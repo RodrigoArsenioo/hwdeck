@@ -1,0 +1,11 @@
+# build output (scripts\build.ps1, scripts\pack.ps1)
+/HWDeck.exe
+/app.ico
+/dist/
+
+# WebView2 SDK files (scripts\fetch-deps.ps1)
+/*.dll
+
+# test runs
+/test/out/
+/test/data*/

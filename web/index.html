@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+<link rel="icon" href="data:,">
+<title>HW Deck</title>
+<link rel="stylesheet" href="deck.css">
+</head>
+<body>
+<div class="app" id="app">
+  <header class="tbar" id="titlebar">
+    <span class="name">HW DECK</span>
+    <span class="dot" id="dot"></span>
+    <nav id="screens"><span class="ind still" id="tabind"></span><button data-s="tiles">Tiles</button><button data-s="overview">Overview</button><button data-s="grid">Grid</button></nav>
+    <span class="grow"></span>
+    <span class="edtools">
+      <button class="ib" id="undo" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+      <button class="ib" id="redo" title="Redo (Ctrl+Shift+Z)"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+    </span>
+    <button class="ib" id="savesBtn" title="Saves"><svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg><i class="bdot" id="savesDot"></i></button>
+    <button class="ib" id="logBtn" title="Warning history"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></svg></button>
+    <button class="ib" id="gamesBtn" title="Game sessions"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="4"/><path d="M8 11v3M6.5 12.5h3"/><path d="M15.5 12h.01M17.5 14h.01"/></svg><i class="bdot live" id="gameDot"></i></button>
+    <button class="ib" id="setBtn" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+    <button class="ib" id="editBtn" title="Edit layout (E)"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg></button>
+    <div class="winbtns">
+      <button id="wmin" title="Minimize"><svg viewBox="0 0 12 12"><path d="M2 6.5h8"/></svg></button>
+      <button id="wmax" title="Maximize or restore"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1"/></svg></button>
+      <button id="wclose" title="Close to the tray"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
+    </div>
+  </header>
+  <div class="banner" id="banner" hidden><span id="bannerTxt"></span><button class="btn warn" id="bannerBtn">Restart HWiNFO</button></div>
+  <div class="panes">
+    <aside class="storage" aria-label="Storage">
+      <div class="pane-h"><h3>Storage</h3><span class="grow"></span><button class="linkbtn" id="addPred" title="A fan HWiNFO can't see: its rpm comes from a curve">+ Predicted fan</button></div>
+      <div class="search" title="Missing a reading? Unhide it in HWiNFO's sensor window">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input id="q" type="search" placeholder="Search sensors, labels, units" autocomplete="off" spellcheck="false">
+        <button class="ib" id="hideIn" title="Hide readings already in the view" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 9 6 9 6a17 17 0 0 1-2.6 3.1M6.6 6.6A17 17 0 0 0 3 12s4 6 9 6a9 9 0 0 0 4.4-1.2"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button>
+      </div>
+      <div class="chips" id="chips"></div>
+      <div class="relink" id="relinkBar" hidden><span id="relinkTxt"></span><button class="linkbtn" id="relinkCancel">Cancel</button></div>
+      <div class="vlist" id="vlist"><div class="vsticky" id="vsticky" hidden></div><div class="vspace" id="vspace"></div></div>
+    </aside>
+    <main class="viewwrap"><div id="sections"><div id="view"></div><button class="newcat" id="newcat">+ New category (or drop a reading here)</button><div class="dropmark" id="dropmark"></div></div></main>
+    <aside class="insp" aria-label="Cell settings"><div class="pane-h"><h3>Cell</h3><span class="grow"></span><button class="ib closer" id="inspClose" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div><div class="insp-body" id="insp"></div></aside>
+  </div>
+  <div class="toast" id="toast" role="status"><span id="toastTxt"></span><button class="linkbtn" id="toastUndo" hidden>Undo</button></div>
+</div>
+
+<!-- a cell's popup: its graph over 15 min to 7 days, HWiNFO's own min / max / average, its gates or fan curve -->
+<div class="modal" id="modal">
+  <div class="mcard">
+    <div class="mhead"><span id="micon"></span><span class="mtitle" id="mtitle"></span><span class="mval" id="mval"></span>
+      <button class="mclose" id="mclose" title="Close"><svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+    <div class="mdesc" id="mdesc"></div>
+    <div id="mgraphsec"><div class="msec"><span class="rng" id="mrng"><span class="ri"></span><button data-r="15m" class="on">15 min</button><button data-r="1h">1 h</button><button data-r="6h">6 h</button><button data-r="12h">12 h</button><button data-r="24h">24 h</button><button data-r="7d">7 days</button></span></div>
+      <canvas id="mgraph"></canvas><div class="mstats" id="mstats"></div></div>
+    <div id="mextra"></div>
+  </div>
+</div>
+
+<div class="modal" id="wmodal">
+  <div class="mcard">
+    <div class="mhead"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></svg><span class="mtitle">Warning history</span>
+      <button class="wclear" id="wclear">Clear</button><button class="mclose" data-close="wmodal" title="Close"><svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+    <div class="mdesc">Every time a cell crossed its yellow or red line, or a fan left its curve, in the last 7 days. Repeats of the same cell close together are merged into one row; click a row to see each one.</div>
+    <div class="wsum" id="wsum"></div><div id="wlist"></div>
+  </div>
+</div>
+
+<div class="modal" id="gmodal">
+  <div class="mcard">
+    <div class="mhead"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="4"/><path d="M8 11v3M6.5 12.5h3"/></svg><span class="mtitle">Game sessions</span>
+      <button class="wclear" id="gclear">Clear</button><button class="mclose" data-close="gmodal" title="Close"><svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+    <div class="mdesc">Every game you played for more than a minute (Steam, Epic, Riot, Battle.net, EA, GOG, Ubisoft, Rockstar, Xbox and your own Steam shortcuts), with how it ran and how hot things got. Click a session for the details.</div>
+    <div class="wsum" id="gsum"></div><div id="glist"></div>
+  </div>
+</div>
+
+<div class="modal" id="smodal">
+  <div class="mcard">
+    <div class="mhead"><svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg><span class="mtitle">Saves</span>
+      <button class="mclose" data-close="smodal" title="Close"><svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+    <div class="mdesc">The view you work on saves itself as you go. A slot keeps a copy of it to come back to; loading one replaces the view.</div>
+    <div id="slist"></div>
+    <div class="sfoot2"><span>Back to the first run: no cells. Undo brings it back.</span><button class="btn warn" id="clearBtn">Clear view</button></div>
+  </div>
+</div>
+
+<div class="modal" id="setmodal">
+  <div class="mcard">
+    <div class="mhead"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span class="mtitle">Settings</span>
+      <button class="mclose" data-close="setmodal" title="Close"><svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+    <div id="setbody"></div>
+  </div>
+</div>
+
+<div class="modal" id="cmodal">
+  <div class="mcard ccard">
+    <div class="mhead"><svg class="ci-danger" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg><svg class="ci-calm" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg><span class="mtitle" id="ctitle"></span></div>
+    <div class="mdesc" id="cdesc"></div>
+    <div class="cbtns"><button id="cno">Cancel</button><button class="yes" id="cyes"></button></div>
+  </div>
+</div>
+<script src="deck.js"></script>
+</body>
+</html>
