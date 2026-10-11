@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.1.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.2.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.2.0.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.1.0";
+    public const string Version = "1.2.0";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -1351,7 +1351,7 @@ class DeckForm : Form
         // sizes in logical pixels, scaled to the screen (225% on a 4K screen would otherwise make a postage stamp)
         float k = 1f;
         try { k = GetDpiForSystem() / 96f; } catch { }   // DeviceDpi still says 96 before the window exists
-        var wa = Screen.PrimaryScreen.WorkingArea;
+        var wa = Screen.FromPoint(Cursor.Position).WorkingArea;   // it opens on the screen under the mouse
         Width = Math.Min((int)(1320 * k), (int)(wa.Width * 0.9)); Height = Math.Min((int)(840 * k), (int)(wa.Height * 0.9));
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(13, 13, 13);
@@ -1360,8 +1360,10 @@ class DeckForm : Form
         string icoPath = Path.Combine(appDir, "app.ico");
         try { Icon = File.Exists(icoPath) ? new Icon(icoPath) : Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         RestoreWin();
-        ResizeEnd += delegate { SaveWin(); };
+        ResizeBegin += delegate { moving = true; };
+        ResizeEnd += delegate { moving = false; if (fitAfterMove) { fitAfterMove = false; FitToScreen(); } SaveWin(); };
         Resize += delegate { if (WindowState != FormWindowState.Minimized) restoreMax = WindowState == FormWindowState.Maximized; };
+        Shown += delegate { FitToScreen(); };
 
         wv = new WebView2();
         wv.Dock = DockStyle.Fill;
@@ -1382,6 +1384,7 @@ class DeckForm : Form
                 if (dpi > 0) MinimumSize = new Size(Math.Min((int)(720 * dpi / 96), wa2.Width / 2), Math.Min((int)(480 * dpi / 96), wa2.Height / 2));
             }
             catch { }
+            BeginInvoke((Action)FitToScreen);
             if (showAsked) BeginInvoke((Action)ShowWin);
             try
             {
@@ -1422,6 +1425,7 @@ class DeckForm : Form
         timer = new Timer { Interval = 250 };
         timer.Tick += OnTick;
         timer.Start();   // history, warnings and games run from the start, page or not
+        if (Environment.GetEnvironmentVariable("HWDECK_TRACE") == "1") UiTrace.Start(this, Path.Combine(dataDir, "trace.log"));
         Log("start " + AppInfo.Version + " (pid " + Process.GetCurrentProcess().Id + (fake ? ", fake " + fakeN : "") + ", data " + dataDir + ")");
     }
 
@@ -1475,7 +1479,11 @@ class DeckForm : Form
         // an app, not a browser: no dev tools (unless a test asked for the debug port), no browser keys (print, find,
         // reload), no autofill, no zoom, nothing dropped or clicked can take the page somewhere else
         bool debug = (Environment.GetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") ?? "").Contains("remote-debugging");
-        nonClient = Try(() => core.Settings.IsNonClientRegionSupportEnabled = true);   // css app-region: drag = the window caption (else the page asks for a drag)
+        // the title bar is NOT a css app-region: WebView2 applies those regions to its windows on this thread after every
+        // layout change, and while views were switched that took this thread for seconds (no ticks: the clock froze and
+        // skipped seconds). The page asks for the drag instead (Win "drag"). HWDECK_NONCLIENT=1 turns regions back on
+        // (diagnostics)
+        nonClient = Environment.GetEnvironmentVariable("HWDECK_NONCLIENT") == "1" && Try(() => core.Settings.IsNonClientRegionSupportEnabled = true);   // css app-region: drag = the window caption (else the page asks for a drag)
         Try(() => core.Settings.IsStatusBarEnabled = false);
         Try(() => core.Settings.IsZoomControlEnabled = false);
         Try(() => core.Settings.AreDefaultContextMenusEnabled = false);
@@ -1505,10 +1513,23 @@ class DeckForm : Form
             else if (ev.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited && !exiting && !ending)   // at a sign-out Windows may end the browser first
                 Try(() => { Process.Start(Application.ExecutablePath, RestartArgs() + " --after " + Process.GetCurrentProcess().Id + (Visible ? "" : " -min")); exiting = true; tray.Visible = false; Application.Exit(); });
         };
-        core.Navigate("https://hwdeck.example/index.html");
+        // the page's files changed (an update): WebView2 may keep serving the old ones from its cache for a while (the
+        // folder mapping sends no cache headers), so its disk cache is cleared once before the page loads
+        string stamp = PageStamp(), seen = settings.ContainsKey("pageStamp") ? settings["pageStamp"] as string : null;
+        Action go = () => core.Navigate("https://hwdeck.example/index.html");
+        if (stamp == seen) { go(); return; }
+        Action keep = () => { settings["pageStamp"] = stamp; Try(() => SaveFile("settings", settings)); };
+        try { core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache).ContinueWith(t => Try(() => BeginInvoke((Action)(() => { if (t.Status == System.Threading.Tasks.TaskStatus.RanToCompletion) keep(); go(); })))); }
+        catch { keep(); go(); }   // a WebView2 runtime without it: load as before (and don't try again every start)
+    }
+    // the page's files as they are now: names, sizes and times
+    string PageStamp()
+    {
+        try { return string.Join("|", Directory.GetFiles(Path.Combine(appDir, "web")).OrderBy(f => f).Select(f => { var i = new FileInfo(f); return i.Name + ":" + i.Length + ":" + i.LastWriteTimeUtc.Ticks; })); }
+        catch { return ""; }
     }
 
-    void Post(Dictionary<string, object> m) { try { wv.CoreWebView2.PostWebMessageAsJson(json.Serialize(m)); } catch { } }
+    void Post(Dictionary<string, object> m) { try { string j = json.Serialize(m); long a = UiTrace.Now(); wv.CoreWebView2.PostWebMessageAsJson(j); if (UiTrace.on) UiTrace.Took("post " + m["t"] + " " + j.Length + " B", a); } catch { } }
     static Dictionary<string, object> Msg(string t) { return new Dictionary<string, object> { { "t", t } }; }
 
     void OnMsg(object s, CoreWebView2WebMessageReceivedEventArgs e)
@@ -1588,7 +1609,7 @@ class DeckForm : Form
         var slots = new List<object>();
         for (int i = 1; i <= 5; i++) slots.Add(ReadFile("slots\\slot" + i));
         var r = Msg("state");
-        r["state"] = ReadFile("state"); r["slots"] = slots; r["fake"] = fake; r["dataDir"] = dataDir; r["version"] = AppInfo.Version;
+        r["state"] = ReadFile("state"); r["slots"] = slots; r["fake"] = fake; r["dataDir"] = dataDir; r["version"] = AppInfo.Version; r["pc"] = Environment.MachineName;
         r["nonClient"] = nonClient;
         Post(r);
         SendSettings();
@@ -1781,8 +1802,9 @@ class DeckForm : Form
     DateTime trimDay = DateTime.Now.Date;
     void OnTick(object s, EventArgs e)
     {
+        UiTrace.TimerFired(); long ta = UiTrace.Now();
         // whatever goes wrong in one tick goes to app.log (once a minute per kind), never to a dialog every 250 ms
-        try { Tick(); }
+        try { Tick(); UiTrace.Took("tick", ta); }
         catch (Exception ex)
         {
             string k = ex.GetType().Name + ex.TargetSite; long at, now = Source.Unix();
@@ -1929,7 +1951,7 @@ exit $code
     void RestartHwinfo()
     {
         var r = Msg("toast");
-        if (fake) { r["text"] = "Demo data: there is no HWiNFO to restart"; Post(r); return; }
+        if (fake) { r["text"] = "Demo data: there is no HWiNFO to restart"; Post(r); Restarted(-3); return; }
         try
         {
             string exe = settings.ContainsKey("hwinfo") ? settings["hwinfo"] as string : null;
@@ -1948,16 +1970,18 @@ exit $code
                             : code == 3 ? "HWiNFO wasn't found: start it once yourself, HW Deck remembers where it is"
                             : code == 4 ? "That HWiNFO isn't signed by its maker (REALiX), so HW Deck didn't start it as admin" : "The HWiNFO restart didn't finish";
                 Log("hwinfo restart: " + code);
-                Try(() => BeginInvoke((Action)(() => { var t = Msg("toast"); t["text"] = text; Post(t); })));
+                Try(() => BeginInvoke((Action)(() => { var t = Msg("toast"); t["text"] = text; Post(t); Restarted(code); })));
             });
         }
         catch (Exception ex)
         {
             var w = ex as System.ComponentModel.Win32Exception;
-            if (w != null && w.NativeErrorCode == 1223) { r["text"] = "HWiNFO restart cancelled"; Post(r); return; }   // No in the Windows prompt
-            Log("hwinfo restart failed: " + ex.Message); r["text"] = "Couldn't restart HWiNFO: " + ex.Message; Post(r);
+            if (w != null && w.NativeErrorCode == 1223) { r["text"] = "HWiNFO restart cancelled"; Post(r); Restarted(-2); return; }   // No in the Windows prompt
+            Log("hwinfo restart failed: " + ex.Message); r["text"] = "Couldn't restart HWiNFO: " + ex.Message; Post(r); Restarted(-1);
         }
     }
+    // the page's restart button spins until this comes (code 0: restarted with shared memory on)
+    void Restarted(int code) { var m = Msg("restarted"); m["code"] = code; Post(m); }
 
     // ---- start with Windows: a Run entry for this exe, in the tray ----
     // on only when the entry starts this copy (after a move or a fresh unzip the old entry points elsewhere)
@@ -2017,12 +2041,22 @@ exit $code
         }
     }
 
+    int lastDrag; Point lastDragAt; bool dragArmed;
     void Win(string a)
     {
         if (a == "min") WindowState = FormWindowState.Minimized;
         else if (a == "max") { WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized; SaveWin(); }
         else if (a == "close") HideToTray();
-        else if (a == "drag" && WindowState != FormWindowState.Maximized) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, 2, 0); }
+        else if (a == "drag")
+        {
+            // a second press on the title bar within the double-click time: maximize or restore, as a caption does;
+            // else Windows moves the window (a maximized one comes out of maximize as it is dragged)
+            int now = Environment.TickCount; var at = Cursor.Position;
+            bool dbl = dragArmed && now - lastDrag < SystemInformation.DoubleClickTime && Math.Abs(at.X - lastDragAt.X) <= SystemInformation.DoubleClickSize.Width && Math.Abs(at.Y - lastDragAt.Y) <= SystemInformation.DoubleClickSize.Height;
+            dragArmed = !dbl; lastDrag = now; lastDragAt = at;
+            if (dbl) Win("max");
+            else { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, 2, 0); }
+        }
         else if (a != null && a.StartsWith("resize:") && WindowState != FormWindowState.Maximized)
         {
             var map = new Dictionary<string, int> { { "l", 10 }, { "r", 11 }, { "t", 12 }, { "tl", 13 }, { "tr", 14 }, { "b", 15 }, { "bl", 16 }, { "br", 17 } };
@@ -2061,6 +2095,7 @@ exit $code
             var wa = Screen.FromRectangle(Rectangle.FromLTRB(r.L, r.T, r.R, r.B)).WorkingArea;
             MinimumSize = new Size(Math.Min(720 * dpi / 96, wa.Width / 2), Math.Min(480 * dpi / 96, wa.Height / 2));
             SetWindowPos(Handle, IntPtr.Zero, r.L, r.T, r.R - r.L, r.B - r.T, 0x0004 /*NOZORDER*/ | 0x0010 /*NOACTIVATE*/);
+            BeginInvoke((Action)FitToScreen);
             m.Result = IntPtr.Zero;
             return;
         }
@@ -2079,6 +2114,28 @@ exit $code
         base.WndProc(ref m);
     }
 
+    // a window bigger than its screen's work area (another screen's scale, a smaller second screen, a size saved on another
+    // monitor) comes back inside it, never under the taskbar
+    // (a monitor change in the middle of a drag waits for the drag to end: the window still straddles both screens)
+    bool moving, fitAfterMove;
+    void FitToScreen()
+    {
+        try
+        {
+            if (WindowState != FormWindowState.Normal || !IsHandleCreated) return;
+            if (moving) { fitAfterMove = true; return; }
+            // what shows: Bounds also holds the invisible resize borders (left, right, bottom), which may sit off the
+            // work area (a window snapped to an edge)
+            var wa = Screen.FromHandle(Handle).WorkingArea; var b = Bounds; var v = b;
+            RECT e; if (DwmGetWindowAttribute(Handle, 9 /*DWMWA_EXTENDED_FRAME_BOUNDS*/, out e, Marshal.SizeOf(typeof(RECT))) == 0 && e.R > e.L && e.B > e.T) v = Rectangle.FromLTRB(e.L, e.T, e.R, e.B);
+            int l = v.Left - b.Left, t = v.Top - b.Top, r = b.Right - v.Right, bo = b.Bottom - v.Bottom;
+            int w = Math.Min(v.Width, wa.Width), h = Math.Min(v.Height, wa.Height);   // only what sticks out: a window that fits stays as it is
+            int x = Math.Max(wa.Left, Math.Min(v.Left, wa.Right - w)), y = Math.Max(wa.Top, Math.Min(v.Top, wa.Bottom - h));
+            if (w != v.Width || h != v.Height || x != v.Left || y != v.Top) Bounds = new Rectangle(x - l, y - t, w + l + r, h + t + bo);
+        }
+        catch { }
+    }
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
     string WinPath { get { return P("window.json"); } }
     void SaveWin()
     {
@@ -2122,6 +2179,50 @@ exit $code
         if (WindowState == FormWindowState.Minimized) WindowState = restoreMax ? FormWindowState.Maximized : FormWindowState.Normal;
         Activate(); SetForegroundWindow(Handle);
     }
+}
+
+// diagnostics (HWDECK_TRACE=1 only): what the UI thread handles each second, how late the 250 ms timer and a probe
+// posted every 50 ms from another thread run; written to trace.log in the data folder
+static class UiTrace
+{
+    public static bool on; static Control ui; static string file;
+    static readonly Stopwatch sw = Stopwatch.StartNew();
+    static long lastTimer, maxTimerGap, maxProbe; static readonly Dictionary<int, int> counts = new Dictionary<int, int>();
+    class Filter : IMessageFilter { public bool PreFilterMessage(ref Message m) { lock (counts) { int c; counts.TryGetValue(m.Msg, out c); counts[m.Msg] = c + 1; } return false; } }
+    static System.Threading.Thread uiThread; static long probeSent = -1;
+    public static void Start(Control c, string path)
+    {
+        on = true; ui = c; file = path; lastTimer = sw.ElapsedMilliseconds; uiThread = System.Threading.Thread.CurrentThread;
+        Application.AddMessageFilter(new Filter());
+        new System.Threading.Thread(() => {
+            long lastLog = sw.ElapsedMilliseconds;
+            while (true) {
+                System.Threading.Thread.Sleep(50);
+                long sent = sw.ElapsedMilliseconds;
+                // a probe still waiting after 300 ms: the UI thread is stuck; write down where (once per stall)
+                if (probeSent >= 0 && sent - probeSent > 300) {
+                    probeSent = -2;
+                    try {
+#pragma warning disable 618
+                        uiThread.Suspend(); string st;
+                        try { st = new StackTrace(uiThread, false).ToString(); } finally { uiThread.Resume(); }
+#pragma warning restore 618
+                        File.AppendAllText(file, DateTime.Now.ToString("HH:mm:ss.fff") + " STUCK, UI thread stack:" + Environment.NewLine + st + Environment.NewLine);
+                    } catch (Exception ex) { try { File.AppendAllText(file, "stack failed: " + ex.Message + Environment.NewLine); } catch { } }
+                }
+                if (probeSent == -1) { probeSent = sent; long ps = sent; try { ui.BeginInvoke((Action)(() => { long d = sw.ElapsedMilliseconds - ps; if (d > maxProbe) maxProbe = d; probeSent = -1; })); } catch { probeSent = -1; } }
+                if (sent - lastLog >= 1000) {
+                    lastLog = sent; string line;
+                    lock (counts) { line = DateTime.Now.ToString("HH:mm:ss.fff") + " probe max " + maxProbe + " ms, timer gap max " + maxTimerGap + " ms, msgs " + string.Join(" ", counts.OrderByDescending(x => x.Value).Take(8).Select(x => "0x" + x.Key.ToString("X") + "=" + x.Value)); counts.Clear(); }
+                    maxProbe = 0; maxTimerGap = 0;
+                    try { File.AppendAllText(file, line + Environment.NewLine); } catch { }
+                }
+            }
+        }) { IsBackground = true }.Start();
+    }
+    public static long Now() { return sw.ElapsedMilliseconds; }
+    public static void Took(string what, long since) { if (!on) return; long d = sw.ElapsedMilliseconds - since; if (d >= 40) try { File.AppendAllText(file, DateTime.Now.ToString("HH:mm:ss.fff") + " SLOW " + what + " " + d + " ms" + Environment.NewLine); } catch { } }
+    public static void TimerFired() { if (!on) return; long t = sw.ElapsedMilliseconds, d = t - lastTimer; lastTimer = t; if (d > maxTimerGap) maxTimerGap = d; }
 }
 
 static class Program

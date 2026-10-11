@@ -15,6 +15,9 @@ const { ok, done } = checks();
 const E = x => p.evaluate(x);
 const until = async (expr, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await E(expr)) return true; await p.sleep(150); } return false; };
 const click = async sel => { const c = await p.center(sel); if (!c) throw new Error('nothing at ' + sel); await p.click(c.x, c.y); await p.sleep(220); };
+// Storage and the settings are drawers over the view in edit mode: this test opens Storage when it uses it and shuts both
+// when it works in the view (the drawers themselves are checked in e2e-layout.mjs)
+const storage = async on => { await E(`(() => { DR.L.pinned = ${on}; DR.L.hover = false; if (!${on}) { DR.R.hover = false; DR.R.byPick = false; } syncDrawers(); })()`); await p.sleep(260); };
 
 // ---- first run ----
 ok('catalog arrives', await until('READ.length === 301 && feed.got'), await E('READ.length'));   // 300 made up and HW Deck's own bottleneck
@@ -25,6 +28,7 @@ ok('Storage draws only the rows in sight', await E('document.querySelectorAll("#
 ok('the type filters wrap instead of hiding (Other is visible)', await E('(() => { const b = [...document.querySelectorAll(".chip")].pop(), r = b.getBoundingClientRect(), s = document.querySelector(".storage").getBoundingClientRect(); return r.right <= s.right && b.textContent.startsWith("Other"); })()'));
 
 // ---- adding ----
+await storage(true);
 await click('#vspace .vrow.r .add');
 ok('+ on a row makes a category named after the sensor', await E('S.L.cats.length === 1 && S.L.cats[0].cells.length === 1 && S.L.cats[0].name.startsWith("CPU")'), await E('S.L.cats.map(c => c.name + ":" + c.cells.length)'));
 ok('the new cell gets values', await until('/\\d/.test(document.querySelector("#view .dc .v").textContent)', 5000), await E('document.querySelector("#view .dc .v").textContent'));
@@ -34,6 +38,7 @@ await p.click(c.x, c.y); await p.sleep(250);
 ok('Temp filter + "+ all" adds that sensor\'s temperatures as one category', await E('S.L.cats[1].name === "dGPU temp" && S.L.cats[1].cells.every(id => BYKEY.get(S.L.cells[id].key).t === "temp")'), await E('S.L.cats.map(c => c.name + ":" + c.cells.length)'));
 await click('.chip[data-t="all"]');
 for (let i = 0; i < 3; i++) await E(`addKeys([READ[${40 + i}].key], S.L.cats[0].id, null)`);
+await storage(false);
 
 // ---- dragging in Tiles ----
 const cat0 = await E('S.L.cats[0].id'), cat1 = await E('S.L.cats[1].id');
@@ -44,21 +49,27 @@ const at = sel => E(`(() => { const r = document.querySelector(${JSON.stringify(
 let a = await at(`#view .dc[data-cid="${moving}"]`), b = await at(`#view .dcat[data-cat="${cat0}"] .dc`);
 await p.drag(a, { x: b.x - b.w / 2 + 6, y: b.y }); await p.sleep(300);
 ok('Tiles: a cell dragged into another category, before its first cell', await E(`S.L.cats[0].cells[0] === "${moving}"`), await E('S.L.cats.map(c => c.cells.length)'));
+await storage(true);
 a = await p.centerOf('[...document.querySelectorAll("#vspace .vrow.r")][5]');
 const rowKey = await E('[...document.querySelectorAll("#vspace .vrow.r")][5].dataset.key');
 b = await p.centerOf(`[...document.querySelectorAll('#view .dcat[data-cat="${cat0}"] .dc')].pop()`);
 await p.drag({ x: a.x - 60, y: a.y }, { x: b.x + b.w / 2 - 4, y: b.y }); await p.sleep(300);
+await storage(false);
 ok('Tiles: a Storage row dragged to the end of a category', await E(`S.L.cells[S.L.cats[0].cells[S.L.cats[0].cells.length - 1]].key === ${JSON.stringify(rowKey)}`));
-a = await p.center(`#view .dcat[data-cat="${cat1}"] .grip`); b = await p.center(`#view .dcat[data-cat="${cat0}"] .dch`);
-await p.drag(a, { x: b.x, y: b.y - 6 }); await p.sleep(300);
-ok('Tiles: a category header dragged above another', await E(`S.L.cats[0].id === "${cat1}"`), await E('S.L.cats.map(c => c.name)'));
-a = await p.centerOf('[...document.querySelectorAll("#vspace .vrow.r")][8]'); b = await p.center('#newcat');
+a = await p.center(`#view .dcat[data-cat="${cat1}"] .grip`); b = await p.center(`#view .dcat[data-cat="${cat0}"]`);
+await p.drag(a, { x: b.x, y: b.y }); await p.sleep(300);
+ok('Tiles: a category dropped on the middle of another swaps them (the view stays automatic)', await E(`S.L.cats[0].id === "${cat1}" && !(S.L.views && S.L.views.tiles && S.L.views.tiles.rows)`), await E('S.L.cats.map(c => c.name)'));
+// "+ New category" shows up over the bottom of the view while a reading is dragged (Storage open for it)
+await storage(true);
+a = await p.centerOf('[...document.querySelectorAll("#vspace .vrow.r")][8]'); b = await E('(() => { const r = document.querySelector(".viewwrap").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.bottom - 40 }; })()');
 await p.drag({ x: a.x - 60, y: a.y }, b); await p.sleep(300);
 ok('a row dropped on "New category" makes one', await E('S.L.cats.length === 3'), await E('S.L.cats.map(c => c.name)'));
+await storage(false);
 
 // ---- the other views: the same cells, and dragging goes up and down there ----
 for (const v of ['overview', 'grid']) {
   await E(`showScreen('${v}')`); await p.sleep(700);
+  await storage(false);   // no drawer over the view
   ok(v + ': every cell is drawn', await E('document.querySelectorAll("#view .dc").length === Object.keys(S.L.cells).length'), await E('document.querySelectorAll("#view .dc").length'));
   const bc = await E('S.L.cats.find(c => c.cells.length >= 3).id');
   const first = await E(`S.L.cats.find(c => c.id === "${bc}").cells[0]`), third = await E(`S.L.cats.find(c => c.id === "${bc}").cells[2]`);
@@ -67,6 +78,7 @@ for (const v of ['overview', 'grid']) {
   ok(v + ': a cell dragged down below another', await E(`S.L.cats.find(c => c.id === "${bc}").cells.indexOf("${first}") === 2`), await E(`S.L.cats.find(c => c.id === "${bc}").cells.indexOf("${first}")`));
 }
 await E(`showScreen('tiles')`); await p.sleep(600);
+await storage(false);   // the settings of the last dropped cell go
 
 // ---- renaming, keyboard ----
 c = await p.center(`#view .dcat[data-cat="${cat1}"] .cn`);
@@ -99,6 +111,7 @@ ok('the warning log shows it', await until('document.querySelectorAll("#wlist .w
 await E('$("wmodal").classList.remove("open")');
 
 // ---- fan curve, predicted fan ----
+await storage(true);
 await click('.chip[data-t="fan"]');
 await click('#vspace .vrow.r .add'); await p.sleep(150);
 const fanCid = await E('sel');
@@ -113,6 +126,7 @@ ok('dragging a curve point moves it', await E(`JSON.stringify(S.L.cells["${fanCi
 await click('.chip[data-t="all"]');
 await click('#addPred'); await p.sleep(200);
 ok('a predicted fan gets its rpm from the curve', await until('(() => { const c = S.L.cells[sel]; return c && c.pred && cellValue(c) > 0; })()', 3000));
+await storage(false);
 
 // ---- the popup and the hover preview ----
 await E(`openDetail("${fanCid}")`); await p.sleep(600);

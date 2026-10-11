@@ -55,6 +55,7 @@ ok('no popup windows', (await E('window.open("https://example.com/") === null'))
 
 // ---- Storage: a click that spans a tick still lands ----
 await E('showScreen("tiles"); typeFilter = "all"; query = ""; renderStorage()'); await p.sleep(300);
+await E('DR.L.pinned = true; syncDrawers()'); await p.sleep(300);   // Storage is a drawer in edit mode: kept open here
 const n0 = await E('Object.keys(S.L.cells).length');
 const btn = await E(`(() => { const vl = $('vlist').getBoundingClientRect(); const b = [...document.querySelectorAll('#vspace .vrow.r .add')].find(x => { const r = x.getBoundingClientRect(); return r.top > vl.top && r.bottom < vl.bottom; }); const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
 const ts0 = await E('nowTs');
@@ -64,6 +65,7 @@ await until(`nowTs > ${ts0}`, 3000); await p.sleep(80);
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseReleased', x: btn.x, y: btn.y, button: 'left', buttons: 0, clickCount: 1 });
 await p.sleep(400);
 ok('a + pressed across a tick adds the cell', (await E('Object.keys(S.L.cells).length')) === n0 + 1, `${n0} to ${await E('Object.keys(S.L.cells).length')}`);
+await E('DR.L.pinned = false; syncDrawers()');
 
 // ---- small things ----
 ok('a number replacing "--" shows at once', await E(`(() => { const el = document.createElement('span'); document.body.appendChild(el); odo(el, '--'); odo(el, '42'); const r = el._ot; el.remove(); return r === '42'; })()`));

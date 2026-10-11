@@ -1,21 +1,25 @@
 # Runs every check on made-up data: the end-to-end test, a clean restart, the restart test, the scale test, the
 # release checks (a prepared data folder), an unreadable working view, a restart that has to wait, sleep and the
 # end of a Windows session, a held history file, the bottleneck with a made-up game, the game sessions popup and report,
-# and a window left open for a few minutes. Uses its own data folders under test\ and debug ports 9230-9237; the real
+# the layouts, the tile looks, and a window left open for a few minutes. Uses its own data folders under test\ and debug ports 9230-9239; the real
 # HW Deck (if running) is left alone.
 #   powershell -File test\run-all.ps1
 $d = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $d
 $failed = 0
+# test windows sit behind other windows: keep Chromium from treating a covered window as hidden (it would slow its
+# timers and stop its frames)
+$awake = '--disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling'
 Add-Type -Namespace HWDeckTest -Name Win -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);'
 function Start-Deck([string]$data, [int]$port, [int]$fake) {
-  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port $awake"
   $p = Start-Process "$d\HWDeck.exe" -ArgumentList '--fake', $fake, '--data', "$d\test\$data" -WorkingDirectory $d -PassThru
   Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
-  # it opens on the screen under the mouse: move it to the main screen (same size, no focus) before the tests look at it.
-  # Leave the test windows alone while they run: a minimized or tray window gets no data and its checks fail
+  # it opens on the screen under the mouse: move it to the main screen (same size, no focus) and behind every other
+  # window, so it doesn't cover anything. Leave the test windows alone while they run: a minimized or tray window gets
+  # no data and its checks fail
   for ($i = 0; $i -lt 20 -and $p.MainWindowHandle -eq 0; $i++) { Start-Sleep -Milliseconds 250; $p.Refresh() }
-  if ($p.MainWindowHandle -ne 0) { [void][HWDeckTest.Win]::SetWindowPos($p.MainWindowHandle, [IntPtr]::Zero, 40, 40, 0, 0, 0x15) }
+  if ($p.MainWindowHandle -ne 0) { [void][HWDeckTest.Win]::SetWindowPos($p.MainWindowHandle, [IntPtr]1, 40, 40, 0, 0, 0x11) }
   Start-Sleep -Seconds 5
   return $p
 }
@@ -64,7 +68,7 @@ Quit-Deck $p 9233
 "== restart that has to wait"
 if (Test-Path "$d\test\data-after") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-after" }
 $p = Start-Deck 'data-after' 9233 50
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9234"
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9234 $awake"
 $q = Start-Process "$d\HWDeck.exe" -ArgumentList '--after', 999999, '--fake', 50, '--data', "$d\test\data-after" -WorkingDirectory $d -PassThru
 Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 Start-Sleep -Seconds 3
@@ -108,6 +112,18 @@ Set-Content -Encoding UTF8 "$d\test\data-g\state.json" '{"v":1,"L":{"v":1,"cats"
 $p = Start-Deck 'data-g' 9237 300
 Run 'game sessions' test/e2e-games.mjs 9237 test/data-g
 Quit-Deck $p 9237
+
+# layouts (port 9238): rows, columns and stacks, the looks, the handles, the drawers, the title bar; a fresh folder
+if (Test-Path "$d\test\data-lay") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-lay" }
+$p = Start-Deck 'data-lay' 9238 300
+Run 'layouts' test/e2e-layout.mjs 9238 test/data-lay
+Quit-Deck $p 9238
+
+# tile looks (port 9239): every kind of tile in many layouts, measured for what looks broken; screenshots in test\out\gallery
+if (Test-Path "$d\test\data-gal") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-gal" }
+$p = Start-Deck 'data-gal' 9239 300
+Run 'tile looks' test/gallery.mjs 9239 test/out/gallery
+Quit-Deck $p 9239
 
 # a window left open for a few minutes: timers and memory stay flat
 if (Test-Path "$d\test\data-soak") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-soak" }

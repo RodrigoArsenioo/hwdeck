@@ -14,15 +14,16 @@ Works on 64-bit Windows 10 and 11.
 
 ## Using it
 
-- Drag sensors from the list on the left into your view, or press + on one.
+- In edit mode (the pencil, or E), drag sensors from Storage (the tab on the left) into your view, or press + on one.
 - Click a cell to see its graph, up to 7 days back.
-- In edit mode (the pencil, or E) you can set yellow and red lines on a cell, or a curve on a fan.
+- Select a cell to set yellow and red lines, or a curve on a fan. Select a category to set its width, height and look.
+- Drop a category on the edge of another to put them side by side or stack them. Each view can be arranged its own way.
 - Tiles, Overview and Grid are three ways to look at the same cells (keys 1, 2, 3).
 - Closing the window keeps it in the tray, still watching. Right-click the tray icon to quit.
 - The clock icon lists past warnings, the gamepad icon your game sessions.
 - Bottleneck (under HW Deck in the list) says what limits your fps while a game runs: the GPU, the CPU, or an fps cap.
 
-The free HWiNFO stops sharing after 12 hours. HW Deck then shows a button to restart it.
+The free HWiNFO stops sharing after 12 hours. The arrow next to the views restarts it.
 
 | | |
 |---|---|

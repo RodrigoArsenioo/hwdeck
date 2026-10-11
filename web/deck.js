@@ -1,9 +1,10 @@
 'use strict';
 // HW Deck page. The host (app.cs) sends the catalog of HWiNFO readings, a tick of values once a second and the saved
 // files; this page owns the layout and draws it three ways (Tiles, Overview, Grid).
-//   layout   { v, cats: [{ id, name, collapsed, cells: [cellId] }], cells: { cellId: cell } }
+//   layout   { v, cats: [{ id, name, collapsed, cells: [cellId] }], cells: { cellId: cell }, views? }
 //   cell     { key, match, name, dec, graph, gates: { mode none|y|yr, dir above|below, y, r, hold },
 //              curve: { src, pts: [[temp, rpm]], tol, hold }, pred }   (pred: a predicted fan, no key)
+//   views    how each view is arranged and how its categories look (see "arrangements" below)
 
 const host = window.chrome && window.chrome.webview ? window.chrome.webview : null;
 const send = m => { if (host) host.postMessage(m); };
@@ -26,6 +27,7 @@ const ICONS = {
   chev: '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
   check: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
   more: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>',
+  corner: '<svg viewBox="0 0 14 14"><path d="M12 5v7H5M12 12L7 7"/></svg>',
   neck: '<svg viewBox="0 0 24 24"><path d="M5 6h14l-5 6v6l-4 2v-8z"/></svg>',
   pad: '<svg viewBox="0 0 64 64"><rect x="8" y="12" width="20" height="16" rx="3"/><rect x="36" y="12" width="20" height="16" rx="3"/><rect x="8" y="36" width="20" height="16" rx="3"/><rect x="36" y="36" width="20" height="16" rx="3" stroke-dasharray="3 3"/></svg>'
 };
@@ -35,7 +37,7 @@ const COLORS = { white: '#e8e8e8', yellow: '#e6c84a', red: '#e5484d', grey: '#55
 const TYPES = ['none', 'temp', 'volt', 'fan', 'current', 'power', 'clock', 'usage', 'other'];
 const TYPE_NAME = { temp: 'Temp', volt: 'Volt', fan: 'Fan', power: 'Power', current: 'Current', clock: 'Clock', usage: 'Usage', other: 'Other' };
 let SENS = [], READ = [], BYKEY = new Map(), BYMATCH = new Map();
-const feed = { bnIn: [null, null, 0], status: 'missing', age: 0, fake: false, dataDir: '', version: '', got: false, game: null, front: false, gameSince: 0, hwinfo: null, autostart: false, updates: true, latest: null, pm: false, nonClient: true };
+const feed = { bnIn: [null, null, 0], status: 'missing', age: 0, fake: false, dataDir: '', version: '', pc: '', got: false, game: null, front: false, gameSince: 0, hwinfo: null, autostart: false, updates: true, latest: null, pm: false, nonClient: true };
 
 function shortName(n) {
   // "S.M.A.R.T.: SAMSUNG SSD 990 PRO 2TB (0123456789ABCDEF) [C:]" is "SAMSUNG SSD 990 PRO 2TB", "CPU [#0]: AMD Ryzen 7 9800X3D: Enhanced" is "CPU"
@@ -205,6 +207,7 @@ const mixHex = (a, b, w) => '#' + [1, 3, 5].map(i => Math.round(parseInt(a.subst
 const durTxt = sec => { const m = Math.max(0, Math.round(sec / 60)); return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + ('0' + (m % 60)).slice(-2) + 'm'; };
 const plural = (n, one, many) => n.toLocaleString('en-US') + ' ' + (n === 1 ? one : many || one + 's');
 const hhmm = u => { const d = new Date(u * 1000); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); };
+const hhmmss = u => hhmm(u) + ':' + ('0' + new Date(u * 1000).getSeconds()).slice(-2);
 const localDay = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 
 // ---------- state: the working layout, 5 slots, saved through the host ----------
@@ -237,20 +240,132 @@ function cleanLayout(L) {
     const nid2 = idOk(id) && !used.has(id) ? id : nid('a');
     used.add(nid2); ids.set(id, nid2); out.cells[nid2] = cell;
   }
+  const catIds = new Map();   // a category's id in the file -> its id here (views refer to categories by id)
   for (const cat of L && Array.isArray(L.cats) ? L.cats : []) {
     if (!cat || typeof cat !== 'object') continue;
     const id = idOk(cat.id) && !used.has(cat.id) ? cat.id : nid('c');
+    if (typeof cat.id === 'string' && !catIds.has(cat.id)) catIds.set(cat.id, id);
     used.add(id);
     const list = [];
     for (const x of Array.isArray(cat.cells) ? cat.cells : []) { const m = typeof x === 'string' ? ids.get(x) : null; if (m && !listed.has(m)) { listed.add(m); list.push(m); } }
     out.cats.push({ id, name: str(cat.name, 200) && cat.name.trim() ? str(cat.name, 200) : 'Category', collapsed: cat.collapsed === true, cells: list });
   }
   for (const id of Object.keys(out.cells)) if (!listed.has(id)) delete out.cells[id];
+  const views = cleanViews(L && L.views, out, ids, catIds);
+  if (views) out.views = views;
   return out;
+}
+// ---------- arrangements (1.2): per view, rows of columns, each column a stack of categories; plus looks ----------
+//   views    { tiles?, overview?, grid? }: a view that isn't there is Automatic (placed as HW Deck always did)
+//   view     { rows?: [{ h?, cols: [{ w?, stack: [catId | { id, h }] }] }], gap?: tight|roomy, cat?: { catId: look },
+//              cell?: { cellId: look } }   (no rows: Automatic placement, the looks still apply)
+//   h        a row's share of the window height, 0.5 to 6 (none: the row fits its content); in a stack, the
+//            category's share of its column
+//   w        a column's share of its row, 1 to 12 (none on every column: equal widths)
+//   looks    category: tiles { per: 1-8 tiles per row, size: short, title: hide, lead }, overview { style: small|list|
+//            band, title: hide, lead }, grid { lead } (lead: the cell shown first); cell: tiles { size: wide|tall|big,
+//            name }, overview and grid { name } (name: its name in that view only)
+//   Grid has exactly one row: its columns are the tables
+const VIEWS = ['tiles', 'overview', 'grid'], VNAME = { tiles: 'Tiles', overview: 'Overview', grid: 'Grid' };
+const MAXC = { tiles: 6, overview: 6, grid: 3 }, MAXS = { tiles: 6, overview: 6, grid: 99 };
+const isObj = x => !!x && typeof x === 'object' && !Array.isArray(x);
+const share = x => typeof x === 'number' && isFinite(x) && x > 0 ? Math.min(6, Math.max(0.5, Math.round(x * 2) / 2)) : undefined;
+const sid = s => typeof s === 'string' ? s : s.id;
+const clone = x => JSON.parse(JSON.stringify(x));
+// ids and catIds map what the file calls a cell or a category to what it is called here; anything that points at
+// nothing, or is out of range, goes; a category no row places gets a row of its own at the bottom (Grid: the last table)
+function cleanViews(V, L, ids, catIds) {
+  if (!isObj(V)) return null;
+  const inCat = new Map();
+  for (const c of L.cats) for (const x of c.cells) inCat.set(x, c.id);
+  const out = {};
+  for (const vn of VIEWS) {
+    const v = V[vn]; if (!isObj(v)) continue;
+    const o = {};
+    if (Array.isArray(v.rows)) {
+      const placed = new Set(), rows = [];
+      for (const r of v.rows.slice(0, 500)) {
+        if (!isObj(r) || !Array.isArray(r.cols)) continue;
+        const cols = [];
+        for (const c of r.cols) {
+          if (cols.length >= MAXC[vn]) break;
+          if (!isObj(c) || !Array.isArray(c.stack)) continue;
+          const stack = [];
+          for (const it of c.stack) {
+            if (stack.length >= MAXS[vn]) break;
+            const raw = typeof it === 'string' ? it : isObj(it) && typeof it.id === 'string' ? it.id : null, id = raw === null ? undefined : catIds.get(raw);
+            if (!id || placed.has(id)) continue;
+            placed.add(id);
+            stack.push(id);   // (1.2 betas kept a height share here: every category now keeps its own height)
+          }
+          if (!stack.length) continue;
+          const col = { stack };
+          if (Number.isInteger(c.w) && c.w >= 1 && c.w <= 12) col.w = c.w;
+          cols.push(col);
+        }
+        if (!cols.length) continue;
+        if (cols.length < 2 || cols.some(c => c.w === undefined)) for (const c of cols) delete c.w;
+        const row = {};
+        if (vn === 'tiles' && share(r.h) !== undefined) row.h = 1;   // Fill: its tiles may grow into spare room
+        row.cols = cols;
+        rows.push(row);
+        if (vn === 'grid') break;
+      }
+      if (rows.length) {
+        for (const c of L.cats) if (!placed.has(c.id)) {
+          if (vn === 'grid') { const cs = rows[0].cols; cs[cs.length - 1].stack.push(c.id); }
+          else rows.push({ cols: [{ stack: [c.id] }] });
+        }
+        o.rows = rows;
+      }
+    }
+    if (vn !== 'grid' && (v.gap === 'tight' || v.gap === 'roomy')) o.gap = v.gap;
+    if (isObj(v.cat)) {
+      const cat = {};
+      for (const k of Object.keys(v.cat)) {
+        const id = catIds.get(k), x = v.cat[k];
+        if (!id || !isObj(x)) continue;
+        const e = {};
+        if (vn === 'tiles' && Number.isInteger(x.per) && x.per >= 1 && x.per <= 8) e.per = x.per;
+        if (vn === 'tiles' && x.size === 'short') e.size = 'short';
+        if (vn === 'overview' && ['small', 'list', 'band'].includes(x.style)) e.style = x.style;
+        if (vn !== 'grid' && x.title === 'hide') e.title = 'hide';
+        if (typeof x.lead === 'string') { const m = ids.get(x.lead); if (m && inCat.get(m) === id) e.lead = m; }
+        if (Object.keys(e).length) cat[id] = e;
+      }
+      if (Object.keys(cat).length) o.cat = cat;
+    }
+    if (isObj(v.cell)) {
+      const cell = {};
+      for (const k of Object.keys(v.cell)) {
+        const id = ids.get(k), x = v.cell[k];
+        if (!id || !inCat.has(id) || !isObj(x)) continue;
+        const e = {};
+        if (vn === 'tiles' && ['wide', 'tall', 'big'].includes(x.size)) e.size = x.size;
+        if (typeof x.name === 'string' && x.name.trim()) e.name = x.name.slice(0, 200);
+        if (Object.keys(e).length) cell[id] = e;
+      }
+      if (Object.keys(cell).length) o.cell = cell;
+    }
+    if (Object.keys(o).length) out[vn] = o;
+  }
+  return Object.keys(out).length ? out : null;
+}
+// after every change: what points at a removed category or cell goes, a new category gets its own row
+function tidyViews(L) {
+  if (!L.views) return;
+  const ids = new Map(Object.keys(L.cells).map(k => [k, k])), catIds = new Map(L.cats.map(c => [c.id, c.id]));
+  const v = cleanViews(L.views, L, ids, catIds);
+  if (v) L.views = v; else delete L.views;
 }
 const cleanSlot = s => s && typeof s === 'object' && s.layout && Array.isArray(s.layout.cats)
   ? { v: 1, name: typeof s.name === 'string' ? s.name.trim().slice(0, 80) : '', layout: cleanLayout(s.layout) } : null;
-const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined };
+const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined, title: undefined, clock: true };
+// the title bar: your title (this PC's name when there is none), the feed's dot and the time of the last reading
+function renderTitle() {
+  setText($('title'), (S.title && S.title.trim()) || feed.pc || 'HW Deck');
+  $('clock').hidden = !S.clock;
+}
 // animations, in Settings: Full (all of it), Reduced (lighter: quick number rolls, fans turned by a 10 Hz timer, graphs
 // glide at 10 fps, no wave when a view opens), Minimal (nothing keeps moving: numbers just change, fans stand still,
 // graphs step; popups and views still slide), Off (nothing moves). Not chosen yet: Full, or Off when Windows asks apps
@@ -263,7 +378,7 @@ const motionSome = () => { const m = motionMode(); return m === 'full' || m === 
 function applyMotion() { document.documentElement.dataset.motion = motionMode(); }
 if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', () => { applyMotion(); if (feed.got) renderView(false); });
 let saveT = 0;
-function saveState() { clearTimeout(saveT); saveT = setTimeout(() => send({ t: 'save', file: 'state', data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion } }), 300); }
+function saveState() { clearTimeout(saveT); saveT = setTimeout(() => send({ t: 'save', file: 'state', data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, pins: [DR.L.pinned, DR.R.pinned], title: S.title, clock: S.clock } }), 300); }
 function saveSlot(i) { send({ t: 'save', file: 'slots/slot' + (i + 1), data: S.slots[i] }); }
 // undo steps hold the layout and which slot it came from, so Clear then Undo is exactly where you were
 let undoStack = [], redoStack = [];
@@ -277,12 +392,12 @@ function restore(json) {
 function pushUndo(before) { undoStack.push(before); if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
 function snap() { pushUndo(snapOf()); }
 // a change that changes nothing (Alt+arrow at the end of a list) leaves no undo step
-function mutate(fn, msg) { const before = snapOf(); fn(); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); afterChange(); if (msg) toast(msg, true); }
-function afterChange() { if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); }
+function mutate(fn, msg) { const before = snapOf(); fn(); tidyViews(S.L); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); afterChange(); if (msg) toast(msg, true); }
+function afterChange() { tidyViews(S.L); fixSel(); if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); }
 function undo() { if (!undoStack.length) return; retireToastUndo(); redoStack.push(snapOf()); restore(undoStack.pop()); fixSel(); afterChange(); }
 function redo() { if (!redoStack.length) return; retireToastUndo(); undoStack.push(snapOf()); restore(redoStack.pop()); fixSel(); afterChange(); }
 function syncUndo() { $('undo').disabled = !undoStack.length; $('redo').disabled = !redoStack.length; }
-function fixSel() { if (sel && !S.L.cells[sel]) sel = null; }
+function fixSel() { if (sel && !S.L.cells[sel]) sel = null; if (selCat && !S.L.cats.some(c => c.id === selCat)) selCat = null; }
 const layoutSig = L => JSON.stringify(L, (k, v) => k === 'collapsed' ? undefined : v);
 const isDirty = () => S.active != null && layoutSig(S.L) !== layoutSig(S.slots[S.active] ? S.slots[S.active].layout : emptyLayout());
 function inView() { const set = new Set(); for (const c of Object.values(S.L.cells)) if (c.key) set.add(c.key); return set; }
@@ -313,7 +428,7 @@ function subscribe() {
 }
 
 // ---------- a cell's value and state: gates (with their hold), fan curve, warming toward yellow ----------
-let sel = null, relinkFor = null;
+let sel = null, selCat = null, relinkFor = null;   // the selected cell, or the selected category (never both)
 const holdSince = {};
 function cellValue(c) {
   if (c.pred) { const src = BYKEY.get(c.curve && c.curve.src); return src ? interp(c.curve.pts, src.v) : null; }
@@ -620,59 +735,161 @@ const sensorHere = c => !!c.key && SENS.some(sn => c.key.startsWith(sn.key + '/'
 const missingTxt = c => sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now' : 'not on this PC: ' + (c.match ? c.match.split('|')[0] : c.key);
 const isFanCell = c => c.pred || isFanR(BYKEY.get(c.key));
 function catHead(cat, inner) {
-  return '<span class="grip" title="Drag to move the category">' + ICONS.grip + '</span><button class="ib chev" title="Collapse">' + ICONS.chev + '</button>' + (inner || '') +
-    '<span class="cn" title="Double-click to rename">' + esc(cat.name) + '</span><span class="cnt">' + cat.cells.length + '</span>' +
+  return '<span class="grip" title="Drag to move the category: onto another one\'s edge to put them side by side or stack them">' + ICONS.grip + '</span><button class="ib chev" title="Collapse">' + ICONS.chev + '</button>' + (inner || '') +
+    '<span class="cn" title="Click to select, double-click to rename">' + esc(cat.name) + '</span><span class="cnt">' + cat.cells.length + '</span>' +
     '<span class="acts"><button class="ib ren" title="Rename">' + ICONS.pen + '</button><button class="ib del" title="Remove the category and its cells">' + ICONS.x + '</button></span>';
 }
-const catCls = cat => 'dcat' + (cat.collapsed ? ' collapsed' : '') + (cat.cells.length ? '' : ' isempty');
+const catCls = cat => 'dcat' + (cat.collapsed ? ' collapsed' : '') + (cat.cells.length ? '' : ' isempty') + (cat.id === selCat ? ' csel' : '');
 const cellsOf = cat => cat.cells.filter(id => S.L.cells[id]);
-function tileHtml(cid) {
-  const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c);
-  const graph = c.graph === false ? '' : isBneck(c) ? '<span class="strip"></span>' : '<canvas></canvas>';
-  return '<div class="tile dc' + (c.pred ? ' pred' : '') + (miss ? ' missing' : '') + (cid === sel ? ' sel' : '') + anim() + '" data-cid="' + esc(cid) + '" data-k="tile" tabindex="0">' +
-    '<div class="tn">' + iconOf(c, r) + '<span>' + esc(cellName(c)) + '</span>' + (c.pred && !/predicted/i.test(cellName(c)) ? '<span class="badge">predicted</span>' : '') + '</div>' +
+const catById = id => S.L.cats.find(c => c.id === id);
+// the view being drawn: a "Start from" template shows itself while the pointer rests on it, without being kept
+let preview = null;   // { vn, view }
+const viewOf = vn => preview && preview.vn === vn ? preview.view : S.L.views && S.L.views[vn] || null;
+const stored = vn => S.L.views && S.L.views[vn] || null;
+const isCustom = vn => { const v = viewOf(vn); return !!(v && v.rows); };
+const catLook = (id, vn) => { const v = viewOf(vn || S.screen); return v && v.cat && v.cat[id] || {}; };
+const cellLook = (id, vn) => { const v = viewOf(vn || S.screen); return v && v.cell && v.cell[id] || {}; };
+// a category's cells in this view: its lead (the reading it shows first) moves to the front
+function idsIn(cat) {
+  const ids = cellsOf(cat), lead = catLook(cat.id).lead, i = lead ? ids.indexOf(lead) : -1;
+  return i > 0 ? [lead].concat(ids.slice(0, i), ids.slice(i + 1)) : ids;
+}
+const nameIn = cid => cellLook(cid).name || cellName(S.L.cells[cid]);
+const headTab = () => S.edit ? ' tabindex="0"' : '';
+function tileHtml(cid, lk) {
+  const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c), short = !!lk && lk.size === 'short', sz = short ? '' : cellLook(cid).size, nm = nameIn(cid);
+  const graph = c.graph === false ? '' : isBneck(c) ? '<span class="strip"></span>' : short ? '' : '<canvas></canvas>';
+  const nog = miss || c.graph === false || (short && !isBneck(c));
+  return '<div class="tile dc' + (c.pred ? ' pred' : '') + (short ? ' short' : '') + (sz ? ' sz-' + sz : '') + (miss ? ' missing' : '') + (nog ? ' nog' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + anim() + '" data-cid="' + esc(cid) + '" data-k="tile" tabindex="0">' +
+    '<div class="tn">' + iconOf(c, r) + '<span>' + esc(nm) + '</span>' + (c.pred && !/predicted/i.test(nm) ? '<span class="badge">predicted</span>' : '') + '</div>' +
     '<div class="tv"><span class="v"></span><small class="u">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small></div><div class="tc"></div>' +
-    (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + '</div>';
+    (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit && !short ? '<span class="corner" title="Drag to make it wider or taller">' + ICONS.corner + '</span>' : '') + '</div>';
+}
+// Tiles: a block per category, a tile per cell (auto: blocks past 6 cells take the whole width)
+function blkHtml(cat, inRows) {
+  const ids = idsIn(cat), lk = catLook(cat.id), spans = !lk.size && ids.some(id => cellLook(id).size);
+  return '<section class="blk ' + catCls(cat) + (!inRows && ids.length > 6 ? ' wide' : '') + (lk.title === 'hide' ? ' notitle' : '') + '" data-cat="' + esc(cat.id) + '"><h2 class="dch"' + headTab() + '>' + catHead(cat) + '</h2>' +
+    '<div class="tg dgrid' + (spans ? ' spans' : '') + (lk.size === 'short' ? ' shorts' : '') + (lk.per ? ' per" style="--per:' + lk.per : '') + '">' + ids.map(id => tileHtml(id, lk)).join('') + '</div></section>';
+}
+// Overview: a card per category (its first cell large, the rest rows with a 15 min graph), a small card, a list
+// (rows only) or a band (the name on the left, every cell side by side)
+function cardHtml(cat) {
+  const ids = idsIn(cat), lk = catLook(cat.id), first = ids.length ? S.L.cells[ids[0]] : null;
+  const icon = first ? iconOf(first, first.key ? BYKEY.get(first.key) : null) : ICONS.mem;
+  const cls = catCls(cat) + (lk.title === 'hide' ? ' notitle' : '');
+  const bits = cid => {
+    const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c);
+    return { c, r, miss, u: esc(c.pred ? 'RPM' : unitOf(r)), cls: (miss ? ' missing' : '') + (cid === sel ? ' sel' : ''), on: c.graph !== false && !miss, bn: isBneck(c), nm: '<span class="nm">' + iconOf(c, r) + '<span>' + esc(nameIn(cid)) + '</span></span>' };
+  };
+  const val = u => '<span class="val"><span class="v"></span><small class="u">' + u + '</small></span>';
+  const rl = '<button class="btn rl">Re-link</button>';
+  if (lk.style === 'band')
+    return '<section class="card band ' + cls + anim() + ';--n:' + Math.max(1, ids.length) + '" data-cat="' + esc(cat.id) + '"><div class="bh"><div class="ch dch"' + headTab() + '>' + catHead(cat, icon) + '</div><span class="tag"></span></div>' +
+      '<div class="dgrid bcells">' + ids.map(cid => {
+        const b = bits(cid);
+        return '<div class="bcell dc' + b.cls + '" data-cid="' + esc(cid) + '" data-k="row" tabindex="0"><div class="bl"><span class="lbl">' + b.nm + '<i></i></span>' + val(b.u) + '</div>' +
+          (b.on ? (b.bn ? '<span class="strip rsp"></span>' : '<canvas class="rsp"></canvas>') : b.miss && S.edit ? rl : '<span class="gph"></span>') + '</div>';
+      }).join('') + '</div></section>';
+  const hero = lk.style !== 'list';
+  return '<section class="card ' + cls + (lk.style === 'small' ? ' small' : '') + (lk.style === 'list' ? ' list' : '') + anim() + '" data-cat="' + esc(cat.id) + '"><div class="ch dch"' + headTab() + '>' + catHead(cat, icon) + '<span class="tag"></span></div>' +
+    '<div class="dgrid vert">' + ids.map((cid, i) => {
+      const b = bits(cid);
+      if (i === 0 && hero) return '<div class="hero dc' + b.cls + '" data-cid="' + esc(cid) + '" data-k="hero" tabindex="0"><div><div class="nm">' + iconOf(b.c, b.r) + '<span>' + esc(nameIn(cid)) + '</span></div>' +
+        '<div class="hv"><span class="v"></span><small class="u">' + b.u + '</small></div><div class="hc"></div>' + (b.miss && S.edit ? rl : '') + '</div>' +
+        (b.on ? (b.bn ? '<span class="strip"></span>' : '<canvas></canvas>') : '<span></span>') + '</div>';
+      const mid = b.on ? (b.bn ? '<span class="strip rsp"></span>' : '<canvas class="rsp"></canvas>') : b.miss && S.edit ? rl : '';
+      return '<div class="row dc' + b.cls + (mid ? '' : ' nog') + '" data-cid="' + esc(cid) + '" data-k="row" tabindex="0"><span class="lbl">' + b.nm + '<i></i></span>' + mid + val(b.u) + '</div>';
+    }).join('') + '</div></section>';
+}
+// what a view's rows hold right now: outside edit mode an empty category isn't shown, so it takes no room
+function visRows(rows) {
+  const out = [];
+  rows.forEach((r, i) => {
+    const cols = [];
+    r.cols.forEach((c, j) => {
+      const stack = c.stack.filter(s => { const cat = catById(sid(s)); return cat && (S.edit || cellsOf(cat).length); });
+      if (stack.length) cols.push({ w: c.w, stack, i: j });
+    });
+    if (cols.length) out.push({ h: r.h, cols, i });
+  });
+  return out;
+}
+// the narrowest a column can be before its row folds (in rem): one tile (Auto), its tiles per row, or a card
+function colMin(c) {
+  const v = viewOf(S.screen), sp = v && v.gap === 'tight' ? 0.6 : v && v.gap === 'roomy' ? 1.5 : 1;
+  let m = 0;
+  for (const s of c.stack) {
+    const cat = catById(sid(s)), lk = catLook(cat.id), n = cellsOf(cat).length;
+    let b;
+    if (S.screen === 'tiles') { if (lk.per) { const k = Math.max(1, Math.min(lk.per, n || 1)); b = k * 8.5 + (k - 1) * 0.62 * sp; } else b = lk.size === 'short' ? 15 : 10.5; }
+    else b = 22;   // a card, a list, a band (it wraps its cells when narrow)
+    m = Math.max(m, b);
+  }
+  return Math.round(m * 10) / 10;
+}
+const colTracks = cols => cols.map(c => 'minmax(0, ' + (c.w || 1) + 'fr)').join(' ');
+const manualRow = r => r.cols.length > 1 && r.cols.every(c => c.w);
+// your own arrangement: rows of columns, a column a stack of categories, each as tall as what it holds. A row without
+// widths of yours gets widths that follow its content (layoutPass); in edit mode the lines between columns and the
+// strip under a Tiles row are handles
+function arrHtml(cls, v, block) {
+  const rows = visRows(v.rows), tiles = S.screen === 'tiles';
+  let h = '';
+  for (const r of rows) {
+    const manual = manualRow(r);
+    h += '<div class="lrow" data-r="' + r.i + '"' + (manual ? '' : ' data-auto="1"') + (tiles && r.h ? ' data-fill="1"' : '') + ' style="--cols:' + colTracks(manual ? r.cols : r.cols.map(() => ({}))) + '">';
+    for (const c of r.cols) h += '<div class="lcol" data-c="' + c.i + '" data-min="' + colMin(c) + '">' + c.stack.map(s => block(catById(sid(s)), true)).join('') + '</div>';
+    if (S.edit) {
+      for (let k = 0; k < r.cols.length - 1; k++) h += '<span class="ldiv" data-k="' + k + '" title="Drag to change the widths, double-click to let them follow what each column holds"></span>';
+      if (tiles) h += '<span class="lrs" title="Drag down to let its tiles grow into spare room (Fill), up to keep them as they are (Fit)"></span>';
+    }
+    h += '</div>';
+  }
+  return '<div class="' + cls + ' arr' + (v.gap ? ' gap-' + v.gap : '') + '" id="view">' + h + '</div>';
 }
 function buildTiles() {
-  return '<div class="tl" id="view">' + S.L.cats.map(cat => {
-    const ids = cellsOf(cat);
-    return '<section class="blk ' + catCls(cat) + (ids.length > 6 ? ' wide' : '') + '" data-cat="' + esc(cat.id) + '"><h2 class="dch">' + catHead(cat) + '</h2>' +
-      '<div class="tg dgrid">' + ids.map(tileHtml).join('') + '</div></section>';
-  }).join('') + '</div>';
+  const v = viewOf('tiles');
+  if (v && v.rows) return arrHtml('tl', v, blkHtml);
+  return '<div class="tl' + (v && v.gap ? ' gap-' + v.gap : '') + '" id="view">' + S.L.cats.map(cat => blkHtml(cat, false)).join('') + '</div>';
 }
 function buildOverview() {
-  return '<div class="ov" id="view">' + S.L.cats.map(cat => {
-    const ids = cellsOf(cat), first = ids.length ? S.L.cells[ids[0]] : null;
-    const icon = first ? iconOf(first, first.key ? BYKEY.get(first.key) : null) : ICONS.mem;
-    return '<section class="card ' + catCls(cat) + anim() + '" data-cat="' + esc(cat.id) + '"><div class="ch dch">' + catHead(cat, icon) + '<span class="tag"></span></div>' +
-      '<div class="dgrid vert">' + ids.map((cid, i) => {
-        const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c), u = esc(c.pred ? 'RPM' : unitOf(r));
-        const cls = (miss ? ' missing' : '') + (cid === sel ? ' sel' : ''), on = c.graph !== false && !miss, bn = isBneck(c);
-        if (i === 0) return '<div class="hero dc' + cls + '" data-cid="' + esc(cid) + '" data-k="hero" tabindex="0"><div><div class="nm">' + iconOf(c, r) + '<span>' + esc(cellName(c)) + '</span></div>' +
-          '<div class="hv"><span class="v"></span><small class="u">' + u + '</small></div><div class="hc"></div>' + (miss && S.edit ? '<button class="btn rl">Re-link</button>' : '') + '</div>' +
-          (on ? (bn ? '<span class="strip"></span>' : '<canvas></canvas>') : '<span></span>') + '</div>';
-        return '<div class="row dc' + cls + '" data-cid="' + esc(cid) + '" data-k="row" tabindex="0"><span class="lbl"><span class="nm">' + iconOf(c, r) + '<span>' + esc(cellName(c)) + '</span></span><i></i></span>' +
-          (on ? (bn ? '<span class="strip rsp"></span>' : '<canvas class="rsp"></canvas>') : miss && S.edit ? '<button class="btn rl">Re-link</button>' : '<span></span>') +
-          '<span class="val"><span class="v"></span><small class="u">' + u + '</small></span></div>';
-      }).join('') + '</div></section>';
-  }).join('') + '</div>';
+  const v = viewOf('overview');
+  if (v && v.rows) return arrHtml('ov', v, cardHtml);
+  return '<div class="ov' + (v && v.gap ? ' gap-' + v.gap : '') + '" id="view">' + S.L.cats.map(cardHtml).join('') + '</div>';
 }
 function buildGrid() {
-  // two tables side by side when there is room, split near the middle row
-  const cats = S.L.cats, rows = cats.map(c => cellsOf(c).length + 1), total = rows.reduce((a, b) => a + b, 0);
-  let acc = 0, cut = cats.length;
-  for (let i = 0; i < cats.length; i++) { if (acc >= total / 2 && i > 0) { cut = i; break; } acc += rows[i]; }
-  const table = list => '<div class="gtable' + anim() + '"><table class="gt"><colgroup><col style="width:26%"><col style="width:15%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:10%"><col></colgroup>' +
+  const table = list => '<div class="gtable' + anim() + '"><table class="gt"><colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"><col class="c5"><col class="c6"><col class="c7"></colgroup>' +
     '<thead><tr><th class="l">sensor</th><th>current</th><th title="HWiNFO\'s own, since it started or was reset">min</th><th title="HWiNFO\'s own, since it started or was reset">max</th><th title="HWiNFO\'s own, since it started or was reset">average</th><th>lines</th><th class="l">info</th></tr></thead>' +
-    list.map(cat => '<tbody class="' + catCls(cat) + '" data-cat="' + esc(cat.id) + '"><tr class="ghdr"><td colspan="7"><span class="dchw dch">' + catHead(cat) + '</span></td></tr>' +
-      cellsOf(cat).map(cid => {
+    list.map(({ cat, ids, cont }) => '<tbody class="' + catCls(cat) + (cont ? ' cont' : '') + '" data-cat="' + esc(cat.id) + '"><tr class="ghdr"><td colspan="7">' +
+      (cont ? '<span class="dchw"><span class="cn">' + esc(cat.name) + '</span><span class="contd">continued</span></span>' : '<span class="dchw dch"' + headTab() + '>' + catHead(cat) + '</span>') + '</td></tr>' +
+      (ids || idsIn(cat)).map(cid => {
         const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c);
-        return '<tr class="dc' + (miss ? ' missing' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + '" data-cid="' + esc(cid) + '" data-k="grow" tabindex="0"><td class="gname">' + iconOf(c, r) + '<span>' + esc(cellName(c)) + '</span>' + (miss && S.edit ? '<button class="btn rl">Re-link</button>' : '') + '</td>' +
+        return '<tr class="dc' + (miss ? ' missing' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + '" data-cid="' + esc(cid) + '" data-k="grow" tabindex="0"><td class="gname">' + iconOf(c, r) + '<span>' + esc(nameIn(cid)) + '</span>' + (miss && S.edit ? '<button class="btn rl">Re-link</button>' : '') + '</td>' +
           '<td class="gval"><span class="v"></span><span class="u gu">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</span></td>' +
           (isBneck(c) && !miss ? '<td class="gstrip" colspan="3">' + (c.graph !== false ? '<span class="strip"></span>' : '') + '</td>' : '<td class="gn"></td><td class="gn"></td><td class="gn"></td>') + '<td class="glines"></td><td class="ginfo"></td></tr>';
       }).join('') + '</tbody>').join('') + '</table></div>';
-  return '<div class="gsplit" id="view">' + (cats.length ? table(cats.slice(0, cut)) + (cut < cats.length ? table(cats.slice(cut)) : '') : '') + '</div>';
+  const v = viewOf('grid');
+  if (v && v.rows) {   // your tables: each column of the one row is a table
+    const r = visRows(v.rows)[0], cols = r ? r.cols : [];
+    return '<div class="gsplit arr" id="view" style="--gt:repeat(' + Math.max(1, cols.length) + ', minmax(0, 1fr))">' +
+      cols.map(c => table(c.stack.map(s => ({ cat: catById(sid(s)) })))).join('') + '</div>';
+  }
+  // two tables side by side when there is room, cut at the middle line: a long category there goes on in the second
+  // table ("continued"), so the two come out about as long
+  const items = S.L.cats.map(cat => ({ cat, ids: cat.collapsed ? null : idsIn(cat) })), len = it => (it.ids ? it.ids.length : 0) + 1;
+  const half = Math.ceil(items.reduce((a, it) => a + len(it), 0) / 2), t1 = [], t2 = [];
+  const fs = parseFloat(document.documentElement.style.fontSize) || 13, two = sectionsEl.clientWidth - 40 >= (2 * 44 + 0.92) * fs;   // else one under the other: one table
+  let acc = two ? 0 : Infinity;
+  if (!two) t1.push(...items);
+  else for (const it of items) {
+    if (t2.length || acc >= half) { t2.push(it); continue; }
+    if (acc + len(it) <= half) { t1.push(it); acc += len(it); continue; }
+    const k = half - acc - 1;   // its cells that still fit in the first table
+    if (it.ids && k >= 3 && it.ids.length - k >= 3) { t1.push({ cat: it.cat, ids: it.ids.slice(0, k) }); t2.push({ cat: it.cat, ids: it.ids.slice(k), cont: true }); acc = half; }
+    else if (!t1.length || acc + len(it) / 2 <= half) { t1.push(it); acc += len(it); }
+    else t2.push(it);
+  }
+  return '<div class="gsplit" id="view">' + (t1.length ? table(t1) : '') + (t2.length ? table(t2) : '') + '</div>';
 }
 function setupHtml() {
   return '<div class="setup" id="view"><h2>HWiNFO isn\'t sharing its sensors</h2><span>HW Deck shows what HWiNFO measures, so it needs HWiNFO running with its shared memory on:</span><ol>' +
@@ -699,6 +916,7 @@ function buildView() {
     : S.screen === 'grid' ? buildGrid() : S.screen === 'overview' ? buildOverview() : buildTiles();
   const tmp = document.createElement('div'); tmp.innerHTML = html;
   old.replaceWith(tmp.firstChild);
+  app.classList.toggle('nocats', !S.L.cats.length && READ.length > 0);
   E = new Map();
   for (const el of document.querySelectorAll('#view .dc')) {
     const q = s => el.querySelector(s), cid = el.dataset.cid, c = S.L.cells[cid];
@@ -735,10 +953,24 @@ function playEntrance() {
 }
 function renderView(enter) {
   if (enter) enterNext = true;
+  const was = flipNext && !enter ? catRects() : null;   // a layout change: the categories glide from where they were
+  flipNext = false;
   buildView();
   updateView(true);
   autofit();
   playEntrance();
+  if (was) playFlip(was);
+}
+let flipNext = false;
+function catRects() { const m = new Map(); if (S.screen !== 'grid') for (const el of document.querySelectorAll('#view .dcat')) m.set(el.dataset.cat, el.getBoundingClientRect()); return m; }
+function playFlip(was) {
+  const mm = motionMode(), dur = mm === 'full' ? 280 : mm === 'reduced' ? 160 : 0;
+  if (!dur || S.screen === 'grid') return;
+  for (const el of document.querySelectorAll('#view .dcat')) {
+    const a = was.get(el.dataset.cat); if (!a) continue;
+    const b = el.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
+    if (Math.abs(dx) + Math.abs(dy) > 1) el.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  }
 }
 
 // every tick: numbers, colours, captions, graphs; reads first (which cells are in sight), then writes
@@ -795,49 +1027,285 @@ function updateView(all) {
 // ---------- fit: in the clean view, the largest scale at which nothing scrolls (it scrolls past 60%) ----------
 let fitRatio = 1, fitTimer = 0;
 const cssScale = () => Math.min(22, Math.max(12, 0.0048 * Math.min(innerWidth, innerHeight * 1.9) + 7));
-const fits = () => sectionsEl.scrollHeight <= sectionsEl.clientHeight;
-function autofit() {
-  const root = document.documentElement;
-  if (S.edit || !S.L.cats.length) { root.style.fontSize = '13px'; fitRatio = 1; return; }
-  const target = cssScale();
-  root.style.fontSize = target + 'px';
-  if (fits()) { fitRatio = 1; return; }
-  let lo = Math.max(9, target * 0.6), hi = target;
-  root.style.fontSize = lo + 'px';
-  if (fits()) {
-    for (let i = 0; i < 8; i++) { const mid = (lo + hi) / 2; root.style.fontSize = mid + 'px'; if (fits()) lo = mid; else hi = mid; }
-    root.style.fontSize = lo + 'px';
-  } else {
-    // the smallest size didn't fit (tiles reflow, so a size between may): the largest that does, else readable and scrolling
-    let found = 0;
-    for (let fs = target - 0.5; fs > lo; fs -= 0.5) { root.style.fontSize = fs + 'px'; if (fits()) { found = fs; break; } }
-    lo = found || target; root.style.fontSize = lo + 'px';
+// the view has the same room in edit mode (Storage and the settings are drawers over it), so it fits the same way
+const fits = () => { layoutPass(); return sectionsEl.scrollHeight <= sectionsEl.clientHeight; };
+// what depends on the room at this size (worked out on every fit try): widths that follow content, tiles per row,
+// rows too narrow for their columns fold (one under the other, never saved), long Overview cards flow into
+// sub-columns, a band too narrow for its cells wraps them, a wide tile in a single column stays one wide
+const spOf = v => v.classList.contains('gap-tight') ? 0.6 : v.classList.contains('gap-roomy') ? 1.5 : 1;
+const sizeOf = t => /sz-big/.test(t.className) ? 'big' : /sz-wide/.test(t.className) ? 'wide' : /sz-tall/.test(t.className) ? 'tall' : '';
+// how many tile places some tiles take at k per row (a wide or big tile needs two of them side by side)
+const tileArea = (tiles, k) => tiles.reduce((a, t) => { const z = sizeOf(t); return a + (z === 'big' ? (k > 1 ? 4 : 2) : z === 'wide' ? (k > 1 ? 2 : 1) : z === 'tall' ? 2 : 1); }, 0);
+// Overview: rows flow into this many sub-columns (each about 26rem, and 3 rows or more)
+const subCols = (w, rows, fs) => Math.max(1, Math.min(Math.floor((w + 2.2 * fs) / (28.2 * fs)), Math.floor(rows / 3)));
+// natural sizes, read off the view (nothing in it stretches)
+function naturals(view, fs) {
+  const q = s => view.querySelector(s), hgt = e => e ? e.offsetHeight : 0, mb = e => e ? parseFloat(getComputedStyle(e).marginBottom) || 0 : 0;   // layout sizes: an animation's transform doesn't count
+  const h2 = q('.blk:not(.notitle) > .dch'), ch = q('.card:not(.band):not(.notitle) > .ch'), card = q('.card:not(.band)');
+  let pad = 0; if (card) { const cs = getComputedStyle(card); pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 2; }
+  const withMb = e => hgt(e) ? hgt(e) + mb(e) : 0;
+  return { T: hgt(q('.tile:not(.short):not(.sz-tall):not(.sz-big)')) || 8.6 * fs, Ts: hgt(q('.tile.short')) || 3.4 * fs, H: withMb(h2) || 2.2 * fs,
+    rowH: hgt(q('.card .dgrid > .row')) || 2.9 * fs, heroH: hgt(q('.card .hero')) || 7.3 * fs, chH: withMb(ch) || 2.4 * fs, pad: pad || 1.8 * fs, bandH: hgt(q('.card.band:not(.bfold)')) || 5 * fs };
+}
+// a row of your own whose widths follow content. Tiles: the row is a run of equal tile tracks; each column gets whole
+// tracks, one at a time to the tallest column that gets shorter by it (others then spread into what is left), and its
+// Auto categories use exactly those tracks, so tiles line up across columns. Overview: the twelfths split with the
+// lowest tallest column. Returns false when the row has to fold
+function balanceRow(row, cols, W, cg, fs, g, nat) {
+  const C = cols.length, rg = parseFloat(getComputedStyle(cols[0]).rowGap) || 0;
+  const desc = cols.map(c => [...c.children].filter(e => e.classList.contains('dcat')).map(b => {
+    const tg = b.querySelector('.tg'), dg = b.querySelector('.dgrid');
+    return { tg, tiles: tg ? [...tg.children].filter(x => x.classList.contains('tile')) : [], collapsed: b.classList.contains('collapsed'), short: !!tg && tg.classList.contains('shorts'),
+      per: tg && tg.classList.contains('per') ? +tg.style.getPropertyValue('--per') || 0 : 0, band: b.classList.contains('band'), hero: !!b.querySelector('.hero'),
+      rows: b.querySelectorAll('.dgrid > .row').length, n: dg ? dg.children.length : 0 };
+  }));
+  const stackH = (i, f) => desc[i].reduce((a, d) => a + f(d), 0) + (desc[i].length - 1) * rg;
+  if (S.screen === 'tiles') {
+    const m0 = 10.5 * fs, K0 = Math.floor((W - (C - 1) * cg + C * g) / (m0 + g) + 1e-6);
+    if (K0 < C) return false;
+    // tracks of at least m wide: each column starts at what its categories need (short tiles want two tracks), then
+    // the tallest that gets shorter within the next 3 tracks takes them; gives the tracks and the tallest column
+    const alloc = (K, m) => {
+      const catH = (d, n) => {
+        if (d.collapsed) return nat.H;
+        if (!d.tiles.length) return nat.H + 5 * fs;   // an empty category (edit mode)
+        const w = n * m + (n - 1) * g, kk = d.per ? Math.max(1, Math.min(d.per, Math.floor((w + g) / (8.5 * fs + g)))) : d.short ? Math.max(1, Math.floor((w + g) / (15 * fs + g))) : n;
+        const rows = Math.ceil(tileArea(d.tiles, kk) / kk);
+        return nat.H + rows * (d.short ? nat.Ts : nat.T) + (rows - 1) * g;
+      };
+      const colH = (i, n) => stackH(i, d => catH(d, n));
+      const k = cols.map(c => Math.max(1, Math.ceil(((+c.dataset.min || 0) * fs + g) / (m + g) - 1e-6)));
+      let rem = K - k.reduce((a, b) => a + b, 0);
+      if (rem < 0) return null;
+      while (rem > 0) {
+        let best = -1, bh = -1, bj = 0;
+        for (let i = 0; i < C; i++) { const a = colH(i, k[i]); for (let j = 1; j <= Math.min(3, rem); j++) if (colH(i, k[i] + j) < a - 0.5) { if (a > bh) { bh = a; best = i; bj = j; } break; } }
+        if (best < 0) break;
+        k[best] += bj; rem -= bj;
+      }
+      return { k, top: Math.max(...k.map((n, i) => colH(i, n))) };
+    };
+    // the tracks rarely split evenly (8 for three equal columns = 3 3 2): one more, a little narrower (never under
+    // 9.5rem), is taken when it leaves the tallest column shorter
+    let a = alloc(K0, m0);
+    if (!a) return false;
+    const m1 = (W - (C - 1) * cg - (K0 + 1 - C) * g) / (K0 + 1);
+    if (m1 >= 9.5 * fs) { const b = alloc(K0 + 1, m1); if (b && b.top < a.top - 0.5) a = b; }
+    const k = a.k;
+    const used = k.reduce((a, b) => a + b, 0), t = (W - (C - 1) * cg - (used - C) * g) / used;
+    row.style.setProperty('--cols', k.map(n => 'minmax(0, ' + (n * t + (n - 1) * g).toFixed(1) + 'fr)').join(' '));
+    desc.forEach((ds, i) => { for (const d of ds) if (d.tg && !d.per && !d.short) { d.tg.dataset.ktrack = '1'; d.tg.classList.add('kset'); d.tg.style.setProperty('--k', k[i]); } });
+    row.dataset.ks = k.join(',');
+    return true;
   }
+  const unit = (W - (C - 1) * cg) / 12;
+  if (unit <= 0) return false;
+  const mins = cols.map(c => Math.max(1, Math.ceil(((+c.dataset.min || 0) * fs - 1) / unit)));
+  if (mins.reduce((a, b) => a + b, 0) > 12) return false;
+  const cardH = (d, w) => {
+    if (d.collapsed) return nat.pad + nat.chH;
+    if (d.band) { const per = Math.max(1, Math.floor((w - 2.5 * fs) / (10.5 * fs))); return w >= (8.5 + Math.max(1, d.n) * 10.5) * fs ? nat.bandH : nat.bandH + (Math.ceil(d.n / per) - 1) * 3.6 * fs; }
+    const n = subCols(w - 2.6 * fs, d.rows, fs);
+    return nat.pad + nat.chH + (d.hero ? nat.heroH : 0) + Math.ceil(d.rows / n) * nat.rowH;
+  };
+  let best = null, bs = Infinity;
+  const ws = Array(C).fill(0), eq = 12 / C;
+  (function walk(i, left) {
+    if (i === C - 1) {
+      if (left < mins[i]) return;
+      ws[i] = left;
+      const top = Math.max(...ws.map((w, j) => stackH(j, d => cardH(d, w * unit)))), score = top * 1000 + ws.reduce((a, w) => a + (w - eq) * (w - eq), 0);
+      if (score < bs) { bs = score; best = ws.slice(); }
+      return;
+    }
+    for (let w = mins[i]; w <= left - mins.slice(i + 1).reduce((a, b) => a + b, 0); w++) { ws[i] = w; walk(i + 1, left - w); }
+  })(0, 12);
+  if (!best) return false;
+  row.style.setProperty('--cols', colTracks(best.map(w => ({ w }))));
+  row.dataset.ks = best.join(',');
+  return true;
+}
+// Tiles per row, Auto: as many as fit, evened out over the rows (3 tiles where 5 fit = 3 wider ones, no empty places)
+function balancedK(tg, W, fs, g) {
+  const tiles = [...tg.children].filter(x => x.classList.contains('tile')), min = (tg.classList.contains('shorts') ? 15 : 10.5) * fs;
+  const kmax = Math.max(1, Math.floor((W + g) / (min + g) + 1e-6)), rows = Math.max(1, Math.ceil(tileArea(tiles, kmax) / kmax));
+  let k = Math.min(kmax, Math.max(1, Math.ceil(tileArea(tiles, kmax) / rows)));
+  if (kmax > 1 && tiles.some(t => /sz-(wide|big)/.test(t.className))) k = Math.max(k, 2);
+  return k;
+}
+// a fit tries several text sizes: the natural sizes scale with it and a row's width doesn't change, so both are read
+// once per drawn view (a resize or a redraw starts again)
+let layGen = 0, natMemo = null;
+const rowW = new WeakMap();
+function naturalsNow(view, fs) {
+  const fit = app.classList.contains('fitting');
+  if (natMemo && natMemo.view === view && natMemo.gen === layGen && natMemo.fit === fit) { const k = fs / natMemo.fs, o = {}; for (const x in natMemo.n) o[x] = natMemo.n[x] * k; return o; }
+  const n = naturals(view, fs); natMemo = { view, gen: layGen, fit, fs, n }; return n;
+}
+function layoutPass() {
+  const fs = parseFloat(document.documentElement.style.fontSize) || 13, view = $('view');
+  if (!view) return;
+  for (const r of view.querySelectorAll('.lrow.grow')) r.classList.remove('grow');
+  for (const t of view.querySelectorAll('.tg[data-ktrack]')) delete t.dataset.ktrack;
+  const g = 0.62 * fs * spOf(view), nat = naturalsNow(view, fs);
+  // rows of your own: their widths first (rows don't change each other's width), then the widths and folds they get
+  const rows = [...view.querySelectorAll(':scope > .lrow')].map(row => ({ row, cols: [...row.children].filter(e => e.classList.contains('lcol')) }));
+  for (const r of rows) { const m = rowW.get(r.row); r.W = m && m[0] === layGen ? m[1] : r.row.clientWidth; rowW.set(r.row, [layGen, r.W]); r.cg = parseFloat(getComputedStyle(r.row).columnGap) || 0; }
+  for (const { row, cols, W, cg } of rows) {
+    if (cols.length < 2) { row.classList.remove('fold'); continue; }
+    const fold = row.dataset.auto ? !balanceRow(row, cols, W, cg, fs, g, nat) : W + 1 < cols.reduce((a, c) => a + (+c.dataset.min || 0) * fs, 0) + cg * (cols.length - 1);
+    row.classList.toggle('fold', fold);
+    if (fold) for (const t of row.querySelectorAll('.tg[data-ktrack]')) delete t.dataset.ktrack;
+  }
+  // then every width the rest depends on, read in one go
+  const gs = document.querySelector('#view.gsplit.arr'), gw = gs ? gs.clientWidth : 0;
+  const tgs = [...view.querySelectorAll('.tg')], tw = tgs.map(t => t.clientWidth);
+  const vs = [...view.querySelectorAll('.card:not(.band) > .dgrid.vert')], vw = vs.map(d => d.clientWidth);
+  const bands = [...view.querySelectorAll('.card.band')], bw = bands.map(b => b.clientWidth);
+  if (gs) { const n = gs.children.length; gs.classList.toggle('fold', n > 1 && gw + 1 < (n * 30 + (n - 1) * 0.92) * fs); }
+  // tiles per row: Auto evened out (unless the row's tracks set it); short tiles too narrow for the name and the
+  // value side by side stack them; a wide tile where only one fits is one wide
+  tgs.forEach((t, i) => {
+    let k;
+    if (t.classList.contains('per')) k = Math.max(1, Math.min(+t.style.getPropertyValue('--per') || 1, Math.floor((tw[i] + g) / (8.5 * fs + g) + 1e-6)));
+    else if (t.dataset.ktrack) k = +t.style.getPropertyValue('--k') || 1;
+    else { k = balancedK(t, tw[i], fs, g); t.classList.add('kset'); t.style.setProperty('--k', k); }
+    if (t.classList.contains('shorts')) t.classList.toggle('narrow', (tw[i] - (k - 1) * g) / k < 12 * fs);
+    for (const x of t.children) if (/sz-(wide|big)/.test(x.className)) x.classList.toggle('one', k < 2);
+  });
+  vs.forEach((d, i) => {
+    const n = d.querySelectorAll(':scope > .row').length, sc = subCols(vw[i], n, fs);
+    d.classList.toggle('sub', sc > 1);
+    if (sc > 1) { d.classList.toggle('nohero', !d.querySelector(':scope > .hero')); d.style.setProperty('--sc', sc); d.style.setProperty('--sr', Math.ceil(n / sc)); }
+  });
+  bands.forEach((b, i) => { const n = b.querySelectorAll('.bcell').length; b.classList.toggle('bfold', bw[i] + 1 < (8.5 + Math.max(1, n) * 10.5) * fs); });   // a band cell needs about 10.5rem
+  placeDividers(view);
+}
+// the handles between columns sit in the middle of the gap, wherever the widths came from
+function placeDividers(view) {
+  const rows = [...view.querySelectorAll(':scope > .lrow')].filter(r => r.querySelector(':scope > .ldiv'));
+  const pos = rows.map(r => { const x0 = r.getBoundingClientRect().left, cs = [...r.children].filter(e => e.classList.contains('lcol')).map(c => c.getBoundingClientRect()); return cs.slice(1).map((c, k) => (cs[k].right + c.left) / 2 - x0); });
+  rows.forEach((r, i) => r.querySelectorAll(':scope > .ldiv').forEach(d => { const x = pos[i][+d.dataset.k]; if (x !== undefined) d.style.left = x.toFixed(1) + 'px'; }));
+}
+// Fill rows (Tiles): the room left under the view goes to their tiles, all of a row one height, at most twice their own
+function growPass() {
+  const view = $('view');
+  if (!view || !view.classList.contains('tl') || !view.classList.contains('arr')) return;
+  const rows = [...view.querySelectorAll(':scope > .lrow[data-fill]')];
+  if (!rows.length) return;
+  const fs = parseFloat(document.documentElement.style.fontSize) || 13, T = naturals(view, fs).T;
+  const spare = sectionsEl.clientHeight - (view.offsetTop + view.offsetHeight) - (parseFloat(getComputedStyle(sectionsEl).paddingBottom) || 0) - 2;
+  if (spare < 6) return;
+  // each column: how tall its content is now, and how many rows of growing tiles it has
+  const info = rows.map(r => [...r.children].filter(e => e.classList.contains('lcol')).map(c => {
+    const kids = [...c.children].filter(x => x.classList.contains('dcat')), gap = parseFloat(getComputedStyle(c).rowGap) || 0;
+    let n = 0;
+    for (const b of kids) { if (b.classList.contains('collapsed')) continue; const tg = b.querySelector('.tg:not(.shorts)'); if (tg && tg.children.length) n += getComputedStyle(tg).gridTemplateRows.split(' ').filter(Boolean).length; }
+    return { h: kids.reduce((a, b) => a + b.offsetHeight, 0) + Math.max(0, kids.length - 1) * gap, n };
+  })).map((cs, i) => {   // a folded row: its columns one under the other, so they grow together
+    if (!rows[i].classList.contains('fold') || cs.length < 2) return cs;
+    const gap = parseFloat(getComputedStyle(rows[i]).rowGap) || 0;
+    return [{ h: cs.reduce((a, c) => a + c.h, 0) + (cs.length - 1) * gap, n: cs.reduce((a, c) => a + c.n, 0) }];
+  });
+  const extra = d => info.reduce((a, cs) => a + Math.max(...cs.map(c => c.h + c.n * d)) - Math.max(...cs.map(c => c.h)), 0);
+  let lo = 0, hi = T;
+  if (extra(hi) > spare) for (let i = 0; i < 20; i++) { const mid = (lo + hi) / 2; if (extra(mid) <= spare) lo = mid; else hi = mid; }
+  else lo = hi;
+  if (lo < 2) return;
+  for (const r of rows) { r.classList.add('grow'); r.style.setProperty('--th', (T + lo).toFixed(1) + 'px'); r.style.setProperty('--gv', (1 + 0.3 * lo / T).toFixed(3)); }
+}
+// the size that fit, per view as it looks now (window, edit mode, categories, its arrangement and looks): switching
+// back to a view tries that one size instead of searching again
+// kept in this window's own storage too (a convenience: lost storage just means one search), so the first switch after
+// a restart is quick as well
+const lastFit = {}, fitMemo = (() => { try { return JSON.parse(localStorage.getItem('hwdeck.fit') || '{}') || {}; } catch (e) { return {}; } })();
+const hashKey = t => { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return 'f' + (h >>> 0).toString(36); };   // (a letter first: keys that look like numbers would lose their order)
+let fitSaveT = 0;
+function rememberFit(key, f) {
+  delete fitMemo[key]; fitMemo[key] = f;
+  const ks = Object.keys(fitMemo); for (let i = 0; i < ks.length - 60; i++) delete fitMemo[ks[i]];
+  clearTimeout(fitSaveT); fitSaveT = setTimeout(() => { try { localStorage.setItem('hwdeck.fit', JSON.stringify(fitMemo)); } catch (e) { /* no storage: fine */ } }, 2000);
+}
+// (the cells too: a name, a graph turned on or off, a missing reading change what fits)
+const fitKey = target => hashKey(JSON.stringify([S.screen, target, sectionsEl.clientWidth, sectionsEl.clientHeight, S.edit, S.L.cats.map(c => [c.id, cellsOf(c).length, c.collapsed]),
+  viewOf(S.screen), S.L.cells, Object.keys(S.L.cells).filter(id => isMissing(S.L.cells[id]))]));
+function autofit() {
+  const root = document.documentElement, v = $('view');
+  if (!S.L.cats.length || v.classList.contains('empty') || v.classList.contains('setup')) { root.style.fontSize = '13px'; fitRatio = 1; layoutPass(); return; }
+  const target = cssScale(), key = fitKey(target), memo = fitMemo[key], floor = Math.max(9, target * 0.6);
+  app.classList.toggle('fitting', S.edit);   // edit mode fits like the normal view: empty categories (hidden there) don't count
+  const at = f => { root.style.fontSize = f + 'px'; return fits(); };
+  // the largest size that fits between lo (fits) and hi (doesn't), to 0.2 px
+  const search = (lo, hi) => { while (hi - lo > 0.2) { const mid = (lo + hi) / 2; if (at(mid)) lo = mid; else hi = mid; } return lo; };
+  let lo;
+  // (the remembered size is still tried: live values can change what fits)
+  if (memo && at(memo)) lo = memo;
+  else if (memo !== target && at(target)) lo = target;
+  // edit mode, redrawn on every change: far too much to ever fit (3 windows tall) scrolls at once, no more tries
+  else if (S.edit && sectionsEl.scrollHeight > sectionsEl.clientHeight * 3) lo = target;
+  else {
+    // from where this view fit last (an edit, a resize: usually close), else from how much of it fits at the full size,
+    // each try steers by how much of the window the content fills (text and tiles scale together); halves the gap
+    // once it has a size that fits and one that doesn't
+    const avail = sectionsEl.clientHeight - 20, H = () => Math.max(1, $('view').offsetHeight);
+    let good = 0, bad = target, f = lastFit[S.screen] ? target * lastFit[S.screen] : target * avail / H();
+    for (let i = 0; i < 6 && bad - good > 0.3; i++) {
+      f = Math.min(bad - 0.1, Math.max(floor, f));
+      if (f <= good) break;
+      if (at(f)) { good = f; const g2 = f * avail / H(); f = g2 - good < 0.25 ? bad : Math.min(g2, (good + bad) / 2 + 0.6); if (g2 - good < 0.25) break; }
+      else { bad = f; f = good ? (good + bad) / 2 : f * avail / H(); if (f <= floor && !good) break; }
+    }
+    if (good) lo = good;
+    else if (at(floor)) lo = search(floor, bad);
+    else {
+      // the smallest size didn't fit (tiles reflow, so a size between may): the largest that does, else scrolling at
+      // the full size. Edit mode, redrawn on every change, skips the walk: so much that it scrolls anyway
+      let found = 0;
+      if (!S.edit) for (let fs = target - 0.5; fs > floor; fs -= 0.5) if (at(fs)) { found = fs; break; }
+      lo = found || target;
+    }
+  }
+  root.style.fontSize = lo + 'px';
+  lastFit[S.screen] = lo / target;
+  rememberFit(key, lo);
+  app.classList.remove('fitting'); layoutPass(); growPass();
+  document.querySelector('.panes').style.setProperty('--sbw', (sectionsEl.offsetWidth - sectionsEl.clientWidth) + 'px');   // the right tab sits left of the scrollbar
   fitRatio = lo / target;
 }
 window.addEventListener('resize', () => {
-  if (!S.edit) document.documentElement.style.fontSize = (cssScale() * fitRatio) + 'px';
+  layGen++;
+  if (S.L.cats.length) document.documentElement.style.fontSize = (cssScale() * fitRatio) + 'px';
   clearTimeout(fitTimer); fitTimer = setTimeout(() => { autofit(); updateView(true); }, 250);
   placeTabInd(true); drawRows();
 });
 
 // ---------- views: Tiles, Overview, Grid ----------
-function placeTabInd(still) {
-  const b = document.querySelector('#screens button[data-s="' + S.screen + '"]'), ind = $('tabind');
+let wantScreen = null, screenRaf = 0;   // a view asked for by a click, drawn on the next frame (requestScreen)
+function placeTabInd(still, to) {
+  const b = document.querySelector('#screens button[data-s="' + (to || wantScreen || S.screen) + '"]'), ind = $('tabind');
   if (!b) return;
   ind.classList.toggle('still', !!still); ind.style.width = b.offsetWidth + 'px'; ind.style.transform = 'translateX(' + b.offsetLeft + 'px)';
 }
 function showScreen(s, first) {
   const order = ['tiles', 'overview', 'grid'];
   slideDir = first ? 0 : Math.sign(order.indexOf(s) - order.indexOf(S.screen));
-  S.screen = s;
+  S.screen = s; preview = null;
   for (const b of document.querySelectorAll('#screens button[data-s]')) b.classList.toggle('active', b.dataset.s === s);
   placeTabInd(!!first);
   if (!first) saveState();
   hidePrev();
   renderView(true);
+  if (S.edit) renderInsp();   // the settings of the view (or of a category) in this view
 }
-$('screens').addEventListener('click', e => { const b = e.target.closest('button[data-s]'); if (b && b.dataset.s !== S.screen) showScreen(b.dataset.s); });
+// a click (or 1 2 3) moves the tab at once and draws that view on the next frame: clicks faster than a view draws
+// don't queue a drawing each, only the view they end on is drawn
+function requestScreen(s) {
+  wantScreen = s;
+  for (const b of document.querySelectorAll('#screens button[data-s]')) b.classList.toggle('active', b.dataset.s === s);
+  placeTabInd(false, s);
+  if (!screenRaf) screenRaf = requestAnimationFrame(() => { screenRaf = 0; const t = wantScreen; wantScreen = null; if (t && t !== S.screen) showScreen(t); });
+}
+$('screens').addEventListener('click', e => { const b = e.target.closest('button[data-s]'); if (b) requestScreen(b.dataset.s); });
 
 // ---------- Storage: a virtual list, only the rows in sight exist ----------
 const ROWH = 30;
@@ -925,6 +1393,7 @@ function addKeys(keys, catId, index, newCatName) {
 }
 function targetForAdd() {
   if (sel) { const c = catOf(sel); if (c) return { cat: c.id, index: c.cells.indexOf(sel) + 1 }; }
+  if (selCat && catById(selCat)) return { cat: selCat, index: null };
   const last = S.L.cats[S.L.cats.length - 1];
   return last ? { cat: last.id, index: null } : { cat: null, index: null };
 }
@@ -963,11 +1432,21 @@ let drag = null, justDragged = false;
 function startDrag(ev, kind, data, label, val) { drag = { kind, data, x0: ev.clientX, y0: ev.clientY, started: false, label, val, target: null }; }
 function beginDrag() {
   drag.started = true;
+  if (drag.kind !== 'cat') app.classList.add('dragging');   // the "+ New category" drop zone shows up
+  // a drawer the drag didn't start on goes at once (one still sliding shut would hide where it drops)
+  // and a reading dragged out of Storage sends Storage away, so every spot in the view can take it (pinned: back after)
+  for (const d of [DR.L, DR.R]) { const r = d.el.getBoundingClientRect(); if ((d === DR.L && drag.kind === 'row') || !d.el.classList.contains('open') || drag.x0 < r.left || drag.x0 > r.right || drag.y0 < r.top || drag.y0 > r.bottom) { clearTimeout(d.t); d.hover = false; } }
+  syncDrawers();
   const gh = document.createElement('div'); gh.className = 'ghost';
   gh.innerHTML = '<span>' + esc(drag.label) + '</span>' + (drag.val ? '<span class="val">' + esc(drag.val) + '</span>' : '');
   document.body.appendChild(gh); drag.ghost = gh;
   if (drag.kind === 'cell') { const el = document.querySelector('#view .dc[data-cid="' + drag.data + '"]'); if (el) el.classList.add('dragging'); }
-  if (drag.kind === 'cat') for (const el of document.querySelectorAll('#view .dcat[data-cat="' + drag.data + '"]')) el.style.opacity = '0.4';
+  if (drag.kind === 'cat') {
+    for (const el of document.querySelectorAll('#view .dcat[data-cat="' + drag.data + '"]')) el.style.opacity = '0.4';
+    // the arrangement it is dropped into: your own, or the Automatic one as it is on screen (made yours by an edge drop)
+    drag.auto = !isCustom(S.screen); drag.rows = rowsNow();
+    gh.classList.add('g2'); gh.insertAdjacentHTML('beforeend', '<span class="gs"></span>');
+  }
   requestAnimationFrame(autoScroll);
 }
 function moveDrag(ev) {
@@ -980,25 +1459,20 @@ function moveDrag(ev) {
 function vrect(el) { const r = el.getBoundingClientRect(), v = sectionsEl.getBoundingClientRect(); return { x: r.left - v.left + sectionsEl.scrollLeft, y: r.top - v.top + sectionsEl.scrollTop, w: r.width, h: r.height }; }
 function showMark(x, y, w, h) { Object.assign(dropmark.style, { display: 'block', left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' }); }
 function hitTest(x, y) {
-  drag.target = null; dropmark.style.display = 'none';
+  const prev = drag.target;
+  drag.target = null; dropmark.style.display = 'none'; dropmark.className = 'dropmark';
   const nc = $('newcat'); nc.classList.remove('over');
   const vr = sectionsEl.getBoundingClientRect();
   if (x < vr.left || x > vr.right || y < vr.top || y > vr.bottom) return;
+  const over = document.elementFromPoint(x, y);
+  if (over && over.closest('.storage.open, .insp.open, .dtab')) return;   // over an open drawer: letting go there drops nothing (one sliding shut doesn't count)
   const cats = [...document.querySelectorAll('#view .dcat')];
   if (drag.kind === 'cat') {
-    // Grid can be two tables side by side: only the one under the pointer counts
-    let list = cats;
-    if (S.screen === 'grid') {
-      const tables = [...document.querySelectorAll('#view .gtable')];
-      const tb = tables.find(t => { const r = t.getBoundingClientRect(); return x >= r.left && x <= r.right; }) || tables[tables.length - 1];
-      if (tb) list = [...tb.querySelectorAll('.dcat')];
-    }
-    let idx = null;
-    for (const el of list) { const r = el.getBoundingClientRect(); if (y < r.top + Math.min(r.height / 2, 40) && (S.screen === 'grid' || x < r.right + 20)) { idx = cats.indexOf(el); break; } }
-    if (idx === null) idx = list.length ? cats.indexOf(list[list.length - 1]) + 1 : cats.length;
-    drag.target = { index: idx };
-    const before = idx < cats.length && list.includes(cats[idx]), ref = before ? cats[idx] : list[list.length - 1] || cats[cats.length - 1];
-    if (ref) { const rr = vrect(ref); showMark(rr.x, before ? rr.y - 7 : rr.y + rr.h + 4, rr.w, 3); }
+    const t = catTarget(x, y, prev);
+    drag.target = t;
+    if (!t) dropmark.style.display = 'none';
+    const gs = drag.ghost && drag.ghost.querySelector('.gs');
+    if (gs) { setText(gs, t ? t.txt : ''); gs.classList.toggle('no', !!t && t.zone === 'full'); }
     return;
   }
   const under = document.elementFromPoint(x, y);
@@ -1012,28 +1486,33 @@ function hitTest(x, y) {
   }
   const catId = catEl.dataset.cat, cat = S.L.cats.find(c => c.id === catId);
   if (!cat) return;
-  const order = cat.cells.filter(id => S.L.cells[id] && !(drag.kind === 'cell' && id === drag.data));
+  // where it lands is "before this cell" (null: at the end); the view draws the lead first, so "before the lead" means
+  // the front of the rest
+  const lead = catLook(catId).lead, front = cat.cells.find(id => S.L.cells[id] && id !== lead && !(drag.kind === 'cell' && id === drag.data)) || null;
   if (catEl.classList.contains('collapsed') || under.closest('.dch, .ghdr')) {
     // on the header: first, where the mark is; on a folded category: last
-    drag.target = { cat: catId, index: catEl.classList.contains('collapsed') ? order.length : 0 };
+    drag.target = { cat: catId, before: catEl.classList.contains('collapsed') ? null : front };
     const rr = vrect(catEl.querySelector('.dch, .ghdr')); showMark(rr.x, rr.y + rr.h, rr.w, 3); return;
   }
-  const cells = [...catEl.querySelectorAll('.dc')].filter(el => !(drag.kind === 'cell' && el.dataset.cid === drag.data));
+  const cells = [...document.querySelectorAll('#view .dcat[data-cat="' + catId + '"] .dc')].filter(el => !(drag.kind === 'cell' && el.dataset.cid === drag.data));
   if (!cells.length) {
-    drag.target = { cat: catId, index: 0 };
+    drag.target = { cat: catId, before: null };
     const g = catEl.querySelector('.dgrid') || catEl.querySelector('.ghdr'); const rr = vrect(g);
     showMark(rr.x + 2, rr.y + rr.h - 3, Math.max(rr.w - 4, 40), 3); return;
   }
   // the nearest cell, then before or after it: by side in a grid of tiles, by half in a list (Overview, Grid)
-  const vertical = S.screen !== 'tiles';
   let best = null, bd = Infinity;
   for (const el of cells) {
     const r = el.getBoundingClientRect();
     const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0, dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
     const d = dx * dx + dy * dy * 4; if (d < bd) { bd = d; best = { el, r }; }
   }
+  const vertical = !best.el.classList.contains('tile') && !best.el.classList.contains('bcell');   // tiles and band cells sit side by side
   const after = vertical ? y > best.r.top + best.r.height / 2 : x > best.r.left + best.r.width / 2;
-  drag.target = { cat: catId, index: order.indexOf(best.el.dataset.cid) + (after ? 1 : 0) };
+  const vis = cells.map(el => el.dataset.cid);
+  let before = vis[vis.indexOf(best.el.dataset.cid) + (after ? 1 : 0)] || null;
+  if (before && before === lead) before = front;
+  drag.target = { cat: catId, before };
   const rr = vrect(best.el.tagName === 'TR' ? best.el.children[0] : best.el);
   if (vertical) { const w = best.el.tagName === 'TR' ? vrect(best.el.closest('table')).w : rr.w; showMark(rr.x, after ? rr.y + rr.h - 1 : rr.y - 2, w, 3); }
   else showMark(after ? rr.x + rr.w + 3 : rr.x - 6, rr.y, 3, rr.h);
@@ -1041,8 +1520,9 @@ function hitTest(x, y) {
 function endDrag(cancel) {
   if (!drag) return;
   const d = drag; drag = null;
-  dropmark.style.display = 'none';
+  dropmark.style.display = 'none'; app.classList.remove('dragging');
   if (d.ghost) d.ghost.remove();
+  syncDrawers();
   $('newcat').classList.remove('over');
   for (const el of document.querySelectorAll('#view .dragging')) el.classList.remove('dragging');
   for (const el of document.querySelectorAll('#view .dcat')) el.style.opacity = '';
@@ -1051,19 +1531,18 @@ function endDrag(cancel) {
   const t = d.target; if (!t) return;
   if (d.kind === 'cell' && !catOf(d.data)) return;   // removed while it was dragged
   if (d.kind === 'cat' && !S.L.cats.some(c => c.id === d.data)) return;
-  if (d.kind === 'cat') {
-    mutate(() => { const i = S.L.cats.findIndex(c => c.id === d.data); const [c] = S.L.cats.splice(i, 1); S.L.cats.splice(t.index > i ? t.index - 1 : t.index, 0, c); });
-  } else if (d.kind === 'row') {
+  if (d.kind === 'cat') dropCat(d);
+  else if (d.kind === 'row') {
     const r = BYKEY.get(d.data);
-    if (t.newcat) addKeys([d.data], null, null, r ? SENS[r.s].short : null); else addKeys([d.data], t.cat, t.index);
+    const to = !t.newcat && catById(t.cat), at = to && t.before ? to.cells.indexOf(t.before) : -1;
+    if (t.newcat) addKeys([d.data], null, null, r ? SENS[r.s].short : null); else addKeys([d.data], t.cat, at >= 0 ? at : null);
   } else if (d.kind === 'cell') {
     mutate(() => {
       const from = catOf(d.data); from.cells.splice(from.cells.indexOf(d.data), 1);
       let to = t.newcat ? null : S.L.cats.find(c => c.id === t.cat);
       if (!to) { to = { id: nid('c'), name: 'New category', collapsed: false, cells: [] }; S.L.cats.push(to); }
-      // the index counts only live cells; map it onto the stored list
-      const live = to.cells.filter(id => S.L.cells[id]), before = live[t.index];
-      to.cells.splice(before ? to.cells.indexOf(before) : to.cells.length, 0, d.data);
+      const at = t.before ? to.cells.indexOf(t.before) : -1;
+      to.cells.splice(at >= 0 ? at : to.cells.length, 0, d.data);
       sel = d.data;
     });
   }
@@ -1075,36 +1554,477 @@ function autoScroll() {
   requestAnimationFrame(autoScroll);
 }
 
+// ---------- arranging (edit mode): dropping a category on another, the handles, the arrangement as data ----------
+function vset(vn) { if (!S.L.views) S.L.views = {}; return S.L.views[vn] || (S.L.views[vn] = {}); }
+// a look in the view on screen (kind cat or cell); an empty value takes it away
+function setLook(kind, id, key, val, vn) {
+  const v = vset(vn || S.screen), m = v[kind] || (v[kind] = {}), e = m[id] || (m[id] = {});
+  if (val === undefined || val === '' || val === null) delete e[key]; else e[key] = val;
+  if (!Object.keys(e).length) delete m[id];
+  if (!Object.keys(m).length) delete v[kind];
+}
+// an Automatic view as rows, read off the screen, so making it your own moves nothing: the categories that share a top
+// are one row, left to right; Grid: each table a column
+function screenRows() {
+  if (S.screen === 'grid') {
+    const cols = [...document.querySelectorAll('#view .gtable')].map(t => ({ stack: [...t.querySelectorAll('tbody.dcat:not(.cont)')].map(b => b.dataset.cat) }));
+    return cols.some(c => c.stack.length) ? [{ cols }] : [];   // (an empty table goes when the view is tidied)
+  }
+  const rows = [];
+  for (const el of document.querySelectorAll('#view > .dcat')) {
+    const r = el.getBoundingClientRect(); if (!r.width) continue;
+    let row = rows.find(q => Math.abs(q.top - r.top) < 4);
+    if (!row) rows.push(row = { top: r.top, items: [] });
+    row.items.push({ id: el.dataset.cat, left: r.left });
+  }
+  rows.sort((a, b) => a.top - b.top);
+  const out = rows.map(q => ({ cols: q.items.sort((a, b) => a.left - b.left).map(it => ({ stack: [it.id] })) }));
+  const seen = new Set(out.flatMap(r => r.cols.map(c => c.stack[0])));
+  for (const c of S.L.cats) if (!seen.has(c.id)) out.push({ cols: [{ stack: [c.id] }] });
+  return out;
+}
+const rowsNow = vn => { const v = stored(vn || S.screen); return v && v.rows ? clone(v.rows) : screenRows(); };
+// makes the view on screen your own if it isn't yet (inside a mutate, before anything else changes the screen)
+function ownRows(vn) { vn = vn || S.screen; const v = vset(vn); if (!v.rows) { v.rows = screenRows(); froze = true; } return v.rows; }
+let froze = false;   // set when a change made a view your own: the toast says so (with Undo)
+function layoutChange(fn) {
+  froze = false; flipNext = true;
+  const before = snapOf(); fn(); tidyViews(S.L);
+  if (snapOf() === before) { flipNext = false; syncUndo(); renderInsp(); return false; }
+  pushUndo(before); afterChange(); flipNext = false;
+  if (froze) toast(VNAME[S.screen] + ' now uses your own arrangement', true);
+  return true;
+}
+function posIn(rows, id) {
+  for (let ri = 0; ri < rows.length; ri++) for (let ci = 0; ci < rows[ri].cols.length; ci++) {
+    const k = rows[ri].cols[ci].stack.findIndex(s => sid(s) === id);
+    if (k >= 0) return { ri, ci, k, row: rows[ri], col: rows[ri].cols[ci] };
+  }
+  return null;
+}
+// moves a category: t.zone left / right (a column of its own beside t.cat; Grid: a table beside table t.table), above /
+// below (stacked over or under t.cat), swap (the two trade places, each keeps the slot's height), row (a row of its own
+// at index t.at), into (Grid: the end of table t.table)
+function placeCat(rows, src, t) {
+  const PH = '\u0000', s0 = posIn(rows, src);
+  if (t.zone === 'swap') {
+    const p = posIn(rows, t.cat); if (!s0 || !p) return rows;
+    const hs = s0.col.stack[s0.k].h, ht = p.col.stack[p.k].h;
+    s0.col.stack[s0.k] = ht ? { id: t.cat, h: ht } : t.cat; p.col.stack[p.k] = hs ? { id: src, h: hs } : src;
+    return rows;
+  }
+  if (s0) s0.col.stack[s0.k] = PH;   // marked first and removed last, so every index below stays right
+  if (t.zone === 'row') rows.splice(Math.max(0, Math.min(rows.length, t.at)), 0, { cols: [{ stack: [src] }] });
+  else if (t.table != null) {
+    const cols = rows[0].cols;
+    if (t.zone === 'into') cols[t.table].stack.push(src);
+    else cols.splice(t.table + (t.zone === 'right' ? 1 : 0), 0, { stack: [src] });
+  } else {
+    const p = posIn(rows, t.cat);
+    if (!p) { if (s0) s0.col.stack[s0.k] = src; return rows; }
+    if (t.zone === 'above' || t.zone === 'below') p.col.stack.splice(p.k + (t.zone === 'below' ? 1 : 0), 0, src);
+    else { p.row.cols.splice(p.ci + (t.zone === 'right' ? 1 : 0), 0, { stack: [src] }); for (const c of p.row.cols) delete c.w; }
+  }
+  for (const r of rows) for (const c of r.cols) c.stack = c.stack.filter(s => s !== PH);
+  for (const r of rows) r.cols = r.cols.filter(c => c.stack.length);
+  const out = rows.filter(r => r.cols.length);
+  for (const r of out) if (r.cols.length < 2) for (const c of r.cols) delete c.w;
+  return out;
+}
+// the rows of the arrangement being dragged over, as boxes on screen (from the categories they hold)
+function rowBoxes(rows) {
+  return rows.map(r => {
+    let b = null;
+    for (const c of r.cols) for (const s of c.stack) {
+      const el = document.querySelector('#view .dcat[data-cat="' + sid(s) + '"]'); if (!el) continue;
+      const q = el.getBoundingClientRect(); if (!q.width) continue;
+      b = b ? { left: Math.min(b.left, q.left), top: Math.min(b.top, q.top), right: Math.max(b.right, q.right), bottom: Math.max(b.bottom, q.bottom) } : { left: q.left, top: q.top, right: q.right, bottom: q.bottom };
+    }
+    return b;
+  });
+}
+// where a dragged category would land, with the mark and the sentence that say it
+function catTarget(x, y, prev) {
+  const src = drag.data, vn = S.screen, rows = drag.rows, nm = id => (catById(id) || {}).name || '';
+  const fs = parseFloat(document.documentElement.style.fontSize) || 13, sv = sectionsEl.getBoundingClientRect();
+  const mk = (cls, l, t, w, h) => { dropmark.className = 'dropmark' + (cls ? ' ' + cls : ''); Object.assign(dropmark.style, { display: 'block', left: (l - sv.left + sectionsEl.scrollLeft) + 'px', top: (t - sv.top + sectionsEl.scrollTop) + 'px', width: w + 'px', height: h + 'px' }); };
+  const others = c => !(c.stack.length === 1 && sid(c.stack[0]) === src);
+  let t = null;
+  const edgeZone = (r, id, side) => {
+    const keep = prev && prev.cat === id ? prev.zone : null;
+    const ew = Math.min(120, Math.max(24, r.width * 0.25)) + (keep === 'left' || keep === 'right' ? 6 : keep === 'swap' ? -6 : 0);
+    const eh = Math.max(20, r.height * 0.3) + (keep === 'above' || keep === 'below' ? 6 : keep === 'swap' ? -6 : 0);
+    return side || (x < r.left + ew ? 'left' : x > r.right - ew ? 'right' : y < r.top + eh ? 'above' : y > r.bottom - eh ? 'below' : 'swap');
+  };
+  if (vn === 'grid') {
+    const tables = [...document.querySelectorAll('#view .gtable')];
+    if (!tables.length) return null;
+    let ti = -1, bd = Infinity;
+    tables.forEach((tb, i) => { const r = tb.getBoundingClientRect(), dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0, dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0, d = dx * dx + dy * dy; if (d < bd) { bd = d; ti = i; } });
+    const r = tables[ti].getBoundingClientRect(), keepSide = prev && prev.table === ti && (prev.zone === 'left' || prev.zone === 'right');
+    const ew = Math.min(70, Math.max(24, r.width * 0.08)) + (keepSide ? 6 : 0);
+    if (x < r.left + ew || x > r.right - ew) {
+      const side = x < r.left + ew ? 'left' : 'right';
+      if (rows[0].cols.filter(others).length >= MAXC.grid) { t = { zone: 'full', txt: 'Three tables at most' }; mk('full', side === 'left' ? r.left - 6 : r.right + 3, r.top, 3, r.height); }
+      else { t = { zone: side, table: ti, txt: 'A new table on the ' + side }; mk('', side === 'left' ? r.left - 6 : r.right + 3, r.top, 3, r.height); }
+      return t;
+    }
+    const groups = [...tables[ti].querySelectorAll('tbody.dcat')].filter(b => b.dataset.cat !== src);
+    if (!groups.length) { mk('box', r.left, r.top, r.width, r.height); return { zone: 'into', table: ti, txt: 'Into this table' }; }
+    let g = groups.find(b => { const q = b.getBoundingClientRect(); return y >= q.top && y <= q.bottom; });
+    if (!g) g = y < groups[0].getBoundingClientRect().top ? groups[0] : groups[groups.length - 1];
+    const q = g.getBoundingClientRect(), id = g.dataset.cat, keep = prev && prev.cat === id ? prev.zone : null;
+    const eh = Math.max(12, q.height * 0.3) + (keep === 'above' || keep === 'below' ? 6 : keep === 'swap' ? -6 : 0);
+    const z = y < q.top + eh ? 'above' : y > q.bottom - eh ? 'below' : 'swap';
+    if (z === 'swap') mk('box', q.left, q.top, q.width, q.height); else mk('', r.left + 8, z === 'above' ? q.top - 2 : q.bottom - 1, r.width - 16, 3);
+    return { zone: z, cat: id, txt: z === 'swap' ? 'Swap with ' + nm(id) : (z === 'above' ? 'Over ' : 'Under ') + nm(id) };
+  }
+  const els = [...document.querySelectorAll('#view .dcat')].filter(el => el.dataset.cat !== src && el.getClientRects().length);
+  const boxes = rowBoxes(rows), rg = 0.92 * fs, cg = (vn === 'tiles' ? 1.7 : 0.92) * fs;
+  let el = els.find(e => { const r = e.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }), side = null;
+  if (!el) {
+    // not on a category: beside the nearest one in this row, else between two rows (a row of its own)
+    const ri = boxes.findIndex(b => b && y >= b.top && y <= b.bottom);
+    const inRow = ri < 0 ? [] : els.filter(e => { const p = posIn(rows, e.dataset.cat); return p && p.ri === ri; });
+    if (inRow.length) {
+      let bd = Infinity;
+      for (const e of inRow) { const r = e.getBoundingClientRect(), d = x < r.left ? r.left - x : x > r.right ? x - r.right : Math.abs(y - (r.top + r.bottom) / 2) / 4; if (d < bd) { bd = d; el = e; } }
+      const r = el.getBoundingClientRect();
+      side = x < r.left ? 'left' : x > r.right ? 'right' : y > r.bottom ? 'below' : 'above';
+    } else {
+      const at = ri >= 0 ? ri : boxes.filter(b => b && b.bottom < y).length;
+      const above = boxes[at - 1], below = boxes[at], my = above && below ? (above.bottom + below.top) / 2 : below ? below.top - rg / 2 : above ? above.bottom + rg / 2 : y;
+      const vr = $('view').getBoundingClientRect();
+      mk('', vr.left, my - 1.5, vr.width, 3);
+      return { zone: 'row', at, txt: 'A row of its own, full width' };
+    }
+  }
+  const r = el.getBoundingClientRect(), id = el.dataset.cat, p = posIn(rows, id), zone = edgeZone(r, id, side);
+  if (zone === 'left' || zone === 'right') {
+    const box = boxes[p.ri] || r, col = (el.closest('.lcol') || el).getBoundingClientRect();
+    const bx = zone === 'left' ? col.left - cg / 2 - 1.5 : col.right + cg / 2 - 1.5;
+    if (p.row.cols.filter(others).length >= MAXC[vn]) { mk('full', bx, box.top, 3, box.bottom - box.top); return { zone: 'full', txt: 'This row is full (' + MAXC[vn] + ' side by side)' }; }
+    mk('', bx, box.top, 3, box.bottom - box.top);
+    return { zone, cat: id, txt: 'Beside ' + nm(id) + ', on the ' + zone };
+  }
+  if (zone === 'above' || zone === 'below') {
+    const by = zone === 'above' ? r.top - rg / 2 - 1.5 : r.bottom + rg / 2 - 1.5;
+    if (p.col.stack.filter(s => sid(s) !== src).length >= MAXS[vn]) { mk('full', r.left, by, r.width, 3); return { zone: 'full', txt: 'This column is full (' + MAXS[vn] + ' stacked)' }; }
+    mk('', r.left, by, r.width, 3);
+    return { zone, cat: id, txt: 'Stacked ' + (zone === 'above' ? 'over ' : 'under ') + nm(id) };
+  }
+  mk('box', r.left, r.top, r.width, r.height);
+  return { zone: 'swap', cat: id, txt: 'Swap with ' + nm(id) };
+}
+function dropCat(d) {
+  const t = d.target, vn = S.screen, src = d.data;
+  if (!t || t.zone === 'full') return;
+  // an Automatic view stays automatic when only the order changes: a swap, a row of its own, Grid up and down
+  if (d.auto && (t.zone === 'swap' || (vn === 'grid' && (t.zone === 'above' || t.zone === 'below')))) {
+    const order = d.rows.flatMap(r => r.cols.flatMap(c => c.stack.map(sid)));
+    if (t.zone === 'swap') { const i = order.indexOf(src), j = order.indexOf(t.cat); order[i] = t.cat; order[j] = src; }
+    else {
+      const ref = t.zone === 'row' ? (t.at < d.rows.length ? sid(d.rows[t.at].cols[0].stack[0]) : null) : t.cat;
+      if (ref === src) return;
+      order.splice(order.indexOf(src), 1);
+      const j = ref ? order.indexOf(ref) + (t.zone === 'below' ? 1 : 0) : order.length;
+      order.splice(j, 0, src);
+    }
+    layoutChange(() => { S.L.cats = order.map(catById).filter(Boolean).concat(S.L.cats.filter(c => !order.includes(c.id))); });
+    return;
+  }
+  layoutChange(() => { const v = vset(vn); if (!v.rows) froze = true; v.rows = placeCat(clone(d.rows), src, t); });
+}
+
+// ---------- the handles: the line between two columns (widths), the strip under a row (height), a tile's corner ----------
+let rs = null;
+const lpill = document.createElement('div'); lpill.className = 'lpill'; document.body.appendChild(lpill);
+function pill(txt, x, y) { lpill.textContent = txt; lpill.style.left = x + 'px'; lpill.style.top = y + 'px'; lpill.classList.add('on'); }
+const gcd = (a, b) => b ? gcd(b, a % b) : a;
+const frac = (a, t) => { const g = gcd(a, t) || 1; return a / g + '/' + t / g; };
+const baseWidths = cols => { const n = cols.length; return cols.every(c => c.w) ? cols.map(c => c.w) : Array(n).fill(12 % n ? 2 : 12 / n); };
+// a row's widths in twelfths: yours, or (following content) what the screen shows now
+function widthsNow(ri, cols) {
+  if (cols.every(c => c.w)) return cols.map(c => c.w);
+  const el = document.querySelector('#view .lrow[data-r="' + ri + '"]'), cs = el ? [...el.children].filter(e => e.classList.contains('lcol')) : [];
+  if (cs.length !== cols.length || el.classList.contains('fold')) return baseWidths(cols);
+  const px = cs.map(c => c.getBoundingClientRect().width), tot = px.reduce((a, b) => a + b, 0) || 1, w = px.map(x => Math.max(1, Math.round(x / tot * 12)));
+  for (let diff = 12 - w.reduce((a, b) => a + b, 0), i = 0; diff && i < 50; i++) { const j = w.indexOf(diff > 0 ? Math.min(...w) : Math.max(...w)); if (diff < 0 && w[j] <= 1) break; w[j] += Math.sign(diff); diff -= Math.sign(diff); }
+  return w;
+}
+const heightTxt = h => h ? 'Fill' : 'Fit';
+function startHandle(ev, el) {
+  const v = stored(S.screen);
+  rs = { el, x0: ev.clientX, y0: ev.clientY, moved: false };
+  if (el.classList.contains('corner')) {
+    const tile = el.closest('.tile'), r = tile.getBoundingClientRect(), size = cellLook(tile.dataset.cid).size || '';
+    Object.assign(rs, { kind: 'corner', tile, cid: tile.dataset.cid, size, start: size, cw: r.width / (size === 'wide' || size === 'big' ? 2 : 1), ch: r.height / (size === 'tall' || size === 'big' ? 2 : 1) });
+  } else {
+    const rowEl = el.closest('.lrow'), ri = +rowEl.dataset.r, row = v && v.rows && v.rows[ri];
+    if (!row) { rs = null; return; }
+    if (el.classList.contains('ldiv')) {
+      const base = widthsNow(ri, row.cols), cols = [...rowEl.children].filter(c => c.classList.contains('lcol'));
+      const W = cols.reduce((a, c) => a + c.getBoundingClientRect().width, 0), T = base.reduce((a, b) => a + b, 0);
+      Object.assign(rs, { kind: 'split', rowEl, ri, k: +el.dataset.k, base, w: base.slice(), T, unit: W / T });
+    } else Object.assign(rs, { kind: 'rowh', ri, h0: row.h || 0, h: row.h || 0 });
+  }
+  el.classList.add('on');
+}
+function moveHandle(ev) {
+  if (!rs) return;
+  if (!rs.moved && Math.hypot(ev.clientX - rs.x0, ev.clientY - rs.y0) < 3) return;
+  rs.moved = true;
+  if (rs.kind === 'split') {
+    const k = rs.k, d = Math.round((ev.clientX - rs.x0) / rs.unit);
+    let a = rs.base[k] + d, b = rs.base[k + 1] - d;
+    if (a < 1) { b -= 1 - a; a = 1; } if (b < 1) { a -= 1 - b; b = 1; }
+    rs.w = rs.base.slice(); rs.w[k] = a; rs.w[k + 1] = b;
+    delete rs.rowEl.dataset.auto;
+    rs.rowEl.style.setProperty('--cols', colTracks(rs.w.map(w => ({ w }))));
+    layoutPass(); growPass();
+    pill(frac(a, rs.T) + ' | ' + frac(b, rs.T), ev.clientX, ev.clientY - 36);
+  } else if (rs.kind === 'rowh') {
+    const dy = ev.clientY - rs.y0;
+    rs.h = dy > 18 ? 1 : dy < -18 ? 0 : rs.h0;
+    const rowEl = document.querySelector('#view .lrow[data-r="' + rs.ri + '"]');
+    if (rowEl) { if (rs.h) rowEl.dataset.fill = '1'; else delete rowEl.dataset.fill; layoutPass(); growPass(); }
+    pill(heightTxt(rs.h), ev.clientX, ev.clientY - 36);
+  } else {
+    const tg = rs.tile.parentElement, per = +tg.style.getPropertyValue('--per') || 0;
+    const c0 = rs.start === 'wide' || rs.start === 'big' ? 2 : 1, r0 = rs.start === 'tall' || rs.start === 'big' ? 2 : 1;
+    const cols = Math.max(1, Math.min(per === 1 ? 1 : 2, Math.round(c0 + (ev.clientX - rs.x0) / rs.cw))), rws = Math.max(1, Math.min(2, Math.round(r0 + (ev.clientY - rs.y0) / rs.ch)));
+    rs.size = cols > 1 && rws > 1 ? 'big' : cols > 1 ? 'wide' : rws > 1 ? 'tall' : '';
+    for (const z of ['wide', 'tall', 'big']) rs.tile.classList.toggle('sz-' + z, rs.size === z);
+    tg.classList.add('spans'); layoutPass(); growPass();
+    pill(cols + ' x ' + rws, ev.clientX + 14, ev.clientY + 10);
+  }
+}
+function endHandle(cancel) {
+  if (!rs) return;
+  const h = rs; rs = null;
+  lpill.classList.remove('on'); h.el.classList.remove('on');
+  justDragged = true; setTimeout(() => { justDragged = false; }, 0);
+  if (!h.moved) return;
+  if (cancel) { renderView(false); return; }
+  const before = snapOf();
+  if (h.kind === 'split') mutate(() => { const row = stored(S.screen).rows[h.ri]; row.cols.forEach((c, i) => { c.w = h.w[i]; }); });
+  else if (h.kind === 'rowh') mutate(() => { const row = stored(S.screen).rows[h.ri]; if (h.h) row.h = 1; else delete row.h; });
+  else mutate(() => setLook('cell', h.cid, 'size', h.size));
+  if (snapOf() === before) renderView(false);   // back where it started: draw it as it was
+}
+document.addEventListener('pointermove', moveHandle);
+document.addEventListener('pointerup', () => endHandle(false));
+document.addEventListener('pointercancel', () => endHandle(true));
+function handleDblclick(el) {
+  if (el.classList.contains('corner')) { mutate(() => setLook('cell', el.closest('.tile').dataset.cid, 'size', '')); return; }
+  const v = stored(S.screen), ri = +el.closest('.lrow').dataset.r, row = v && v.rows && v.rows[ri]; if (!row) return;
+  if (el.classList.contains('ldiv')) mutate(() => { for (const c of row.cols) delete c.w; });
+  else mutate(() => { delete row.h; });
+}
+
+// ---------- moving and sizing a selected category (the buttons in its settings and the keys do the same) ----------
+// Move: row = a row of its own under its row now, beside = the last column of the row above, stack = under the
+// category on its left, unstack = a column of its own right of its stack
+function moveOptions(id) {
+  const rows = rowsNow(), p = posIn(rows, id), o = {};
+  if (!p || S.screen === 'grid') return o;
+  o.row = p.row.cols.length > 1 || p.col.stack.length > 1;
+  o.beside = p.ri > 0 && rows[p.ri - 1].cols.length < MAXC[S.screen];
+  o.stack = p.ci > 0 && p.row.cols[p.ci - 1].stack.length < MAXS[S.screen];
+  o.unstack = p.col.stack.length > 1 && p.row.cols.length < MAXC[S.screen];
+  return o;
+}
+function moveCat(id, how) {
+  if (!moveOptions(id)[how]) return false;
+  layoutChange(() => {
+    const rows = ownRows(), p = posIn(rows, id);
+    let t;
+    if (how === 'row') t = { zone: 'row', at: p.ri + 1 };
+    else if (how === 'beside') { const up = rows[p.ri - 1], last = up.cols[up.cols.length - 1]; t = { zone: 'right', cat: sid(last.stack[0]) }; }
+    else if (how === 'stack') { const left = p.row.cols[p.ci - 1]; t = { zone: 'below', cat: sid(left.stack[left.stack.length - 1]) }; }
+    else t = { zone: 'right', cat: sid(p.col.stack.find(s => sid(s) !== id)) };
+    vset(S.screen).rows = placeCat(rows, id, t);
+  });
+  announce(id);
+  return true;
+}
+// its column's width as twelfths of the row (the others keep their shares of what is left); 0 = Auto: the widths
+// follow what each column holds
+function setWidth(id, twelfths) {
+  const p = posIn(rowsNow(), id); if (!p || p.row.cols.length < 2) return;
+  if (!twelfths) { if (p.row.cols.every(c => c.w)) layoutChange(() => { const q = posIn(ownRows(), id); for (const c of q.row.cols) delete c.w; }); announce(id); return; }
+  const now = widthsNow(p.ri, p.row.cols);
+  layoutChange(() => {
+    const rows = ownRows(), q = posIn(rows, id), cols = q.row.cols, base = now, T = base.reduce((a, b) => a + b, 0);
+    const mine = Math.max(1, Math.min(12 - (cols.length - 1), twelfths)), rest = 12 - mine, others = T - base[q.ci];
+    const w = base.map((b, i) => i === q.ci ? mine : Math.max(1, Math.round(b / others * rest)));
+    let diff = 12 - w.reduce((a, b) => a + b, 0);
+    for (let i = cols.length - 1, g = 0; diff !== 0 && g < 100; g++, i = (i + cols.length - 1) % cols.length) {
+      if (i === q.ci) continue;
+      if (diff > 0) { w[i]++; diff--; } else if (w[i] > 1) { w[i]--; diff++; }
+    }
+    cols.forEach((c, i) => { c.w = w[i]; });
+  });
+  announce(id);
+}
+function nudgeWidth(id, d) {
+  const p = posIn(rowsNow(), id); if (!p || p.row.cols.length < 2) return;
+  const now = widthsNow(p.ri, p.row.cols);
+  { const w = now, j = p.ci < p.row.cols.length - 1 ? p.ci + 1 : p.ci - 1; if (w[p.ci] + d < 1 || w[j] - d < 1) return; }   // at the limit: nothing to do
+  layoutChange(() => {
+    const rows = ownRows(), q = posIn(rows, id), cols = q.row.cols, w = now.slice(), j = q.ci < cols.length - 1 ? q.ci + 1 : q.ci - 1;
+    if (w[q.ci] + d < 1 || w[j] - d < 1) return;
+    w[q.ci] += d; w[j] -= d;
+    cols.forEach((c, i) => { c.w = w[i]; });
+  });
+  announce(id);
+}
+function setRowHeight(id, h) {
+  if (!h && !isCustom(S.screen)) return;   // Automatic rows already fit
+  layoutChange(() => { const rows = ownRows(), q = posIn(rows, id); if (!q) return; if (h) q.row.h = 1; else delete q.row.h; });
+  announce(id);
+}
+// the category nearest to it on screen in a direction (for Alt+arrow)
+function nearestCat(id, dx, dy) {
+  const a = document.querySelector('#view .dcat[data-cat="' + id + '"]'); if (!a) return null;
+  const ra = a.getBoundingClientRect(), ax = (ra.left + ra.right) / 2, ay = (ra.top + ra.bottom) / 2;
+  let best = null, bd = Infinity;
+  for (const el of document.querySelectorAll('#view .dcat')) {
+    if (el === a || el.dataset.cat === id) continue;
+    const r = el.getBoundingClientRect(), x = (r.left + r.right) / 2 - ax, y = (r.top + r.bottom) / 2 - ay, along = x * dx + y * dy;
+    if (along <= 4) continue;
+    const beside = dx ? r.top < ra.bottom - 1 && r.bottom > ra.top + 1 : r.left < ra.right - 1 && r.right > ra.left + 1;   // in its row (or column)
+    const d = along + Math.abs(dx ? y : x) * 2 + (beside ? 0 : 1e5);
+    if (d < bd) { bd = d; best = el.dataset.cat; }
+  }
+  return best;
+}
+// "Height: Fill the window" (Tiles): every row's tiles may grow into the room left under the view
+function autoHeights(vn, rows) { for (const r of rows) { if (vn === 'tiles') r.h = 1; else delete r.h; } }
+// "Start from": 2 or 3 categories a row (big ones get a row of their own), one a row, or a copy of the other view's rows
+function templateRows(kind) {
+  const vn = S.screen;
+  if (kind === 'copy') { const o = stored(vn === 'tiles' ? 'overview' : 'tiles'); return o && o.rows ? clone(o.rows) : null; }
+  const n = kind === 'two' ? 2 : kind === 'three' ? 3 : 1, rows = [];
+  const big = c => vn === 'tiles' ? cellsOf(c).length > (n === 2 ? 6 : 9) || (catLook(c.id, vn).per || 0) >= 5 : catLook(c.id, vn).style === 'band';
+  let cur = null;
+  for (const c of S.L.cats) {
+    if (n === 1 || big(c)) { rows.push({ cols: [{ stack: [c.id] }] }); cur = null; continue; }
+    if (!cur || cur.cols.length >= n) rows.push(cur = { cols: [] });
+    cur.cols.push({ stack: [c.id] });
+  }
+  return rows;
+}
+function templateView(kind) {
+  const rows = templateRows(kind); if (!rows) return null;
+  const v = clone(stored(S.screen) || {});
+  if (v.rows && v.rows.some(r => r.h)) autoHeights(S.screen, rows);
+  v.rows = rows;
+  return v;
+}
+// Grid: the categories in reading order cut into n tables of about the same length
+function gridTables(n) {
+  const order = rowsNow('grid').flatMap(r => r.cols.flatMap(c => c.stack.map(sid))), len = id => cellsOf(catById(id)).length + 1;
+  const total = order.reduce((a, id) => a + len(id), 0), cols = [];
+  let acc = 0;
+  for (const id of order) {
+    const k = Math.min(n - 1, Math.floor(acc / total * n + 1e-9));
+    while (cols.length <= k) cols.push({ stack: [] });
+    cols[k].stack.push(id); acc += len(id);
+  }
+  return [{ cols: cols.filter(c => c.stack.length) }];
+}
+const live = $('live');
+function announce(id) {
+  const rows = rowsNow(), p = posIn(rows, id), cat = catById(id); if (!p || !cat) return;
+  live.textContent = cat.name + ': row ' + (p.ri + 1) + ' of ' + rows.length + ', column ' + (p.ci + 1) + ' of ' + p.row.cols.length + (p.col.stack.length > 1 ? ', stacked ' + (p.k + 1) + ' of ' + p.col.stack.length : '');
+}
+
 // ---------- events: the view ----------
 function setEdit(on) {
   S.edit = on; app.classList.toggle('editing', on);
   $('editBtn').classList.toggle('on', on);
-  if (!on) { sel = null; endRelink(true); app.classList.remove('has-sel'); }
+  preview = null;
+  if (!on) { sel = null; selCat = null; endRelink(true); }
+  syncDrawers();
   hidePrev(); saveState();
   renderView(false); renderStorage(); renderInsp(); placeTabInd(true);
 }
 $('editBtn').onclick = () => setEdit(!S.edit);
+function newCategory() {
+  mutate(() => S.L.cats.push({ id: nid('c'), name: 'New category', collapsed: false, cells: [] }));
+  const all = document.querySelectorAll('#view .dcat'), el = all[all.length - 1];
+  if (el) { el.scrollIntoView({ block: 'nearest' }); renameCat(el); }
+}
+$('newcat').onclick = newCategory; $('addCat').onclick = newCategory;
+// ---------- edit mode: Storage (left) and the settings (right) are drawers over the view, so the view keeps the size it
+// has outside edit mode. A drawer opens while the pointer rests on its tab or on it, and stays while pinned or while
+// you type in it; Storage also while you pick a reading for a cell or the view is empty. The settings open when you
+// select something and go once the pointer has been in them and left (the selection stays: their tab brings them back).
+// While you drag, a drawer stays only as long as the pointer is on it (so the view under it takes the drop) ----------
+const DR = { L: { el: document.querySelector('.storage'), tab: $('tabL'), pin: $('pinL') }, R: { el: document.querySelector('.insp'), tab: $('tabR'), pin: $('pinR') } };
+for (const k of ['L', 'R']) Object.assign(DR[k], { pinned: false, hover: false, t: 0 });
+function drawerOpen(k) {
+  const d = DR[k]; if (!S.edit) return false;
+  if (drag && drag.started) return d.hover;
+  const a = document.activeElement, typing = !!a && d.el.contains(a) && a.matches('input:not([type=checkbox]), select, textarea');
+  if (d.hover || d.pinned || typing) return true;
+  return k === 'L' ? !!relinkFor || (!S.L.cats.length && READ.length > 0) : d.byPick && (!!sel || !!selCat);
+}
+// the settings open on the side away from what you selected, so they never cover it (pinned or from their tab: the right)
+function selOnRight() {
+  const el = sel ? document.querySelector('#view .dc[data-cid="' + sel + '"]') : selCat ? document.querySelector('#view .dcat[data-cat="' + selCat + '"]') : null;
+  if (!el) return false;
+  const r = el.getBoundingClientRect(), v = sectionsEl.getBoundingClientRect();
+  return r.right > v.right - DR.R.el.offsetWidth - 20 && r.left + r.width / 2 > v.left + v.width / 2;
+}
+function syncDrawers() {
+  for (const k of ['L', 'R']) {
+    const d = DR[k], key = sel || selCat || '';
+    if (k === 'R' && key !== d.key) { d.byPick = !!key; d.pickT = Date.now(); }   // a new selection opens them
+    const o = drawerOpen(k), was = d.el.classList.contains('open');
+    if (k === 'R' && o && !d.pinned && !d.hover) d.left = !!key && selOnRight() && !DR.L.el.classList.contains('open');   // re-checked whenever it isn't in use (the selection may have moved or grown)
+    else if (k === 'R' && o && !was && d.hover && !d.byPick) d.left = false;   // opened from its tab: by the tab
+    if (k === 'R') { d.key = key; if (!o) d.left = d.left && was; if (d.pinned) d.left = false; d.el.classList.toggle('left', !!d.left && (o || was)); }   // pinned: always on the right
+    d.el.classList.toggle('open', o); d.tab.classList.toggle('on', o);
+    d.pin.classList.toggle('on', d.pinned); d.pin.setAttribute('aria-pressed', d.pinned);
+  }
+}
+for (const k of ['L', 'R']) {
+  const d = DR[k];
+  const inside = e => !!e.relatedTarget && (d.el.contains(e.relatedTarget) || d.tab.contains(e.relatedTarget));
+  const enter = () => { clearTimeout(d.t); if (!d.hover) d.t = setTimeout(() => { d.hover = true; syncDrawers(); }, d.el.classList.contains('open') ? 0 : 90); };
+  const leave = e => { if (inside(e)) return; clearTimeout(d.t); d.t = setTimeout(() => { if (d.hover) d.byPick = false; d.hover = false; syncDrawers(); }, drag && drag.started ? 0 : 380); };
+  for (const el of [d.el, d.tab]) { el.addEventListener('mouseenter', enter); el.addEventListener('mouseleave', leave); }
+  d.tab.addEventListener('click', () => { d.pinned = true; d.hover = true; syncDrawers(); saveState(); });
+  d.pin.addEventListener('click', () => { d.pinned = !d.pinned; syncDrawers(); saveState(); });
+  d.el.addEventListener('focusin', syncDrawers);
+  // settings opened by a selection and not touched while the pointer keeps working in the view: they slide away
+  if (k === 'R') sectionsEl.addEventListener('pointermove', () => { if (d.byPick && !d.hover && !d.pinned && Date.now() - (d.pickT || 0) > 2000 && d.el.classList.contains('open')) { d.byPick = false; syncDrawers(); } });
+  d.el.addEventListener('focusout', () => setTimeout(syncDrawers, 0));
+}
 $('undo').onclick = undo; $('redo').onclick = redo;
 $('toastUndo').onclick = () => { if (toastDepth >= 0 && undoStack.length === toastDepth) undo(); $('toast').classList.remove('show'); retireToastUndo(); };
 sectionsEl.addEventListener('pointerdown', ev => {
   if (ev.button !== 0 || ev.target.closest('button,input') || (host && zoneAt(ev))) return;   // the window edge: a resize
   hidePrev();
   if (!S.edit) return;
+  const hd = ev.target.closest('.ldiv, .lrs, .corner');
+  if (hd) { startHandle(ev, hd); ev.preventDefault(); return; }
   const g = ev.target.closest('.dch .grip');
   if (g) { const cat = g.closest('.dcat').dataset.cat; startDrag(ev, 'cat', cat, S.L.cats.find(c => c.id === cat).name); ev.preventDefault(); return; }
   const cell = ev.target.closest('#view .dc');
   if (cell) {
     const c = S.L.cells[cell.dataset.cid], r = c.key && BYKEY.get(c.key);
-    startDrag(ev, 'cell', cell.dataset.cid, cellName(c), r ? valTxt(r) : '');
+    startDrag(ev, 'cell', cell.dataset.cid, nameIn(cell.dataset.cid), r ? valTxt(r) : '');
     if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp')) document.activeElement.blur();
     ev.preventDefault(); cell.focus({ preventScroll: true });   // no text selection painted across the view while dragging
   }
 });
 sectionsEl.addEventListener('click', ev => {
   if (justDragged) return;
-  if (ev.target.closest('#setupRestart')) { send({ t: 'restartHwinfo' }); return; }
+  if (ev.target.closest('#setupRestart')) { restartHwinfo(); return; }
   const catEl = ev.target.closest('.dcat');
-  if (ev.target.closest('#newcat')) { mutate(() => S.L.cats.push({ id: nid('c'), name: 'New category', collapsed: false, cells: [] })); const all = document.querySelectorAll('#view .dcat'); renameCat(all[all.length - 1]); return; }
   if (ev.target.closest('.chev') && catEl) { const c = S.L.cats.find(x => x.id === catEl.dataset.cat); c.collapsed = !c.collapsed; saveState(); syncSaves(); renderView(false); return; }
   if (ev.target.closest('.ren') && catEl) { renameCat(catEl); return; }
   if (ev.target.closest('.del') && catEl) {
@@ -1113,13 +2033,23 @@ sectionsEl.addEventListener('click', ev => {
     return;
   }
   if (ev.target.closest('.rl')) { startRelink(ev.target.closest('.dc').dataset.cid); return; }
+  if (ev.target.closest('.ldiv, .lrs, .corner')) return;
   const cell = ev.target.closest('#view .dc');
   if (!S.edit) { if (cell) openDetail(cell.dataset.cid); return; }
   if (cell) { selectCell(cell.dataset.cid); return; }
-  if (sel && !ev.target.closest('.dch')) { sel = null; for (const el of document.querySelectorAll('#view .dc.sel')) el.classList.remove('sel'); renderInsp(); }
+  // a category's header (its name, its empty space) selects the category; anywhere else: the view
+  if (catEl && ev.target.closest('.dch, .ghdr, .bh') && !ev.target.closest('input')) { selectCat(catEl.dataset.cat); return; }
+  if (sel || selCat) clearSel();
 });
-function selectCell(cid) { sel = cid; for (const el of document.querySelectorAll('#view .dc.sel')) el.classList.remove('sel'); const el = document.querySelector('#view .dc[data-cid="' + cid + '"]'); if (el) el.classList.add('sel'); renderInsp(); }
+function selectCell(cid) {
+  sel = cid; selCat = null; DR.R.byPick = true; DR.R.pickT = Date.now();
+  for (const el of document.querySelectorAll('#view .dc.sel, #view .dcat.csel')) el.classList.remove('sel', 'csel');
+  const el = document.querySelector('#view .dc[data-cid="' + cid + '"]'); if (el) el.classList.add('sel');
+  renderInsp();
+}
 sectionsEl.addEventListener('dblclick', ev => {
+  const hd = ev.target.closest('.ldiv, .lrs, .corner');
+  if (hd && S.edit) { handleDblclick(hd); return; }
   const cn = ev.target.closest('.cn');
   if (cn && S.edit) { renameCat(cn.closest('.dcat')); return; }
   const cell = ev.target.closest('#view .dc');
@@ -1213,24 +2143,18 @@ function startRelink(cid) {
   // the search starts with the label; if this PC calls it something else, the list says so and offers everything
   query = lbl; $('q').value = lbl; typeFilter = 'all'; renderStorage(); renderView(false); renderInsp();
 }
-function endRelink(quiet) { if (!relinkFor && quiet) return; relinkFor = null; $('relinkBar').hidden = true; query = ''; $('q').value = ''; if (!quiet) renderStorage(); }
+function endRelink(quiet) { if (!relinkFor && quiet) return; relinkFor = null; $('relinkBar').hidden = true; query = ''; $('q').value = ''; if (!quiet) renderStorage(); syncDrawers(); }
 $('relinkCancel').onclick = () => { endRelink(); renderView(false); };
 
-// ---------- cell settings ----------
+// ---------- the right panel: a cell's settings, a category's, or the view's ----------
 function renderInsp() {
   const box = $('insp');
-  const c = sel && S.L.cells[sel];
-  app.classList.toggle('has-sel', !!c);
+  const c = sel && S.L.cells[sel], cat = !c && selCat ? catById(selCat) : null;
+  syncDrawers();
+  setText($('inspTitle'), c ? 'Cell' : cat ? 'Category' : S.screen === 'overview' ? 'Overview' : VNAME[S.screen] + ' view');
   if (!S.edit) return;
-  if (!c) {
-    const cells = Object.values(S.L.cells);
-    const nb = (n, one, many) => '<b>' + n + '</b> ' + (n === 1 ? one : many);
-    if (!READ.length) { box.innerHTML = '<div class="none"><span>Nothing to pick from yet: HWiNFO isn\'t sharing its sensors. The steps are in the middle.</span></div>'; return; }
-    box.innerHTML = '<div class="none"><span>Select a cell to set its name, decimals, lines and fan curve. Double-click one for its graphs (outside edit mode, one click).</span>' +
-      '<span>' + nb(S.L.cats.length, 'category', 'categories') + ', ' + nb(cells.length, 'cell', 'cells') + ', ' + nb(cells.filter(x => gatesOn(x.gates)).length, 'with lines', 'with lines') + ', ' + nb(cells.filter(x => x.curve).length, 'on a fan curve', 'on a fan curve') + '.</span>' +
-      '<span>Tip: pick a type in Storage (Temp, Fan...), then <b>+ all</b> on a sensor to add all of those readings as one category.</span></div>';
-    return;
-  }
+  if (cat) { box.innerHTML = catPanel(cat); return; }
+  if (!c) { box.innerHTML = viewPanel(); return; }
   const r = c.key ? BYKEY.get(c.key) : null, sen = r ? SENS[r.s] : null;
   const g = c.gates || { mode: 'none', dir: 'above', y: NaN, r: NaN, hold: 3 };
   const unit = c.pred ? 'RPM' : unitOf(r);
@@ -1239,6 +2163,7 @@ function renderInsp() {
     : r ? '<span>' + esc(sen.name) + '</span><span style="color:var(--fg)" title="' + esc(r.key) + '">' + esc(r.label) + '</span>'
     : '<span style="color:#e08a8d">' + (sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now' : 'Not on this PC' + (c.match ? ': ' + esc(c.match.replace('|', ', ')) : '')) + '</span><span class="k">' + esc(c.key) + '</span>') + '</div>';
   h += '<label class="fld"><span>Name</span><input id="iName" value="' + esc(c.name || '') + '" placeholder="' + esc(r ? r.label : c.pred ? 'Predicted fan' : '') + '"></label>';
+  h += cellLayHtml(sel, c);
   const bn = isBneck(c), gsel = '<select id="iGraph"><option value="1"' + (c.graph !== false ? ' selected' : '') + '>Show</option><option value="0"' + (c.graph === false ? ' selected' : '') + '>Hide</option></select>';
   // the bottleneck is a call, not a number: no decimals, no lines
   if (bn) h += '<div class="two"><label class="fld"><span>15 min bar</span>' + gsel + '</label><span></span></div>' +
@@ -1366,7 +2291,7 @@ function drawCurveSvg(c, e) {
   box._scale = { l, t, W, H, b, rr, xmin, xmax, ymax };
 }
 const insp = $('insp');
-$('inspClose').onclick = () => { sel = null; for (const el of document.querySelectorAll('#view .dc.sel')) el.classList.remove('sel'); renderInsp(); };
+$('inspClose').onclick = () => { const d = DR.R; clearTimeout(d.t); d.hover = false; d.pinned = false; d.byPick = false; clearSel(); saveState(); };
 function setCell(fn, withUndo) {
   const c = S.L.cells[sel]; if (!c) return;
   const before = withUndo ? snapOf() : null;
@@ -1382,7 +2307,7 @@ insp.addEventListener('input', e => {
   if (t.id === 'iName') {
     setCell(c => { c.name = t.value.trim() || undefined; });
     const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
-    if (el) el.textContent = cellName(c);
+    if (el) el.textContent = nameIn(sel);
   }
   if (t.id === 'iY' || t.id === 'iR' || t.id === 'iHold') { setCell(c => { const k = t.id === 'iY' ? 'y' : t.id === 'iR' ? 'r' : 'hold'; c.gates[k] = t.value === '' ? NaN : k === 'hold' ? Math.min(1e9, Math.max(0, Number(t.value) || 0)) : Number(t.value); }); tickInsp(); updateView(false); }
   if (t.id === 'cTol' || t.id === 'cHold') { if (t.value === '') return; setCell(c => { c.curve[t.id === 'cTol' ? 'tol' : 'hold'] = Math.max(t.id === 'cTol' ? 1 : 0, Number(t.value) || 0); }); tickInsp(); updateView(false); }
@@ -1475,6 +2400,195 @@ document.addEventListener('pointermove', e => {
 });
 document.addEventListener('pointerup', () => { if (dragPt) { const moved = dragPt.moved; dragPt = null; if (moved) { saveState(); syncSaves(); renderInsp(); } } });
 
+// ---------- the right panel for a category, for the view, and the layout bits of a cell ----------
+const segL = (label, key, opts, cur) => '<div class="fld"><span>' + label + '</span><div class="seg" data-lay="' + key + '">' +
+  opts.map(([v, t, off]) => '<button data-v="' + v + '"' + (off ? ' disabled' : '') + ' class="' + (String(v) === String(cur) ? 'on' : '') + '">' + t + '</button>').join('') + '</div></div>';
+const TPLS = [['two', '2 columns', '1fr 1fr', '1fr 1fr 1fr', ['1/1', '1/2', '2/1', '2/2', '3/1/4/3']], ['three', '3 columns', '1fr 1fr 1fr', '1fr 1fr', ['1/1', '1/2', '1/3', '2/1/3/4']],
+  ['one', 'One per row', '1fr', '1fr 1fr 1fr', ['1/1', '2/1', '3/1']], ['copy', 'Copy', '1fr 1fr 1fr', '1fr 0.6fr 1fr', ['1/1', '1/2', '1/3', '2/1/3/4', '3/1', '3/2', '3/3']]];
+const LOOKS = [['', 'Card', [[6, 8, 40, 38], [52, 14, 42, 26], [6, 58, 88, 12], [6, 78, 88, 12]]], ['small', 'Small card', [[6, 8, 30, 24], [42, 12, 52, 16], [6, 42, 88, 12], [6, 62, 88, 12], [6, 82, 88, 12]]],
+  ['list', 'List', [[6, 8, 88, 14], [6, 30, 88, 14], [6, 52, 88, 14], [6, 74, 88, 14]]], ['band', 'Band', [[4, 20, 14, 60], [22, 20, 16, 60], [41, 20, 16, 60], [60, 20, 16, 60], [79, 20, 16, 60]]]];
+const LOOK_HINT = { '': 'Card: its first reading large with a graph, the rest as rows.', small: 'Small card: a card with a smaller big reading.', list: 'List: every reading as a row, none large.',
+  band: 'Band: the name on the left and every reading side by side in one strip, each with a small graph. Best on a row of its own.' };
+const otherView = vn => vn === 'tiles' ? 'overview' : 'tiles';
+function outlineHtml(rows) {
+  return '<div class="outline">' + rows.map(r => '<div class="orow" style="grid-template-columns:' + r.cols.map(c => (c.w || 1) + 'fr').join(' ') + '">' +
+    r.cols.map(c => '<div class="ocol">' + c.stack.map(s => { const id = sid(s), cat = catById(id); return '<button class="obox' + (id === selCat ? ' on' : '') + '" data-ocat="' + esc(id) + '" title="' + esc(cat ? cat.name : '') + '">' + esc(cat ? cat.name : '') + '</button>'; }).join('') + '</div>').join('') + '</div>').join('') + '</div>';
+}
+function viewPanel() {
+  const vn = S.screen, v = stored(vn), own = !!(v && v.rows), cells = Object.values(S.L.cells);
+  const nb = (n, one, many) => '<b>' + n + '</b> ' + (n === 1 ? one : many);
+  if (!READ.length) return '<div class="none"><span>Nothing to pick from yet: HWiNFO isn\'t sharing its sensors. The steps are in the middle.</span></div>';
+  let h = '';
+  if (S.L.cats.length) {
+    h += segL('Arrangement', 'arr', [['auto', 'Automatic'], ['own', 'Your own']], own ? 'own' : 'auto') + '<span class="hint">' + (own
+      ? 'Your rows and columns. Drag a category by its handle onto the edge of another one; drag the line between two columns to change their widths.'
+      : 'HW Deck places the categories for you. Drop a category on the edge of another one, or pick a start below, to arrange them yourself.') + '</span>';
+    if (vn !== 'grid') {
+      const ov = otherView(vn), canCopy = !!(stored(ov) && stored(ov).rows);
+      h += '<div class="fgrp"><span class="lab">Start from</span><div class="tpls">' + TPLS.map(([k, t, gc, gr, areas]) => '<button class="tpl" data-tpl="' + k + '"' + (k === 'copy' && !canCopy ? ' disabled title="' + VNAME[ov] + ' is placed automatically: there is nothing to copy"' : '') + '>' +
+        '<span class="pic" style="grid-template-columns:' + gc + ';grid-template-rows:' + gr + '">' + areas.map(a => '<i style="grid-area:' + a + '"></i>').join('') + '</span>' + (k === 'copy' ? 'Copy from ' + VNAME[ov] : t) + '</button>').join('') + '</div>' +
+        '<span class="hint">Rest the pointer on one to see it with your categories, click to use it. Undo brings yours back.</span></div>';
+      h += '<div class="fgrp">' + (vn === 'tiles' ? segL('Height', 'fill', [['fit', 'All fit'], ['fill', 'Fill the window']], own && v.rows.some(r => r.h) ? 'fill' : 'fit') +
+        '<span class="hint">Fill the window: room left under the tiles makes them taller (bigger graphs), up to twice their size.</span>' : '') +
+        segL('Spacing', 'gap', [['tight', 'Tight'], ['', 'Normal'], ['roomy', 'Roomy']], v && v.gap || '') + '<span class="hint">The gaps between categories and between their ' + (vn === 'tiles' ? 'tiles' : 'rows') + '.</span></div>';
+    } else {
+      const n = own ? v.rows[0].cols.length : document.querySelectorAll('#view .gtable').length;
+      h += '<div class="fgrp">' + segL('Tables', 'tables', [[1, 'One'], [2, 'Two'], [3, 'Three']], n) + '</div>';
+    }
+    if (own) h += '<div class="fgrp"><span class="lab">Outline</span>' + outlineHtml(v.rows) + '<span class="hint">Click a box to select that category.</span></div>';
+  }
+  h += '<div class="fgrp"><div class="none"><span>Select a cell to set its name, decimals, lines and fan curve, or a category (click its name) to set where it goes and how it looks. Double-click a cell for its graphs (outside edit mode, one click).</span>' +
+    '<span>' + nb(S.L.cats.length, 'category', 'categories') + ', ' + nb(cells.length, 'cell', 'cells') + ', ' + nb(cells.filter(x => gatesOn(x.gates)).length, 'with lines', 'with lines') + ', ' + nb(cells.filter(x => x.curve).length, 'on a fan curve', 'on a fan curve') + '.</span>' +
+    '<span>Tip: pick a type in Storage (Temp, Fan...), then <b>+ all</b> on a sensor to add all of those readings as one category.</span>' +
+    (own ? '<span><button class="linkbtn" data-lay="auto">Back to automatic</button></span>' : '') + '</div></div>';
+  return h;
+}
+function catPanel(cat) {
+  const vn = S.screen, V = VNAME[vn], lk = catLook(cat.id), v = stored(vn), own = !!(v && v.rows), ids = cellsOf(cat);
+  const leadOpts = '<option value="">' + (ids.length ? 'The first one (' + esc(nameIn(ids[0])) + ')' : 'The first one') + '</option>' +
+    ids.slice(1).map(id => '<option value="' + esc(id) + '"' + (lk.lead === id ? ' selected' : '') + '>' + esc(nameIn(id)) + '</option>').join('');
+  let h = '<label class="fld"><span>Name</span><input id="lName" value="' + esc(cat.name) + '"></label><div class="fgrp"><span class="sub">In ' + V + '</span>';
+  if (vn !== 'grid') {
+    const rows = rowsNow(vn), p = posIn(rows, cat.id), alone = !p || p.row.cols.length < 2;
+    h += '<span class="row3">' + (own && p ? 'Row ' + (p.ri + 1) + ' of ' + rows.length + (alone ? ', alone in its row (full width)' : ', column ' + (p.ci + 1) + ' of ' + p.row.cols.length) + (p.col.stack.length > 1 ? ', stacked ' + (p.k + 1) + ' of ' + p.col.stack.length : '')
+      : 'Placed automatically. Changing where it goes or how wide it is gives ' + V + ' your own arrangement, starting from what you see.') + '</span>';
+    const mine = !alone && p.row.cols.every(c => c.w), b = mine ? p.row.cols.map(c => c.w) : [1], tw = alone ? '' : mine ? Math.round(b[p.ci] / b.reduce((x, y) => x + y, 0) * 1200) / 100 : 'auto';
+    h += segL('Width in row', 'width', [['auto', 'Auto', alone], [3, '1/4', alone], [4, '1/3', alone], [6, '1/2', alone], [8, '2/3', alone], [9, '3/4', alone]], tw);
+    h += '<span class="hint">' + (alone ? 'Alone in its row, so it takes the whole width. Put another category beside it to share the row.'
+      : tw === 'auto' ? 'Auto: the widths follow what each column holds, so the columns end about together.' : 'Yours. Auto (or a double-click on the line between columns) lets them follow the content again.') + '</span>';
+    if (vn === 'tiles') h += segL('Row height', 'rowh', [[0, 'Fit'], [1, 'Fill']], own && p && p.row.h ? 1 : 0) + '<span class="hint">Fill: when the view leaves room below, this row\'s tiles grow taller to use it.</span>';
+    const mo = moveOptions(cat.id), mb = [['row', 'Own row', 'R'], ['beside', 'Beside the row above', 'B'], ['stack', 'Stack under the left one', 'S'], ['unstack', 'Unstack', 'U']].filter(m => mo[m[0]]);
+    if (mb.length) h += '<div class="fld"><span>Move</span><div class="btnrow">' + mb.map(m => '<button class="btn" data-lay="move" data-v="' + m[0] + '">' + m[1] + '<span class="kb">' + m[2] + '</span></button>').join('') + '</div></div>';
+  } else {
+    const rows = rowsNow('grid'), p = posIn(rows, cat.id), n = rows.length ? rows[0].cols.length : 1;
+    h += segL('Table', 'table', [...Array(Math.min(3, n + 1))].map((_, i) => [i, i < n ? String(i + 1) : 'New table']), p ? p.ci : 0);
+  }
+  h += '</div>';
+  if (vn === 'tiles')
+    h += '<div class="fgrp"><span class="lab">Look in Tiles</span><div class="two"><label class="fld"><span>Tiles per row</span><select data-lay="per"><option value="">Auto</option>' +
+      [1, 2, 3, 4, 5, 6, 7, 8].map(n => '<option' + (lk.per === n ? ' selected' : '') + '>' + n + '</option>').join('') + '</select></label>' + segL('Tile style', 'size', [['', 'Normal'], ['short', 'Short']], lk.size || '') + '</div>' +
+      '<span class="hint">Short: no graph; the name over its 15 min max on the left, the value on the right. Wider tiles, so fewer to a row.</span><div class="two">' + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') +
+      '<label class="fld"><span>Shown first</span><select data-lay="lead">' + leadOpts + '</select></label></div></div>';
+  else if (vn === 'overview') {
+    const st = lk.style || '';
+    h += '<div class="fgrp"><span class="lab">Look in Overview</span><div class="looks" data-lay="style">' + LOOKS.map(([k, t, rects]) => '<button class="look' + (st === k ? ' on' : '') + '" data-v="' + k + '"><span class="pic">' +
+      rects.map(q => '<i style="left:' + q[0] + '%;top:' + q[1] + '%;width:' + q[2] + '%;height:' + q[3] + '%"></i>').join('') + '</span>' + t + '</button>').join('') + '</div><span class="hint">' + LOOK_HINT[st] + '</span>' +
+      '<div class="two">' + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') + '<label class="fld"><span>' + (st === '' || st === 'small' ? 'Big reading' : 'Shown first') + '</span><select data-lay="lead">' + leadOpts + '</select></label></div></div>';
+  } else h += '<div class="fgrp"><span class="lab">Look in Grid</span><label class="fld"><span>Listed first</span><select data-lay="lead">' + leadOpts + '</select></label></div>';
+  h += '<div class="fgrp"><div class="btnrow"><button class="btn" data-lay="reset"' + (Object.keys(lk).length ? '' : ' disabled') + '>Reset its look in ' + V + '</button><button class="btn warn" data-lay="remove">Remove category</button></div>' +
+    '<span class="hint">' + (vn === 'grid' ? 'Drag its handle onto the left or right edge of a table for a new table there, or over and under other categories.'
+      : 'Drag its handle onto another category: the left or right edge puts them side by side, the top or bottom stacks them, the middle swaps them, the gap between two rows gives it a row of its own.') + '</span></div>';
+  return h;
+}
+function cellLayHtml(cid, c) {
+  const vn = S.screen, V = VNAME[vn], cl = cellLook(cid), cat = catOf(cid), lk = cat ? catLook(cat.id) : {};
+  let h = '<div class="fgrp"><span class="sub">In ' + V + '</span>';
+  h += cl.name != null ? '<div class="fld"><span>Name in ' + V + '</span><div class="vname"><input id="lvName" value="' + esc(cl.name) + '" placeholder="' + esc(cellName(c)) + '"><button class="ib" data-lay="vname-x" title="The same name as in the other views">' + ICONS.x + '</button></div></div>'
+    : '<button class="linkbtn" data-lay="vname-on" style="align-self:flex-start">Different name in ' + V + '</button>';
+  if (vn === 'tiles') {
+    if (lk.size === 'short') h += '<span class="hint">Its category shows short tiles: they all have one size.</span>';
+    else h += segL('Size', 'csize', [['', 'Normal'], ['wide', 'Wide', lk.per === 1], ['tall', 'Tall'], ['big', 'Big', lk.per === 1]], cl.size || '') +
+      '<span class="hint">Or drag the corner of the tile.' + (lk.per === 1 ? ' Wide and Big need two or more tiles per row.' : '') + '</span>';
+  } else if (cat) {
+    const first = idsIn(cat)[0] === cid, big = vn === 'overview' && lk.style !== 'list' && lk.style !== 'band';
+    h += '<button class="btn" data-lay="lead-me" style="align-self:flex-start"' + (first ? ' disabled' : '') + '>' + (first ? (big ? 'This is the big reading' : 'It is shown first') : big ? 'Make it the big reading' : vn === 'grid' ? 'List it first' : 'Show it first') + '</button>';
+  }
+  return h + '</div>';
+}
+function removeCat(id) {
+  const c = catById(id); if (!c) return;
+  mutate(() => { for (const x of c.cells) delete S.L.cells[x]; S.L.cats = S.L.cats.filter(x => x !== c); fixSel(); }, 'Removed "' + c.name + '"');
+}
+function applyTemplate(k) {
+  preview = null;
+  const v = templateView(k); if (!v) return;
+  layoutChange(() => { const vv = vset(S.screen); if (!vv.rows) froze = true; vv.rows = v.rows; });
+}
+function layoutAct(key, v) {
+  const vn = S.screen, id = selCat;
+  if (key === 'arr' && v === 'own') layoutChange(() => ownRows());
+  else if ((key === 'arr' && v === 'auto') || key === 'auto') { if (stored(vn) && stored(vn).rows) mutate(() => { delete vset(vn).rows; }, VNAME[vn] + ' is placed automatically again'); }
+  else if (key === 'fill') layoutChange(() => { const rows = ownRows(); if (v === 'fill') autoHeights(vn, rows); else for (const r of rows) delete r.h; });
+  else if (key === 'gap') mutate(() => { if (v) vset(vn).gap = v; else delete vset(vn).gap; });
+  else if (key === 'tables' && !(stored('grid') && stored('grid').rows) && +v === document.querySelectorAll('#view .gtable').length) return;
+  else if (key === 'tables') layoutChange(() => { const g = vset('grid'); if (!g.rows) froze = true; g.rows = gridTables(+v); });
+  else if (key === 'width') setWidth(id, v === 'auto' ? 0 : +v);
+  else if (key === 'rowh') setRowHeight(id, +v);
+  else if (key === 'move') moveCat(id, v);
+  else if (key === 'table') layoutChange(() => {
+    const rows = ownRows(), p = posIn(rows, id), t = +v; if (!p || p.ci === t) return;
+    vset('grid').rows = placeCat(rows, id, t >= rows[0].cols.length ? { zone: 'right', table: rows[0].cols.length - 1 } : { zone: 'into', table: t });
+  });
+  else if (key === 'size' || key === 'title' || key === 'style') mutate(() => setLook('cat', id, key, v));
+  else if (key === 'reset') mutate(() => { const w = vset(vn); if (w.cat) delete w.cat[id]; });
+  else if (key === 'remove') removeCat(id);
+  else if (key === 'csize') mutate(() => setLook('cell', sel, 'size', v));
+  else if (key === 'vname-on') { mutate(() => setLook('cell', sel, 'name', cellName(S.L.cells[sel]))); const f = $('lvName'); if (f) { f.focus(); f.select(); } }
+  else if (key === 'vname-x') mutate(() => setLook('cell', sel, 'name', ''));
+  else if (key === 'lead-me') { const c = catOf(sel); if (c) mutate(() => setLook('cat', c.id, 'lead', cellsOf(c)[0] === sel ? '' : sel)); }
+}
+insp.addEventListener('click', e => {
+  if (!S.edit) return;
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
+  if (b.dataset.tpl) { applyTemplate(b.dataset.tpl); return; }
+  if (b.dataset.ocat) { selectCat(b.dataset.ocat); return; }
+  const grp = b.closest('[data-lay]'), key = b.dataset.lay || (grp && grp.dataset.lay);
+  if (key) layoutAct(key, b.dataset.v);
+});
+insp.addEventListener('change', e => {
+  if (!S.edit) return;
+  const t = e.target;
+  if (t.id === 'lName') {
+    const cat = selCat && catById(selCat), v = t.value.trim().slice(0, 200);
+    if (cat && v && v !== cat.name) mutate(() => { cat.name = v; }); else if (cat) t.value = cat.name;
+    return;
+  }
+  if (!selCat || !t.dataset || !t.dataset.lay) return;
+  if (t.dataset.lay === 'per') mutate(() => setLook('cat', selCat, 'per', t.value ? +t.value : ''));
+  if (t.dataset.lay === 'lead') mutate(() => setLook('cat', selCat, 'lead', t.value));
+});
+insp.addEventListener('input', e => {   // a name in this view, as it's typed (the cell's own input listener took the undo step)
+  const t = e.target; if (t.id !== 'lvName' || !sel || !S.L.cells[sel]) return;
+  setLook('cell', sel, 'name', t.value.trim() ? t.value.slice(0, 200) : '');
+  tidyViews(S.L); saveState(); syncSaves();
+  const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
+  if (el) el.textContent = nameIn(sel);
+});
+insp.addEventListener('keydown', e => { if (e.target.id === 'lName' && e.key === 'Escape') { const cat = catById(selCat); if (cat) e.target.value = cat.name; e.target.blur(); } });
+// a template shows itself while the pointer rests on it
+insp.addEventListener('mouseover', e => {
+  const b = e.target.closest('.tpl'); if (!b || b.disabled || (preview && preview.k === b.dataset.tpl)) return;
+  const v = templateView(b.dataset.tpl); if (!v) return;
+  preview = { vn: S.screen, view: v, k: b.dataset.tpl }; renderView(false);
+});
+insp.addEventListener('mouseout', e => {
+  const b = e.target.closest('.tpl'); if (!b || (e.relatedTarget && b.contains(e.relatedTarget))) return;
+  if (preview) { preview = null; renderView(false); }
+});
+
+// ---------- selecting: a cell, a category, or nothing (the view) ----------
+function selectCat(id) {
+  sel = null; selCat = id; DR.R.byPick = true; DR.R.pickT = Date.now();   // clicking it again brings its settings back
+  for (const el of document.querySelectorAll('#view .dc.sel')) el.classList.remove('sel');
+  for (const el of document.querySelectorAll('#view .dcat')) el.classList.toggle('csel', el.dataset.cat === id);
+  renderInsp();
+}
+function clearSel() {
+  sel = null; selCat = null;
+  for (const el of document.querySelectorAll('#view .dc.sel, #view .dcat.csel')) el.classList.remove('sel', 'csel');
+  renderInsp();
+}
+// repeated layout keys close together are one undo step
+let keyStep = { t: 0, n: -1 };
+function keyLayout(fn) {
+  const merge = Date.now() - keyStep.t < 800 && undoStack.length === keyStep.n && keyStep.n > 0, n0 = undoStack.length;
+  fn();
+  if (merge && undoStack.length === n0 + 1) undoStack.splice(n0, 1);
+  keyStep = { t: Date.now(), n: undoStack.length }; syncUndo();
+}
+function focusCat(id) { const h = document.querySelector('#view .dcat[data-cat="' + id + '"] .dch'); if (h) h.focus({ preventScroll: false }); }
+function swapCats(a, b) { dropCat({ target: { zone: 'swap', cat: b }, data: a, auto: !isCustom(S.screen), rows: rowsNow() }); }
+
 // ---------- the cell popup: 15 min live, 1 h to 7 days from the host, HWiNFO's own min / max / average ----------
 const modal = $('modal'), mrng = $('mrng'), mgraph = $('mgraph'), mgsec = $('mgraphsec');
 let openedAt = 0, modalCid = null, bigRange = '15m', bigHist = null, histAsked = 0, bigMap = null, bigRev0 = 0, lastBig = null, modalGateInView = false;
@@ -1522,7 +2636,7 @@ function refreshModal(full) {
   const mi = $('micon'), ic = iconOf(c, r);
   if (mi._h !== ic) { mi.innerHTML = ic; mi._h = ic; sweepSpins(); }
   if (isFanCell(c)) spinIcon(mi.querySelector('svg'), e.v);
-  setText($('mtitle'), cellName(c));
+  setText($('mtitle'), nameIn(modalCid));
   const mv = $('mval');
   mv.style.color = COLORS[e.col] || COLORS.white;
   if (!mv._n) { mv.innerHTML = '<span></span><span class="u"></span>'; mv._n = mv.firstChild; mv._u = mv.lastChild; }
@@ -1755,7 +2869,7 @@ function fillPrev() {
   const pi = hprev.querySelector('.pi'), ic = iconOf(c, r);
   if (pi._h !== ic) { pi.innerHTML = ic; pi._h = ic; sweepSpins(); }
   if (isFanCell(c)) spinIcon(pi.querySelector('svg'), e.v);
-  setText(hprev.querySelector('.pt'), cellName(c));
+  setText(hprev.querySelector('.pt'), nameIn(HP.cid));
   const pv = hprev.querySelector('.pv'), vh = e.txt != null ? esc(e.txt) + '<small>' + esc(e.utxt) + '</small>' : esc(fmtV(e.v, dec, r)) + '<small>' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small>';
   if (pv._h !== vh) { pv.innerHTML = vh; pv._h = vh; }
   pv.style.color = COLORS[e.col] || COLORS.white;
@@ -2146,6 +3260,8 @@ function showGame() {
 const setmodal = $('setmodal');
 function renderSettings() {
   $('setbody').innerHTML =
+    '<div class="setrow"><div>Title<small>Shown in the title bar. Empty: the name of this PC' + (feed.pc ? ' (' + esc(feed.pc) + ')' : '') + '.</small></div><input class="setin" id="sTitle" maxlength="60" spellcheck="false" placeholder="' + esc(feed.pc || 'HW Deck') + '" value="' + esc(S.title || '') + '"></div>' +
+    '<div class="setrow"><div>Clock<small>The time of the last reading, next to the title.</small></div><button class="tog2' + (S.clock ? ' on' : '') + '" id="sClock" aria-pressed="' + S.clock + '" title="Show the clock"></button></div>' +
     '<div class="setrow"><div>Start with Windows<small>Opens in the tray when you sign in.</small></div><button class="tog2' + (feed.autostart ? ' on' : '') + '" id="sAuto" aria-pressed="' + feed.autostart + '" title="Start with Windows"></button></div>' +
     '<div class="setrow"><div>Animations<small>' + ({ full: 'Rolling numbers, smoothly spinning fans, gliding graphs.', reduced: 'Lighter: quicker number rolls, fans turn in small steps, graphs move a few times a second.', minimal: 'Nothing keeps moving: numbers just change, fans stand still, graphs step. Popups and views still slide.', off: 'Nothing moves at all.' })[motionMode()] +
       (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' (Windows asks apps for less motion.)' : '') + '</small></div><span class="seg seg3" id="sMotion">' +
@@ -2156,7 +3272,8 @@ function renderSettings() {
     '<div class="setrow"><div>Your files<small class="k">' + esc(feed.dataDir) + '</small><small>Layouts, slots, the logs and 7 days of history.</small></div><button class="btn" id="sData">Open</button></div>' +
     '<div class="setrow" style="display:block"><div style="margin-bottom:8px">Keys</div><div class="keys2">' +
       [['E', 'edit layout on or off'], ['1 2 3', 'Tiles, Overview, Grid'], ['Enter', 'open (or select) the cell in focus'], ['Ctrl+S', 'save to the loaded slot'], ['Ctrl+Z, Ctrl+Shift+Z', 'undo, redo'],
-       ['Alt + arrows', 'move the selected cell'], ['Del', 'remove the selected cell'], ['Esc', 'close a popup']].map(k => '<span class="kbd">' + k[0] + '</span><span>' + k[1] + '</span>').join('') + '</div></div>' +
+       ['Alt + arrows', 'move the selected cell, or swap the selected category with its neighbour'], ['Shift + Alt + arrows', 'the selected category: wider, narrower, its row taller, shorter'],
+       ['R  B  S  U', 'the selected category: own row, beside the row above, stack under the left one, unstack'], ['Del', 'remove the selected cell or category'], ['Esc', 'close a popup, then select nothing']].map(k => '<span class="kbd">' + k[0] + '</span><span>' + k[1] + '</span>').join('') + '</div></div>' +
     '<div class="setrow"><div>HW Deck ' + esc(feed.version) + '<small>Reads HWiNFO\'s shared memory on this PC.</small></div></div>';
 }
 $('setBtn').onclick = () => { renderSettings(); setmodal.classList.add('open'); };
@@ -2165,12 +3282,32 @@ $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sAuto')) { feed.autostart = !feed.autostart; send({ t: 'autostart', on: feed.autostart }); renderSettings(); }
   const mb = e.target.closest('#sMotion button');
   if (mb && mb.dataset.m !== S.motion) { S.motion = mb.dataset.m; applyMotion(); saveState(); renderSettings(); renderView(false); }   // the one already on too: picked by hand, it stops following Windows
-  if (e.target.closest('#sRestart')) send({ t: 'restartHwinfo' });
+  if (e.target.closest('#sRestart')) restartHwinfo();
   if (e.target.closest('#sData')) send({ t: 'openData' });
   if (e.target.closest('#sUpd')) { feed.updates = !feed.updates; if (!feed.updates) feed.latest = null; send({ t: 'updates', on: feed.updates }); syncUpd(); renderSettings(); }
   if (e.target.closest('#sGet')) send({ t: 'openRelease' });
+  if (e.target.closest('#sClock')) { S.clock = !S.clock; renderTitle(); saveState(); renderSettings(); }
 });
-$('bannerBtn').onclick = () => send({ t: 'restartHwinfo' });
+$('setbody').addEventListener('input', e => {
+  if (e.target.id !== 'sTitle') return;
+  S.title = e.target.value.trim() ? e.target.value.slice(0, 60) : undefined; renderTitle(); saveState();
+});
+$('bannerBtn').onclick = () => restartHwinfo();
+// Restart HWiNFO (the button by the views, the banner, the setup screen, Settings): the host restarts it as admin after
+// checking it is signed by its maker; the button turns until the host says how it went (the result is a toast)
+let restartT = 0;
+function restartHwinfo() {
+  const b = $('rstBtn');
+  if (feed.fake || b.classList.contains('spin')) { if (feed.fake) toast('Demo data: there is no HWiNFO to restart'); return; }
+  send({ t: 'restartHwinfo' });
+  b.classList.add('spin'); b.disabled = true; b.title = 'Restarting HWiNFO...';
+  clearTimeout(restartT); restartT = setTimeout(restartDone, 70000);   // the host gives up after a minute
+}
+function restartDone() {
+  clearTimeout(restartT);
+  const b = $('rstBtn'); b.classList.remove('spin'); b.disabled = feed.fake; b.title = 'Restart HWiNFO (turns its shared memory back on)';
+}
+$('rstBtn').onclick = restartHwinfo;
 
 // ---------- toast ----------
 let toastT = 0, toastDepth = -1;
@@ -2187,6 +3324,7 @@ function retireToastUndo() { $('toastUndo').hidden = true; toastDepth = -1; }
 // ---------- keys ----------
 document.addEventListener('keydown', ev => {
   if (drag && drag.started) { if (ev.key === 'Escape') endDrag(true); ev.preventDefault(); return; }   // nothing else mid-drag
+  if (rs) { if (ev.key === 'Escape') endHandle(true); ev.preventDefault(); return; }
   // fields that take typing (a checkbox doesn't; a select takes letters and digits for its options)
   const typing = ev.target.closest && ev.target.closest('textarea, select, input:not([type=checkbox]):not([type=radio])');
   const ctrl = ev.ctrlKey || ev.metaKey, k = (ev.key || '').toLowerCase();
@@ -2198,6 +3336,10 @@ document.addEventListener('keydown', ev => {
     if (modalCid) { closeDetail(); return; }
     for (const id of ['wmodal', 'gmodal', 'smodal', 'setmodal']) if ($(id).classList.contains('open')) { $(id).classList.remove('open'); return; }
     if (relinkFor) { endRelink(); renderView(false); }
+    else if (S.edit && !typing) {   // Esc: nothing selected, and the drawers that aren't pinned tuck away (even under the pointer)
+      for (const d of [DR.L, DR.R]) { clearTimeout(d.t); d.hover = false; d.byPick = false; }
+      if (sel || selCat) clearSel(); else syncDrawers();
+    }
     return;
   }
   if (typing) return;
@@ -2205,19 +3347,41 @@ document.addEventListener('keydown', ev => {
   if (anyModalOpen() || ctrl) return;
   const dc = ev.target.matches && ev.target.matches('#view .dc') ? ev.target : null;
   if (dc && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); if (S.edit) selectCell(dc.dataset.cid); else openDetail(dc.dataset.cid); return; }
+  const dh = S.edit && ev.target.matches && ev.target.matches('#view .dch') ? ev.target : null;
+  if (dh && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); selectCat(dh.closest('.dcat').dataset.cat); return; }
   if (ev.key === 'e' || ev.key === 'E') { setEdit(!S.edit); return; }
-  if (!ev.altKey && ['1', '2', '3'].includes(ev.key)) { const s = ['tiles', 'overview', 'grid'][+ev.key - 1]; if (s !== S.screen) showScreen(s); return; }
+  if (!ev.altKey && ['1', '2', '3'].includes(ev.key)) { requestScreen(['tiles', 'overview', 'grid'][+ev.key - 1]); return; }
+  if (S.edit && selCat && !sel && preview) { preview = null; renderView(false); }   // keys act on yours, not on a template being previewed
+  if (S.edit && selCat && !sel) {   // a selected category: arrows with Alt move it, with Shift+Alt size it, R B S U place it
+    const id = selCat, k = ev.key, dx = k === 'ArrowLeft' ? -1 : k === 'ArrowRight' ? 1 : 0, dy = k === 'ArrowUp' ? -1 : k === 'ArrowDown' ? 1 : 0;
+    if (k === 'Delete' || k === 'Backspace') { ev.preventDefault(); removeCat(id); return; }
+    if (k === 'F2') { ev.preventDefault(); renameCat(document.querySelector('#view .dcat[data-cat="' + id + '"]')); return; }
+    if ((dx || dy) && ev.altKey && ev.shiftKey && S.screen !== 'grid') {
+      ev.preventDefault();
+      keyLayout(() => {
+        if (dx) nudgeWidth(id, dx);
+        else if (S.screen === 'tiles') setRowHeight(id, dy > 0 ? 1 : 0);
+      });
+      focusCat(id); return;
+    }
+    if ((dx || dy) && ev.altKey) { ev.preventDefault(); const o = nearestCat(id, dx, dy); if (o) keyLayout(() => swapCats(id, o)); focusCat(id); return; }
+    const how = !ev.altKey && S.screen !== 'grid' ? { r: 'row', b: 'beside', s: 'stack', u: 'unstack' }[k.toLowerCase()] : null;
+    if (how) { ev.preventDefault(); moveCat(id, how); focusCat(id); return; }
+    return;
+  }
   if (!S.edit || !sel) return;
   if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); removeCell(sel); return; }
   if (ev.altKey && ev.key.startsWith('Arrow')) {
     ev.preventDefault();
-    const cat = catOf(sel), ci = S.L.cats.indexOf(cat), i = cat.cells.indexOf(sel), id = sel;
+    const cat = catOf(sel), ci = S.L.cats.indexOf(cat), id = sel, lead = catLook(cat.id).lead;
     const back = ev.key === 'ArrowLeft' || (S.screen !== 'tiles' && ev.key === 'ArrowUp'), fwd = ev.key === 'ArrowRight' || (S.screen !== 'tiles' && ev.key === 'ArrowDown');
+    // within the category it moves among the others as drawn; the lead (drawn first) keeps its place
+    const leadAt = lead && lead !== id ? cat.cells.indexOf(lead) : -1, rest = cat.cells.filter(x => x !== lead || x === id), i = rest.indexOf(id);
     mutate(() => {
-      if (back && i > 0) { cat.cells.splice(i, 1); cat.cells.splice(i - 1, 0, id); }
-      else if (fwd && i < cat.cells.length - 1) { cat.cells.splice(i, 1); cat.cells.splice(i + 1, 0, id); }
-      else if ((ev.key === 'ArrowUp' || back) && ci > 0) { cat.cells.splice(i, 1); S.L.cats[ci - 1].cells.push(id); S.L.cats[ci - 1].collapsed = false; }
-      else if ((ev.key === 'ArrowDown' || fwd) && ci < S.L.cats.length - 1) { cat.cells.splice(i, 1); S.L.cats[ci + 1].cells.unshift(id); S.L.cats[ci + 1].collapsed = false; }
+      if (id !== lead && back && i > 0) { rest.splice(i, 1); rest.splice(i - 1, 0, id); if (leadAt >= 0) rest.splice(leadAt, 0, lead); cat.cells = rest; }
+      else if (id !== lead && fwd && i < rest.length - 1) { rest.splice(i, 1); rest.splice(i + 1, 0, id); if (leadAt >= 0) rest.splice(leadAt, 0, lead); cat.cells = rest; }
+      else if ((ev.key === 'ArrowUp' || back) && ci > 0) { cat.cells.splice(cat.cells.indexOf(id), 1); S.L.cats[ci - 1].cells.push(id); S.L.cats[ci - 1].collapsed = false; }
+      else if ((ev.key === 'ArrowDown' || fwd) && ci < S.L.cats.length - 1) { cat.cells.splice(cat.cells.indexOf(id), 1); S.L.cats[ci + 1].cells.unshift(id); S.L.cats[ci + 1].collapsed = false; }
     });
     const el = document.querySelector('#view .dc[data-cid="' + id + '"]'); if (el) el.focus();
   }
@@ -2269,14 +3433,17 @@ function showFeed() {
 }
 function onHost(m) {
   if (m.t === 'state') {
-    feed.fake = !!m.fake; feed.dataDir = m.dataDir || ''; feed.version = m.version || ''; feed.nonClient = m.nonClient !== false;
+    feed.fake = !!m.fake; feed.dataDir = m.dataDir || ''; feed.version = m.version || ''; feed.nonClient = m.nonClient !== false; feed.pc = typeof m.pc === 'string' ? m.pc : '';
     S.slots = (m.slots || []).slice(0, 5).map(cleanSlot);
     while (S.slots.length < 5) S.slots.push(null);
     const st = m.state;
     if (st && st.L && Array.isArray(st.L.cats)) { S.L = cleanLayout(st.L); S.active = Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && S.slots[st.active] ? st.active : null; S.edit = st.edit !== false; S.screen = ['tiles', 'overview', 'grid'].includes(st.screen) ? st.screen : 'tiles'; S.motion = st.motion === false ? 'off' : MOTIONS.includes(st.motion) ? st.motion : undefined; }
     else { S.L = emptyLayout(); S.active = null; S.edit = true; S.screen = 'tiles'; }   // first run: nothing, edit mode on
     applyMotion();
-    undoStack = []; redoStack = []; sel = null;
+    if (st && Array.isArray(st.pins)) { DR.L.pinned = st.pins[0] === true; DR.R.pinned = st.pins[1] === true; }
+    S.title = st && typeof st.title === 'string' && st.title.trim() ? st.title.slice(0, 60) : undefined; S.clock = !st || st.clock !== false;
+    renderTitle(); $('rstBtn').disabled = feed.fake; if (feed.fake) $('rstBtn').title = 'Demo data: there is no HWiNFO to restart';
+    undoStack = []; redoStack = []; sel = null; selCat = null; preview = null;
     app.classList.toggle('editing', S.edit); $('editBtn').classList.toggle('on', S.edit);
     for (const b of document.querySelectorAll('#screens button[data-s]')) b.classList.toggle('active', b.dataset.s === S.screen);
     placeTabInd(true);
@@ -2291,7 +3458,7 @@ function onHost(m) {
     lastSub = ''; subscribe();
     // the same readings with new names (a rename in HWiNFO): no rebuild under someone typing in a field
     const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp input, #insp select, #insp textarea, .cn-in');
-    if (sameKeys && typing) { for (const [cid, r] of E) { const c = S.L.cells[cid], n = r.root.querySelector('.tn > span, .nm > span, .gname > span'); if (c && n) setText(n, cellName(c)); } renderStorage(); }
+    if (sameKeys && typing) { for (const [cid, r] of E) { const c = S.L.cells[cid], n = r.root.querySelector('.tn > span, .nm > span, .gname > span'); if (c && n) setText(n, nameIn(cid)); } renderStorage(); }
     else { renderView(false); renderStorage(); renderInsp(); }
     showFeed();
   } else if (m.t === 'spark') {
@@ -2308,6 +3475,7 @@ function onHost(m) {
     feed.status = m.status; feed.age = m.age; feed.got = true; feed.game = m.game; feed.front = m.front; feed.gameSince = m.gameSince; feed.pm = !!m.pm;
     if (lastTick && m.ts - lastTick > 2) for (const k in holdSince) delete holdSince[k];   // seconds we didn't see (hidden): holds start again
     nowTs = lastTick = m.ts;
+    if (S.clock) setText($('clock'), hhmmss(m.ts));
     for (let j = 0; j < m.i.length; j++) { const r = READ[m.i[j]]; if (!r) continue; r.v = m.v[j]; if (m.mn[j] != null) { r.mn = m.mn[j]; r.mx = m.mx[j]; r.av = m.av[j]; } }
     const live = m.status === 'ok';
     for (const k of cellKeys()) { const r = BYKEY.get(k); ringPut(k, m.ts, live && r ? r.v : null); }
@@ -2322,6 +3490,7 @@ function onHost(m) {
   } else if (m.t === 'alerts') renderWarnings(m.log);
   else if (m.t === 'games') renderGames(m.log);
   else if (m.t === 'toast') toast(m.text, false, m.ms);
+  else if (m.t === 'restarted') restartDone();
   else if (m.t === 'imported') {
     const d = cleanSlot(m.data), i = m.slot;
     if (!d || !(i >= 0 && i < 5)) { toast('That file is not an HW Deck layout'); return; }
