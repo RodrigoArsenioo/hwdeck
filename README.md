@@ -7,8 +7,8 @@ A small dashboard for HWiNFO. Pick the sensors you care about, give them warning
 ## Setup
 
 1. Install [HWiNFO](https://www.hwinfo.com) and turn on Shared Memory Support in its settings.
-2. Download the zip from [Releases](https://github.com/RodrigoArsenioo/hwdeck/releases/latest) and unzip it anywhere.
-3. Run `HWDeck.exe`. The first time, Windows warns you because the app isn't signed: click More info, then Run anyway.
+2. Download `HWDeck-x.y.z.msi` from [Releases](https://github.com/RodrigoArsenioo/hwdeck/releases/latest) and run it. Or take the zip, unzip it anywhere and run `HWDeck.exe`.
+3. The first time, Windows warns you because it isn't signed: click More info, then Run anyway.
 
 Works on 64-bit Windows 10 and 11.
 
@@ -20,6 +20,7 @@ Works on 64-bit Windows 10 and 11.
 - Tiles, Overview and Grid are three ways to look at the same cells (keys 1, 2, 3).
 - Closing the window keeps it in the tray, still watching. Right-click the tray icon to quit.
 - The clock icon lists past warnings, the gamepad icon your game sessions.
+- Bottleneck (under HW Deck in the list) says what limits your fps while a game runs: the GPU, the CPU, or an fps cap.
 
 The free HWiNFO stops sharing after 12 hours. HW Deck then shows a button to restart it.
 
@@ -30,7 +31,9 @@ The free HWiNFO stops sharing after 12 hours. HW Deck then shows a button to res
 
 ## Good to know
 
-- Nothing leaves your PC. No account, no tracking.
+- No account, no tracking. The only thing it does online is ask GitHub once a day if there's a new version (you can turn that off in Settings).
+- To update, run the new installer (or unzip the new zip over the old folder). Your layouts and history stay.
+- To remove it: Windows Settings, Apps, HW Deck, Uninstall (for the zip, delete the folder). Your layouts and history stay.
 - Your layouts and history are in `%APPDATA%\HW Deck`.
 - Not made by or affiliated with HWiNFO.
 

@@ -5,7 +5,7 @@ const p = await connect(Number(process.argv[2] || 9231));
 const { ok, done } = checks();
 const E = x => p.evaluate(x);
 const until = async (expr, ms = 10000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await E(expr)) return true; await p.sleep(200); } return false; };
-ok('3,000 readings arrive', await until('READ.length === 3000'), await E('READ.length'));
+ok('3,000 readings arrive', await until('READ.length === 3001'), await E('READ.length'));   // and HW Deck's own bottleneck
 ok('Storage keeps about 30 rows in the page', await E('document.querySelectorAll("#vspace .vrow").length < 50'), await E('document.querySelectorAll("#vspace .vrow").length'));
 const ms = await E(`(() => { const t = performance.now(); for (let i = 0; i < 20; i++) { query = 'temperature ' + (i % 9); computeRows(); } query = ''; computeRows(); return (performance.now() - t) / 21; })()`);
 ok('a Storage search over 3,000 readings takes under 5 ms', ms < 5, ms.toFixed(2) + ' ms');

@@ -1,0 +1,100 @@
+<!-- HW Deck's installer (WiX 5). Built by scripts\pack.ps1 from the same files as the zip:
+     dotnet wix build installer\HWDeck.wxs -d Version=x.y.z -d Stage=<folder with the zip's files> -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -arch x64 -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="HW Deck" Manufacturer="Rodrigo Arsenio" Version="$(Version)" UpgradeCode="95A708FA-F654-440F-ABB7-4D6BDE2E37C0" Scope="perMachine" Language="1033">
+    <SummaryInformation Description="HW Deck, a small dashboard for HWiNFO" />
+    <!-- a newer version replaces the old one in place; an older one refuses -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of HW Deck is already installed." Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="app.ico" SourceFile="$(Stage)\app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="app.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/RodrigoArsenioo/hwdeck" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/RodrigoArsenioo/hwdeck" />
+
+    <!-- the choices: Start with Windows on, a desktop shortcut off; an update keeps what the last install had -->
+    <Property Id="AUTOSTART" Value="1" />
+    <Property Id="RUNPREV"><RegistrySearch Id="RunPrev" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="HW Deck" Type="raw" /></Property>
+    <Property Id="DESKTOPPREV"><RegistrySearch Id="DesktopPrev" Root="HKLM" Key="Software\HW Deck" Name="DesktopShortcut" Type="raw" Bitness="always64" /></Property>
+    <Property Id="INSTALLFOLDER"><RegistrySearch Id="FolderPrev" Root="HKLM" Key="Software\HW Deck" Name="InstallFolder" Type="raw" Bitness="always64" /></Property>
+    <SetProperty Id="AUTOSTART" Value="{}" After="AppSearch" Sequence="both" Condition="WIX_UPGRADE_DETECTED AND NOT RUNPREV" />
+    <SetProperty Id="DESKTOPSHORTCUT" Value="1" After="AppSearch" Sequence="both" Condition="WIX_UPGRADE_DETECTED AND DESKTOPPREV" />
+    <SetProperty Id="CACHEFOLDER" Value="[LocalAppDataFolder]HW Deck" Before="CostInitialize" Sequence="execute" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="HW Deck" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="Main" Title="HW Deck" AllowAbsent="no">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="Folder" />
+      <ComponentRef Id="StartMenu" />
+      <ComponentRef Id="Desktop" />
+      <ComponentRef Id="Autostart" />
+      <ComponentRef Id="Cache" />
+    </Feature>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(Stage)\**" />
+    </ComponentGroup>
+    <Component Id="Folder" Directory="INSTALLFOLDER">
+      <RegistryValue Root="HKLM" Key="Software\HW Deck" Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+    </Component>
+    <Component Id="StartMenu" Directory="ProgramMenuFolder">
+      <Shortcut Id="StartMenuShortcut" Name="HW Deck" Target="[INSTALLFOLDER]HWDeck.exe" WorkingDirectory="INSTALLFOLDER" Icon="app.ico" />
+      <RegistryValue Root="HKLM" Key="Software\HW Deck" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+    <Component Id="Desktop" Directory="DesktopFolder" Condition="DESKTOPSHORTCUT = 1">
+      <Shortcut Id="DesktopShortcut" Name="HW Deck" Target="[INSTALLFOLDER]HWDeck.exe" WorkingDirectory="INSTALLFOLDER" Icon="app.ico" />
+      <RegistryValue Root="HKLM" Key="Software\HW Deck" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+    <!-- the same entry HW Deck's own Settings switch writes, so the switch shows it and can turn it off -->
+    <Component Id="Autostart" Directory="INSTALLFOLDER" Condition="AUTOSTART = 1">
+      <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="HW Deck" Type="string" Value="&quot;[INSTALLFOLDER]HWDeck.exe&quot; -min" KeyPath="yes" />
+    </Component>
+    <!-- the browser cache in %LOCALAPPDATA%\HW Deck goes with the app; the layouts and history in %APPDATA% stay -->
+    <Component Id="Cache" Directory="INSTALLFOLDER">
+      <RegistryValue Root="HKLM" Key="Software\HW Deck" Name="Cache" Type="integer" Value="1" KeyPath="yes" />
+      <util:RemoveFolderEx On="uninstall" Property="CACHEFOLDER" />
+    </Component>
+
+    <!-- the screens: welcome, folder, options, ready, progress, done. No license step (MIT); an update skips the folder -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUIBannerBmp" Value="installer\banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="installer\dialog.bmp" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open HW Deck now" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <CustomAction Id="LaunchHWDeck" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixShellExec" Impersonate="yes" />
+
+    <UI>
+      <Dialog Id="OptionsDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="290" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Shortcuts" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Where you want to find HW Deck." />
+        <Control Id="StartMenuNote" Type="Text" X="20" Y="60" Width="330" Height="15" NoPrefix="yes" Text="A Start menu shortcut is always added." />
+        <Control Id="DesktopBox" Type="CheckBox" X="20" Y="82" Width="330" Height="17" Property="DESKTOPSHORTCUT" CheckBoxValue="1" Text="Desktop shortcut" />
+        <Control Id="AutostartBox" Type="CheckBox" X="20" Y="104" Width="330" Height="17" Property="AUTOSTART" CheckBoxValue="1" Text="Start HW Deck with Windows (in the tray)" />
+        <Control Id="Note" Type="Text" X="20" Y="132" Width="330" Height="30" NoPrefix="yes" Text="You can change Start with Windows later in HW Deck's Settings. Your layouts and history stay in %APPDATA%\HW Deck." />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="OptionsDlg" Order="3" Condition="NOT Installed AND WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="OptionsDlg" Order="5" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+      <Publish Dialog="OptionsDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" Condition="NOT WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="OptionsDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Condition="WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="OptionsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="OptionsDlg" Order="3" Condition="NOT Installed" />
+      <Publish Dialog="ExitDialog" Control="Finish" Property="WixShellExecTarget" Value="[INSTALLFOLDER]HWDeck.exe" Order="997" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchHWDeck" Order="998" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+  </Package>
+</Wix>

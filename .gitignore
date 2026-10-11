@@ -9,3 +9,6 @@
 # test runs
 /test/out/
 /test/data*/
+
+# WiX extensions (scripts\pack.ps1 adds them)
+/.wix/

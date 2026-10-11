@@ -1,4 +1,4 @@
-# Push a tag like v1.0.1: this builds the zip and publishes it as a release.
+# Push a tag like v1.1.1: this builds the zip and the installer and publishes them as a release.
 name: release
 
 on:
@@ -24,7 +24,9 @@ jobs:
 
       - uses: actions/attest-build-provenance@v4
         with:
-          subject-path: dist/HWDeck-*.zip
+          subject-path: |
+            dist/HWDeck-*.zip
+            dist/HWDeck-*.msi
 
       - name: Publish
         shell: powershell
@@ -33,7 +35,7 @@ jobs:
         run: |
           $v = $env:GITHUB_REF_NAME.TrimStart('v')
           $notes = ((Get-Content CHANGELOG.md -Raw) -split '(?m)^## ')[1] -replace '^.*\n', ''
-          $notes = $notes.Trim() + "`n`nUnzip it and run HWDeck.exe. Windows warns the first time because the app isn't signed: More info, then Run anyway.`n"
+          $notes = $notes.Trim() + "`n`nRun HWDeck-$v.msi to install it, or unzip the zip anywhere and run HWDeck.exe. Windows warns the first time because they aren't signed: More info, then Run anyway.`n"
           [IO.File]::WriteAllText("$PWD\dist\notes.md", $notes)
-          gh release create $env:GITHUB_REF_NAME "dist\HWDeck-$v.zip" dist\SHA256SUMS.txt --title "HW Deck $v" --notes-file dist\notes.md
+          gh release create $env:GITHUB_REF_NAME "dist\HWDeck-$v.msi" "dist\HWDeck-$v.zip" dist\SHA256SUMS.txt --title "HW Deck $v" --notes-file dist\notes.md
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

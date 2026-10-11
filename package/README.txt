@@ -11,6 +11,8 @@ Setup
 Good to know
 - Closing the window keeps it in the tray. Right-click the tray icon to quit.
 - The free HWiNFO stops sharing after 12 hours. HW Deck then offers to restart it.
+- It asks GitHub once a day if there's a new version (Settings can turn that off). Nothing else goes online.
+- To update: quit it from the tray, unzip the new version over this folder.
 - Your data is in %APPDATA%\HW Deck. To remove the app, turn off Start with Windows in its settings, quit it, then delete this folder and that one.
 
 Updates: https://github.com/RodrigoArsenioo/hwdeck

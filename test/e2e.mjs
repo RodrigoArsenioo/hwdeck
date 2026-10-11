@@ -17,7 +17,7 @@ const until = async (expr, ms = 8000) => { const t0 = Date.now(); while (Date.no
 const click = async sel => { const c = await p.center(sel); if (!c) throw new Error('nothing at ' + sel); await p.click(c.x, c.y); await p.sleep(220); };
 
 // ---- first run ----
-ok('catalog arrives', await until('READ.length === 300 && feed.got'), await E('READ.length'));
+ok('catalog arrives', await until('READ.length === 301 && feed.got'), await E('READ.length'));   // 300 made up and HW Deck's own bottleneck
 ok('first run is empty, edit mode on', await E('S.L.cats.length === 0 && S.edit && !!document.querySelector("#view.empty")'));
 ok('5 empty slots', await E('S.slots.every(s => !s)'));
 ok('the status is only a dot (its tooltip says demo data)', (await E('$("dot").title')).includes('Demo data') && !(await E('!!document.getElementById("stat")')), await E('$("dot").title'));
@@ -82,7 +82,7 @@ ok('Alt+Right moves the selected cell one place', await E(`S.L.cats.find(c => c.
 // ---- gates, and the warning log they write ----
 await E(`selectCell("${k1}")`); await p.sleep(150);
 await click('#iMode button[data-v="yr"]');
-ok('Yellow + red shows both fields', await E('!!$("iY") && !!$("iR")'));
+ok('Yellow + Red shows both fields', await E('!!$("iY") && !!$("iR")'));
 const v = await E(`BYKEY.get(S.L.cells["${k1}"].key).v`);
 const setv = (id, x) => E(`(() => { const e = $('${id}'); e.value = ${x}; e.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 await setv('iY', Math.floor(v) + 50); await setv('iR', Math.floor(v) + 40);

@@ -26,6 +26,7 @@ const ICONS = {
   chev: '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
   check: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
   more: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>',
+  neck: '<svg viewBox="0 0 24 24"><path d="M5 6h14l-5 6v6l-4 2v-8z"/></svg>',
   pad: '<svg viewBox="0 0 64 64"><rect x="8" y="12" width="20" height="16" rx="3"/><rect x="36" y="12" width="20" height="16" rx="3"/><rect x="8" y="36" width="20" height="16" rx="3"/><rect x="36" y="36" width="20" height="16" rx="3" stroke-dasharray="3 3"/></svg>'
 };
 const COLORS = { white: '#e8e8e8', yellow: '#e6c84a', red: '#e5484d', grey: '#555555' };
@@ -34,7 +35,7 @@ const COLORS = { white: '#e8e8e8', yellow: '#e6c84a', red: '#e5484d', grey: '#55
 const TYPES = ['none', 'temp', 'volt', 'fan', 'current', 'power', 'clock', 'usage', 'other'];
 const TYPE_NAME = { temp: 'Temp', volt: 'Volt', fan: 'Fan', power: 'Power', current: 'Current', clock: 'Clock', usage: 'Usage', other: 'Other' };
 let SENS = [], READ = [], BYKEY = new Map(), BYMATCH = new Map();
-const feed = { status: 'missing', age: 0, fake: false, dataDir: '', version: '', got: false, game: null, front: false, gameSince: 0, hwinfo: null, autostart: false, pm: false, nonClient: true };
+const feed = { bnIn: [null, null, 0], status: 'missing', age: 0, fake: false, dataDir: '', version: '', got: false, game: null, front: false, gameSince: 0, hwinfo: null, autostart: false, updates: true, latest: null, pm: false, nonClient: true };
 
 function shortName(n) {
   // "S.M.A.R.T.: SAMSUNG SSD 990 PRO 2TB (0123456789ABCDEF) [C:]" is "SAMSUNG SSD 990 PRO 2TB", "CPU [#0]: AMD Ryzen 7 9800X3D: Enhanced" is "CPU"
@@ -73,6 +74,7 @@ function setCatalog(m) {
     return r;
   });
   BYKEY = new Map(READ.map(r => [r.key, r]));
+  nOwn = READ.filter(isOwn).length;
   BYMATCH = new Map();
   for (const r of READ) { const k = matchOf(r); BYMATCH.set(k, BYMATCH.has(k) ? null : r); }   // null: more than one
   BYMATCH2 = new Map();
@@ -94,12 +96,48 @@ function relinkByName() {
   if (n) saveState();
   return n;
 }
+// HW Deck's own readings come after HWiNFO's, under its own sensor; the dot counts only HWiNFO's
+const isOwn = r => !!r && /^hwdeck\./.test(r.key);
+let nOwn = 0;
+const hwCount = () => READ.length - nOwn;
+// the bottleneck, one of them: what limits the fps while a game runs, as 1 gpu, 2 cpu, 3 capped (none: no game)
+const BNECK = 'hwdeck.0/bneck';
+const isBneck = c => !!c && !c.pred && c.key === BNECK;
+const BN = { 1: ['GPU', 'bound', 'b-gpu', 'gpu'], 2: ['CPU', 'bound', 'b-cpu', 'cpu'], 3: ['FPS', 'capped', 'b-cap', 'capped'] };
+// the last 15 min of calls: runs of one call as strip segments [from, to, shade] on 0..900, and each call's share
+function bnStrip() {
+  const s = series(BNECK, HLEN).map(x => BN[x] ? x : 0), segs = [], n = [0, 0, 0, 0];
+  for (let a = 0, i = 1; i <= HLEN; i++) if (i === HLEN || s[i] !== s[a]) { if (s[a]) { segs.push([a, i, BN[s[a]][2]]); n[s[a]] += i - a; } a = i; }
+  const tot = n[1] + n[2] + n[3];
+  return { segs, tot, split: tot ? [1, 2, 3].map(k => [BN[k][3], Math.round(n[k] * 100 / tot), BN[k][2]]) : [] };
+}
+const bnSplit = b => b.split.map(q => q[0] + ' ' + q[1] + '%').join(', ');
+// what the cell shows: the most common call of the last 5 s, so one odd second can't flip it
+function bnNow() {
+  const n = [0, 0, 0, 0];
+  for (const x of series(BNECK, 5)) if (BN[x]) n[x]++;
+  return n[1] + n[2] + n[3] === 0 ? 0 : n[1] >= n[2] && n[1] >= n[3] ? 1 : n[2] >= n[3] ? 2 : 3;
+}
+// what the host goes by: [GPU usage key, Max CPU/Thread Usage key, how many per-thread usages]
+const bnInputs = () => !!feed.bnIn[0] && (!!feed.bnIn[1] || feed.bnIn[2] > 0);
+function bnFrom() {
+  const nm = k => { const r = BYKEY.get(k); return r ? esc(r.label) + ' (' + esc(SENS[r.s].short) + ')' : ''; };
+  if (!bnInputs()) return 'HWiNFO shares no GPU core load or CPU thread usage on this PC, so there is nothing to go by.';
+  return 'It goes by ' + nm(feed.bnIn[0]) + ' and ' + (feed.bnIn[1] ? nm(feed.bnIn[1]) : 'the busiest of ' + feed.bnIn[2] + ' CPU thread usages') + '.';
+}
+const bnLegend = b => b.split.map(q => '<span><i class="lg ' + q[2] + '"></i><em>' + q[0] + '</em>' + q[1] + '%</span>').join('');
+function renderStrip(track, segs, span) {
+  let h = '';
+  for (const g of segs) h += '<span class="' + g[2] + '" style="left:' + (g[0] / span * 100) + '%;width:' + Math.max(0.3, (g[1] - g[0]) / span * 100) + '%"></span>';
+  if (track._h !== h) { track.innerHTML = h; track._h = h; }
+}
 const isFanR = r => !!r && (r.t === 'fan' || r.unit === 'RPM');
 const isF = u => /\u00b0F/.test(u || '');   // HWiNFO can show temperatures in Fahrenheit
 const tempUnit = r => r && isF(r.unit) ? '\u00b0F' : '\u00b0C';
 const cToU = (c, r) => r && isF(r.unit) ? Math.round(c * 9 / 5 + 32) : c;
 function iconOf(c, r) {
   if (c && c.pred) return ICONS.fan;
+  if (isBneck(c) || (r && r.key === BNECK)) return ICONS.neck;
   if (!r) return ICONS.mem;
   if (isFanR(r)) return ICONS.fan;
   if (r.unit === 'FPS' || /^Frame/.test(r.label)) return ICONS.game;
@@ -154,7 +192,7 @@ const isYN = r => !!r && r.unit === 'Yes/No';
 // a value as the cell shows it: Yes/No readings in words, the rest with their decimals
 const fmtV = (v, dec, r) => isYN(r) ? (v == null || !isFinite(v) ? '--' : v >= 0.5 ? 'Yes' : 'No') : fmt(v, dec);
 const unitOf = r => !r || r.unit === 'Yes/No' ? '' : r.unit;
-function valTxt(r) { if (!r || r.v == null) return '--'; return isYN(r) ? fmtV(r.v, 0, r) : fmt(r.v, decFor(r)) + (r.unit ? ' ' + r.unit : ''); }
+function valTxt(r) { if (!r || r.v == null) return '--'; if (r.key === BNECK) return BN[r.v] ? BN[r.v][0] + ' ' + BN[r.v][1] : '--'; return isYN(r) ? fmtV(r.v, 0, r) : fmt(r.v, decFor(r)) + (r.unit ? ' ' + r.unit : ''); }
 const fmtL = (x, dec) => (+x).toLocaleString('en-US', { maximumFractionDigits: dec == null ? 1 : dec });
 function interp(pts, x) {
   if (!pts || !pts.length || x == null || !isFinite(x)) return null;
@@ -287,6 +325,13 @@ function evalCell(cid, c, peek, quick) {
   const r = c.key ? BYKEY.get(c.key) : null, live = feed.status === 'ok';
   const v = cellValue(c);
   const out = { v, lvl: 0, warm: 0, sub: '', curve: null, col: 'white' };
+  if (isBneck(c)) {   // a call in words, no lines; its caption is the split of the last 15 min
+    const b = bnStrip(), w = BN[v] ? BN[bnNow() || v] : null;
+    out.txt = w ? w[0] : '--'; out.utxt = w ? w[1] : ''; out.strip = b;
+    out.col = w && live ? 'white' : 'grey';
+    out.sub = w ? bnSplit(b) : !bnInputs() ? 'needs GPU usage and CPU thread usage' : feed.game && !live ? 'waiting for HWiNFO' : 'no game running';
+    return out;
+  }
   if (v == null) {
     out.col = 'grey';
     if (c.pred && !BYKEY.get(c.curve && c.curve.src)) out.sub = 'its temperature is missing';
@@ -310,9 +355,10 @@ function evalCell(cid, c, peek, quick) {
       if (Math.abs(dev) > c.curve.tol && raw < 1) { raw = 1; hold = c.curve.hold || 0; out.offCurve = true; }
     }
   }
-  // a gate only turns after the value stayed past it for the hold time
-  const now = Date.now() / 1000;
-  if (!peek) { if (raw) { if (!holdSince[cid]) holdSince[cid] = now; } else delete holdSince[cid]; }
+  // a gate only turns after the value stayed past it for the hold time; while the feed isn't live (HWiNFO stalled or
+  // gone) the clock stops at its last live moment, so a frozen value turns nothing
+  const now = live ? (feed.liveAt = Date.now() / 1000) : feed.liveAt || 0;
+  if (!peek) { if (raw) { if (!holdSince[cid] && live) holdSince[cid] = now; } else delete holdSince[cid]; }
   out.lvl = raw && holdSince[cid] && now - holdSince[cid] >= hold ? raw : 0;
   out.col = !live ? 'grey' : out.lvl === 2 ? 'red' : out.lvl === 1 ? 'yellow' : 'white';
   if (out.lvl) out.warm = 0;
@@ -368,7 +414,7 @@ function odo(el, s, due) {
   }
   odoWait.delete(el); el._pend = null; el._at = now;
   const old = built ? el._ot : null, num = x => { const n = parseFloat(String(x).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; };
-  const a = num(old), b = num(s), up = a === null || b === null || b >= a, roll = motionSome();
+  const a = num(old), b = num(s), up = a === null || b === null || Math.abs(b) >= Math.abs(a), roll = motionSome();   // the digits show the size: -5 to -7 rolls up
   const shape = x => x.replace(/[0-9]/g, '0');
   el._t = el._ot = s;
   if (!built || shape(old) !== shape(s)) {
@@ -542,6 +588,8 @@ function drawGraph(cv, G, rev) {
   for (const sg of segs) sg.forEach((q, i) => i ? ctx.lineTo(X(q.x), Y(q.v)) : ctx.moveTo(X(q.x), Y(q.v)));
   ctx.strokeStyle = G.col; ctx.globalAlpha = 0.9; ctx.lineWidth = 1.4 * dpr; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   ctx.stroke();
+  ctx.fillStyle = G.col;   // a reading on its own between gaps (a line needs two) still shows, as a dot
+  for (const sg of segs) if (sg.length === 1) { ctx.beginPath(); ctx.arc(X(sg[0].x), Y(sg[0].v), 1.1 * dpr, 0, 7); ctx.fill(); }
   const tip = st.pts[st.pts.length - 1];
   ctx.beginPath();
   for (const sg of segs) { sg.forEach((q, i) => i ? ctx.lineTo(X(q.x), Y(q.v)) : ctx.moveTo(X(q.x), Y(q.v))); ctx.lineTo(X(sg[sg.length - 1].x), h); ctx.lineTo(X(sg[0].x), h); ctx.closePath(); }
@@ -580,10 +628,11 @@ const catCls = cat => 'dcat' + (cat.collapsed ? ' collapsed' : '') + (cat.cells.
 const cellsOf = cat => cat.cells.filter(id => S.L.cells[id]);
 function tileHtml(cid) {
   const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c);
+  const graph = c.graph === false ? '' : isBneck(c) ? '<span class="strip"></span>' : '<canvas></canvas>';
   return '<div class="tile dc' + (c.pred ? ' pred' : '') + (miss ? ' missing' : '') + (cid === sel ? ' sel' : '') + anim() + '" data-cid="' + esc(cid) + '" data-k="tile" tabindex="0">' +
     '<div class="tn">' + iconOf(c, r) + '<span>' + esc(cellName(c)) + '</span>' + (c.pred && !/predicted/i.test(cellName(c)) ? '<span class="badge">predicted</span>' : '') + '</div>' +
     '<div class="tv"><span class="v"></span><small class="u">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small></div><div class="tc"></div>' +
-    (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : c.graph !== false ? '<canvas></canvas>' : '') + '</div>';
+    (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + '</div>';
 }
 function buildTiles() {
   return '<div class="tl" id="view">' + S.L.cats.map(cat => {
@@ -599,12 +648,12 @@ function buildOverview() {
     return '<section class="card ' + catCls(cat) + anim() + '" data-cat="' + esc(cat.id) + '"><div class="ch dch">' + catHead(cat, icon) + '<span class="tag"></span></div>' +
       '<div class="dgrid vert">' + ids.map((cid, i) => {
         const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c), u = esc(c.pred ? 'RPM' : unitOf(r));
-        const cls = (miss ? ' missing' : '') + (cid === sel ? ' sel' : '');
+        const cls = (miss ? ' missing' : '') + (cid === sel ? ' sel' : ''), on = c.graph !== false && !miss, bn = isBneck(c);
         if (i === 0) return '<div class="hero dc' + cls + '" data-cid="' + esc(cid) + '" data-k="hero" tabindex="0"><div><div class="nm">' + iconOf(c, r) + '<span>' + esc(cellName(c)) + '</span></div>' +
           '<div class="hv"><span class="v"></span><small class="u">' + u + '</small></div><div class="hc"></div>' + (miss && S.edit ? '<button class="btn rl">Re-link</button>' : '') + '</div>' +
-          (c.graph !== false && !miss ? '<canvas></canvas>' : '<span></span>') + '</div>';
+          (on ? (bn ? '<span class="strip"></span>' : '<canvas></canvas>') : '<span></span>') + '</div>';
         return '<div class="row dc' + cls + '" data-cid="' + esc(cid) + '" data-k="row" tabindex="0"><span class="lbl"><span class="nm">' + iconOf(c, r) + '<span>' + esc(cellName(c)) + '</span></span><i></i></span>' +
-          (c.graph !== false && !miss ? '<canvas class="rsp"></canvas>' : miss && S.edit ? '<button class="btn rl">Re-link</button>' : '<span></span>') +
+          (on ? (bn ? '<span class="strip rsp"></span>' : '<canvas class="rsp"></canvas>') : miss && S.edit ? '<button class="btn rl">Re-link</button>' : '<span></span>') +
           '<span class="val"><span class="v"></span><small class="u">' + u + '</small></span></div>';
       }).join('') + '</div></section>';
   }).join('') + '</div>';
@@ -619,8 +668,9 @@ function buildGrid() {
     list.map(cat => '<tbody class="' + catCls(cat) + '" data-cat="' + esc(cat.id) + '"><tr class="ghdr"><td colspan="7"><span class="dchw dch">' + catHead(cat) + '</span></td></tr>' +
       cellsOf(cat).map(cid => {
         const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c);
-        return '<tr class="dc' + (miss ? ' missing' : '') + (cid === sel ? ' sel' : '') + '" data-cid="' + esc(cid) + '" data-k="grow" tabindex="0"><td class="gname">' + iconOf(c, r) + '<span>' + esc(cellName(c)) + '</span>' + (miss && S.edit ? '<button class="btn rl">Re-link</button>' : '') + '</td>' +
-          '<td class="gval"><span class="v"></span><span class="u gu">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</span></td><td class="gn"></td><td class="gn"></td><td class="gn"></td><td class="glines"></td><td class="ginfo"></td></tr>';
+        return '<tr class="dc' + (miss ? ' missing' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + '" data-cid="' + esc(cid) + '" data-k="grow" tabindex="0"><td class="gname">' + iconOf(c, r) + '<span>' + esc(cellName(c)) + '</span>' + (miss && S.edit ? '<button class="btn rl">Re-link</button>' : '') + '</td>' +
+          '<td class="gval"><span class="v"></span><span class="u gu">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</span></td>' +
+          (isBneck(c) && !miss ? '<td class="gstrip" colspan="3">' + (c.graph !== false ? '<span class="strip"></span>' : '') + '</td>' : '<td class="gn"></td><td class="gn"></td><td class="gn"></td>') + '<td class="glines"></td><td class="ginfo"></td></tr>';
       }).join('') + '</tbody>').join('') + '</table></div>';
   return '<div class="gsplit" id="view">' + (cats.length ? table(cats.slice(0, cut)) + (cut < cats.length ? table(cats.slice(cut)) : '') : '') + '</div>';
 }
@@ -652,7 +702,7 @@ function buildView() {
   E = new Map();
   for (const el of document.querySelectorAll('#view .dc')) {
     const q = s => el.querySelector(s), cid = el.dataset.cid, c = S.L.cells[cid];
-    const r = { root: el, cid, kind: el.dataset.k, v: q('.v'), u: q('.u'), vbox: q('.tv, .hv, .val, .gval'), cap: q('.tc, .hc, .lbl i, .ginfo'), canvas: q('canvas'), lines: q('.glines') };
+    const r = { root: el, cid, kind: el.dataset.k, v: q('.v'), u: q('.u'), vbox: q('.tv, .hv, .val, .gval'), cap: q('.tc, .hc, .lbl i, .ginfo'), canvas: q('canvas'), strip: q('.strip'), lines: q('.glines') };
     if (r.kind === 'grow') r.td = el.children;
     if (c && isFanCell(c)) r.fan = q('.tn svg, .nm svg, .gname svg');
     if (r.canvas) { r.canvas._enter = enterNext; ro.observe(r.canvas); }
@@ -704,7 +754,8 @@ function updateView(all) {
     const e = evalCell(cid, c, false, !vis);
     const cat = catOf(cid); if (cat) cardLvl[cat.id] = Math.max(cardLvl[cat.id] || 0, e.lvl);
     const dec = decOfCell(c, rd);
-    if (vis) odo(r.v, fmtV(e.v, dec, rd));
+    if (vis) odo(r.v, e.txt != null ? e.txt : fmtV(e.v, dec, rd));
+    if (e.txt != null) setText(r.u, e.utxt);
     const colCls = e.col === 'white' ? '' : e.col;
     if (r.vbox) { for (const k of ['yellow', 'red', 'grey']) r.vbox.classList.toggle(k, colCls === k); }
     if (r.cap) { setText(r.cap, e.sub); r.cap.classList.toggle('y', e.lvl === 1); r.cap.classList.toggle('r', e.lvl === 2); }
@@ -712,7 +763,8 @@ function updateView(all) {
       r.root.classList.toggle('yellow', e.lvl === 1); r.root.classList.toggle('red', e.lvl === 2); r.root.classList.toggle('warm', e.warm > 0);
       if (r._w !== e.warm) { r._w = e.warm; r.root.style.setProperty('--wb', e.warm ? mixHex('#242424', '#5c4f1d', e.warm * 0.85) : ''); }
     }
-    if (r.kind === 'grow') {
+    if (r.kind === 'grow' && e.strip) { if (r.cap.title !== e.sub) r.cap.title = e.sub; if (r.td[1].title !== e.txt + ' ' + e.utxt) r.td[1].title = (e.txt + ' ' + e.utxt).trim(); }
+    else if (r.kind === 'grow') {
       const f = x => x == null ? '' : fmtV(x, dec, rd);
       setText(r.td[2], c.pred ? '' : f(rd && rd.mn)); setText(r.td[3], c.pred ? '' : f(rd && rd.mx));
       setText(r.td[4], c.pred || !rd || rd.av == null ? '' : isYN(rd) ? Math.round(rd.av) + '% yes' : f(rd.av));
@@ -727,6 +779,7 @@ function updateView(all) {
     if (r._lvl !== undefined && e.lvl > r._lvl) glow(r, e.lvl);
     r._lvl = e.lvl;
     if (r.canvas && sight.get(cid)) graphFeed(r.canvas, c, graphCol(e, r.kind === 'hero'));
+    if (r.strip && e.strip && sight.get(cid)) renderStrip(r.strip, e.strip.segs, HLEN);
   }
   for (const k of CARDS) {
     const cat = S.L.cats.find(c => c.id === k.cat); if (!cat) continue;
@@ -1186,10 +1239,14 @@ function renderInsp() {
     : r ? '<span>' + esc(sen.name) + '</span><span style="color:var(--fg)" title="' + esc(r.key) + '">' + esc(r.label) + '</span>'
     : '<span style="color:#e08a8d">' + (sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now' : 'Not on this PC' + (c.match ? ': ' + esc(c.match.replace('|', ', ')) : '')) + '</span><span class="k">' + esc(c.key) + '</span>') + '</div>';
   h += '<label class="fld"><span>Name</span><input id="iName" value="' + esc(c.name || '') + '" placeholder="' + esc(r ? r.label : c.pred ? 'Predicted fan' : '') + '"></label>';
-  h += '<div class="two"><label class="fld"><span>Decimals</span><select id="iDec">' + [0, 1, 2, 3].map(d => '<option' + (decOfCell(c, r) === d ? ' selected' : '') + '>' + d + '</option>').join('') + '</select></label>' +
-       '<label class="fld"><span>Graph</span><select id="iGraph"><option value="1"' + (c.graph !== false ? ' selected' : '') + '>Show</option><option value="0"' + (c.graph === false ? ' selected' : '') + '>Hide</option></select></label></div>';
-  if (!c.pred) {
-    h += '<div class="fgrp"><span class="lab">Lines</span><div class="seg" id="iMode">' + [['none', 'None'], ['y', 'Yellow'], ['yr', 'Yellow + red']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.mode === v ? 'on' : '') + '">' + t + '</button>').join('') + '</div>';
+  const bn = isBneck(c), gsel = '<select id="iGraph"><option value="1"' + (c.graph !== false ? ' selected' : '') + '>Show</option><option value="0"' + (c.graph === false ? ' selected' : '') + '>Hide</option></select>';
+  // the bottleneck is a call, not a number: no decimals, no lines
+  if (bn) h += '<div class="two"><label class="fld"><span>15 min bar</span>' + gsel + '</label><span></span></div>' +
+    '<div class="fgrp"><span class="hint">Worked out by HW Deck once a second while a game runs, from GPU usage and the busiest CPU thread. GPU bound: the GPU at 95% or more. CPU bound: the GPU under 85% with a thread at 80% or more. FPS capped: neither, so an fps limit or vsync sets the pace.</span></div>';
+  else h += '<div class="two"><label class="fld"><span>Decimals</span><select id="iDec">' + [0, 1, 2, 3].map(d => '<option' + (decOfCell(c, r) === d ? ' selected' : '') + '>' + d + '</option>').join('') + '</select></label>' +
+       '<label class="fld"><span>Graph</span>' + gsel + '</label></div>';
+  if (!c.pred && !bn) {
+    h += '<div class="fgrp"><span class="lab">Lines</span><div class="seg" id="iMode">' + [['none', 'None'], ['y', 'Yellow'], ['yr', 'Yellow + Red']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.mode === v ? 'on' : '') + '">' + t + '</button>').join('') + '</div>';
     if (g.mode !== 'none') {
       h += '<div class="seg" id="iDir">' + [['above', 'Bad when above'], ['below', 'Bad when below']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.dir === v ? 'on' : '') + '">' + t + '</button>').join('') + '</div>';
       h += '<div class="two"><label class="fld gate-y"><span>Yellow ' + esc(unit) + '</span><input id="iY" type="number" step="any" value="' + num(g.y) + '"></label>' +
@@ -1469,15 +1526,20 @@ function refreshModal(full) {
   const mv = $('mval');
   mv.style.color = COLORS[e.col] || COLORS.white;
   if (!mv._n) { mv.innerHTML = '<span></span><span class="u"></span>'; mv._n = mv.firstChild; mv._u = mv.lastChild; }
-  odo(mv._n, fmtV(e.v, dec, r)); setText(mv._u, e.v == null ? '' : ' ' + unit);
+  odo(mv._n, e.txt != null ? e.txt : fmtV(e.v, dec, r)); setText(mv._u, e.txt != null ? (e.utxt ? ' ' + e.utxt : '') : e.v == null ? '' : ' ' + unit);
   const g = c.gates, det = gatesOn(g) ? { y: g.y, r: g.mode === 'yr' && Number.isFinite(g.r) ? g.r : undefined } : {};
   if (full) {
     let d = c.pred ? 'Predicted from ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ' through its curve; there is no fan sensor.'
       : r ? '<span title="' + esc(r.key) + '">' + esc(SENS[r.s].name) + ', ' + esc(r.label) + '.</span>' : sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now.' : 'This reading is not on this PC.';
     if (gatesOn(g)) d += ' Lines: yellow ' + fmtL(g.y, dec) + (det.r !== undefined ? ', red ' + fmtL(g.r, dec) : '') + ' ' + esc(unit) + (g.dir === 'below' ? ' (bad when below)' : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
     if (c.curve && !c.pred) d += ' Follows a fan curve on ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ', within ' + fmtL(c.curve.tol, 1) + '%.';
+    if (e.strip) d = 'What limits your fps while a game runs, worked out once a second from GPU usage and the busiest CPU thread. GPU bound: the GPU at 95% or more, ' +
+      'normal for a game without an fps limit. CPU bound: the GPU under 85% with a CPU thread at 80% or more. FPS capped: neither is the limit, so an fps cap or vsync sets the pace. ' +
+      'The cell shows the most common call of the last 5 seconds. ' + bnFrom();
     $('mdesc').innerHTML = d;
   }
+  mgsec.hidden = !!e.strip;
+  if (e.strip) { lastBig = null; bnPanel($('mextra'), e, full); return; }
   const sp = bucketArr(c, isYN(r));
   if (full) {   // the yellow line joins the scale when it is close above the data; decided once per opening
     modalGateInView = false;
@@ -1503,6 +1565,14 @@ function refreshModal(full) {
     if (full || !extra.querySelector('#mcurve')) extra.innerHTML = '<div class="msec">' + (c.pred ? 'its curve' : 'fan curve') + '</div><canvas id="mcurve"></canvas>';
     drawCurveChart(extra.querySelector('#mcurve'), c, e);
   } else if (full) extra.innerHTML = '';
+}
+// the bottleneck has no graph: its popup shows the last 15 min of calls as a bar, and each call's share
+function bnPanel(box, e, full) {
+  if (full || !box.querySelector('.bnp')) box.innerHTML = '<div class="bnp"><div class="msec">last 15 minutes</div><div class="strip big"></div>' +
+    '<div class="sticks"><span>-15m</span><span>-10m</span><span>-5m</span><span>now</span></div><div class="mstats"></div></div>';
+  renderStrip(box.querySelector('.strip'), e.strip.segs, HLEN);
+  const lg = e.strip.tot ? bnLegend(e.strip) : '<span>no game in the last 15 minutes</span>', el = box.querySelector('.mstats');
+  if (el._h !== lg) { el.innerHTML = lg; el._h = lg; }
 }
 modal.addEventListener('mousedown', e => { if (e.target === modal && performance.now() - openedAt > 450) closeDetail(); });
 $('mclose').onclick = closeDetail;
@@ -1573,6 +1643,8 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
   if (maxData) { path(maxData, runs(maxData)); ctx.strokeStyle = 'rgba(201,201,201,0.30)'; ctx.lineWidth = 1.2 * dpr; ctx.lineJoin = 'round'; ctx.stroke(); }
   const rs = runs(data);
   path(data, rs); ctx.strokeStyle = '#c9c9c9'; ctx.lineWidth = 1.8 * dpr; ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.fillStyle = '#c9c9c9';   // a value on its own between gaps still shows, as a dot
+  for (const run of rs) if (run.length === 1) { ctx.beginPath(); ctx.arc(X(run[0]), Y(data[run[0]]), 1.5 * dpr, 0, 7); ctx.fill(); }
   if (!maxData) {
     ctx.beginPath();
     for (const run of rs) { run.forEach((i, j) => j ? ctx.lineTo(X(i), Y(data[i])) : ctx.moveTo(X(i), Y(data[i]))); ctx.lineTo(X(run[run.length - 1]), h - padB); ctx.lineTo(X(run[0]), h - padB); ctx.closePath(); }
@@ -1660,7 +1732,8 @@ function hoverStep() {
 // ---------- hover preview: rest the pointer on a cell (clean view) and its 15 min graph shows beside it ----------
 const hprev = document.createElement('div');
 hprev.id = 'hprev';
-hprev.innerHTML = '<div class="ph"><span class="pi"></span><span class="pt"></span><span class="pv"></span></div><canvas></canvas><div class="ps"></div><div class="pc"></div>';
+hprev.innerHTML = '<div class="ph"><span class="pi"></span><span class="pt"></span><span class="pv"></span></div><canvas></canvas>' +
+  '<div class="pstrip" hidden><div class="strip big"></div><div class="sticks"><span>-15m</span><span>-10m</span><span>-5m</span><span>now</span></div></div><div class="ps"></div><div class="pc"></div>';
 document.body.appendChild(hprev);
 const HP = { cid: null, el: null, timer: 0, shown: false, rev0: 0, raf: 0 };
 const anyModalOpen = () => [...document.querySelectorAll('.modal')].some(m => m.classList.contains('open'));
@@ -1683,17 +1756,20 @@ function fillPrev() {
   if (pi._h !== ic) { pi.innerHTML = ic; pi._h = ic; sweepSpins(); }
   if (isFanCell(c)) spinIcon(pi.querySelector('svg'), e.v);
   setText(hprev.querySelector('.pt'), cellName(c));
-  const pv = hprev.querySelector('.pv'), vh = esc(fmtV(e.v, dec, r)) + '<small>' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small>';
+  const pv = hprev.querySelector('.pv'), vh = e.txt != null ? esc(e.txt) + '<small>' + esc(e.utxt) + '</small>' : esc(fmtV(e.v, dec, r)) + '<small>' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small>';
   if (pv._h !== vh) { pv.innerHTML = vh; pv._h = vh; }
   pv.style.color = COLORS[e.col] || COLORS.white;
-  const v = cellSeries(c, HLEN).filter(x => isFinite(x));
-  const sh = v.length && !isYN(r) ? '<span><em>min</em>' + f(Math.min(...v)) + '</span><span><em>avg</em>' + f(v.reduce((a, b) => a + b, 0) / v.length) + '</span><span><em>max</em>' + f(Math.max(...v)) + '</span>' : '';
+  // the bottleneck shows its bar and each call's share instead of a graph and min / avg / max
+  hprev.querySelector('canvas').hidden = !!e.strip; hprev.querySelector('.pstrip').hidden = !e.strip;
+  if (e.strip) renderStrip(hprev.querySelector('.pstrip .strip'), e.strip.segs, HLEN);
+  const v = e.strip ? [] : cellSeries(c, HLEN).filter(x => isFinite(x));
+  const sh = e.strip ? bnLegend(e.strip) : v.length && !isYN(r) ? '<span><em>min</em>' + f(Math.min(...v)) + '</span><span><em>avg</em>' + f(v.reduce((a, b) => a + b, 0) / v.length) + '</span><span><em>max</em>' + f(Math.max(...v)) + '</span>' : '';
   const ps = hprev.querySelector('.ps'); if (ps._h !== sh) { ps.innerHTML = sh; ps._h = sh; }
-  setText(hprev.querySelector('.pc'), e.sub);
+  setText(hprev.querySelector('.pc'), e.strip && BN[e.v] ? '' : e.sub);   // the bottleneck's split is already above
   return true;
 }
 function drawPrev() {
-  const c = S.L.cells[HP.cid]; if (!c) { HP.rev0 = 0; return; }
+  const c = S.L.cells[HP.cid]; if (!c || isBneck(c)) { HP.rev0 = 0; return; }
   const r = c.key ? BYKEY.get(c.key) : null, g = c.gates, det = gatesOn(g) ? { y: g.y, r: g.mode === 'yr' && Number.isFinite(g.r) ? g.r : undefined } : {};
   const sp = bucketArr(c), vals = sp.filter(x => x !== null);
   let gate = false;
@@ -1822,7 +1898,7 @@ function renderWarnings(log) {
   const open = {}, eps = [];
   for (const line of (log || '').split(/\r?\n/)) {
     // times carry their UTC offset (so a summer-time change doesn't make durations negative); older lines don't
-    const m0 = line.match(/^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)([+-]\d\d:\d\d)?\s+(YELLOW|RED|OK|MARK)\s+(.+)$/);
+    const m0 = line.match(/^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)([+-]\d\d:\d\d)?\s+(YELLOW|RED|OK|MARK|PEAK)\s+(.+)$/);
     if (!m0) continue;
     const m = [m0[0], m0[1], m0[2], m0[4], m0[5]];
     const when = new Date(m[1] + 'T' + m[2] + (m0[3] || '')), rest = m[4].trim();
@@ -1834,6 +1910,8 @@ function renderWarnings(log) {
       continue;
     }
     const cut = rest.lastIndexOf(': '), name = cut > 0 ? rest.slice(0, cut) : rest, detail = cut > 0 ? rest.slice(cut + 2) : '';
+    // the peak so far of an episode the next MARK ends (logs from 1.0.0 have none)
+    if (m[3] === 'PEAK') { if (open[name]) open[name].peak = detail; continue; }
     if (open[name]) { if (m[3] === 'RED') { open[name].level = 'RED'; open[name].redDetail = detail; } continue; }
     const ep = { when, day: m[1], time: m[2].slice(0, 5), level: m[3], name, detail, end: null, peak: null, interrupted: false };
     open[name] = ep; eps.push(ep);
@@ -1868,7 +1946,7 @@ function renderWarnings(log) {
     if (many) {
       hh += '<div class="wsub" data-sub="' + gi + '">';
       for (const ep of g.eps.slice().reverse()) {
-        const m2 = ep.interrupted ? (/^HWiNFO/.test(ep.cut || '') ? 'HWiNFO stopped sharing' : 'ended with the app') + (ep.end ? ', ' + fmtDur(ep.end - ep.when) : '')
+        const m2 = ep.interrupted ? (/^HWiNFO/.test(ep.cut || '') ? 'HWiNFO stopped sharing' : /^PC going to sleep/.test(ep.cut || '') ? 'PC went to sleep' : 'ended with the app') + (ep.end ? ', ' + fmtDur(ep.end - ep.when) : '') + (ep.peak ? ', peak ' + ep.peak : '')
           : ep.end ? fmtDur(ep.end - ep.when) + (ep.peak ? ', peak ' + ep.peak : '') : 'ongoing';
         hh += '<div class="wrow"><span class="wdot" style="background:' + (ep.level === 'RED' ? '#e5484d' : '#e6c84a') + ';width:6px;height:6px"></span><span class="wtime">' + ep.time + '</span><span class="wname">' + (ep.level === 'RED' ? 'red' : 'yellow') + ' at ' + esc(ep.redDetail || ep.detail) + '</span><span class="wmeta">' + esc(m2) + '</span></div>';
       }
@@ -1884,31 +1962,181 @@ const gmodal = $('gmodal');
 let lastGameCount = 0;
 $('gamesBtn').onclick = () => { gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; if (host) send({ t: 'games' }); else renderGames(''); };
 $('gclear').onclick = () => askConfirm('Clear game sessions?', 'This wipes the game log (' + lastGameCount + (lastGameCount === 1 ? ' session' : ' sessions') + '). A copy is kept as games.log.bak first, so it can be brought back.', 'Clear sessions', () => send({ t: 'games:clear' }));
+// layout A, the tailored dashboard's popup: a week strip, columns that line up down the list, a session opens into
+// avg / max bars against its lines and a minute by minute timeline
+const GX_CHEV = '<svg class="gx-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg>';
+const GX_WD = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const GX_MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const gxN = v => typeof v === 'number' && isFinite(v) ? v : null;
+const gxF = (v, d) => gxN(v) === null ? '--' : fmt(v, d);
+// gpu-bound / cpu-bound / capped seconds while the game was in front
+function gxSplit(x) {
+  const g = Math.max(0, +x.g || 0), c = Math.max(0, +x.c || 0), f = Math.max(0, +x.f || 0), n = g + c + f;
+  const pc = v => n ? Math.round(v / n * 100) : 0;
+  const top = !n ? null : c >= g && c >= f ? ['cpu-bound', pc(c)] : g >= f ? ['gpu-bound', pc(g)] : ['capped', pc(f)];
+  return { g, c, f, n, pc, top };
+}
+function gxNbar(sp) {
+  let h = '<span class="gx-nbar">', x = 0;
+  for (const [k, v] of [['gpu', sp.g], ['cpu', sp.c], ['cap', sp.f]]) { if (v && sp.n) h += '<span class="b-' + k + '" style="left:' + (x / sp.n * 100).toFixed(2) + '%;width:' + (v / sp.n * 100).toFixed(2) + '%"></span>'; x += v; }
+  return h + '</span>';
+}
+// a reading: its bar runs from lo to the red line (or a typical limit), avg dark, max light, the yellow line as a tick.
+// Lines that warn below are only a tick: the max says nothing about them
+function gxRow(label, lo, hi, avg, max, y, r, unit, dec, peakOnly, below, wide) {
+  const A = gxN(avg), M = gxN(max), sc = v => Math.max(0, Math.min(100, (v - lo) / Math.max(1e-9, hi - lo) * 100));
+  let b = '<span class="gx-bar">';
+  if (M !== null) {
+    if (A !== null && !peakOnly) b += '<i class="a" style="width:' + sc(A).toFixed(1) + '%"></i><i class="m" style="left:' + sc(A).toFixed(1) + '%;width:' + Math.max(0, sc(M) - sc(A)).toFixed(1) + '%"></i>';
+    else b += '<i class="m solo" style="left:0;width:' + sc(M).toFixed(1) + '%"></i>';
+  } else if (A !== null && !peakOnly) b += '<i class="a" style="width:' + sc(A).toFixed(1) + '%;border-radius:3px"></i>';
+  if (gxN(y) !== null && y > lo && y < hi) b += '<i class="y" style="left:' + sc(y).toFixed(1) + '%"></i>';
+  b += '</span>';
+  const cls = below ? '' : M !== null && gxN(r) !== null && M >= r ? ' class="r"' : M !== null && gxN(y) !== null && M >= y ? ' class="y"' : '';
+  const av = peakOnly ? '<i class="pk">peak</i>' : '<i>' + gxF(A, dec) + '</i>';
+  return '<div class="gx-rr' + (wide ? ' x' : '') + '"><span class="l"' + (wide ? ' title="' + label + '"' : '') + '>' + label + '</span>' + b + '<span class="gx-v">' + av + '<b' + cls + '>' + gxF(M, dec) + '</b><u>' + unit + '</u></span></div>';
+}
+// the main readings by their names in the report: column, label, where the bar starts, where it ends with no red line
+// (0: from the session's own values), decimals, peak only
+const GX_MAIN = {
+  'GPU temp': ['gpu', 'core temp', 30, 90, 1], 'GPU hotspot': ['gpu', 'hotspot', 30, 110, 1], 'GPU memory': ['gpu', 'mem temp', 30, 110, 1],
+  'GPU power': ['gpu', 'power', 0, 0, 0], 'GPU usage': ['gpu', 'usage', 0, 100, 0],
+  'CPU temp': ['cpu', 'temp', 30, 100, 1], 'CPU power': ['cpu', 'power', 0, 0, 1], 'CPU usage': ['cpu', 'usage', 0, 100, 0],
+  'VRAM': ['cpu', 'VRAM', 0, 0, 1, true], 'RAM': ['cpu', 'RAM', 0, 0, 1, true] };
+// a session's readings: name, unit, avg, max (all an older line has), then its lines, 1 for a main reading, the scale
+// of VRAM / RAM and 1 for lines that warn below
+function gxItems(x) {
+  return (Array.isArray(x.items) ? x.items : []).filter(it => Array.isArray(it) && it.length >= 4).map(it => ({ n: String(it[0]), u: typeof it[1] === 'string' ? it[1] : '',
+    a: gxN(it[2]), m: gxN(it[3]), y: gxN(it[4]), r: gxN(it[5]), main: it.length > 6 ? it[6] === 1 : !!GX_MAIN[it[0]], hi: gxN(it[7]), below: it[8] === 1 }));
+}
+const gxTop = v => { if (!(v > 0)) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); return [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find(s => s * p >= v) * p; };
+function gxItemRow(it, spec) {
+  let { a, m, y, r, hi, u } = it;
+  if (spec && u === 'MB') { [a, m, y, r, hi] = [a, m, y, r, hi].map(v => v === null ? null : v / 1024); u = 'GB'; }
+  const F = /°F/.test(u), deg = c => F ? Math.round(c * 9 / 5 + 32) : c;
+  const base = a !== null ? a : m, lo = /°/.test(u) ? Math.max(0, Math.min(deg(30), Math.floor((base === null ? deg(40) : base) / 10) * 10 - 10)) : 0;
+  let top = !it.below && r !== null && r > lo ? r : spec && spec[3] ? (spec[2] === 30 ? deg(spec[3]) : spec[3]) : hi !== null ? hi : u === '%' ? 100 : gxTop(Math.max(m || 0, y || 0, a || 0) * 1.15);
+  if (!(top > lo)) top = lo + 1;
+  return gxRow(spec ? spec[1] : esc(it.n), lo, top, a, m, y, r, esc(u), spec ? spec[4] : decFor({ unit: u }), !!(spec && spec[5]), it.below, !spec);
+}
+// minute by minute: fps with its 1% low as a band, and what limited it; gaps are minutes the game wasn't in front
+function gxTimeline(x, sp) {
+  const tb = typeof x.tb === 'string' ? x.tb : '', tf = Array.isArray(x.tf) ? x.tf : [], tl = Array.isArray(x.tl) ? x.tl : [];
+  const N = Math.max(tb.length, tf.length);
+  if (N < 2 || (!/[gcf]/.test(tb) && !tf.some(v => gxN(v) !== null))) return '';
+  let h = '<div class="gx-tl"><div class="gx-ch">over time<span>per minute, gaps are time the game was not in front</span></div>';
+  const fv = tf.map(gxN), have = fv.filter(v => v !== null);
+  if (have.length) {
+    const mx = Math.max(...have, 1), step = mx > 300 ? 200 : mx > 150 ? 100 : mx > 60 ? 50 : 20, top = Math.ceil(mx * 1.1 / step) * step;
+    const W = N * 10, H = 46, X = m => ((m + 0.5) / N * W).toFixed(1), Y = v => (H - Math.max(0, Math.min(top, v)) / top * H).toFixed(1);
+    let grid = '', band = '', line = '', yl = '';
+    for (let v = step; v < top; v += step) { grid += '<line x1="0" x2="' + W + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/>'; yl += '<span style="top:' + Y(v) + 'px">' + v + '</span>'; }
+    let run = [];
+    const flush = () => {
+      if (run.length) {
+        const lows = run.filter(m => gxN(tl[m]) !== null);
+        if (lows.length === run.length) band += '<polygon points="' + run.map(m => X(m) + ',' + Y(fv[m])).join(' ') + ' ' + run.slice().reverse().map(m => X(m) + ',' + Y(tl[m])).join(' ') + '"/>';
+        line += run.length > 1 ? '<polyline points="' + run.map(m => X(m) + ',' + Y(fv[m])).join(' ') + '"/>' : '<polyline points="' + (+X(run[0]) - 3) + ',' + Y(fv[run[0]]) + ' ' + (+X(run[0]) + 3) + ',' + Y(fv[run[0]]) + '"/>';
+      }
+      run = [];
+    };
+    for (let m = 0; m < N; m++) { if (fv[m] !== null && fv[m] !== undefined) run.push(m); else flush(); }
+    flush();
+    h += '<div class="gx-tr"><span class="l">fps</span><svg class="gx-fpsc" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + grid + band + line + '</svg><span class="gx-yax">' + yl + '</span></div>';
+  }
+  if (/[gcf]/.test(tb)) {
+    let seg = '';
+    for (let m = 0; m < tb.length;) {
+      const ch = tb[m]; let e = m;
+      while (e + 1 < tb.length && tb[e + 1] === ch) e++;
+      const k = ch === 'g' ? 'gpu' : ch === 'c' ? 'cpu' : ch === 'f' ? 'cap' : null;
+      if (k) seg += '<span class="b-' + k + '" style="left:' + (m / N * 100).toFixed(3) + '%;width:' + ((e - m + 1) / N * 100).toFixed(3) + '%"></span>';
+      m = e + 1;
+    }
+    h += '<div class="gx-tr s"><span class="l">limited by</span><span class="gx-strip">' + seg + '</span><span></span></div>';
+  }
+  // clock ticks: start and end, and the round half hours (quarters, fives) between them; none past the end, which a
+  // last minute cut short leaves before the right edge
+  const t0 = x.start, t1 = x.start + N * 60, every = N > 90 ? 30 : N > 40 ? 15 : N > 15 ? 5 : 1;
+  let tk = '<span class="e0">' + hhmm(t0) + '</span>';
+  for (let u = Math.ceil(t0 / 60 / every) * every * 60; u < Math.min(t1, x.end); u += every * 60) {
+    const pc = (u - t0) / (t1 - t0) * 100;
+    if (pc > 9 && pc < 91) tk += '<span style="left:' + pc.toFixed(2) + '%">' + hhmm(u) + '</span>';
+  }
+  tk += '<span class="e1">' + hhmm(Math.min(t1, x.end)) + '</span>';
+  h += '<div class="gx-tr"><span></span><span class="gx-ticks">' + tk + '</span><span></span></div>';
+  const away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0;
+  h += '<div class="gx-tr"><span></span><span class="gx-leg">' + (sp.n ? '<span><b class="b-cpu"></b>cpu-bound <i>' + sp.pc(sp.c) + '%</i></span><span><b class="b-gpu"></b>gpu-bound <i>' + sp.pc(sp.g) + '%</i></span><span><b class="b-cap"></b>capped <i>' + sp.pc(sp.f) + '%</i></span>' : '') +
+       (away >= 60 ? '<span><b class="aw"></b>not in front ' + durTxt(away) + '</span>' : '') + '</span><span></span></div>';
+  return h + '</div>';
+}
+// the main readings HWiNFO had in a gpu and a cpu column, then the other cells with lines, then the timeline
+function gxDetail(x, sp) {
+  const main = {}, extra = [], col = { gpu: '', cpu: '' };
+  for (const it of gxItems(x)) { if (it.main && GX_MAIN[it.n] && !main[it.n]) main[it.n] = it; else extra.push(it); }
+  for (const n in GX_MAIN) if (main[n]) col[GX_MAIN[n][0]] += gxItemRow(main[n], GX_MAIN[n]);
+  let h = '';
+  if (col.gpu || col.cpu) h += '<div class="gx-rd">' + (col.gpu ? '<div><div class="gx-ch">gpu</div>' + col.gpu + '</div>' : '') + (col.cpu ? '<div><div class="gx-ch">cpu and memory</div>' + col.cpu + '</div>' : '') + '</div>';
+  if (extra.length) h += '<div class="gx-xc"><div class="gx-ch">cells with lines</div><div class="gx-rd">' + extra.map(it => gxItemRow(it, null)).join('') + '</div></div>';
+  const tl = gxTimeline(x, sp);
+  return '<div class="gx-in">' + (h ? '<div class="gx-key"><span><i class="sw" style="background:#555"></i>avg</span><span><i class="sw" style="background:#bdbdbd"></i>max</span>' +
+         '<span><i class="tk"></i>yellow line</span><span class="end">bars end at the red line, or at a typical limit</span></div>' + h : tl ? '' : '<div class="gx-nil">no readings were recorded for this session</div>') + tl + '</div>';
+}
 function renderGames(text) {
   const ss = [];
   for (const line of (text || '').split(/\r?\n/)) {
-    try { const x = line.trim() ? JSON.parse(line) : null; if (x && typeof x === 'object' && Number.isFinite(x.start) && Number.isFinite(x.end)) { x.items = Array.isArray(x.items) ? x.items.filter(it => Array.isArray(it) && it.length >= 4) : []; ss.push(x); } } catch (e) { }
+    try { const x = line.trim() ? JSON.parse(line) : null; if (x && typeof x === 'object' && Number.isFinite(x.start) && Number.isFinite(x.end) && x.end >= x.start) ss.push(x); } catch (e) { }
   }
   ss.sort((a, b) => b.start - a.start);
   lastGameCount = ss.length;
-  const week = Date.now() / 1000 - 7 * 86400, recent = ss.filter(x => x.start >= week), per = {};
+  const now = Date.now() / 1000, week = now - 7 * 86400, recent = ss.filter(x => x.start >= week), per = {};
   for (const x of recent) per[x.game] = (per[x.game] || 0) + (x.end - x.start);
-  const top = Object.keys(per).sort((a, b) => per[b] - per[a])[0], total = recent.reduce((p, x) => p + (x.end - x.start), 0);
-  $('gsum').innerHTML = recent.length ? '<span>last 7 days:</span><span><b>' + recent.length + '</b> ' + (recent.length === 1 ? 'session' : 'sessions') + '</span><span><b>' + durTxt(total) + '</b> played</span>' + (top ? '<span>most: ' + esc(top) + ' (' + durTxt(per[top]) + ')</span>' : '') : '';
-  const today = localDay(new Date()), yd = new Date(); yd.setDate(yd.getDate() - 1); const yest = localDay(yd);
+  const top = Object.keys(per).sort((a, b) => per[b] - per[a])[0];
+  const total = recent.reduce((p, x) => p + (x.end - x.start), 0);
+  const dayKey = u => localDay(new Date(u * 1000)), byDay = {};
+  for (const x of ss) { const d = byDay[dayKey(x.start)] || (byDay[dayKey(x.start)] = { n: 0, t: 0 }); d.n++; d.t += x.end - x.start; }
+  // the week strip: minutes played on each of the last 7 days, today last
+  let wk = '';
+  const days = [];
+  for (let i = 6; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); days.push(d); }
+  const dayMins = days.map(d => { const k = localDay(d); return recent.filter(x => dayKey(x.start) === k).reduce((p, x) => p + (x.end - x.start) / 60, 0); });
+  const peak = Math.max(60, ...dayMins);
+  days.forEach((d, i) => { const v = dayMins[i]; wk += '<span class="gx-wd' + (i === 6 ? ' today' : '') + '" title="' + (v ? durTxt(v * 60) : 'nothing') + '"><i' + (v ? '' : ' class="z"') + ' style="height:' + (v ? Math.max(3, Math.round(v / peak * 22)) : 2) + 'px"></i><em>' + GX_WD[d.getDay()][0].toUpperCase() + '</em></span>'; });
+  $('gsum').innerHTML = ss.length ? '<div class="gx-sum"><div class="gx-sumtxt">' +
+    '<div class="gx-stat"><em>last 7 days</em><b>' + recent.length + '<small>' + (recent.length === 1 ? 'session' : 'sessions') + '</small></b></div>' +
+    '<div class="gx-stat"><em>played</em><b>' + (total ? durTxt(total) : '0m') + '</b></div>' +
+    (top ? '<div class="gx-stat"><em>most played</em><b>' + esc(top) + '<small>' + durTxt(per[top]) + '</small></b></div>' : '') +
+    '</div><div class="gx-week">' + wk + '</div></div>' : '';
+  const today = localDay(new Date()), yd = new Date(); yd.setDate(yd.getDate() - 1);
+  const yest = localDay(yd);
   let h = '', lastDay = null;
   ss.forEach((x, i) => {
-    const dk = localDay(new Date(x.start * 1000));
-    if (dk !== lastDay) { lastDay = dk; h += '<div class="wday">' + (dk === today ? 'today' : dk === yest ? 'yesterday' : dk) + '</div>'; }
-    const fps = x.fps != null ? '<b>' + esc(x.fps) + '</b> fps' + (x.low ? ', 1% low <b>' + esc(x.low) + '</b>' : '') : '<em>no fps reading</em>';
-    h += '<div class="gsrow" data-g="' + i + '"><span class="wchev">&#9656;</span><div><div class="gn">' + esc(x.game) + '</div><div class="gt2">' + hhmm(x.start) + ' to ' + hhmm(x.end) + ', ' + durTxt(x.end - x.start) +
-      (x.from - x.start > 90 ? ' (tracked from ' + hhmm(x.from) + ')' : '') + (typeof x.front === 'number' && x.secs - x.front >= 60 ? ', in front ' + durTxt(x.front) : '') + '</div></div><div class="gr">' + fps + '</div></div>';
-    h += '<div class="gdet" data-d="' + i + '"><div><div class="gstats">' + (x.items || []).map(it => '<span><em>' + esc(it[0]) + '</em>avg ' + esc(it[2]) + ' ' + esc(it[1]) + ', max ' + esc(it[3]) + ' ' + esc(it[1]) + '</span>').join('') +
-      '<span><em>warnings</em>' + esc(x.warns || 0) + '</span></div></div></div>';
+    const dk = dayKey(x.start);
+    if (dk !== lastDay) {
+      lastDay = dk;
+      const d = new Date(x.start * 1000), same = byDay[dk];
+      const name = dk === today ? 'today' : dk === yest ? 'yesterday' : now - x.start < 6 * 86400 ? GX_WD[d.getDay()] : '';
+      const date = (name && name !== 'today' && name !== 'yesterday' ? '' : GX_WD[d.getDay()].slice(0, 3) + ' ') + d.getDate() + ' ' + GX_MON[d.getMonth()];   // "thursday 8 oct", "yesterday sat 10 oct"
+      h += '<div class="gx-day"><div>' + (name ? name + '<span>' + date + '</span>' : date) + '</div><div class="gx-tot">' + same.n + (same.n === 1 ? ' session, ' : ' sessions, ') + durTxt(same.t) + '</div></div>';
+    }
+    const sp = gxSplit(x), away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0;
+    const wn = Math.max(0, +x.warns || 0), wl = Array.isArray(x.wl) ? x.wl.filter(w => Array.isArray(w) && w.length >= 3) : [];
+    const st = wn ? '<span class="gx-wv">' + wn + (wn === 1 ? ' warning' : ' warnings') + '</span>' + (wl.length ? '<span class="gx-sub" title="' + esc(wl.map(w => w[0] + ' ' + gxF(w[1], gxN(w[1]) % 1 ? 1 : 0) + ' ' + w[2]).join(', ')) + '">' + esc(wl[0][0]) + ' ' + esc(gxF(wl[0][1], gxN(wl[0][1]) % 1 ? 1 : 0)) + ' ' + esc(wl[0][2]) + '</span>' : '') : '<span class="gx-ok">none</span>';
+    h += '<div class="gx-sess" data-g="' + i + '"><div class="gx-row">' + GX_CHEV +
+         '<span class="gx-gm"><span class="gx-gn">' + esc(x.game) + '</span><span class="gx-sub">' + hhmm(x.start) + ' to ' + hhmm(x.end) + (x.from - x.start > 90 ? ', tracked from ' + hhmm(x.from) : '') + '</span></span>' +
+         '<span class="gx-c gx-num"><span>' + durTxt(x.end - x.start) + '</span>' + (away >= 60 ? '<span class="gx-sub">' + durTxt(x.front) + ' in front</span>' : '') + '</span>' +
+         '<span class="gx-c gx-num gx-fps">' + gxF(x.fps) + '</span><span class="gx-c gx-num gx-lo">' + gxF(x.low) + '</span>' +
+         '<span class="gx-c">' + (sp.n ? gxNbar(sp) + '<span class="gx-sub">' + sp.top[0] + ' ' + sp.top[1] + '%</span>' : '<span class="gx-sub">--</span>') + '</span>' +
+         '<span class="gx-c gx-st">' + st + '</span></div>' +
+         '<div class="gx-det"><div>' + gxDetail(x, sp) + '</div></div></div>';
   });
-  $('glist').innerHTML = h || '<div class="wempty ico pad">No game sessions yet. They show up here when a game you played for over a minute closes.</div>';
+  const list = $('glist');
+  list.innerHTML = h ? '<div class="gx-cols"><span></span><span>game</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
+                     : '<div class="wempty ico pad">No game sessions yet. They show up here when a game you played for over a minute closes.</div>';
+  const first = list.querySelector('.gx-sess');
+  if (first) first.classList.add('open');   // the newest session opens with the popup
 }
-$('glist').addEventListener('click', e => { const r = e.target.closest('.gsrow'); if (!r) return; r.classList.toggle('open'); const d = document.querySelector('.gdet[data-d="' + r.dataset.g + '"]'); if (d) d.classList.toggle('open'); });
+$('glist').addEventListener('click', e => { const r = e.target.closest('.gx-row'); if (r) r.parentNode.classList.toggle('open'); });
 function showGame() {
   $('gameDot').classList.toggle('on', !!feed.game);
   $('gamesBtn').title = feed.game ? 'Game sessions: ' + feed.game + ' running, ' + durTxt(Math.max(60, nowTs - feed.gameSince)) + (feed.front ? '' : ' (in the background)') : 'Game sessions';
@@ -1923,19 +2151,24 @@ function renderSettings() {
       (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' (Windows asks apps for less motion.)' : '') + '</small></div><span class="seg seg3" id="sMotion">' +
       [['full', 'Full'], ['reduced', 'Reduced'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionMode() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
     '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>The free version turns its shared memory off after 12 hours; a restart turns it back on (Windows asks for permission).</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
+    '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub once a day if there is a new version. Nothing else is sent.') + '</small></div>' +
+      '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">Get it</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>' +
     '<div class="setrow"><div>Your files<small class="k">' + esc(feed.dataDir) + '</small><small>Layouts, slots, the logs and 7 days of history.</small></div><button class="btn" id="sData">Open</button></div>' +
     '<div class="setrow" style="display:block"><div style="margin-bottom:8px">Keys</div><div class="keys2">' +
       [['E', 'edit layout on or off'], ['1 2 3', 'Tiles, Overview, Grid'], ['Enter', 'open (or select) the cell in focus'], ['Ctrl+S', 'save to the loaded slot'], ['Ctrl+Z, Ctrl+Shift+Z', 'undo, redo'],
        ['Alt + arrows', 'move the selected cell'], ['Del', 'remove the selected cell'], ['Esc', 'close a popup']].map(k => '<span class="kbd">' + k[0] + '</span><span>' + k[1] + '</span>').join('') + '</div></div>' +
-    '<div class="setrow"><div>HW Deck ' + esc(feed.version) + '<small>Reads HWiNFO\'s shared memory; nothing leaves this PC.</small></div></div>';
+    '<div class="setrow"><div>HW Deck ' + esc(feed.version) + '<small>Reads HWiNFO\'s shared memory on this PC.</small></div></div>';
 }
 $('setBtn').onclick = () => { renderSettings(); setmodal.classList.add('open'); };
+function syncUpd() { const d = $('setDot'); d.classList.toggle('on', !!feed.latest); $('setBtn').title = feed.latest ? 'Settings (HW Deck ' + feed.latest + ' is out)' : 'Settings'; }
 $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sAuto')) { feed.autostart = !feed.autostart; send({ t: 'autostart', on: feed.autostart }); renderSettings(); }
   const mb = e.target.closest('#sMotion button');
-  if (mb && mb.dataset.m !== motionMode()) { S.motion = mb.dataset.m; applyMotion(); saveState(); renderSettings(); renderView(false); }
+  if (mb && mb.dataset.m !== S.motion) { S.motion = mb.dataset.m; applyMotion(); saveState(); renderSettings(); renderView(false); }   // the one already on too: picked by hand, it stops following Windows
   if (e.target.closest('#sRestart')) send({ t: 'restartHwinfo' });
   if (e.target.closest('#sData')) send({ t: 'openData' });
+  if (e.target.closest('#sUpd')) { feed.updates = !feed.updates; if (!feed.updates) feed.latest = null; send({ t: 'updates', on: feed.updates }); syncUpd(); renderSettings(); }
+  if (e.target.closest('#sGet')) send({ t: 'openRelease' });
 });
 $('bannerBtn').onclick = () => send({ t: 'restartHwinfo' });
 
@@ -2022,8 +2255,8 @@ const agoTxt = s => {
 function showFeed() {
   const dot = $('dot'), ban = $('banner'), was = ban.hidden;
   app.classList.toggle('noreadings', !READ.length && !feed.fake);
-  if (feed.fake) { dot.className = 'dot fake'; dot.title = 'Demo data: ' + READ.length.toLocaleString('en-US') + ' made-up readings'; ban.hidden = true; }
-  else if (feed.status === 'ok') { dot.className = 'dot ok'; dot.title = 'HWiNFO: ' + READ.length.toLocaleString('en-US') + ' readings, polled ' + (feed.age < 2 ? 'just now' : feed.age + ' s ago'); ban.hidden = true; }
+  if (feed.fake) { dot.className = 'dot fake'; dot.title = 'Demo data: ' + hwCount().toLocaleString('en-US') + ' made-up readings'; ban.hidden = true; }
+  else if (feed.status === 'ok') { dot.className = 'dot ok'; dot.title = 'HWiNFO: ' + hwCount().toLocaleString('en-US') + ' readings, polled ' + (feed.age < 2 ? 'just now' : feed.age + ' s ago'); ban.hidden = true; }
   else {
     dot.className = 'dot bad';
     dot.title = feed.status === 'stale' ? 'HWiNFO stopped updating' : 'HWiNFO not found';
@@ -2049,11 +2282,12 @@ function onHost(m) {
     placeTabInd(true);
     lastSub = ''; subscribe(); enterNext = true; renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves();
   } else if (m.t === 'settings') {
-    feed.autostart = !!m.autostart; feed.hwinfo = m.hwinfo || null;
+    feed.autostart = !!m.autostart; feed.hwinfo = m.hwinfo || null; feed.updates = m.updates !== false; feed.latest = m.latest || null; syncUpd();
     if (setmodal.classList.contains('open')) renderSettings();
   } else if (m.t === 'catalog') {
     const sameKeys = READ.length === m.readings.length && m.readings.every((x, i) => READ[i].key === x[2]);
     setCatalog(m);
+    feed.bnIn = Array.isArray(m.bneck) ? m.bneck : [null, null, 0];
     lastSub = ''; subscribe();
     // the same readings with new names (a rename in HWiNFO): no rebuild under someone typing in a field
     const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp input, #insp select, #insp textarea, .cn-in');

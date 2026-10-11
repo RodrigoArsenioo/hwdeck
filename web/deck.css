@@ -41,6 +41,7 @@ nav#screens .ind.still { transition: none; }
 .ib .bdot { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); display: none; }
 .ib .bdot.on { display: block; }
 .ib .bdot.live { background: var(--ok); }
+.ib .bdot.upd { background: var(--edit); }
 .edtools { display: inline-flex; gap: 2px; padding-right: 6px; margin-right: 2px; border-right: 1px solid var(--line); }
 .app:not(.editing) .edtools { display: none; }
 .winbtns { display: flex; gap: 2px; margin-left: 4px; }
@@ -71,12 +72,12 @@ nav#screens .ind.still { transition: none; }
 
 /* Storage: every reading HWiNFO shares; a virtual list (only the rows in sight exist) */
 .storage { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--side); font-size: 13px; }
-.search { margin: 0 12px; display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 0 3px 0 9px; }
+.search { margin: 0 12px 9px; display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 0 3px 0 9px; }
 .search:focus-within { border-color: var(--line2); }
 .search > svg { width: 14px; height: 14px; stroke: var(--dim); fill: none; stroke-width: 2; flex: none; }
 .search input { flex: 1; min-width: 0; background: none; border: 0; color: var(--fg); font: inherit; padding: 7px 0; outline: none; }
 .search .ib { padding: 5px; }
-.chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 9px 12px 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 12px 8px; }
 .chip { border: 1px solid var(--line); background: none; color: var(--muted); border-radius: 999px; padding: 2px 9px; font-size: 12px; cursor: pointer; font-variant-numeric: tabular-nums; }
 .chip:hover { color: var(--fg); }
 .chip.on { background: #222; color: var(--hi); border-color: #3a3a3a; }
@@ -237,6 +238,19 @@ table.gt { width: 100%; border-collapse: collapse; font-size: 0.96rem; table-lay
 .gt td.glines .y { color: #b39b3c; } .gt td.glines .r { color: #b4474b; }
 .gt td.ginfo { text-align: left; color: #7d7d7d; font-size: 0.85rem; padding-left: 0.77rem; transition: color 300ms, background 150ms; }
 .gt td.ginfo.y { color: #c9ad3f; } .gt td.ginfo.r { color: #e5484d; }
+
+/* ---------- the bottleneck: a bar of the last 15 min instead of a graph, a grey per call (light cpu bound, mid gpu
+   bound, dark capped), a gap where no game ran ---------- */
+.strip { position: relative; display: block; height: 0.62rem; background: #1f1f1f; border-radius: 0.15rem; overflow: hidden; min-width: 0; }
+.strip span { position: absolute; top: 0; bottom: 0; }
+.b-gpu { background: #6f6f6f; } .b-cpu { background: #d2d2d2; } .b-cap { background: #3e3e3e; }
+i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+.tile .strip { flex: none; margin-top: auto; margin-bottom: 0.3rem; }
+.hero .strip { align-self: end; margin-bottom: 0.45rem; }
+.gt td.gstrip { padding-left: 0.77rem; padding-right: 0.3rem; }
+.gt tr.bn td.gval .gu { width: auto; }
+.strip.big { height: 12px; border-radius: 4px; }
+.sticks { display: flex; justify-content: space-between; font-size: 11px; color: #555; margin: 5px 0 6px; font-variant-numeric: tabular-nums; }
 .gt td.gname .rl { margin: 0 0 0 0.5rem; vertical-align: middle; }
 .gt tr.ghdr td { color: #6f6f6f; text-transform: uppercase; font-size: 0.81rem; letter-spacing: 0.08em; text-align: left; padding: 0.92rem 0.3rem 0.3rem; }
 .gt tr.ghdr .dchw { display: flex; align-items: center; gap: 0.4rem; }
@@ -312,9 +326,11 @@ table.gt { width: 100%; border-collapse: collapse; font-size: 0.96rem; table-lay
 .modal.open { opacity: 1; pointer-events: auto; visibility: visible; transition: opacity 280ms cubic-bezier(0.16, 1, 0.3, 1), visibility 0s; }
 #cmodal { z-index: 110; background: rgba(0,0,0,0.45); }
 .mcard { width: min(640px, 92vw); max-height: 88vh; overflow-y: auto; background: #151515; border: 1px solid #2c2c2c; border-radius: 14px; padding: 20px 22px 18px; position: relative;
-         box-shadow: 0 24px 60px rgba(0,0,0,0.55); transform: translateY(26px) scale(0.94); transition: transform 150ms ease-in; scrollbar-width: thin; scrollbar-color: #2a2a2a transparent; }
+         box-shadow: 0 24px 60px rgba(0,0,0,0.55); transform: translateY(26px) scale(0.94); transition: transform 150ms ease-in; }
+/* a popup taller than the window scrolls inside its card, with a thin scrollbar so it's clear it does */
+.mcard { scrollbar-width: thin; scrollbar-color: #343434 transparent; overscroll-behavior: contain; }
 .modal.open .mcard { transform: none; transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1); will-change: transform, opacity; }
-#gmodal .mcard { width: min(700px, 94vw); }
+#gmodal .mcard { width: min(840px, 94vw); padding: 22px 26px 22px; }
 .mhead { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
 .mhead > svg, #micon svg { width: 18px; height: 18px; stroke: #7a7a7a; fill: none; stroke-width: 1.6; flex: none; }
 #micon { display: inline-flex; }
@@ -361,19 +377,116 @@ table.gt { width: 100%; border-collapse: collapse; font-size: 0.96rem; table-lay
 .wgrp { cursor: pointer; } .wgrp:hover { background: #1a1a1a; }
 .wcnt { font-size: 11px; color: #9a9a9a; background: #222; border-radius: 6px; padding: 1px 6px; margin-left: 6px; font-variant-numeric: tabular-nums; }
 .wchev { color: #555; font-size: 11px; width: 10px; flex: none; transition: transform 150ms; }
-.wgrp.open .wchev, .gsrow.open .wchev { transform: rotate(90deg); }
+.wgrp.open .wchev { transform: rotate(90deg); }
 .wsub { display: none; padding: 0 0 6px 28px; } .wsub.open { display: block; }
 .wsub .wrow { padding: 4px 0; font-size: 12px; border-bottom: 0; } .wsub .wname { color: #8a8a8a; }
-.gsrow { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 4px; border-bottom: 1px solid #1e1e1e; cursor: pointer; border-radius: 6px; transition: background 150ms; }
-.gsrow:hover { background: #1b1b1b; }
-.gsrow .gn { color: #d6d6d6; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gsrow .gt2 { color: #6f6f6f; font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
-.gsrow .gr { text-align: right; font-size: 12.5px; color: #a8a8a8; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.gsrow .gr b { color: #e8e8e8; font-weight: 600; } .gsrow .gr em { font-style: normal; color: #666; }
-.gdet { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
-.gdet.open { grid-template-rows: 1fr; } .gdet > div { overflow: hidden; }
-.gstats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; padding: 8px 26px 12px; font-size: 12.5px; color: #b0b0b0; font-variant-numeric: tabular-nums; }
-.gstats em { font-style: normal; color: #676767; margin-right: 6px; }
+
+/* game sessions, layout A (the tailored dashboard's): a week strip, columns that line up down the list, a session
+   opens into avg / max bars against its lines and a minute by minute timeline */
+#gmodal .gx-sum { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 14px 12px; background: #181818; border-radius: 10px; margin: 8px 0 20px; }
+#gmodal .gx-sumtxt { display: flex; gap: 36px; min-width: 0; }
+#gmodal .gx-stat { display: grid; gap: 5px; min-width: 0; }
+#gmodal .gx-stat em { font-style: normal; font-size: 11px; color: #6f6f6f; }
+#gmodal .gx-stat b { font-size: 15px; font-weight: 600; color: #e8e8e8; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#gmodal .gx-stat b small { font-size: 12px; font-weight: 400; color: #8a8a8a; margin-left: 4px; }
+#gmodal .gx-week { display: flex; gap: 7px; align-items: flex-end; flex: none; }
+#gmodal .gx-wd { display: grid; justify-items: center; gap: 4px; }
+#gmodal .gx-wd i { display: block; width: 8px; background: #6f6f6f; border-radius: 2px; }
+#gmodal .gx-wd i.z { background: #2e2e2e; }
+#gmodal .gx-wd em { font-style: normal; font-size: 9.5px; color: #555; line-height: 1; }
+#gmodal .gx-wd.today em { color: #9a9a9a; }
+#gmodal .gx-cols, #gmodal .gx-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) 90px 46px 56px 152px 132px; gap: 0 20px; align-items: center; padding: 0 12px; }
+#gmodal .gx-cols { font-size: 10.5px; color: #555; text-transform: uppercase; letter-spacing: 0.09em; padding-bottom: 9px; border-bottom: 1px solid #1e1e1e; }
+#gmodal .gx-r { text-align: right; }
+#gmodal .gx-cols > :nth-child(6), #gmodal .gx-row > :nth-child(6) { padding-left: 16px; }
+#gmodal .gx-day { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.09em; margin: 34px 12px 8px; }
+#gmodal .gx-cols + .gx-day { margin-top: 22px; }
+#gmodal .gx-day span { color: #474747; margin-left: 8px; }
+#gmodal .gx-day .gx-tot { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; font-variant-numeric: tabular-nums; }
+/* every session is its own block with a gap around it (open or not), so rows never run into each other */
+#gmodal .gx-sess { background: #171717; border: 1px solid #1f1f1f; border-radius: 10px; transition: background 200ms, border-color 200ms; }
+#gmodal .gx-sess + .gx-sess { margin-top: 12px; }
+#gmodal .gx-sess.open { background: #191919; border-color: #282828; }
+#gmodal .gx-row { min-height: 58px; padding-top: 11px; padding-bottom: 11px; cursor: pointer; border-radius: 9px; }
+#gmodal .gx-sess:not(.open):hover { background: #1c1c1c; border-color: #2a2a2a; }
+#gmodal .gx-chev { width: 10px; height: 10px; stroke: #5a5a5a; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+#gmodal .open .gx-chev { transform: rotate(90deg); stroke: #9a9a9a; }
+#gmodal .gx-gm, #gmodal .gx-c { display: grid; gap: 5px; min-width: 0; }
+#gmodal .gx-gn { color: #d6d6d6; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#gmodal .open .gx-gn { color: #ececec; }
+#gmodal .gx-sub { font-size: 11.5px; color: #6f6f6f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+#gmodal .gx-num { text-align: right; justify-items: end; font-size: 12.5px; color: #c4c4c4; font-variant-numeric: tabular-nums; }
+#gmodal .gx-fps { color: #e8e8e8; font-weight: 600; font-size: 13px; }
+#gmodal .gx-lo { color: #9a9a9a; }
+#gmodal .gx-c > .gx-nbar { margin: 6.5px 0; }
+#gmodal .gx-nbar, #gmodal .gx-strip { position: relative; display: block; height: 5px; border-radius: 3px; overflow: hidden; background: #232323; }
+#gmodal .gx-nbar span, #gmodal .gx-strip span { position: absolute; top: 0; bottom: 0; }
+#gmodal .gx-strip { height: 7px; background: none; }
+#gmodal .gx-strip::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; margin-top: -0.5px; background: #333; }
+#gmodal .gx-st { justify-items: end; text-align: right; font-size: 12px; }
+#gmodal .gx-st > * { max-width: 100%; }
+#gmodal .gx-st .gx-ok { color: #4a4a4a; }
+#gmodal .gx-st .gx-wv { color: #e6c84a; display: inline-flex; align-items: center; gap: 6px; }
+#gmodal .gx-st .gx-wv::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #e6c84a; }
+#gmodal .gx-st .gx-wv.r { color: #e5484d; } #gmodal .gx-st .gx-wv.r::before { background: #e5484d; }
+#gmodal .gx-det { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+#gmodal .gx-sess.open .gx-det { grid-template-rows: 1fr; }
+#gmodal .gx-det > div { overflow: hidden; }
+#gmodal .gx-in { padding: 0 12px 15px 46px; }   /* the details line up with the game name */
+#gmodal .gx-key { display: flex; align-items: center; gap: 16px; font-size: 11px; color: #6f6f6f; margin: 0 0 16px; padding-top: 16px; border-top: 1px solid #242424; }
+#gmodal .gx-key span { display: inline-flex; align-items: center; gap: 6px; }
+#gmodal .gx-key .kw { width: 14px; height: 5px; border-radius: 2px; display: inline-block; }
+#gmodal .gx-key .tk { width: 2px; height: 11px; border-radius: 1px; background: #e6c84a; display: inline-block; }
+#gmodal .gx-key .end { margin-left: auto; color: #555; }
+#gmodal .gx-rd { display: grid; grid-template-columns: 1fr 1fr; column-gap: 56px; }
+#gmodal .gx-ch { font-size: 10.5px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 4px; }
+#gmodal .gx-rr { display: grid; grid-template-columns: 64px minmax(0, 1fr) 122px; gap: 18px; align-items: center; height: 30px; }
+#gmodal .gx-rr .l { font-size: 12px; color: #8a8a8a; white-space: nowrap; }
+#gmodal .gx-bar { position: relative; display: block; height: 5px; background: #232323; border-radius: 3px; }
+#gmodal .gx-bar i { position: absolute; top: 0; bottom: 0; }
+#gmodal .gx-bar .a { left: 0; background: #555; border-radius: 3px 0 0 3px; }
+#gmodal .gx-bar .m { background: #bdbdbd; border-radius: 0 3px 3px 0; }
+#gmodal .gx-bar .m.solo { border-radius: 3px; }
+#gmodal .gx-bar .y { top: -3px; bottom: auto; width: 2px; height: 11px; margin-left: -1px; background: #e6c84a; border-radius: 1px; }
+#gmodal .gx-v { display: grid; grid-template-columns: 40px 48px 22px; gap: 6px; align-items: baseline; font-size: 12.5px; font-variant-numeric: tabular-nums; text-align: right; }
+#gmodal .gx-v i { font-style: normal; color: #6f6f6f; }
+#gmodal .gx-v i.pk { font-size: 10.5px; color: #555; }
+#gmodal .gx-v b { font-weight: 500; color: #e8e8e8; }
+#gmodal .gx-v b.y { color: #e6c84a; } #gmodal .gx-v b.r { color: #e5484d; }
+#gmodal .gx-v u { text-decoration: none; color: #6f6f6f; font-size: 11px; text-align: left; }
+#gmodal .gx-tl { margin-top: 20px; padding-top: 16px; padding-bottom: 7px; border-top: 1px solid #242424; }
+#gmodal .gx-tl > .gx-ch { margin-bottom: 3px; }
+#gmodal .gx-tl .gx-ch { display: flex; justify-content: space-between; }
+#gmodal .gx-tl .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; }
+#gmodal .gx-tr { display: grid; grid-template-columns: 64px minmax(0, 1fr) 34px; gap: 18px; align-items: center; }
+#gmodal .gx-tr .l { font-size: 12px; color: #8a8a8a; }
+#gmodal .gx-fpsc { display: block; width: 100%; height: 46px; }
+#gmodal .gx-fpsc line { stroke: #2a2a2a; stroke-width: 1; vector-effect: non-scaling-stroke; stroke-dasharray: 2 3; }
+#gmodal .gx-fpsc polygon { fill: #2a2a2a; }
+#gmodal .gx-fpsc polyline { fill: none; stroke: #b5b5b5; stroke-width: 1.3; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+#gmodal .gx-yax { position: relative; height: 46px; font-size: 10px; color: #4f4f4f; font-variant-numeric: tabular-nums; }
+#gmodal .gx-yax span { position: absolute; left: 0; transform: translateY(-50%); }
+#gmodal .gx-tr.s { margin-top: 8px; }
+#gmodal .gx-ticks { position: relative; height: 14px; margin-top: 2px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
+#gmodal .gx-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+#gmodal .gx-ticks span.e0 { transform: none; left: 0; } #gmodal .gx-ticks span.e1 { transform: none; right: 0; }
+#gmodal .gx-leg { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 11.5px; color: #8a8a8a; margin-top: 20px; font-variant-numeric: tabular-nums; }
+#gmodal .gx-leg span { display: inline-flex; align-items: center; gap: 6px; }
+#gmodal .gx-leg b { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+#gmodal .gx-leg b.aw { height: 1px; width: 10px; background: #444; border-radius: 0; }
+#gmodal .gx-leg i { color: #e8e8e8; font-style: normal; }
+#gmodal .gx-nbar span.b-gpu, #gmodal .gx-strip span.b-gpu, #gmodal .gx-leg b.b-gpu { background: #6f6f6f; }
+#gmodal .gx-nbar span.b-cpu, #gmodal .gx-strip span.b-cpu, #gmodal .gx-leg b.b-cpu { background: #d2d2d2; }
+#gmodal .gx-nbar span.b-cap, #gmodal .gx-strip span.b-cap, #gmodal .gx-leg b.b-cap { background: #3e3e3e; }
+/* HW Deck: its generic detail (the other cells with lines, an empty session) and its own key swatch */
+#gmodal .gx-key .sw { width: 14px; height: 5px; border-radius: 2px; display: inline-block; }
+#gmodal .gx-nil { font-size: 12px; color: #6f6f6f; padding-top: 12px; border-top: 1px solid #222; }
+#gmodal .gx-xc { margin-top: 12px; }
+#gmodal .gx-xc .gx-ch { margin-bottom: 4px; }
+#gmodal .gx-rr.x { grid-template-columns: 84px minmax(0, 1fr) 116px; }
+#gmodal .gx-rr.x .l { overflow: hidden; text-overflow: ellipsis; }
+#gmodal .gx-rr.x .gx-v { grid-template-columns: 36px 46px 28px; }
+#gmodal .gx-in > .gx-tl:first-child { margin-top: 2px; }
 .ccard { width: min(420px, 92vw); padding: 18px 20px 16px; }
 .ccard .mdesc { margin: 10px 0 16px; }
 .cbtns { display: flex; justify-content: flex-end; gap: 8px; }
@@ -425,6 +538,8 @@ table.gt { width: 100%; border-collapse: collapse; font-size: 0.96rem; table-lay
 #hprev .ps { display: flex; gap: 14px; font-size: 11.5px; color: #9a9a9a; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
 #hprev .ps em { font-style: normal; color: #737373; margin-right: 4px; }
 #hprev .pc { font-size: 11.5px; color: #7b7b7b; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hprev .pstrip { margin-top: 12px; }
+#hprev .pstrip .strip.big { height: 10px; }
 
 .toast { position: absolute; left: 50%; bottom: 18px; transform: translate(-50%, 20px); opacity: 0; transition: opacity 180ms, transform 180ms; background: #1d1d1d; border: 1px solid var(--line2);
          border-radius: 10px; padding: 8px 12px; display: flex; gap: 12px; align-items: center; font-size: 13px; z-index: 130; pointer-events: none; max-width: calc(100% - 32px);
