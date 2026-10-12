@@ -23,15 +23,10 @@ Works on 64-bit Windows 10 and 11.
 - Drop a category on the edge of another to put them side by side or stack them. Each view can be arranged its own way.
 - Tiles, Overview and Grid are three ways to look at the same cells (keys 1, 2, 3).
 - Closing the window keeps it in the tray, still watching. Right-click the tray icon to quit.
-- The clock icon lists past warnings, the gamepad icon your game sessions.
+- The clock icon lists past warnings, the gamepad icon your sessions: games, and ones you record yourself.
 - Bottleneck (under HW Deck in the list) says what limits your fps while a game runs: the GPU, the CPU, or an fps cap.
 
 The free HWiNFO stops sharing after 12 hours. The arrow next to the views restarts it.
-
-| | |
-|---|---|
-| ![Tiles](docs/screenshots/tiles.png) | ![Edit mode](docs/screenshots/edit.png) |
-| ![Popup](docs/screenshots/popup.png) | ![Grid](docs/screenshots/grid.png) |
 
 ## Good to know
 
