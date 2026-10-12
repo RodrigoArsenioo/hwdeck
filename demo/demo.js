@@ -6,7 +6,7 @@
 (() => {
   'use strict';
   const RELEASES = 'https://github.com/RodrigoArsenioo/hwdeck/releases/latest';
-  const VERSION = '1.4.0';
+  const VERSION = '1.4.1';
   const T0 = Math.floor(Date.now() / 1000);
   const nowS = () => Math.floor(Date.now() / 1000);
   const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
@@ -352,14 +352,15 @@
       }
       case 'openRelease': window.open(RELEASES, '_blank', 'noopener'); break;
       case 'export': {
-        const a = document.createElement('a'), b = new Blob([JSON.stringify(m.data, null, 2)], { type: 'application/json' });
-        a.href = URL.createObjectURL(b); a.download = String(m.name || 'layout').replace(/[^\w .-]+/g, '_') + '.json'; document.body.appendChild(a); a.click(); a.remove();
+        // (the app's file: { hwdeck: 1, slot }, named like the app names it, so it imports there too)
+        const a = document.createElement('a'), b = new Blob([JSON.stringify({ hwdeck: 1, slot: m.data }, null, 2)], { type: 'application/json' });
+        a.href = URL.createObjectURL(b); a.download = String(m.name || 'layout').replace(/[^\w .-]+/g, '_') + '.hwdeck.json'; document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
         break;
       }
       case 'import': {
         const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
-        inp.onchange = () => { const f = inp.files && inp.files[0]; if (!f) return; f.text().then(txt => { let d = null; try { d = JSON.parse(txt); } catch (e) { } post({ t: 'imported', slot: m.slot, data: d }); }); };
+        inp.onchange = () => { const f = inp.files && inp.files[0]; if (!f) return; f.text().then(txt => { let d = null; try { d = JSON.parse(txt); } catch (e) { } post({ t: 'imported', slot: m.slot, data: d && typeof d === 'object' && d.slot !== undefined ? d.slot : d }); }); };
         inp.click();
         break;
       }

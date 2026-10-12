@@ -17,8 +17,9 @@ const send = m => { if (host) host.postMessage(m); };
 // their say, icon(r, c): its icon (an svg, 24 x 24 strokes like ICONS) }. EXT.kindOf(r): a kind for a reading that has none of its own (one of HWiNFO's); EXT.after(out, r, c,
 // cid): the same as a kind's after, for every cell; EXT.head(cat): html at the end of a category's header (its own
 // buttons); EXT.tag(cat, ids, n): an Overview card's tag instead of "all normal" (null: as usual, '': none).
-// EXT.msg(m) gets the host's "x.*" messages; the page sends its own with send({ t: 'x.something' })
-const EXT = window.EXT = { kinds: {}, msg: null, loaded: false, kindOf: null, after: null, head: null, tag: null };
+// EXT.msg(m) gets the host's "x.*" messages; the page sends its own with send({ t: 'x.something' }). EXT.keys(): more
+// readings to stream than the cells hold (what its captions read)
+const EXT = window.EXT = { kinds: {}, msg: null, loaded: false, kindOf: null, after: null, head: null, tag: null, keys: null };
 const xkOf = r => { if (!r) return null; const k = r.kind || (EXT.kindOf ? EXT.kindOf(r) : null); return k ? EXT.kinds[k] || null : null; };
 const xBody = (cid, r, where) => { const xk = xkOf(r); return xk && xk.body ? '<div class="xb" data-x="1">' + xk.body(cid, r, where) + '</div>' : null; };
 // HW Deck's own 12V-2x6 connector (a GPU that reports its pins): its most loaded pin as the value, with lines like any
@@ -71,6 +72,8 @@ const ICONS = {
   x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   chev: '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
   check: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
+  eye: '<svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 9 6 9 6a17 17 0 0 1-2.6 3.1M6.6 6.6A17 17 0 0 0 3 12s4 6 9 6a9 9 0 0 0 4.4-1.2"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>',
   more: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>',
   corner: '<svg viewBox="0 0 14 14"><path d="M12 5v7H5M12 12L7 7"/></svg>',
   neck: '<svg viewBox="0 0 24 24"><path d="M5 6h14l-5 6v6l-4 2v-8z"/></svg>',
@@ -232,17 +235,38 @@ const bucketArr = (c, peak) => buckets(c, peak).slice(-NB).map(q => q.v);
 function decFor(r) {
   const u = r ? r.unit || '' : '';
   if (u === 'V') return 3; if (u === 'A' || u === 'x') return 2;
-  if (u.indexOf('\u00b0') >= 0 || ['W', 'ms', 'GT/s', 'GB', 'MB/s', 'KB/s', 'GB/s'].includes(u)) return 1;
+  if (u.indexOf('\u00b0') >= 0 || ['W', 'ms', 'GT/s', 'GB', 'MB', 'MB/s', 'KB/s', 'GB/s'].includes(u)) return 1;   // (MB shows in GB)
   return 0;
 }
 const decOfCell = (c, r) => c.dec != null ? c.dec : r ? decFor(r) : 0;
-function fmt(v, dec) { return v == null || !isFinite(v) ? '--' : (+v).toLocaleString('en-US', { minimumFractionDigits: dec || 0, maximumFractionDigits: dec || 0 }); }
+const NF = [0, 1, 2, 3].map(d => new Intl.NumberFormat('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }));
+const NFL = [0, 1, 2, 3].map(d => new Intl.NumberFormat('en-US', { maximumFractionDigits: d }));
+function fmt(v, dec) { return v == null || !isFinite(v) ? '--' : (NF[dec] || NF[0]).format(+v); }
 const isYN = r => !!r && r.unit === 'Yes/No';
 // a value as the cell shows it: Yes/No readings in words, the rest with their decimals
-const fmtV = (v, dec, r) => isYN(r) ? (v == null || !isFinite(v) ? '--' : v >= 0.5 ? 'Yes' : 'No') : fmt(v, dec);
-const unitOf = r => !r || r.unit === 'Yes/No' ? '' : r.unit;
-function valTxt(r) { if (!r || r.v == null) return '--'; if (r.key === BNECK) return BN[r.v] ? BN[r.v][0] + ' ' + BN[r.v][1] : '--'; return isYN(r) ? fmtV(r.v, 0, r) : fmt(r.v, decFor(r)) + (r.unit ? ' ' + r.unit : ''); }
-const fmtL = (x, dec) => (+x).toLocaleString('en-US', { maximumFractionDigits: dec == null ? 1 : dec });
+// HWiNFO gives memory sizes in MB: they show in GB, and their lines are typed in GB (kept in MB, as the host reads
+// them). gbK: what a value in the reading's own unit is multiplied by to show
+const inGB = r => !!r && r.unit === 'MB';
+const gbK = r => inGB(r) ? 1 / 1024 : 1;
+const fmtV = (v, dec, r) => isYN(r) ? (v == null || !isFinite(v) ? '--' : v >= 0.5 ? 'Yes' : 'No') : fmt(v == null ? v : v * gbK(r), dec);
+const unitOf = r => !r || r.unit === 'Yes/No' ? '' : inGB(r) ? 'GB' : r.unit;
+function valTxt(r) { if (!r || r.v == null) return '--'; if (r.key === BNECK) return BN[r.v] ? BN[r.v][0] + ' ' + BN[r.v][1] : '--'; return isYN(r) ? fmtV(r.v, 0, r) : fmtV(r.v, decFor(r), r) + (r.unit ? ' ' + unitOf(r) : ''); }
+// a memory reading's partner: the same sensor's "... Memory Available" (used + available = what there is), for the
+// "34% of 64 GB" caption; worked out once per catalog
+let memPairs = null, memPairsOf = null;
+function memPair(r) {
+  if (!inGB(r) || /Available$/.test(r.label)) return null;
+  if (memPairsOf !== READ) {
+    memPairsOf = READ; memPairs = new Map();
+    for (const x of READ) if (x.unit === 'MB' && /^(Physical|GPU) Memory Available$/.test(x.label)) memPairs.set(x.s, x);
+  }
+  return /Used|Allocated/.test(r.label) ? memPairs.get(r.s) || null : null;   // (not D3D Dedicated: its total isn't used + available)
+}
+// what's installed, from what Windows can use (used + available leaves out what the hardware keeps: 64 GB of RAM
+// reads 62.x): the memory size it rounds up to, so the caption says the size on the box
+const MEM_SIZES = [1, 2, 3, 4, 6, 8, 10, 11, 12, 16, 18, 20, 24, 32, 36, 40, 48, 64, 72, 80, 96, 128, 160, 192, 256, 384, 512, 768, 1024, 1536, 2048];   // (36 and 72: 32 or 64 plus memory soldered on)
+const memSize = gb => MEM_SIZES.find(s => s >= gb - 0.3) || Math.ceil(gb);
+const fmtL = (x, dec) => (NFL[dec == null ? 1 : dec] || NFL[1]).format(+x);
 // a curve's points go by temperature, a tie by rpm (two points at one temperature: a step)
 const ptOrd = (a, b) => a[0] - b[0] || a[1] - b[1];
 function interp(pts, x) {
@@ -469,7 +493,7 @@ const motionSome = () => { const m = motionMode(); return m === 'full' || m === 
 function applyMotion() { document.documentElement.dataset.motion = motionMode(); }
 if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', () => { applyMotion(); if (feed.got) renderView(false); });
 let saveT = 0;
-function saveState() { clearTimeout(saveT); saveT = setTimeout(() => send({ t: 'save', file: 'state', data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, pins: [DR.L.pinned, DR.R.pinned], title: S.title, clock: S.clock } }), 300); }
+function saveState() { clearTimeout(saveT); saveT = setTimeout(() => send({ t: 'save', file: 'state', data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, pins: [DR.L.pinned, DR.R.pinned], title: S.title, clock: S.clock, hide: S.hide } }), 300); }
 function saveSlot(i) { send({ t: 'save', file: 'slots/slot' + (i + 1), data: S.slots[i] }); }
 // undo steps hold the layout and which slot it came from, so Clear then Undo is exactly where you were
 let undoStack = [], redoStack = [];
@@ -523,8 +547,10 @@ function cellKeys() {
   const set = new Set();
   for (const c of Object.values(S.L.cells)) {
     if (c.key) set.add(c.key); if (c.curve && c.curve.src) set.add(c.curve.src);
+    const mp = c.key && memPair(BYKEY.get(c.key)); if (mp) set.add(mp.key);   // (its "% of" caption)
     if (c.key === CONN && feed.c12keys) for (const k of feed.c12keys[0].concat(feed.c12keys[1])) set.add(k);   // its pins
   }
+  if (EXT.keys) for (const k of EXT.keys()) set.add(k);
   return [...set];
 }
 function subscribe() {
@@ -539,7 +565,7 @@ function subscribe() {
 
 // ---------- a cell's value and state: gates (with their hold), fan curve, warming toward yellow ----------
 let sel = null, selCat = null, relinkFor = null;   // the selected cell, or the selected category (never both)
-const holdSince = {};
+const holdSince = {}, cellEp = {};
 function cellValue(c) {
   if (c.pred) { const src = BYKEY.get(c.curve && c.curve.src); return src ? interp(c.curve.pts, src.v) : null; }
   const r = BYKEY.get(c.key); return r ? r.v : null;
@@ -566,6 +592,9 @@ function gateLevel(g, v) {
   return { raw: 0, side: 0 };
 }
 // a cell's lines for the graphs: y and r, and the other side's as y2 and r2
+// a graph's values and its lines as the cell shows them (GB for memory)
+const gbArr = (a, k) => k === 1 || !a ? a : a.map(x => x == null ? x : x * k);
+const gbDet = (d, k) => { if (k === 1) return d; const o = {}; for (const n in d) o[n] = typeof d[n] === 'number' ? d[n] * k : d[n]; return o; };
 function gateLines(g) {
   if (!gatesOn(g)) return {};
   const o = otherOf(g);
@@ -622,23 +651,32 @@ function evalCell0(cid, c, peek, quick) {
   // gone) the clock stops at its last live moment, so a frozen value turns nothing
   const now = live ? (feed.liveAt = Date.now() / 1000) : feed.liveAt || 0;
   if (!peek) { if (raw) { if (!holdSince[cid] && live) holdSince[cid] = now; } else delete holdSince[cid]; }
-  out.lvl = raw && holdSince[cid] && now - holdSince[cid] >= hold ? raw : 0;
+  // like the warning log: an episode going on keeps its colour through a calm second or two (it ends on the 3rd calm
+  // second, counted in the host's seconds as the log counts them), so a value hovering on its line doesn't turn the cell
+  // white for the whole hold after each dip
+  const ep = cellEp[cid] || (cellEp[cid] = { lvl: 0, calmTs: 0 });
+  if (!peek) { if (raw) ep.calmTs = 0; else if (ep.lvl && !ep.calmTs) ep.calmTs = nowTs; if (ep.lvl && ep.calmTs && nowTs - ep.calmTs >= 2) { ep.lvl = 0; ep.calmTs = 0; } }
+  out.lvl = raw && holdSince[cid] && now - holdSince[cid] >= hold ? raw : raw && ep.lvl ? Math.min(raw, ep.lvl) : 0;
+  if (!peek && out.lvl > ep.lvl) ep.lvl = out.lvl;
   out.col = !live ? 'grey' : out.lvl === 2 ? 'red' : out.lvl === 1 ? 'yellow' : 'white';
   if (out.lvl) out.warm = 0;
-  const dec = dec0;
+  const dec = dec0, k = gbK(r), fl = x => fmt(x * k, dec);
   if (pmOff && gatesOn(g) && !out.curve) out.sub = 'lines count while a game is in front';
-  else if (out.lvl && side) out.sub = (o.below ? 'under ' : 'over ') + (out.lvl === 2 ? 'red ' + fmt(o.r, dec) : 'yellow ' + fmt(o.y, dec));
-  else if (out.lvl === 2) out.sub = (g.dir === 'below' ? 'under red ' : 'over red ') + fmt(g.r, dec);
-  else if (out.lvl === 1 && !out.offCurve) out.sub = (g.dir === 'below' ? 'under yellow ' : 'over yellow ') + fmt(g.y, dec);
+  else if (out.lvl && side) out.sub = (o.below ? 'under ' : 'over ') + (out.lvl === 2 ? 'red ' + fl(o.r) : 'yellow ' + fl(o.y));
+  else if (out.lvl === 2) out.sub = (g.dir === 'below' ? 'under red ' : 'over red ') + fl(g.r);
+  else if (out.lvl === 1 && !out.offCurve) out.sub = (g.dir === 'below' ? 'under yellow ' : 'over yellow ') + fl(g.y);
   else if (out.curve) {
     const d = Math.round(out.curve.dev);
     out.sub = Math.abs(out.curve.dev) <= c.curve.tol ? 'on curve, expects ' + fmt(out.curve.exp, 0) : Math.abs(d) + '% ' + (d < 0 ? 'under' : 'over') + ' its curve';
   } else if (c.pred) {
     const src = BYKEY.get(c.curve.src);
     out.sub = src ? 'from ' + src.label + ' ' + fmt(src.v, decFor(src)) + (src.unit ? ' ' + src.unit : '') : 'its temperature is missing';
+  } else if (memPair(r) && memPair(r).v != null && v > 0) {   // memory: how much of it is in use
+    const size = memSize((v + memPair(r).v) / 1024);
+    out.sub = Math.round(v / 1024 / size * 100) + '% of ' + size + ' GB';
   } else if (r && !quick && !isYN(r)) {
     let mx = -Infinity; for (const x of series(r.key, HLEN)) if (x > mx) mx = x;
-    out.sub = isFinite(mx) ? '15 min max ' + fmt(mx, dec) + (unitOf(r) ? ' ' + r.unit : '') : '';
+    out.sub = isFinite(mx) ? '15 min max ' + fl(mx) + (unitOf(r) ? ' ' + unitOf(r) : '') : '';
   }
   return out;
 }
@@ -687,7 +725,7 @@ function odo(el, s, due) {
     for (const ch of s) h += ch >= '0' && ch <= '9' ? '<span class="od"><span class="odh">' + ch + '</span><span class="odr" aria-hidden="true">' + REEL + '</span></span>' : '<span>' + esc(ch) + '</span>';
     el.innerHTML = h;
     const cells = [...el.children].map((sp, i) => ({ d: +s[i], rl: sp.className === 'od' ? sp.lastChild : null, h: sp.className === 'od' ? sp.firstChild : null }));
-    for (const c of cells) if (c.rl) { c.rl.style.transition = 'none'; reelAt(c.rl, c.d + 10); c.rl._snap = true; }
+    for (const c of cells) if (c.rl) reelAt(c.rl, c.d + 10);
     el._ocells = cells;
     return;
   }
@@ -696,72 +734,78 @@ function odo(el, s, due) {
     const c = cells[i]; if (!c.rl) continue;
     const d = +s[i]; if (d === c.d) continue;
     c.d = d; c.h.textContent = s[i];
-    if (roll) rollTo(c, d, up); else { c.rl.style.transition = 'none'; reelAt(c.rl, d + 10); c.rl._snap = true; }
+    if (roll) rollTo(c, d, up); else { rolling.delete(c.rl); c.rl.parentNode.classList.remove('roll'); reelAt(c.rl, d + 10); }
   }
 }
+// a digit rolls to its place on the motion clock (no CSS transition: that one ran at the screen's refresh rate)
+const rolling = new Set();
+const ROLL_MS = () => motionMode() === 'reduced' ? 250 : 600;
+const rollEase = p => 1 - Math.pow(1 - p, 3);
 function rollTo(c, d, up) {
   const rl = c.rl;
-  if (rl._snap) { getComputedStyle(rl).opacity; rl.style.transition = ''; rl._snap = false; }
-  if (rl._p < 10 || rl._p > 19) { rl.style.transition = 'none'; reelAt(rl, rl._p % 10 + 10); getComputedStyle(rl).opacity; rl.style.transition = ''; }
-  const p = rl._p; let t = null;
+  // where it is now (mid-roll: its place this step), back on the middle turn of the reel
+  let p = rl._p; if (rolling.has(rl)) { rolling.delete(rl); p = rl._to; }
+  if (p < 10 || p > 19) p = p % 10 + 10;
+  let t = null;
   for (let k = 0; k < 3; k++) { const q = d + 10 * k; if (up ? q >= p && (t === null || q < t) : q <= p && (t === null || q > t)) t = q; }
   if (t === null) t = d + 10;
-  if (t !== p) { rl.parentNode.classList.add('roll'); clearTimeout(rl._tm); rl._tm = setTimeout(settleReel, 800, rl); }
-  reelAt(rl, t);
+  if (t === p) { reelAt(rl, p); return; }
+  rl.parentNode.classList.add('roll');
+  rl._from = p; rl._to = t; rl._r0 = performance.now(); rl._dur = ROLL_MS();
+  reelAt(rl, p); rolling.add(rl); motionRun();
+}
+function rollStep(now) {
+  for (const rl of rolling) {
+    if (!rl.isConnected) { rolling.delete(rl); continue; }
+    const q = Math.min(1, (now - rl._r0) / rl._dur);
+    reelAt(rl, rl._from + (rl._to - rl._from) * rollEase(q));
+    if (q >= 1) { rolling.delete(rl); rl._p = rl._to; settleReel(rl); }
+  }
 }
 function settleReel(rl) {
-  clearTimeout(rl._tm);
-  const home = rl._p % 10 + 10;
-  if (rl._p !== home) { rl.style.transition = 'none'; reelAt(rl, home); rl._snap = true; }
+  const home = Math.round(rl._p) % 10 + 10;
+  if (rl._p !== home) reelAt(rl, home);
   rl.parentNode.classList.remove('roll');
 }
-document.addEventListener('transitionend', e => { const rl = e.target; if (rl.className === 'odr' && e.propertyName === 'transform') settleReel(rl); });
 
 // ---------- fan icons turn with their fan: one turn a second at 1500 rpm ----------
-const spinning = new Set();
-function sweepSpins() { for (const s of spinning) if (!s.isConnected) { s._spin.cancel(); spinning.delete(s); } }
 function spinWrap(svg) {
   let w = svg.parentNode;
-  if (w.className !== 'spw') { w = document.createElement('i'); w.className = 'spw'; svg.replaceWith(w); w.appendChild(svg); }
+  if (w.className !== 'spw') { w = document.createElement('i'); w.className = 'spw'; svg.replaceWith(w); w.appendChild(svg); spinSeen.observe(w); }
   return w;
 }
-// Reduced: one shared timer turns the fans in steps, 10 times a second, so the page draws 10 frames a second, not one per refresh
-const SPIN_HZ = 10;
+// a fan out of sight (scrolled away, in a folded category) doesn't keep the clock going
+const spinSeen = new IntersectionObserver(es => { for (const e of es) { const svg = e.target.firstChild; if (!svg) continue; svg._seen = e.isIntersecting; if (e.isIntersecting && svg._srate) motionRun(); } });
+const unstep = svg => { stepped.delete(svg); if (svg.parentNode) { svg.parentNode.style.transform = ''; spinSeen.unobserve(svg.parentNode); } };
+// the motion clock: one timer for all that moves, 30 steps a second in Full, 10 in Reduced; it stops when nothing moves
+const motionHz = () => motionMode() === 'reduced' ? 10 : 30;
 const stepped = new Set();
-let stepT = 0;
-function stepSpins() {
-  for (const svg of stepped) if (!svg.isConnected || motionMode() !== 'reduced') { stepped.delete(svg); svg.parentNode.style.transform = ''; }
-  if (!stepped.size) { clearInterval(stepT); stepT = 0; return; }
+let motionT = 0, motionAt = 0, graphMore = false;
+function motionRun() { const hz = motionHz(); if (motionT && motionAt === hz) return; clearInterval(motionT); motionAt = hz; motionT = setInterval(motionTick, 1000 / hz); }
+function motionTick() {
+  const now = performance.now(), spin = motionMode() === 'full' || motionMode() === 'reduced';
+  for (const svg of stepped) if (!svg.isConnected || !spin) unstep(svg);
+  const turning = s => s._srate && s._seen !== false;
+  const fans = [...stepped].some(turning);
+  if (!fans && !rolling.size && !graphMore) { clearInterval(motionT); motionT = 0; return; }
   if (document.hidden) return;
-  for (const svg of stepped) if (svg._srate) { svg._ang = (svg._ang + svg._srate * 360 / SPIN_HZ) % 360; svg.parentNode.style.transform = 'rotate(' + svg._ang.toFixed(1) + 'deg)'; }
+  for (const svg of stepped) if (turning(svg)) { svg._ang = (svg._ang + svg._srate * 360 / motionAt) % 360; svg.parentNode.style.transform = 'rotate(' + svg._ang.toFixed(1) + 'deg)'; }
+  rollStep(now);
+  if (graphMore) { graphMore = false; kickGraphs(); }
 }
 function spinIcon(svg, rpm) {
   if (!svg) return;
   const mode = motionMode();
   const rate = (mode === 'full' || mode === 'reduced') && rpm > 0 && feed.status === 'ok' ? Math.max(0.05, Math.round(rpm / 1500 * 20) / 20) : 0;
-  if (mode === 'reduced') {
-    if (svg._spin) { svg._spin.cancel(); svg._spin = null; spinning.delete(svg); }
-    if (!rate && !stepped.has(svg)) return;
-    spinWrap(svg);
-    svg._srate = rate; if (svg._ang == null) svg._ang = 0;
-    stepped.add(svg);
-    if (!stepT) stepT = setInterval(stepSpins, 1000 / SPIN_HZ);
-    return;
-  }
-  if (stepped.delete(svg)) svg.parentNode.style.transform = '';
-  if (!svg._spin) {
-    if (!rate) return;
-    sweepSpins(); spinning.add(svg);
-    const w = spinWrap(svg);
-    svg._spin = w.animate([{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }], { duration: 1000, iterations: Infinity });
-    svg._spin.playbackRate = rate; svg._rate = rate;
-  } else if (!rate) { if (svg._spin.playState !== 'paused') svg._spin.pause(); svg._rate = 0; }   // a paused animation draws nothing
-  else {
-    if (svg._rate !== rate) { svg._spin.updatePlaybackRate(rate); svg._rate = rate; }
-    if (svg._spin.playState === 'paused') svg._spin.play();
-  }
+  if (!rate && !stepped.has(svg)) return;
+  const w = spinWrap(svg);
+  if (!stepped.has(svg)) spinSeen.observe(w);   // (again after a stop that kept its wrapper: Minimal, then Full)
+  svg._srate = rate; if (svg._ang == null) svg._ang = 0;
+  stepped.add(svg);
+  if (rate) motionRun();
 }
-const pauseSpin = svg => { if (!svg) return; svg._srate = 0; if (svg._spin) svg._spin.pause(); };
+const pauseSpin = svg => { if (svg) svg._srate = 0; };
+function sweepSpins() { for (const s of stepped) if (!s.isConnected) unstep(s); }
 function glow(r, lvl) {
   if (motionMode() === 'off') return;
   const c = lvl === 2 ? '229,72,77' : '230,200,74';
@@ -772,7 +816,7 @@ function glow(r, lvl) {
 // ---------- graphs: 15 min that scroll with time; each new second the line morphs into the new one ----------
 const GDUR = 500;
 const graphs = new Map();
-let graphRaf = 0, graphT = 0;
+let graphRaf = 0;
 const easeOut = p => 1 - Math.pow(1 - p, 3);
 const easeInOut = p => p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
 function graphState(c) {
@@ -805,8 +849,7 @@ function graphFeed(cv, c, col) {
   if (!G.to || !motionSome()) { G.cur = G.from = G.to = st; G.t0 = 0; } else { G.from = G.cur || G.to; G.to = st; G.t0 = now; }
   G.dirty = true; kickGraphs();
 }
-function kickGraphs() { if (!graphRaf && !graphT) graphRaf = requestAnimationFrame(graphLoop); }
-function graphTick() { graphT = 0; kickGraphs(); }
+function kickGraphs() { if (!graphRaf) graphRaf = requestAnimationFrame(graphLoop); }
 function graphLoop(now) {
   graphRaf = 0;
   let more = false;
@@ -816,7 +859,6 @@ function graphLoop(now) {
     const p = G.t0 ? Math.min(1, (now - G.t0) / GDUR) : 1, rv = G.rev0 ? Math.min(1, (now - G.rev0) / 800) : 1;
     const moving = p < 1 || rv < 1;
     if (!moving && !G.dirty) continue;
-    if (moving && now - G.last < (rv < 1 ? 15 : 32)) { more = true; continue; }
     todo.push({ cv, G, p, rv, moving });
   }
   // every size first, then the drawing: a size read after a canvas was resized would lay out the page each time
@@ -829,8 +871,7 @@ function graphLoop(now) {
     G.dirty = false;
     if (moving) more = true;
   }
-  if (more && motionMode() === 'reduced') { if (!graphT) graphT = setTimeout(graphTick, 100); }   // Reduced: a glide in 10 fps steps
-  else if (more) kickGraphs();
+  if (more) { graphMore = true; motionRun(); }   // (the next step on the motion clock: 30 a second in Full, 10 in Reduced)
 }
 function drawGraph(cv, G, rev) {
   if (G.cw == null) { G.cw = cv.clientWidth; G.ch = cv.clientHeight; }
@@ -1149,8 +1190,10 @@ function playEntrance() {
     a.onfinish = a.oncancel = () => { if (sectionsEl._slide === a) { sectionsEl._slide = null; sectionsEl.classList.remove('sliding'); } };
   } else { view.classList.add('enter'); setTimeout(() => view.classList.remove('enter'), 1000); }
 }
+let drawnHidden = false;   // (a view drawn in the tray: measured again when the window shows)
 function renderView(enter) {
   if (enter) enterNext = true;
+  if (document.hidden) drawnHidden = true;
   const was = flipNext && !enter ? catRects() : null;   // a layout change: the categories glide from where they were
   flipNext = false;
   buildView();
@@ -1210,7 +1253,7 @@ function updateView(all) {
       const cur = fmtV(e.v, dec, rd) + (unitOf(rd) && e.v != null ? ' ' + unitOf(rd) : c.pred && e.v != null ? ' RPM' : '');
       if (r.td[1].title !== cur) r.td[1].title = cur;
       if (r.cap && r.cap.title !== (e.sub || '')) r.cap.title = e.sub || '';
-      const g = c.gates, gl = gateLines(g), two = gl.y2 !== undefined || gl.r2 !== undefined, ln = (y, r) => (y !== undefined ? '<span class="y">' + fmtL(y, dec) + '</span>' : '') + (r !== undefined ? (y !== undefined ? '&nbsp; ' : '') + '<span class="r">' + fmtL(r, dec) + '</span>' : '');
+      const g = c.gates, gl = gateLines(g), two = gl.y2 !== undefined || gl.r2 !== undefined, gk = gbK(rd), ln = (y, r) => (y !== undefined ? '<span class="y">' + fmtL(y * gk, dec) + '</span>' : '') + (r !== undefined ? (y !== undefined ? '&nbsp; ' : '') + '<span class="r">' + fmtL(r * gk, dec) + '</span>' : '');
       const lh = gatesOn(g) ? (two ? (g.dir === 'below' ? 'under ' : 'over ') : '') + ln(gl.y, gl.r) + (two ? ', ' + (g.dir === 'below' ? 'over ' : 'under ') + ln(gl.y2, gl.r2) : '') : '';
       if (r.lines._h !== lh) { r.lines.innerHTML = lh; r.lines._h = lh; }
     }
@@ -1593,6 +1636,7 @@ function rememberFit(key, f) {
 const fitKey = target => hashKey(JSON.stringify([S.screen, target, !!EXT.ready, sectionsEl.clientWidth, sectionsEl.clientHeight, S.L.cats.map(c => [c.id, cellsOf(c).length, c.collapsed]),
   viewOf(S.screen), S.L.cells, Object.keys(S.L.cells).filter(id => isMissing(S.L.cells[id]))]));
 function autofit() {
+  if (document.hidden) drawnHidden = true;   // (measured in the tray: again when the window shows)
   const root = document.documentElement, v = $('view');
   if (!S.L.cats.length || v.classList.contains('empty') || v.classList.contains('setup')) { root.style.fontSize = '13px'; fitRatio = 1; layoutPass(); return; }
   const target = cssScale(), key = fitKey(target), memo = fitMemo[key], floor = Math.max(9, target * 0.6);
@@ -1683,9 +1727,31 @@ $('screens').addEventListener('click', e => { const b = e.target.closest('button
 // ---------- Storage: a virtual list, only the rows in sight exist ----------
 const ROWH = 30;
 let rows = [], typeFilter = 'all', query = '', hideIn = false;
+// ---- hidden from Storage (and from Customize's list), kept per PC in state.json: readings or whole sensors you hid
+// (r, s), and by default the iGPU when there is a discrete GPU and readings HWiNFO has only ever seen at 0 (an empty fan
+// header, a dead voltage input; the host's 'zero' list); show / showS bring back what was hidden by default. A
+// reading's own choice wins over its sensor's, its sensor's over the default ----
+S.hide = { r: [], s: [], show: [], showS: [] };
+function cleanHide(h) {
+  const arr = a => Array.isArray(a) ? [...new Set(a.filter(x => typeof x === 'string' && x.length && x.length <= 200))].slice(0, 2000) : [];
+  return { r: arr(h && h.r), s: arr(h && h.s), show: arr(h && h.show), showS: arr(h && h.showS) };
+}
+let HS = { r: new Set(), s: new Set(), show: new Set(), showS: new Set() }, igpuOf = null, igpu = new Set();
+function hideSets() { HS = { r: new Set(S.hide.r), s: new Set(S.hide.s), show: new Set(S.hide.show), showS: new Set(S.hide.showS) }; }
+const autoHid = r => { if (igpuOf !== SENS) { igpuOf = SENS; igpu = new Set(); const dgpu = SENS.some(x => /^(dGPU|GPU) \[#/.test(x.name)); if (dgpu) SENS.forEach((x, i) => { if (/^iGPU\b/.test(x.name)) igpu.add(i); }); } return igpu.has(r.s) || (!!feed.zero && feed.zero.has(r.key)); };
+// 0 shown, 1 hidden by you, 2 hidden by default
+function hidOf(r) {
+  if (HS.show.has(r.key)) return 0; if (HS.r.has(r.key)) return 1;
+  const sk = SENS[r.s] ? SENS[r.s].key : '';
+  if (HS.showS.has(sk)) return 0; if (HS.s.has(sk)) return 1;
+  return autoHid(r) ? 2 : 0;
+}
+function setHide(fn) { fn(S.hide); S.hide = cleanHide(S.hide); hideSets(); saveState(); renderStorage(); if (GZ.on) { gzCompute(); gzChips(); gzDraw(); } }
+const without = (a, x) => a.filter(y => y !== x);
 const collapsedGroups = new Set();
 function passes(r, toks, iv) {
-  if (typeFilter !== 'all' && r.t !== typeFilter) return false;
+  if (typeFilter === 'hidden' ? !hidOf(r) : hidOf(r)) return false;
+  if (typeFilter !== 'all' && typeFilter !== 'hidden' && r.t !== typeFilter) return false;
   if (hideIn && iv.has(r.key)) return false;
   for (const t of toks) if (!r.hay.includes(t)) return false;
   return true;
@@ -1694,9 +1760,10 @@ let chipCounts = {};
 function computeRows() {
   const toks = query.toLowerCase().split(/\s+/).filter(Boolean), iv = inView();
   const counts = new Map(), hits = [];
-  chipCounts = { all: 0 };
+  chipCounts = { all: 0, hidden: 0 };
   for (const r of READ) {
     if ((hideIn && iv.has(r.key)) || toks.some(t => !r.hay.includes(t))) continue;   // the chips count what the search leaves
+    if (hidOf(r)) { chipCounts.hidden++; if (typeFilter === 'hidden') { hits.push(r); counts.set(r.s, (counts.get(r.s) || 0) + 1); } continue; }
     chipCounts.all++; chipCounts[r.t] = (chipCounts[r.t] || 0) + 1;
     if (typeFilter === 'all' || r.t === typeFilter) { hits.push(r); counts.set(r.s, (counts.get(r.s) || 0) + 1); }
   }
@@ -1718,7 +1785,8 @@ function drawRows() {
   const vl = $('vlist'), sp = $('vspace');
   const top = vl.scrollTop, hgt = vl.clientHeight || 400;
   if (!rows.length && READ.length) {
-    const h = '<div class="vempty">No readings match' + (query ? ' "' + esc(query) + '"' : typeFilter !== 'all' ? ' this type' : '') + '. <button class="linkbtn" id="qClear">Show all</button></div>';
+    const h = '<div class="vempty">No readings match' + (query ? ' "' + esc(query) + '"' : typeFilter !== 'all' ? ' this type' : '') + '. ' +
+      (typeFilter !== 'hidden' && chipCounts.hidden ? plural(chipCounts.hidden, 'hidden one does', 'hidden ones do') + ': <button class="linkbtn" id="qHidden">Show hidden</button>' : '<button class="linkbtn" id="qClear">Show all</button>') + '</div>';
     if (sp._h !== h) { sp.innerHTML = h; sp._h = h; }
     if (rowKeys.length) { rowKeys = []; subscribe(); }
     $('vsticky').hidden = true;
@@ -1731,12 +1799,12 @@ function drawRows() {
     const row = rows[i];
     if (row.g) {
       const sn = SENS[row.s];
-      html += '<div class="vrow g' + (collapsedGroups.has(sn.key) ? ' collapsed' : '') + '" style="top:' + i * ROWH + 'px" data-gs="' + row.s + '"><button class="tw" title="Collapse">' + ICONS.chev + '</button><span class="gn" title="' + esc(sn.name) + '">' + esc(sn.name) + '</span><span class="gc">' + row.n + '</span>' + (relinkFor ? '' : '<button class="addall" title="Add these as a new category">+ all</button>') + '</div>';
+      html += '<div class="vrow g' + (collapsedGroups.has(sn.key) ? ' collapsed' : '') + '" style="top:' + i * ROWH + 'px" data-gs="' + row.s + '"><button class="tw" title="Collapse">' + ICONS.chev + '</button><span class="gn" title="' + esc(sn.name) + '">' + esc(sn.name) + '</span><span class="gc">' + row.n + '</span>' + (relinkFor ? '' : typeFilter === 'hidden' ? '<button class="hid on" data-act="unhides" title="Show this sensor in Storage again">' + ICONS.eye + '</button>' : '<button class="hid" data-act="hides" title="Hide this sensor from Storage">' + ICONS.eyeOff + '</button><button class="addall" title="Add these as a new category">+ all</button>') + '</div>';
     } else {
       const r = row.r, has = iv.has(r.key);
       keys.push(r.key);
       html += '<div class="vrow r" style="top:' + i * ROWH + 'px" data-key="' + esc(r.key) + '"><span class="ti t-' + r.t + '"></span><span class="lbl" title="' + esc(r.label) + '">' + esc(r.label) + '</span><span class="val"></span>' +
-        (relinkFor ? '<button class="add link" data-act="link">Link</button>' : has ? '<span class="inv" title="In the view">' + ICONS.check + '</span>' : '<button class="add" data-act="add" title="Add to the view">+</button>') + '</div>';
+        (relinkFor ? '<button class="add link" data-act="link">Link</button>' : (typeFilter === 'hidden' ? '<button class="hid on" data-act="unhide" title="Show it in Storage again">' + ICONS.eye + '</button>' : '<button class="hid" data-act="hide" title="Hide it from Storage">' + ICONS.eyeOff + '</button>') + (has ? '<span class="inv" title="In the view">' + ICONS.check + '</span>' : '<button class="add" data-act="add" title="Add to the view">+</button>')) + '</div>';
     }
   }
   // the same rows as last time stay the same elements (a click that spans a tick still lands); only values change
@@ -1749,8 +1817,8 @@ function drawRows() {
 }
 function renderChips() {
   const counts = chipCounts;
-  $('chips').innerHTML = ['all', 'temp', 'volt', 'fan', 'power', 'current', 'clock', 'usage', 'other'].filter(t => counts[t] || t === typeFilter)
-    .map(t => '<button class="chip' + (typeFilter === t ? ' on' : '') + '" data-t="' + t + '">' + (t === 'all' ? 'All' : TYPE_NAME[t]) + ' ' + (counts[t] || 0).toLocaleString('en-US') + '</button>').join('');
+  $('chips').innerHTML = ['all', 'temp', 'volt', 'fan', 'power', 'current', 'clock', 'usage', 'other', 'hidden'].filter(t => counts[t] || t === typeFilter)
+    .map(t => '<button class="chip' + (t === 'hidden' ? ' hidchip' : '') + (typeFilter === t ? ' on' : '') + '" data-t="' + t + '"' + (t === 'hidden' ? ' title="What you hid, the integrated GPU and readings that have only ever been 0: bring them back from here"' : '') + '>' + (t === 'all' ? 'All' : t === 'hidden' ? 'Hidden' : TYPE_NAME[t]) + ' ' + (counts[t] || 0).toLocaleString('en-US') + '</button>').join('');
 }
 
 // ---------- adding and removing cells ----------
@@ -2676,9 +2744,18 @@ $('chips').addEventListener('click', e => { const b = e.target.closest('.chip');
 $('hideIn').addEventListener('click', () => { hideIn = !hideIn; $('hideIn').classList.toggle('on', hideIn); $('hideIn').setAttribute('aria-pressed', hideIn); renderStorage(); });
 $('vspace').addEventListener('click', e => {
   if (e.target.closest('#qClear')) { query = ''; $('q').value = ''; typeFilter = 'all'; renderStorage(); return; }
+  if (e.target.closest('#qHidden')) { typeFilter = 'hidden'; $('vlist').scrollTop = 0; renderStorage(); return; }
   const g = e.target.closest('.vrow.g');
   if (g) {
     const s = Number(g.dataset.gs), sk = SENS[s].key;
+    const ha = e.target.closest('[data-act="hides"], [data-act="unhides"]');
+    if (ha) {
+      const keys = READ.filter(r => r.s === s).map(r => r.key), hide = ha.dataset.act === 'hides';
+      setHide(h => { h.r = h.r.filter(k => !keys.includes(k)); h.show = h.show.filter(k => !keys.includes(k)); h.s = without(h.s, sk); h.showS = without(h.showS, sk);
+        if (hide) h.s.push(sk); else if (READ.some(r => r.s === s && autoHid(r))) h.showS.push(sk); });
+      toast(hide ? SENS[s].short + ' hidden from Storage: the Hidden chip brings it back' : SENS[s].short + ' is back in Storage');
+      return;
+    }
     if (e.target.closest('.addall')) {
       const toks = query.toLowerCase().split(/\s+/).filter(Boolean), iv = inView();
       const keys = READ.filter(r => r.s === s && passes(r, toks, iv) && !iv.has(r.key)).map(r => r.key);
@@ -2691,6 +2768,14 @@ $('vspace').addEventListener('click', e => {
   }
   const row = e.target.closest('.vrow.r'); if (!row) return;
   const act = e.target.closest('[data-act]');
+  if (act && (act.dataset.act === 'hide' || act.dataset.act === 'unhide')) {
+    const k = row.dataset.key, r = BYKEY.get(k), hide = act.dataset.act === 'hide';
+    // (shown again: an exception kept only while its sensor, or the default, would still hide it)
+    setHide(h => { h.r = without(h.r, k); h.show = without(h.show, k); const sk = r && SENS[r.s] ? SENS[r.s].key : '';
+      if (hide) h.r.push(k); else if (r && !h.showS.includes(sk) && (h.s.includes(sk) || autoHid(r))) h.show.push(k); });
+    if (hide) toast((r ? r.label : 'It') + ' hidden from Storage: the Hidden chip brings it back');
+    return;
+  }
   if (act && act.dataset.act === 'add') { const t = targetForAdd(), r = BYKEY.get(row.dataset.key); addKeys([row.dataset.key], t.cat, t.index, r ? SENS[r.s].short : null); }
   if (act && act.dataset.act === 'link' && relinkFor) {
     const cid = relinkFor, r = BYKEY.get(row.dataset.key);
@@ -2744,8 +2829,8 @@ function renderInsp() {
   if (!c) { box.innerHTML = viewPanel(); refocus(); return; }
   const r = c.key ? BYKEY.get(c.key) : null, sen = r ? SENS[r.s] : null;
   const g = c.gates || { mode: 'none', dir: 'above', y: NaN, r: NaN, hold: 3 };
-  const unit = c.pred ? 'RPM' : unitOf(r);
-  const num = x => (x == null || !isFinite(x)) ? '' : x;
+  const unit = c.pred ? 'RPM' : unitOf(r), lk = c.pred ? 1 : gbK(r);
+  const num = x => (x == null || !isFinite(x)) ? '' : x, numL = x => (x == null || !isFinite(x)) ? '' : Math.round(x * lk * 1e4) / 1e4;   // (lines in GB for memory)
   let h = '<div class="src">' + (c.pred ? '<span>Predicted fan: no sensor, its rpm comes from the curve below.</span>'
     : r ? '<span>' + esc(sen.name) + '</span><span style="color:var(--fg)" title="' + esc(r.key) + '">' + esc(r.label) + '</span>'
     : '<span style="color:#e08a8d">' + (sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now' : 'Not on this PC' + (c.match ? ': ' + esc(c.match.replace('|', ', ')) : '')) + '</span><span class="k">' + esc(c.key) + '</span>') + '</div>';
@@ -2762,11 +2847,11 @@ function renderInsp() {
     if (g.mode !== 'none') {
       h += '<div class="seg" id="iDir">' + [['above', 'Bad when above'], ['below', 'Bad when below']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.dir === v ? 'on' : '') + '">' + t + '</button>').join('') + '</div>';
       const o = g.other && typeof g.other === 'object' ? g.other : null, osd = g.dir === 'below' ? 'above' : 'below', side = (d, t) => o ? (d === 'below' ? 'Low: ' + t.toLowerCase() : 'High: ' + t.toLowerCase()) : t;
-      h += '<div class="two"><label class="fld gate-y"><span>' + side(g.dir, 'Yellow') + ' ' + esc(unit) + '</span><input id="iY" type="number" step="any" value="' + num(g.y) + '"></label>' +
-           (g.mode === 'yr' ? '<label class="fld gate-r"><span>' + side(g.dir, 'Red') + ' ' + esc(unit) + '</span><input id="iR" type="number" step="any" value="' + num(g.r) + '"></label>' : '<span></span>') + '</div>';
+      h += '<div class="two"><label class="fld gate-y"><span>' + side(g.dir, 'Yellow') + ' ' + esc(unit) + '</span><input id="iY" type="number" step="any" value="' + numL(g.y) + '"></label>' +
+           (g.mode === 'yr' ? '<label class="fld gate-r"><span>' + side(g.dir, 'Red') + ' ' + esc(unit) + '</span><input id="iR" type="number" step="any" value="' + numL(g.r) + '"></label>' : '<span></span>') + '</div>';
       h += '<label class="chk"><input type="checkbox" id="iOther"' + (o ? ' checked' : '') + '> Also bad when ' + osd + '</label>';
-      if (o) h += '<div class="two"><label class="fld gate-y"><span>' + side(osd, 'Yellow') + ' ' + esc(unit) + '</span><input id="iOY" type="number" step="any" placeholder="none" value="' + num(o.y) + '"></label>' +
-        '<label class="fld gate-r"><span>' + side(osd, 'Red') + ' ' + esc(unit) + '</span><input id="iOR" type="number" step="any" placeholder="none" value="' + num(o.r) + '"></label></div>';
+      if (o) h += '<div class="two"><label class="fld gate-y"><span>' + side(osd, 'Yellow') + ' ' + esc(unit) + '</span><input id="iOY" type="number" step="any" placeholder="none" value="' + numL(o.y) + '"></label>' +
+        '<label class="fld gate-r"><span>' + side(osd, 'Red') + ' ' + esc(unit) + '</span><input id="iOR" type="number" step="any" placeholder="none" value="' + numL(o.r) + '"></label></div>';
       h += '<label class="fld"><span>Hold before it turns (s)</span><input id="iHold" type="number" min="0" step="1" value="' + num(g.hold) + '"></label>';
       h += '<div class="err" id="gErr"></div><div class="scale" id="gScale"></div>';
     } else if (r) {
@@ -2809,12 +2894,12 @@ function renderInsp() {
 }
 // new lines start a little past where the value is now, on its bad side, at the cell's decimals (nothing without a value)
 function seedLines(c, r, again) {
-  const g = c.gates, v = r && r.v != null ? r.v : null;
+  const g = c.gates, gk = gbK(r), v = r && r.v != null ? r.v * gk : null;   // (in what the cell shows: GB for memory)
   if (v == null || g.mode === 'none' || (isFanR(r) && v <= 0)) return;   // nothing to go on (a fan standing still): the fields stay empty
   const dec = decOfCell(c, r), step = Math.pow(10, -dec);
   const past = (x, k) => +(x + (g.dir === 'below' ? -1 : 1) * Math.max(Math.abs(x) * k, step)).toFixed(dec);
-  if (again || !Number.isFinite(g.y)) g.y = past(v, g.dir === 'below' ? 0.2 : 0.15);
-  if (g.mode === 'yr' && (again || !Number.isFinite(g.r))) g.r = past(g.y, g.dir === 'below' ? 0.3 : 0.12);
+  if (again || !Number.isFinite(g.y)) g.y = past(v, g.dir === 'below' ? 0.2 : 0.15) / gk;
+  if (g.mode === 'yr' && (again || !Number.isFinite(g.r))) g.r = past(g.y * gk, g.dir === 'below' ? 0.3 : 0.12) / gk;
 }
 function presetFor(r) {
   const sn = SENS[r.s] ? SENS[r.s].name : '';
@@ -2835,7 +2920,7 @@ function tickInsp() {
     const g = c.gates;
     const og = g.other && typeof g.other === 'object' ? g.other : null, oset = og && (Number.isFinite(og.y) || Number.isFinite(og.r)), osd = g.dir === 'below' ? 'above' : 'below';
     $('gErr').textContent = !Number.isFinite(g.y) ? 'Set the yellow value.' : gatesBad(g) ? 'Red has to be ' + (g.dir === 'below' ? 'below' : 'above') + ' yellow.' : (g.mode === 'yr' && !Number.isFinite(g.r)) ? 'Set the red value.' :
-      og && !oset ? 'Set a yellow or red value for when it is too ' + (osd === 'below' ? 'low' : 'high') + '.' : oset && !otherOf(g) ? 'When it is ' + (osd === 'below' ? 'low' : 'high') + ', its lines have to be ' + (osd === 'below' ? 'under ' : 'over ') + fmtL(g.y, decOfCell(c, c.key ? BYKEY.get(c.key) : null)) + (Number.isFinite(og.y) && Number.isFinite(og.r) ? ', with red ' + (osd === 'below' ? 'under' : 'over') + ' yellow' : '') + '.' : '';
+      og && !oset ? 'Set a yellow or red value for when it is too ' + (osd === 'below' ? 'low' : 'high') + '.' : oset && !otherOf(g) ? 'When it is ' + (osd === 'below' ? 'low' : 'high') + ', its lines have to be ' + (osd === 'below' ? 'under ' : 'over ') + fmtL(g.y * gbK(c.key ? BYKEY.get(c.key) : null), decOfCell(c, c.key ? BYKEY.get(c.key) : null)) + (Number.isFinite(og.y) && Number.isFinite(og.r) ? ', with red ' + (osd === 'below' ? 'under' : 'over') + ' yellow' : '') + '.' : '';
     const s = c.key ? series(c.key, HLEN).filter(isFinite) : [];
     if (e.v != null) s.push(e.v);
     let mn = s.length ? Math.min(...s) : 0, mx = s.length ? Math.max(...s) : 1;
@@ -2847,8 +2932,8 @@ function tickInsp() {
     const cuts = [mn, ...marks.filter(x => x > mn && x < mx).sort((x, y) => x - y), mx], zc = ['#1f2a22', '#4d4317', '#4a1e21'];
     const bar = cuts.slice(1).map((z, i) => '<i style="width:' + Math.max(0, P(z) - P(cuts[i])) + '%;background:' + zc[gateLevel(g, (cuts[i] + z) / 2).raw] + '"></i>').join('');
     const r = c.key ? BYKEY.get(c.key) : null, dec = decOfCell(c, r);
-    sc.innerHTML = '<div class="bar">' + bar + '</div>' + (e.v != null ? '<span class="mk" style="left:' + P(e.v) + '%"></span><span class="tk" style="left:' + P(e.v) + '%;top:-12px;color:var(--fg)">now ' + fmt(e.v, dec) + '</span>' : '') +
-      marks.map(x => '<span class="tk" style="left:' + P(x) + '%">' + fmt(x, dec) + '</span>').join('');
+    sc.innerHTML = '<div class="bar">' + bar + '</div>' + (e.v != null ? '<span class="mk" style="left:' + P(e.v) + '%"></span><span class="tk" style="left:' + P(e.v) + '%;top:-12px;color:var(--fg)">now ' + fmtV(e.v, dec, r) + '</span>' : '') +
+      marks.map(x => '<span class="tk" style="left:' + P(x) + '%">' + fmtV(x, dec, r) + '</span>').join('');
   }
   if ($('cChart') && c.curve) drawCurveSvg(c, e);
   const st = $('cStat');
@@ -2913,8 +2998,9 @@ insp.addEventListener('input', e => {
     const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
     if (el) el.textContent = nameIn(sel);
   }
-  if (t.id === 'iOY' || t.id === 'iOR') { setCell(c => { const o = c.gates.other || (c.gates.other = {}), k = t.id === 'iOY' ? 'y' : 'r'; if (t.value === '' || !isFinite(Number(t.value))) delete o[k]; else o[k] = Number(t.value); }); tickInsp(); updateView(false); }
-  if (t.id === 'iY' || t.id === 'iR' || t.id === 'iHold') { setCell(c => { const k = t.id === 'iY' ? 'y' : t.id === 'iR' ? 'r' : 'hold'; c.gates[k] = t.value === '' ? NaN : k === 'hold' ? Math.min(1e9, Math.max(0, Number(t.value) || 0)) : Number(t.value); }); tickInsp(); updateView(false); }
+  const lk = c.pred ? 1 : gbK(BYKEY.get(c.key));   // (memory lines are typed in GB, kept in MB)
+  if (t.id === 'iOY' || t.id === 'iOR') { setCell(c => { const o = c.gates.other || (c.gates.other = {}), k = t.id === 'iOY' ? 'y' : 'r'; if (t.value === '' || !isFinite(Number(t.value))) delete o[k]; else o[k] = Number(t.value) / lk; }); tickInsp(); updateView(false); }
+  if (t.id === 'iY' || t.id === 'iR' || t.id === 'iHold') { setCell(c => { const k = t.id === 'iY' ? 'y' : t.id === 'iR' ? 'r' : 'hold'; c.gates[k] = t.value === '' ? NaN : k === 'hold' ? Math.min(1e9, Math.max(0, Number(t.value) || 0)) : Number(t.value) / lk; }); tickInsp(); updateView(false); }
   if (t.id === 'cTol' || t.id === 'cHold') { if (t.value === '') return; setCell(c => { c.curve[t.id === 'cTol' ? 'tol' : 'hold'] = Math.max(t.id === 'cTol' ? 1 : 0, Number(t.value) || 0); }); tickInsp(); updateView(false); }
   if (t.dataset && t.dataset.i != null && t.closest('#cTab') && t.value !== '') { setCell(c => { c.curve.pts[Number(t.dataset.i)][Number(t.dataset.j)] = Number(t.value); }); tickInsp(); updateView(false); }
 });
@@ -3204,13 +3290,17 @@ insp.addEventListener('input', e => {   // a name in this view, as it's typed (t
 });
 insp.addEventListener('keydown', e => { if (e.target.id === 'lName' && e.key === 'Escape') { const cat = catById(selCat); if (cat) e.target.value = cat.name; e.target.blur(); } });
 // a template shows itself while the pointer rests on it
+let tplT = 0;
 insp.addEventListener('mouseover', e => {
   const b = e.target.closest('.tpl'); if (!b || b.disabled || (preview && preview.k === b.dataset.tpl)) return;
-  const v = templateView(b.dataset.tpl); if (!v) return;
-  preview = { vn: S.screen, view: v, k: b.dataset.tpl }; renderView(false);
+  clearTimeout(tplT);
+  tplT = setTimeout(() => { if (!b.isConnected) return; const v = templateView(b.dataset.tpl); if (!v) return; preview = { vn: S.screen, view: v, k: b.dataset.tpl }; renderView(false); }, 180);
 });
 insp.addEventListener('mouseout', e => {
   const b = e.target.closest('.tpl'); if (!b || (e.relatedTarget && b.contains(e.relatedTarget))) return;
+  clearTimeout(tplT);
+  // (onto the next template: it takes over from this preview, no stop at the real view between them)
+  if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.tpl')) return;
   if (preview) { preview = null; renderView(false); }
 });
 
@@ -3277,7 +3367,7 @@ function openDetail(cid) {
   refreshModal(true);
   bigRev0 = motionOn() ? performance.now() : 0; bigLoop();
 }
-function closeDetail() { modalCid = null; modal.classList.remove('open'); pauseSpin(document.querySelector('#micon svg')); }
+function closeDetail() { modalCid = null; bigHist = null; modal.classList.remove('open'); pauseSpin(document.querySelector('#micon svg')); }
 function refreshModal(full) {
   const c = S.L.cells[modalCid]; if (!c) { closeDetail(); return; }
   const r = c.key ? BYKEY.get(c.key) : null, e = evalCell(modalCid, c, true, true), dec = decOfCell(c, r), unit = c.pred ? 'RPM' : unitOf(r), xk = xkOf(r);
@@ -3289,11 +3379,11 @@ function refreshModal(full) {
   mv.style.color = COLORS[e.col] || COLORS.white;
   if (!mv._n) { mv.innerHTML = '<span></span><span class="u"></span>'; mv._n = mv.firstChild; mv._u = mv.lastChild; }
   odo(mv._n, e.txt != null ? e.txt : fmtV(e.v, dec, r)); setText(mv._u, e.txt != null ? (e.utxt ? ' ' + e.utxt : '') : e.v == null ? '' : ' ' + unit);
-  const g = c.gates, det = gateLines(g);
+  const g = c.gates, gk = gbK(r), det = gbDet(gateLines(g), gk);
   if (full) {
     let d = c.pred ? 'Predicted from ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ' through its curve; there is no fan sensor.'
       : r ? '<span title="' + esc(r.key) + '">' + esc(SENS[r.s].name) + ', ' + esc(r.label) + '.</span>' : sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now.' : 'This reading is not on this PC.';
-    if (gatesOn(g)) d += ' Lines: yellow ' + fmtL(g.y, dec) + (det.r !== undefined ? ', red ' + fmtL(g.r, dec) : '') + ' ' + esc(unit) + (g.dir === 'below' ? ' (bad when below)' : '') + (det.y2 !== undefined || det.r2 !== undefined ? ', and on the other side ' + [det.y2 !== undefined ? 'yellow ' + fmtL(det.y2, dec) : '', det.r2 !== undefined ? 'red ' + fmtL(det.r2, dec) : ''].filter(Boolean).join(', ') + (g.dir === 'below' ? ' (bad when above)' : ' (bad when below)') : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
+    if (gatesOn(g)) d += ' Lines: yellow ' + fmtL(det.y, dec) + (det.r !== undefined ? ', red ' + fmtL(det.r, dec) : '') + ' ' + esc(unit) + (g.dir === 'below' ? ' (bad when below)' : '') + (det.y2 !== undefined || det.r2 !== undefined ? ', and on the other side ' + [det.y2 !== undefined ? 'yellow ' + fmtL(det.y2, dec) : '', det.r2 !== undefined ? 'red ' + fmtL(det.r2, dec) : ''].filter(Boolean).join(', ') + (g.dir === 'below' ? ' (bad when above)' : ' (bad when below)') : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
     if (c.curve && !c.pred) d += ' Follows a fan curve on ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ', within ' + fmtL(c.curve.tol, 1) + '%' + (c.curve.warn === false ? ' (it doesn\'t warn when off it)' : '') + '.';
     if (e.strip) d = 'What limits your fps while a game runs, worked out once a second from GPU usage and the busiest CPU thread. GPU bound: the GPU at 95% or more, ' +
       'normal for a game without an fps limit. CPU bound: the GPU under 85% with a CPU thread at 80% or more. FPS capped: neither is the limit, so an fps cap or vsync sets the pace. ' +
@@ -3305,7 +3395,7 @@ function refreshModal(full) {
   mgraph.hidden = $('mstats').hidden = !!e.strip;   // the bottleneck: only the range tabs up here, its bar below
   if (e.strip) { lastBig = null; bnPanel($('mextra'), e, full); return; }
   if (xk && xk.noGraph) { lastBig = null; xDetail(xk, r, e, full); return; }
-  const sp = bucketArr(c, isYN(r));
+  const sp = gbArr(bucketArr(c, isYN(r)), gk);
   if (full) {   // the yellow line joins the scale when it is close above the data; decided once per opening
     modalGateInView = false;
     const vals = sp.filter(x => x !== null);
@@ -3313,7 +3403,7 @@ function refreshModal(full) {
   }
   const gu = isYN(r) ? 'Yes/No' : unit;
   if (bigRange === '15m') lastBig = [mgraph, sp, det, dec, gu, modalGateInView, null, HLEN * 1000];
-  else if (histReady()) { const H = histOf(c); lastBig = isYN(r) ? [mgraph, H.max, det, dec, gu, modalGateInView, null, H.span * 1000] : [mgraph, H.avg, det, dec, gu, modalGateInView, H.max, H.span * 1000]; }
+  else if (histReady()) { const H = histOf(c); lastBig = isYN(r) ? [mgraph, H.max, det, dec, gu, modalGateInView, null, H.span * 1000] : [mgraph, gbArr(H.avg, gk), det, dec, gu, modalGateInView, gbArr(H.max, gk), H.span * 1000]; }
   else lastBig = [mgraph, [], det, dec, gu, modalGateInView, null, 0];
   mgraph.classList.toggle('loading', bigRange !== '15m' && !histReady());
   drawBigGraph.apply(null, lastBig);
@@ -3414,7 +3504,7 @@ $('mextra').addEventListener('pointerleave', () => { BNP.x = null; bnHover($('me
 modal.addEventListener('mousedown', e => { if (e.target === modal) closeDetail(); });
 $('mclose').onclick = closeDetail;
 function graphCtx(cv) {
-  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth * dpr, h = cv.clientHeight * dpr;
+  const dpr = window.devicePixelRatio || 1, w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
   if (cv.width !== w) cv.width = w;
   if (cv.height !== h) cv.height = h;
   const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, w, h);
@@ -3590,7 +3680,7 @@ window.addEventListener('blur', () => { HP.cid = null; hidePrev(); });
 function hidePrev() { HP.shown = false; hprev.classList.remove('on'); pauseSpin(hprev.querySelector('.pi svg')); }
 function fillPrev() {
   const c = S.L.cells[HP.cid]; if (!c) return false;
-  const r = c.key ? BYKEY.get(c.key) : null, e = evalCell(HP.cid, c, true, true), dec = decOfCell(c, r), f = x => x == null || !isFinite(x) ? '--' : fmt(x, dec);
+  const r = c.key ? BYKEY.get(c.key) : null, e = evalCell(HP.cid, c, true, true), dec = decOfCell(c, r), f = x => x == null || !isFinite(x) ? '--' : fmtV(x, dec, r);
   const pi = hprev.querySelector('.pi'), ic = iconOf(c, r);
   if (pi._h !== ic) { pi.innerHTML = ic; pi._h = ic; sweepSpins(); }
   if (isFanCell(c)) spinIcon(pi.querySelector('svg'), e.v);
@@ -3609,8 +3699,8 @@ function fillPrev() {
 }
 function drawPrev() {
   const c = S.L.cells[HP.cid]; if (!c || isBneck(c)) { HP.rev0 = 0; return; }
-  const r = c.key ? BYKEY.get(c.key) : null, g = c.gates, det = gateLines(g);
-  const sp = bucketArr(c), vals = sp.filter(x => x !== null);
+  const r = c.key ? BYKEY.get(c.key) : null, g = c.gates, gk = gbK(r), det = gbDet(gateLines(g), gk);
+  const sp = gbArr(bucketArr(c), gk), vals = sp.filter(x => x !== null);
   let gate = false;
   if (vals.length > 1 && det.y !== undefined) { const hi = Math.max(...vals), spn = Math.max(1.2, hi - Math.min(...vals)); gate = det.y > hi && det.y < hi + spn * 1.2; }
   const p = HP.rev0 && motionOn() ? Math.min(1, (performance.now() - HP.rev0) / 450) : 1;
@@ -3731,7 +3821,7 @@ $('clearBtn').onclick = () => askConfirm('Clear the view?', 'Back to the first r
 const wmodal = $('wmodal');
 let lastLogCount = 0;
 $('logBtn').onclick = () => { wmodal.classList.add('open'); $('wlist').innerHTML = '<div class="wempty">loading...</div>'; if (host) send({ t: 'alerts' }); else renderWarnings(''); };
-$('wclear').onclick = () => askConfirm('Clear warning history?', 'This wipes the warning log (' + lastLogCount + ' crossings in the last ' + (feed.warnDays || 30) + ' days). A copy is kept as alerts.log.bak first, so it can be brought back.', 'Clear history', () => send({ t: 'alerts:clear' }));
+$('wclear').onclick = () => askConfirm('Clear warning history?', 'This wipes the warning log (' + lastLogCount + ' crossings' + (feed.warnDays ? ' in the last ' + feed.warnDays + ' days' : '') + '). A copy goes to alerts.log.bak first.', 'Clear history', () => send({ t: 'alerts:clear' }));
 function fmtDur(ms) { const s = Math.max(0, Math.round(ms / 1000)); if (s < 60) return s + 's'; const m = Math.round(s / 60); return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; }
 function renderWarnings(log) {
   const open = {}, eps = [];
@@ -3755,8 +3845,8 @@ function renderWarnings(log) {
     const ep = { when, day: m[1], time: m[2].slice(0, 5), level: m[3], name, detail, end: null, peak: null, interrupted: false };
     open[name] = ep; eps.push(ep);
   }
-  const N = feed.warnDays || 30, recent = eps.filter(ep => ep.when.getTime() >= Date.now() - N * 86400000);
-  setText($('wdays'), String(N));
+  const N = feed.warnDays, recent = N ? eps.filter(ep => ep.when.getTime() >= Date.now() - N * 86400000) : eps;   // (no days set: all of it)
+  setText($('wdays'), N ? String(N) : 'all');
   const groups = [], lastOf = {};
   for (const ep of recent) {
     const g = lastOf[ep.name], prevEnd = g ? (g.end || g.last.when) : null;
@@ -3764,17 +3854,26 @@ function renderWarnings(log) {
     else { const ng = { name: ep.name, day: ep.day, first: ep, last: ep, eps: [ep], level: ep.level, end: ep.end, ongoing: !ep.end && !ep.interrupted, cut: ep.interrupted && !ep.end }; groups.push(ng); lastOf[ep.name] = ng; }
   }
   const num = x => { const m = /^([\d.]+)\s*(.*)$/.exec(x || ''); return m ? { v: parseFloat(m[1]), u: m[2].replace(/\s*\(.*$/, '') } : null; };
+  // a row's peak: the worst of its episodes, the lowest for a line that warns below (the host marks those "(under its
+  // line)"; an older log is read off an episode whose peak went lower than its crossing)
   for (const g of groups) {
     let pk = null, dur = 0;
-    for (const ep of g.eps) { const c = num(ep.peak) || num(ep.redDetail) || num(ep.detail); if (c && (!pk || c.v > pk.v)) pk = c; if (ep.end) dur += Math.max(0, ep.end - ep.when); }
+    const low = g.eps.some(ep => /\(under its line\)/.test(ep.detail) || (!/ fan curve$/.test(ep.name) && num(ep.peak) && num(ep.detail) && num(ep.peak).v < num(ep.detail).v));   // (a curve's peak is the furthest off it, either way)
+    for (const ep of g.eps) { const c = num(ep.peak) || num(ep.redDetail) || num(ep.detail); if (c && (!pk || (low ? c.v < pk.v : c.v > pk.v))) pk = c; if (ep.end) dur += Math.max(0, ep.end - ep.when); }
     g.peak = pk; g.dur = dur;
   }
   lastLogCount = recent.length;
   const nRed = recent.filter(ep => ep.level === 'RED').length, nYel = recent.length - nRed;
-  $('wsum').innerHTML = groups.length ? '<span>crossings in the last ' + N + ' days:</span><span><b style="color:#e5484d">' + nRed + '</b> red</span><span><b style="color:#e6c84a">' + nYel + '</b> yellow</span><span>' + plural(groups.length, 'row') + '</span>' : '';
+  $('wsum').innerHTML = groups.length ? '<span>crossings' + (N ? ' in the last ' + N + ' days' : '') + ':</span><span><b style="color:#e5484d">' + nRed + '</b> red</span><span><b style="color:#e6c84a">' + nYel + '</b> yellow</span><span>' + plural(groups.length, 'row') + '</span>' : '';
+  // (the newest 300 rows first, more on asking: a log with thousands of crossings drew them all at once)
+  wGroups = groups.reverse(); wShow = 300; wEmptyN = N;
+  drawWarnList();
+}
+let wGroups = [], wShow = 300, wEmptyN = 30;
+function drawWarnList() {
   const today = localDay(new Date()), y = new Date(); y.setDate(y.getDate() - 1); const yest = localDay(y);
   let hh = '', lastDay = null;
-  groups.reverse().forEach((g, gi) => {
+  wGroups.slice(0, wShow).forEach((g, gi) => {
     if (g.day !== lastDay) { lastDay = g.day; hh += '<div class="wday">' + (g.day === today ? 'today' : g.day === yest ? 'yesterday' : g.day) + '</div>'; }
     const col = g.level === 'RED' ? '#e5484d' : '#e6c84a';
     const endT = g.end ? ('0' + g.end.getHours()).slice(-2) + ':' + ('0' + g.end.getMinutes()).slice(-2) : null;
@@ -3783,24 +3882,46 @@ function renderWarnings(log) {
     const many = g.eps.length > 1;
     hh += '<div class="wrow' + (many ? ' wgrp' : '') + '" data-g="' + gi + '"><span class="wchev">' + (many ? '&#9656;' : '') + '</span><span class="wdot" style="background:' + col + '"></span>' +
       '<span class="wtime">' + span + '</span><span class="wname">' + esc(g.name) + (many ? '<span class="wcnt">' + g.eps.length + 'x</span>' : '') + '</span><span class="wmeta">' + esc(meta) + '</span></div>';
-    if (many) {
-      hh += '<div class="wsub" data-sub="' + gi + '">';
-      for (const ep of g.eps.slice().reverse()) {
-        const m2 = ep.interrupted ? (/^HWiNFO/.test(ep.cut || '') ? 'HWiNFO stopped sharing' : /^PC going to sleep/.test(ep.cut || '') ? 'PC went to sleep' : 'ended with the app') + (ep.end ? ', ' + fmtDur(ep.end - ep.when) : '') + (ep.peak ? ', peak ' + ep.peak : '')
-          : ep.end ? fmtDur(ep.end - ep.when) + (ep.peak ? ', peak ' + ep.peak : '') : 'ongoing';
-        hh += '<div class="wrow"><span class="wdot" style="background:' + (ep.level === 'RED' ? '#e5484d' : '#e6c84a') + ';width:6px;height:6px"></span><span class="wtime">' + ep.time + '</span><span class="wname">' + (ep.level === 'RED' ? 'red' : 'yellow') + ' at ' + esc(ep.redDetail || ep.detail) + '</span><span class="wmeta">' + esc(m2) + '</span></div>';
-      }
-      hh += '</div>';
-    }
+    if (many) hh += '<div class="wsub" data-sub="' + gi + '"></div>';   // (its episodes drawn when it opens: a big log had 100,000+ hidden rows)
   });
-  $('wlist').innerHTML = hh || '<div class="wempty ico chk">Nothing crossed a line in the last ' + N + ' days. Quiet machine.</div>';
+  if (wGroups.length > wShow) hh += '<button class="linkbtn wmore" id="wMore">Show older (' + plural(wGroups.length - wShow, 'more row') + ')</button>';
+  $('wlist').innerHTML = hh || '<div class="wempty ico chk">Nothing crossed a line' + (wEmptyN ? ' in the last ' + wEmptyN + ' days' : '') + '. Quiet machine.</div>';
 }
-$('wlist').addEventListener('click', e => { const r = e.target.closest('.wgrp'); if (!r) return; r.classList.toggle('open'); const sub = document.querySelector('.wsub[data-sub="' + r.dataset.g + '"]'); if (sub) sub.classList.toggle('open'); });
+function wSubRows(g) {
+  let hh = '';
+  for (const ep of g.eps.slice().reverse()) {
+    const m2 = ep.interrupted ? (/^HWiNFO/.test(ep.cut || '') ? 'HWiNFO stopped sharing' : /^PC going to sleep/.test(ep.cut || '') ? 'PC went to sleep' : 'ended with the app') + (ep.end ? ', ' + fmtDur(ep.end - ep.when) : '') + (ep.peak ? ', peak ' + ep.peak : '')
+      : ep.end ? fmtDur(ep.end - ep.when) + (ep.peak ? ', peak ' + ep.peak : '') : 'ongoing';
+    hh += '<div class="wrow"><span class="wdot" style="background:' + (ep.level === 'RED' ? '#e5484d' : '#e6c84a') + ';width:6px;height:6px"></span><span class="wtime">' + ep.time + '</span><span class="wname">' + (ep.level === 'RED' ? 'red' : 'yellow') + ' at ' + esc(ep.redDetail || ep.detail) + '</span><span class="wmeta">' + esc(m2) + '</span></div>';
+  }
+  return hh;
+}
+$('wlist').addEventListener('click', e => {
+  if (e.target.closest('#wMore')) { const st = $('wlist').closest('.mcard').scrollTop; wShow += 300; drawWarnList(); $('wlist').closest('.mcard').scrollTop = st; return; }
+  const r = e.target.closest('.wgrp'); if (!r) return;
+  r.classList.toggle('open');
+  const sub = document.querySelector('.wsub[data-sub="' + r.dataset.g + '"]');
+  if (sub) { if (!sub.firstChild && wGroups[+r.dataset.g]) sub.innerHTML = wSubRows(wGroups[+r.dataset.g]); sub.classList.toggle('open'); }
+});
 
 // ---------- game sessions ----------
 const gmodal = $('gmodal');
+// a closed popup lets go of its list (thousands of rows stayed in the page all day) and of Customize (its readings
+// stayed subscribed)
+// (after the fade: emptied as it starts to close, the card shrank and jumped while it faded)
+const afterFade = (el, fn) => setTimeout(() => { if (!el.classList.contains('open')) fn(); }, 250);
+new MutationObserver(() => {
+  if (gmodal.classList.contains('open')) return;
+  afterFade(gmodal, () => {
+    if ($('glist').firstChild) { $('glist').innerHTML = ''; gxSs = []; gxTl.length = 0; }
+    gxText = '';
+    if (GZ.on) { GZ.on = false; renderGz(); }
+  });
+}).observe(gmodal, { attributes: true, attributeFilter: ['class'] });
+new MutationObserver(() => { if (!$('wmodal').classList.contains('open')) afterFade($('wmodal'), () => { if ($('wlist').firstChild) { $('wlist').innerHTML = ''; wGroups = []; } }); }).observe($('wmodal'), { attributes: true, attributeFilter: ['class'] });
 let lastGameCount = 0;
-$('gamesBtn').onclick = () => { gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; recKey = null; renderRec(); if (host) send({ t: 'games' }); else renderGames(''); };
+$('gamesBtn').onclick = () => { gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; recKey = null; gxLoaded = false; renderRec(); if (host) send({ t: 'games' }); else renderGames(''); };
+let gxLoaded = false;   // the log is in since the popup opened (Start names the next "Session n" from it)
 // ---- sessions of your own: Start records one (the host follows it like a game's, beside any game), each running one
 // shows on top with its name (change it there), its time so far and Stop ----
 let recKey = null, recHold = 0;
@@ -3813,7 +3934,7 @@ function renderRec() {
       '<span class="gx-rs">recording since ' + hhmm(x[0]) + '</span><span class="gx-rt"></span><button class="btn" data-rec="stop">Stop</button></div>').join('');
   }
   for (const el of box.children) setText(el.querySelector('.gx-rt'), recClock(Math.max(0, nowTs - +el.dataset.start)));
-  $('grec').disabled = rs.length >= 8 || Date.now() < recHold;
+  $('grec').disabled = rs.length >= 8 || Date.now() < recHold || !gxLoaded;
 }
 // the next free 'Session n'
 function recName() {
@@ -3825,7 +3946,7 @@ $('grec').onclick = () => { send({ t: 'rec', act: 'start', name: recName() }); r
 $('grun').addEventListener('click', e => { const b = e.target.closest('[data-rec="stop"]'); if (!b) return; b.disabled = true; send({ t: 'rec', act: 'stop', start: +b.closest('.gx-rec').dataset.start }); });
 $('grun').addEventListener('change', e => { if (!e.target.matches('.gx-rn')) return; const v = e.target.value.trim(); if (v) send({ t: 'rec', act: 'name', start: +e.target.closest('.gx-rec').dataset.start, name: v.slice(0, 60) }); });
 $('grun').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.gx-rn')) e.target.blur(); });
-$('gclear').onclick = () => askConfirm('Clear all sessions?', 'This wipes the session log (' + lastGameCount + (lastGameCount === 1 ? ' session' : ' sessions') + '). A copy is kept as games.log.bak first, so it can be brought back.', 'Clear sessions', () => send({ t: 'games:clear' }));
+$('gclear').onclick = () => askConfirm('Clear all sessions?', 'This wipes the session log (' + lastGameCount + (lastGameCount === 1 ? ' session' : ' sessions') + '). A copy goes to games.log.bak first.', 'Clear sessions', () => send({ t: 'games:clear' }));
 // layout A, the tailored dashboard's popup: a week strip, columns that line up down the list, a session opens into
 // avg / max bars against its lines and a minute by minute timeline
 const GX_CHEV = '<svg class="gx-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg>';
@@ -3877,7 +3998,7 @@ const gxTop = v => { if (!(v > 0)) return 1; const p = Math.pow(10, Math.floor(M
 function gxItemRow(it, label, spec) {
   if (!it) return '<div class="gx-rw nil" title="Not recorded in this session: a reading you add is recorded from the next game on"><span class="n">' + label + '</span><span class="gx-mb"></span><span class="a"></span><span class="m">--</span></div>';
   let { a, m, y, r, hi, u } = it;
-  if (u === 'MB' && (spec ? spec[4] : (hi || m || 0) > 2048)) { [a, m, y, r, hi] = [a, m, y, r, hi].map(v => v === null ? null : v / 1024); u = 'GB'; }
+  if (u === 'MB') { [a, m, y, r, hi] = [a, m, y, r, hi].map(v => v === null ? null : v / 1024); u = 'GB'; }   // (memory in GB, like the cells)
   const F = /°F/.test(u), deg = c => F ? Math.round(c * 9 / 5 + 32) : c;
   const base = a !== null ? a : m, lo = /°/.test(u) ? Math.max(0, Math.min(deg(30), Math.floor((base === null ? deg(40) : base) / 10) * 10 - 10)) : 0;
   // the bar ends a little past the red line (both lines show as ticks), else at a typical limit, the scale, or the values
@@ -3911,7 +4032,8 @@ function gxTimeline(x, sp, gi) {
   const D = gxMinutes(x), N = D.N;
   if (!gxHasTl(D)) return '';
   const T = gxTl[gi] = Object.assign({ start: x.start, custom: !!x.custom }, D);
-  let h = '<div class="gx-tl" data-g="' + gi + '"><div class="gx-ch">over time<span>' + (x.custom ? 'per minute' : 'per minute, gaps are time the game was not in front') + '</span></div><div class="gx-hz">';
+  const cut = x.end - x.start > N * 60 + 90;   // (the host keeps 24 hours of minutes)
+  let h = '<div class="gx-tl" data-g="' + gi + '"><div class="gx-ch">over time<span>' + (cut ? 'the first 24 hours, ' : '') + (x.custom ? 'per minute' : 'per minute, gaps are time the game was not in front') + '</span></div><div class="gx-hz">';
   const have = D.fv.filter(v => v !== null);
   if (have.length) {
     // round steps, about 4 of them, from a little under the lowest 1% low to a little over the highest fps
@@ -3944,13 +4066,15 @@ function gxTimeline(x, sp, gi) {
   h += '<div class="gx-tip"></div></div>';
   // clock ticks: start and end, and the round half hours (quarters, fives) between them; none past the end, which a
   // last minute cut short leaves before the right edge, and none that would read the same as the end
-  const t0 = x.start, t1 = x.start + N * 60, t2 = Math.min(t1, x.end), every = N > 90 ? 30 : N > 40 ? 15 : N > 15 ? 5 : 1;
-  let tk = '<span class="e0">' + hhmm(t0) + '</span>';
+  // (a long one gets hours apart, or its labels ran into each other past about 16 hours)
+  const t0 = x.start, t1 = x.start + N * 60, t2 = Math.min(t1, x.end), every = N > 960 ? 180 : N > 480 ? 60 : N > 90 ? 30 : N > 40 ? 15 : N > 15 ? 5 : 1;
+  const day = u => GX_WD[new Date(u * 1000).getDay()].slice(0, 3) + ' ', long = t2 - t0 >= 16 * 3600;   // (a chart most of a day long: which day each end is)
+  let tk = '<span class="e0">' + (long ? day(t0) : '') + hhmm(t0) + '</span>';
   for (let u = Math.ceil(t0 / 60 / every) * every * 60; u < t2; u += every * 60) {
     const pc = (u - t0) / (t1 - t0) * 100;
     if (pc > 9 && pc < 91 && hhmm(u) !== hhmm(t2)) tk += '<span style="left:' + pc.toFixed(2) + '%">' + hhmm(u) + '</span>';
   }
-  tk += '<span class="e1">' + hhmm(t2) + '</span>';
+  tk += '<span class="e1">' + (long ? day(t2) : '') + hhmm(t2) + '</span>';
   h += '<div class="gx-tr"><span></span><span class="gx-ticks">' + tk + '</span><span></span></div>';
   const away = !x.custom && typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0, of = { gpu: 'g', cpu: 'c', cap: 'f' };   // (yours count every second: no time away)
   h += '<div class="gx-tr"><span></span><span class="gx-leg">' + (have.length ? '<span><b class="ln fp"></b>fps</span><span><b class="ln lo"></b>1% low</span>' : '') +
@@ -4053,9 +4177,16 @@ function rerenderGames() {
 
 // ---- Customize: the categories (order, shown or not, names) and each one's readings, like the main layout's ----
 const GZ = { on: false, sel: null, q: '', t: 'all', shut: new Set(), counts: { all: 0 } };
-function gzEdit(fn) {   // a change to the setup: an undo step, saved with the layout, the details drawn again (onLayout)
-  mutate(() => { const G = S.L.games = JSON.parse(JSON.stringify(gxLayout())); fn(G); });
+// a change to the sessions' setup: an undo step, saved with the layout (the host follows what it tracks), Customize
+// and the open sessions drawn again; the dashboard behind is left as it is (nothing it shows changed)
+function gzApply(fn) {
+  const before = snapOf();
+  fn();
+  if (snapOf() === before) return;
+  pushUndo(before); saveState(); syncUndo(); syncSaves();
+  if (GZ.on) renderGz(); rerenderGames();
 }
+function gzEdit(fn) { gzApply(() => { const G = S.L.games = JSON.parse(JSON.stringify(gxLayout())); fn(G); }); }
 onLayout = () => { if (GZ.on) renderGz(); rerenderGames(); };
 // the readings to add: Storage's list (search by sensor, label or unit, the type chips, grouped by sensor), only
 // the rows in sight drawn; + puts one in the selected category, its tick takes it out again
@@ -4065,7 +4196,7 @@ function gzCompute() {
   const toks = GZ.q.toLowerCase().split(/\s+/).filter(Boolean), counts = new Map(), hits = [];
   GZ.counts = { all: 0 };
   for (const r of READ) {
-    if (r.key === BNECK || !SENS[r.s] || toks.some(t => !r.hay.includes(t))) continue;   // (the bottleneck has its own place: the summary)
+    if (r.key === BNECK || !SENS[r.s] || hidOf(r) || toks.some(t => !r.hay.includes(t))) continue;   // (the bottleneck has its own place: the summary; hidden ones as in Storage)
     GZ.counts.all++; GZ.counts[r.t] = (GZ.counts[r.t] || 0) + 1;
     if (GZ.t === 'all' || r.t === GZ.t) { hits.push(r); counts.set(r.s, (counts.get(r.s) || 0) + 1); }
   }
@@ -4143,10 +4274,10 @@ $('gcz').addEventListener('click', e => {
   if (k === 'chip') { GZ.t = b.dataset.t; gzCompute(); gzChips(); document.querySelector('#gcz .gz-list').scrollTop = 0; gzDraw(); return; }
   if (k === 'qclear') { GZ.q = ''; GZ.t = 'all'; renderGz(); return; }
   if (k === 'done') { GZ.on = false; renderGz(); }
-  else if (k === 'reset') { mutate(() => { delete S.L.games; }); GZ.sel = null; renderGz(); rerenderGames(); }
+  else if (k === 'reset') { GZ.sel = null; gzApply(() => { delete S.L.games; }); }
   else if (k === 'hide') gzEdit(G => { G.secs[i].hide = !G.secs[i].hide; if (!G.secs[i].hide) delete G.secs[i].hide; });
   else if (k === 'del') gzEdit(G => { G.secs.splice(i, 1); });
-  else if (k === 'addsec') { const id = nid('g'); gzEdit(G => { G.secs.push({ id, kind: 'list', name: 'New category', cells: [] }); }); GZ.sel = id; renderGz(); const n = document.querySelector('#gcz .gz-s.on .gz-name'); if (n) { n.focus(); n.select(); } }
+  else if (k === 'addsec') { const id = nid('g'); GZ.sel = id; gzEdit(G => { G.secs.push({ id, kind: 'list', name: 'New category', cells: [] }); }); const n = document.querySelector('#gcz .gz-s.on .gz-name'); if (n) { n.focus(); n.select(); } }
   else if (k === 'add' && rk) gzEdit(G => { const s = G.secs.find(x => x.id === GZ.sel); if (s && s.cells.length < GX_MAX && !s.cells.some(c => c.key === rk)) s.cells.push({ key: rk }); });
   else if (k === 'out' && rk) gzEdit(G => { const s = G.secs.find(x => x.id === GZ.sel), j = s ? s.cells.findIndex(c => c.key === rk) : -1; if (j >= 0) s.cells.splice(j, 1); });
   else if (k === 'cdel') gzEdit(G => { G.secs.find(x => x.id === GZ.sel).cells.splice(ci, 1); });
@@ -4180,11 +4311,13 @@ $('gcz').addEventListener('pointerdown', e => {
   document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
 });
 function renderGames(text, keep) {
-  gxText = text || '';
+  gxText = text || ''; gxLoaded = true; renderRec();
   const ss = [];
   for (const line of (text || '').split(/\r?\n/)) {
     try { const x = line.trim() ? JSON.parse(line) : null; if (x && typeof x === 'object' && Number.isFinite(x.start) && Number.isFinite(x.end) && x.end >= x.start) ss.push(x); } catch (e) { }
   }
+  const keepCut = feed.gameDays ? Date.now() / 1000 - feed.gameDays * 86400 : -Infinity;   // (no days set after a damaged settings file: nothing is cut)
+  for (let i = ss.length - 1; i >= 0; i--) if (ss[i].end < keepCut) ss.splice(i, 1);   // (older than the days kept: going at the next trim)
   ss.sort((a, b) => b.start - a.start);
   lastGameCount = ss.length; gxTl.length = 0; gxSs = ss;
   const now = Date.now() / 1000, week = now - 7 * 86400, recent = ss.filter(x => x.start >= week && !x.custom), per = {};   // (the week's numbers are games')
@@ -4226,7 +4359,7 @@ function renderGames(text, keep) {
          '<span class="gx-c gx-num gx-fps">' + gxF(x.fps) + '</span><span class="gx-c gx-num gx-lo">' + gxF(x.low) + '</span>' +
          '<span class="gx-c">' + (sp.n ? gxNbar(sp) + '<span class="gx-sub">' + sp.top[0] + ' ' + sp.top[1] + '%</span>' : '<span class="gx-sub">--</span>') + '</span>' +
          '<span class="gx-c gx-st">' + st + '</span></div>' +
-         '<div class="gx-det"><div>' + gxDetail(x, sp, i, i > 0, gxActs(x, i)) + '</div></div></div>';
+         '<div class="gx-det"><div>' + (i === 0 && !Array.isArray(keep) ? gxDetail(x, sp, i, false, gxActs(x, i)) : '<div class="gx-lz" data-g="' + i + '"></div>') + '</div></div></div>';
   });
   const list = $('glist');
   list.innerHTML = h ? '<div class="gx-cols"><span></span><span>session</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
@@ -4234,11 +4367,13 @@ function renderGames(text, keep) {
   const first = list.querySelector('.gx-sess');
   if (Array.isArray(keep)) {   // (drawn again: what was open stays open, at once)
     list.classList.add('still');
-    for (const el of list.querySelectorAll('.gx-sess')) { const x = gxSs[+el.dataset.g]; if (!x || !keep.includes(x.start)) continue; const z = el.querySelector('.gx-tlz'); if (z) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g); el.classList.add('open'); }
+    for (const el of list.querySelectorAll('.gx-sess')) { const x = gxSs[+el.dataset.g]; if (!x || !keep.includes(x.start)) continue; gxFill(el); const z = el.querySelector('.gx-tlz'); if (z) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g); el.classList.add('open'); }
     requestAnimationFrame(() => requestAnimationFrame(() => list.classList.remove('still')));
   } else if (first) first.classList.add('open');   // the newest session opens with the popup
 }
 let gxSs = [];   // the sessions as listed, for the timelines drawn when they open
+// a session's details, built the first time it opens (all of them up front made a big log slow and heavy)
+function gxFill(sess) { const z = sess && sess.querySelector('.gx-lz'); if (!z) return; const i = +z.dataset.g, x = gxSs[i]; if (x) z.outerHTML = gxDetail(x, gxSplit(x), i, false, gxActs(x, i)); }
 // under a session's details: its name (one of your own) and Delete
 const gxActs = (x, i) => '<div class="gx-acts">' + (x.custom ? '<label class="gx-nmf"><em>name</em><input class="gx-nm" data-g="' + i + '" value="' + esc(x.game) + '" maxlength="60" spellcheck="false" title="Its name: type a new one, Enter to keep it"></label>' : '') +
   '<span class="sp"></span><button class="wclear gx-del" data-g="' + i + '" title="Delete this session (a copy is kept in games.log.bak)">Delete session</button></div>';
@@ -4251,8 +4386,9 @@ $('glist').addEventListener('change', e => {
 $('glist').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.gx-nm')) e.target.blur(); });
 $('glist').addEventListener('click', e => {
   const d = e.target.closest('.gx-del');
-  if (d) { const x = gxSs[+d.dataset.g]; if (x) askConfirm('Delete this session?', x.game + ', ' + localDay(new Date(x.start * 1000)) + ' ' + hhmm(x.start) + ' to ' + hhmm(x.end) + '. A copy is kept in games.log.bak, so it can be brought back.', 'Delete', () => send({ t: 'gedit', act: 'del', start: x.start, end: x.end, game: x.game })); return; }
+  if (d) { const x = gxSs[+d.dataset.g]; if (x) askConfirm('Delete this session?', x.game + ', ' + localDay(new Date(x.start * 1000)) + ' ' + hhmm(x.start) + ' to ' + hhmm(x.end) + '. A copy goes to games.log.bak.', 'Delete', () => { const y = gxSs.find(s => s.start === x.start && s.end === x.end) || x; send({ t: 'gedit', act: 'del', start: y.start, end: y.end, game: y.game }); }); return; }
   const r = e.target.closest('.gx-row'); if (!r) return;
+  gxFill(r.parentNode);
   const z = r.parentNode.querySelector('.gx-tlz'), x = z && gxSs[+z.dataset.g];
   if (x) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g);
   r.parentNode.classList.toggle('open');
@@ -4277,8 +4413,8 @@ function renderSettings() {
     '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>The free version turns its shared memory off after 12 hours; a restart turns it back on (Windows asks for permission).</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
     (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub once a day if there is a new version. Nothing else is sent.') + '</small></div>' +
       '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">Get it</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>') +
-    '<div class="setrow"><div>Keep sessions<small>Game sessions and your own older than this are deleted (a copy goes to games.log.bak).</small></div><span class="setdays"><input class="setin" id="sGameDays" inputmode="numeric" maxlength="4" spellcheck="false" value="' + (feed.gameDays || 30) + '"><i>days</i></span></div>' +
-    '<div class="setrow"><div>Keep warnings<small>The warning history keeps this many days.</small></div><span class="setdays"><input class="setin" id="sWarnDays" inputmode="numeric" maxlength="4" spellcheck="false" value="' + (feed.warnDays || 30) + '"><i>days</i></span></div>' +
+    '<div class="setrow"><div>Keep sessions<small>Game sessions and your own older than this are deleted (a copy goes to games.log.bak).</small></div><span class="setdays"><input class="setin" id="sGameDays" inputmode="numeric" maxlength="4" spellcheck="false" placeholder="30" value="' + (feed.gameDays || '') + '"><i>days</i></span></div>' +
+    '<div class="setrow"><div>Keep warnings<small>The warning history keeps this many days.</small></div><span class="setdays"><input class="setin" id="sWarnDays" inputmode="numeric" maxlength="4" spellcheck="false" placeholder="30" value="' + (feed.warnDays || '') + '"><i>days</i></span></div>' +
     '<div class="setrow"><div>Your files<small class="k">' + esc(feed.dataDir) + '</small><small>Layouts, slots, the logs and 7 days of history.</small></div><button class="btn" id="sData">Open</button></div>' +
     '<div class="setrow" style="display:block"><div style="margin-bottom:8px">Keys</div><div class="keys2">' +
       [['E', 'edit layout on or off'], ['1 2 3', 'Tiles, Overview, Grid'], ['Enter', 'open (or select) the cell in focus'], ['Ctrl+S', 'save to the loaded slot'], ['Ctrl+Z, Ctrl+Shift+Z', 'undo, redo'],
@@ -4300,11 +4436,12 @@ $('setbody').addEventListener('click', e => {
 });
 $('setbody').addEventListener('change', e => {
   const id = e.target.id; if (id !== 'sGameDays' && id !== 'sWarnDays') return;
-  const k = id === 'sGameDays' ? 'gameDays' : 'warnDays', old = feed[k] || 30, v = Math.max(1, Math.min(3650, Math.round(Number(e.target.value)) || old));
-  e.target.value = old; if (v === old) return;
-  const go = () => { feed[k] = v; const i = $(id); if (i) i.value = v; send({ t: 'keep', games: feed.gameDays || 30, warns: feed.warnDays || 30 }); };
-  if (v > old) go();
-  else askConfirm('Keep ' + (k === 'gameDays' ? 'sessions' : 'warnings') + ' ' + v + (v === 1 ? ' day?' : ' days?'), (k === 'gameDays' ? 'Sessions' : 'Warnings') + ' older than that are deleted now. A copy is kept in ' + (k === 'gameDays' ? 'games.log.bak' : 'alerts.log.bak') + ', so they can be brought back.', 'Delete older', go);
+  // (old 0: not set since a damaged settings file, so any number cuts something and asks first)
+  const k = id === 'sGameDays' ? 'gameDays' : 'warnDays', old = feed[k] || 0, v = Math.max(1, Math.min(3650, Math.round(Number(e.target.value)) || old || 30));
+  e.target.value = old || ''; if (v === old) return;
+  const go = () => { feed[k] = v; const i = $(id); if (i) i.value = v; send(k === 'gameDays' ? { t: 'keep', games: v } : { t: 'keep', warns: v }); };   // (only the one changed)
+  if (old && v > old) go();
+  else askConfirm('Keep ' + (k === 'gameDays' ? 'sessions' : 'warnings') + ' ' + v + (v === 1 ? ' day?' : ' days?'), (k === 'gameDays' ? 'Sessions' : 'Warnings') + ' older than that are deleted now. A copy goes to ' + (k === 'gameDays' ? 'games.log.bak' : 'alerts.log.bak') + '.', 'Delete older', go);
 });
 $('setbody').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'sGameDays' || e.target.id === 'sWarnDays')) { e.preventDefault(); const t = e.target; setTimeout(() => t.blur(), 0); } });   // (later: the same Enter pressed Cancel on the question it opened)
 $('setbody').addEventListener('input', e => {
@@ -4477,6 +4614,7 @@ function onHost(m) {
     applyMotion();
     if (st && Array.isArray(st.pins)) { DR.L.pinned = st.pins[0] === true; DR.R.pinned = st.pins[1] === true; }
     S.title = st && typeof st.title === 'string' && st.title.trim() ? st.title.slice(0, 60) : undefined; S.clock = !st || st.clock !== false;
+    S.hide = cleanHide(st && st.hide); hideSets();
     renderTitle(); $('rstBtn').disabled = feed.fake; if (feed.fake) $('rstBtn').title = 'Demo data: there is no HWiNFO to restart';
     undoStack = []; redoStack = []; sel = null; selCat = null; preview = null;
     app.classList.toggle('editing', S.edit); $('editBtn').classList.toggle('on', S.edit);
@@ -4485,7 +4623,7 @@ function onHost(m) {
     lastSub = ''; subscribe(); enterNext = true; renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves();
   } else if (m.t === 'settings') {
     feed.autostart = !!m.autostart; feed.hwinfo = m.hwinfo || null; feed.updates = m.updates !== false; feed.latest = m.latest || null; syncUpd();
-    feed.gameDays = m.gameDays || 30; feed.warnDays = m.warnDays || 30;
+    feed.gameDays = m.gameDays || 0; feed.warnDays = m.warnDays || 0;   // (0: not set since a damaged settings file, nothing cut)
     if ($('wmodal').classList.contains('open')) send({ t: 'alerts' });
     if (setmodal.classList.contains('open')) renderSettings();
   } else if (m.t === 'catalog') {
@@ -4493,6 +4631,7 @@ function onHost(m) {
     setCatalog(m);
     feed.bnIn = Array.isArray(m.bneck) ? m.bneck : [null, null, 0];
     feed.c12keys = Array.isArray(m.c12) && m.c12.length === 2 ? m.c12 : null;
+    feed.zero = new Set(Array.isArray(m.zero) ? m.zero : []);   // (HWiNFO readings only ever at 0: hidden from Storage by default)
     lastSub = ''; subscribe();
     // the same readings with new names (a rename in HWiNFO): no rebuild under someone typing in a field
     const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp input, #insp select, #insp textarea, .cn-in');
@@ -4517,7 +4656,7 @@ function onHost(m) {
     feed.gs = m.gs && typeof m.gs === 'object' ? m.gs : null;   // this game session's min, average, max of the game's own readings
     feed.bnl = m.bnl;   // the bottleneck's call this second, game or not
     feed.rec = Array.isArray(m.rec) ? m.rec.filter(x => Array.isArray(x) && x.length >= 2) : [];   // your own sessions running: [start, name]
-    if (lastTick && m.ts - lastTick > 2) for (const k in holdSince) delete holdSince[k];   // seconds we didn't see (hidden): holds start again
+    if (lastTick && m.ts - lastTick > 2) { for (const k in holdSince) delete holdSince[k]; for (const k in cellEp) delete cellEp[k]; }   // seconds we didn't see (hidden): holds and episodes start again
     nowTs = lastTick = m.ts;
     if (S.clock) setText($('clock'), hhmmss(m.ts));
     for (let j = 0; j < m.i.length; j++) { const r = READ[m.i[j]]; if (!r) continue; r.v = m.v[j]; if (m.mn[j] != null) { r.mn = m.mn[j]; r.mx = m.mx[j]; r.av = m.av[j]; } }
@@ -4525,20 +4664,22 @@ function onHost(m) {
     for (const k of cellKeys()) { const r = BYKEY.get(k); ringPut(k, m.ts, live && r ? r.v : null); }
     showFeed(); showGame();
     if ((first || was !== m.status) && (!READ.length || !S.L.cats.length)) renderView(false);
-    if (!drag || !drag.started) { updateView(false); tickInsp(); if (!dragPt) drawRows(); }
+    if (!drag || !drag.started) { updateView(false); tickInsp(); if (!dragPt && drawerOpen('L')) drawRows(); }
     if (GZ.on && gmodal.classList.contains('open')) gzDraw();
     if (!boot.tick) { boot.tick = true; if (m.status !== 'ok') boot.cat = boot.x = true; bootCheck(m.status !== 'ok' && !READ.length); }   // (no HWiNFO: nothing more to wait for)
     if (modalCid) { refreshModal(); if (bigRange !== '15m' && Date.now() - histAsked > 60000) askHist(); }
     if (HP.shown) { if (anyModalOpen() || !S.L.cells[HP.cid]) hidePrev(); else { fillPrev(); if (!HP.rev0) drawPrev(); } }
   } else if (m.t === 'hist') {
+    const again = bigHist && bigHist.key === m.key && bigHist.range === m.range;   // (the same graph a minute on: no new draw-in, one under way goes on)
     bigHist = m;
-    if (modalCid && histReady()) { bigRev0 = motionOn() ? performance.now() : 0; refreshModal(); bigLoop(); }
-  } else if (m.t === 'alerts') renderWarnings(m.log);
-  else if (m.t === 'games') renderGames(m.log, $('glist').querySelector('.gx-sess') ? gxOpen() : undefined);   // (an edit: what was open stays open)
+    if (modalCid && histReady()) { if (!again) bigRev0 = motionOn() ? performance.now() : 0; refreshModal(); if (bigRev0 && !again) bigLoop(); }
+  } else if (m.t === 'alerts') { if (wmodal.classList.contains('open')) renderWarnings(m.log); }   // (one that comes in after a close isn't drawn)
+  else if (m.t === 'games') { if (gmodal.classList.contains('open')) renderGames(m.log, $('glist').querySelector('.gx-sess') ? gxOpen() : undefined); }   // (an edit: what was open stays open; one after a close isn't kept)
   else if (m.t === 'toast') toast(m.text, false, m.ms);
+  else if (m.t === 'zero') { feed.zero = new Set(Array.isArray(m.keys) ? m.keys : []); renderStorage(); if (GZ.on) { gzCompute(); gzChips(); gzDraw(); } }
   // the window just came up (from the tray, a cold start, or minimized): what was measured while it was hidden came
   // out short (a Smart Life tile without its bar), so every tile is measured again on screen
-  else if (m.t === 'shown') requestAnimationFrame(() => remeasureSoon(0));
+  else if (m.t === 'shown') { if (drawnHidden) { drawnHidden = false; requestAnimationFrame(() => remeasureSoon(0)); } }
   else if (m.t === 'restarted') restartDone();
   else if (typeof m.t === 'string' && m.t.startsWith('x.')) {
     if (EXT.msg) EXT.msg(m);
@@ -4548,7 +4689,7 @@ function onHost(m) {
     if (!boot.x) { boot.x = true; bootCheck(); }
   }
   else if (m.t === 'imported') {
-    const d = cleanSlot(m.data), i = m.slot;
+    const d = cleanSlot(m.data && typeof m.data === 'object' && m.data.hwdeck && m.data.slot ? m.data.slot : m.data), i = m.slot;   // (the app's file, or a bare slot)
     if (!d || !(i >= 0 && i < 5)) { toast('That file is not an HW Deck layout'); return; }
     if (!d.name) d.name = 'Imported';
     S.slots[i] = d; saveSlot(i); syncSaves(); renderSaves();

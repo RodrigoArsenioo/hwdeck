@@ -50,6 +50,7 @@ n = lines().length;
 win([WM_POWERBROADCAST, PBT_APMRESUMEAUTOMATIC]);
 ok('they come back after the wake', await untilLog(ls => ls.slice(n).some(l => /YELLOW\s+Hot: /.test(l)), 5000), since(n).join(' | '));
 await E(`renderWarnings(${JSON.stringify(text(join(data, 'alerts.log')))})`);
+await E('(() => { document.querySelectorAll("#wlist .wgrp").forEach(r => r.click()); return 1; })()');   // (a row draws its episodes when it opens)
 ok('the warning log says the episode ended with the sleep', await E('$("wlist").textContent.includes("PC went to sleep")'), await E('$("wlist").textContent'));
 ok('no page errors', errs.length === 0, errs.join(' | '));
 

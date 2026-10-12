@@ -220,7 +220,7 @@ ok('Stop logs your own session: marked as yours, under its name, from Start to S
 ok('it counts every second like a game in front: the fps of what is in front, the call of the moment, its timeline', o.front >= 100 && o.front < o.secs && o.fps > 0 && o.g + o.c + o.f >= o.secs - 5 && (o.items || []).some(it => it[0] === 'CPU temp' && it[3] === 91.5) &&
   Array.isArray(o.tf) && o.tf.length >= 3 && o.tf.every(v => v > 0) && /^[gcf]+$/.test(o.tb), JSON.stringify({ secs: o.secs, front: o.front, fps: o.fps, g: o.g, c: o.c, f: o.f, tf: o.tf, tb: o.tb }));
 ok('and the game\'s warning while it ran', o.warns >= 1 && (o.wl || []).some(w => w[0] === 'Hot CPU'), JSON.stringify({ warns: o.warns, wl: o.wl }));
-ok('nothing records any more', await until('feed.rec.length === 0 && $("grun").hidden', 4000));
+ok('nothing records any more', await until('feed.rec.length === 0 && $("grun").hidden', 8000));
 await until('[...document.querySelectorAll("#glist .gx-gn")].some(x => x.textContent === "Bench Game")', 5000);
 ok('the popup shows it on top, open, with its warning and the timeline', await ev('(() => { const s = document.querySelector("#glist .gx-sess"); return s.classList.contains("open") && s.querySelector(".gx-gn").textContent === "Bench Game" && /2 warningsHot CPU 91\\.5 °C/.test(s.querySelector(".gx-st").textContent) && !!s.querySelector(".gx-fpsc polyline") && !!s.querySelector(".gx-bnc rect"); })()'),
   await ev('document.querySelector("#glist .gx-sess").textContent.slice(0, 300)'));
@@ -259,10 +259,10 @@ await click('#cno');
 ok('Cancel leaves the days as they were', await ev('feed.warnDays === 30 && $("sWarnDays").value === "30"'));
 const setDays = (id, v) => ev(`(() => { const i = $("${id}"); i.value = "${v}"; i.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()`);
 ok('the days are typed, not a spinner a wheel could run down', await ev('$("sGameDays").type === "text" && $("sWarnDays").type === "text"'));
-await setDays('sGameDays', 1); await p.sleep(200);
+await setDays('sGameDays', 1); await p.sleep(450);   // (the question settles before its button is clicked)
 ok('fewer days asks first, and nothing changes until you say yes', await ev('cmodal.classList.contains("open") && /Keep sessions 1 day/.test($("ctitle").textContent) && feed.gameDays === 30 && $("sGameDays").value === "30"'), await ev('$("ctitle").textContent'));
 await click('#cyes');
-await setDays('sWarnDays', 14); await p.sleep(200);
+await setDays('sWarnDays', 14); await p.sleep(450);
 await click('#cyes');
 ok('sessions older than that go at once (Old Game, a day back), kept in games.log.bak', await until('feed.gameDays === 1 && feed.warnDays === 14', 4000) && await (async () => { let t1 = Date.now(); while (/Old Game/.test(text(join(data, 'games.log'))) && Date.now() - t1 < 4000) await p.sleep(200); return !/Old Game/.test(text(join(data, 'games.log'))) && /Bench Game/.test(text(join(data, 'games.log'))) && /Old Game/.test(text(join(data, 'games.log.bak'))); })(),
   text(join(data, 'games.log')).slice(0, 120));

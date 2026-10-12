@@ -132,6 +132,11 @@ nav#screens .ind.still { transition: none; }
 .vrow .add:hover { color: var(--hi); border-color: #555; background: var(--raise); }
 .vrow .add.link { width: auto; padding: 0 7px; font-size: 11.5px; color: #c9dafa; border-color: #3a4f75; }
 .vrow .inv { width: 22px; display: inline-flex; justify-content: center; color: var(--ok); flex: none; }
+/* hide from Storage: shows on the row under the pointer; in the Hidden list, the eye brings it back */
+.vrow .hid { width: 22px; height: 22px; border: 0; background: none; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; flex: none; cursor: pointer; padding: 0; border-radius: 6px; opacity: 0; transition: opacity 120ms; }
+.vrow:hover .hid, .vrow .hid.on, .vrow .hid:focus-visible { opacity: 1; } .vrow .hid:hover { color: var(--hi); background: var(--raise); }
+.vrow .hid svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+.chip.hidchip { border-style: dashed; }
 .vrow .inv svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2.4; }
 .vsticky { position: sticky; top: 0; z-index: 3; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; margin-bottom: -30px; }
 .ti { width: 8px; height: 8px; border-radius: 2px; flex: none; }
@@ -152,7 +157,7 @@ html[data-motion="off"] .viewwrap { transition: none; }
 /* ---------- shared view bits (rem) ---------- */
 .v { font-variant-numeric: tabular-nums; }
 .od { position: relative; display: inline-block; overflow: clip; font-variant-numeric: tabular-nums; }
-.od .odr { position: absolute; left: 0; right: 0; top: 0; white-space: pre; text-align: center; visibility: hidden; transition: transform 600ms cubic-bezier(0.4, 0, 0.2, 1); }
+.od .odr { position: absolute; left: 0; right: 0; top: 0; white-space: pre; text-align: center; visibility: hidden; }   /* rolled by the page's motion clock */
 .od.roll .odh { visibility: hidden; } .od.roll .odr { visibility: visible; }
 .spw { display: inline-flex; flex: none; font-style: normal; }
 .yellow { color: var(--yellow); } .red { color: var(--red); } .grey { color: #555; }
@@ -775,9 +780,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 
 /* animations: Reduced rolls the digits quicker and opens views without the wave, Minimal doesn't roll them at all, Off
    has no transitions at all */
-:root[data-motion="reduced"] .od .odr { transition-duration: 250ms; }
 :root[data-motion="reduced"] #view.enter .anim, :root[data-motion="minimal"] #view.enter .anim { animation: none; }
-:root[data-motion="minimal"] .od .odr { transition: none; }
 :root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after { transition: none !important; animation: none !important; }
 
 /* Windows high contrast: states drawn with background colour alone need a border or a system colour */
@@ -844,6 +847,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 #glist.still .gx-det { transition: none; }
 .wclear.gzbtn { margin-right: 8px; } .wclear.gzbtn:hover, .wclear.gzbtn.on { color: #c9dafa; border-color: #3a4f75; }
 /* your own sessions recording now */
+#wlist .wmore { display: block; margin: 14px auto 4px; }
 #grun { display: grid; gap: 8px; margin: 4px 0 14px; } #grun[hidden] { display: none; }
 #grun .gx-rec { display: flex; align-items: center; gap: 12px; border: 1px solid #3a2a2c; background: #1a1516; border-radius: 10px; padding: 8px 10px 8px 14px; font-size: 12.5px; }
 #grun .rdot { width: 8px; height: 8px; border-radius: 50%; background: #e5484d; flex: none; animation: recblink 1.6s ease-in-out infinite; }

@@ -147,9 +147,10 @@ if (g) {
 }
 
 // ---- the game log: what limited a session in its row and its timeline; lines from before it still show ----
-const old = JSON.stringify({ game: 'Old Game', start: 1700000000, end: 1700003600, from: 1700000000, secs: 3600, front: 3600, fps: 120, low: 90, items: [['GPU temp', '°C', 60, 70]], warns: 0 });
+const oldAt = Math.floor(Date.now() / 1000) - 2 * 86400;   // older than the calls, still inside the days kept
+const old = JSON.stringify({ game: 'Old Game', start: oldAt, end: oldAt + 3600, from: oldAt, secs: 3600, front: 3600, fps: 120, low: 90, items: [['GPU temp', '°C', 60, 70]], warns: 0 });
 await ev(`renderGames(${JSON.stringify(old + '\r\n' + text(join(data, 'games.log')))})`);
-const lim = await ev('[...document.querySelectorAll("#glist .gx-sess")].map(s => [s.querySelector(".gx-gn").textContent, s.querySelectorAll(".gx-row .gx-nbar span").length, s.querySelector(".gx-row .gx-nbar + .gx-sub, .gx-row .gx-c:nth-child(6) .gx-sub").textContent, !!s.querySelector(".gx-bnc rect"), s.querySelector(".gx-det").textContent])');
+const lim = await ev('[...document.querySelectorAll("#glist .gx-sess")].map(s => (gxFill(s), s)).map(s => [s.querySelector(".gx-gn").textContent, s.querySelectorAll(".gx-row .gx-nbar span").length, s.querySelector(".gx-row .gx-nbar + .gx-sub, .gx-row .gx-c:nth-child(6) .gx-sub").textContent, !!s.querySelector(".gx-bnc rect"), s.querySelector(".gx-det").textContent])');
 ok('a session shows what limited it (row and timeline); one from before (no g, c, f) still shows, without it', lim.length === 2 && lim[0][0] === 'Bench Game' && lim[0][1] >= 2 && /^(gpu-bound|cpu-bound|capped) \d+%$/.test(lim[0][2]) && lim[0][3] && /gpu-bound \d+%cpu-bound \d+%capped \d+%/.test(lim[0][4]) &&
   lim[1][0] === 'Old Game' && lim[1][1] === 0 && lim[1][2] === '--' && !lim[1][3] && /GPU60\.070\.0/.test(lim[1][4]), JSON.stringify(lim.map(x => x.slice(0, 4))));
 ok('no warning lines for it', !/Bottleneck/.test(text(join(data, 'alerts.log'))));

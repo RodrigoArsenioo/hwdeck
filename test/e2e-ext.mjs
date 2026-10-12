@@ -39,6 +39,20 @@ const c0 = Number(await ev(`BYKEY.get("x.test/count").v`));
 await p.sleep(2200);
 const c1 = Number(await ev(`BYKEY.get("x.test/count").v`));
 ok('the counter counts, once a second, with a graph like any reading', c1 >= c0 + 1 && await ev(`!!${cntEl}.querySelector("canvas")`), c0 + ' then ' + c1);
+// ---- its always-on line and its judged rule: the line steps aside while a cell's lines watch the counter the same
+// way, the judged rule always stays ----
+const alog = () => existsSync(join(data, 'alerts.log')) ? readFileSync(join(data, 'alerts.log'), 'utf8') : '';
+const untilLog = async (re, from, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (re.test(alog().slice(from))) return true; await p.sleep(300); } return false; };
+ok('a build\'s always-on line and its judged rule both log', await untilLog(/YELLOW +Test always: /, 0) && await untilLog(/YELLOW +Test own: .*\(always\)/, 0), alog().split('\n').slice(-4).join(' | '));
+let mark = alog().length;
+await ev(`(() => { mutate(() => { S.L.cells[${cnt}].gates = { mode: 'y', dir: 'above', y: 1e9, r: NaN, hold: 0 }; }); return 1; })()`);
+ok('lines on the counter\'s cell: the always-on line steps aside (its episode ends)', await untilLog(/OK +Test always: back to normal \(line removed/, mark), alog().slice(mark).split('\n').join(' | '));
+await p.sleep(2500);
+ok('the judged rule stays', !/Test own/.test(alog().slice(mark)) && /YELLOW +Test own: /.test(alog()));
+mark = alog().length;
+await ev(`(() => { mutate(() => { S.L.cells[${cnt}].gates = { mode: 'y', dir: 'below', y: -1, r: NaN, hold: 0 }; }); return 1; })()`);
+ok('lines that watch the other way don\'t count: the always-on line comes back', await untilLog(/YELLOW +Test always: /, mark), alog().slice(mark).split('\n').join(' | '));
+await ev(`(() => { mutate(() => { delete S.L.cells[${cnt}].gates; }); return 1; })()`); await p.sleep(300);
 ok('once extras.js is in, its tiles are measured with their bodies (drawn afresh: the same heights)', await ev(`EXT.ready === true && (() => { const h = () => [...document.querySelectorAll('#view .tile')].map(t => Math.round(t.getBoundingClientRect().height)).join(); const a = h(); packMemo.clear(); renderView(false); return a === h(); })()`));
 
 // ---- its control: a real click, in view mode it acts and the popup stays shut ----

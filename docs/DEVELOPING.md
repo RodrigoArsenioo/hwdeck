@@ -24,10 +24,10 @@ Flags: `-min` starts in the tray, `--data <dir>` uses another data folder, `--fa
 powershell -ExecutionPolicy Bypass -File test\run-all.ps1
 ```
 
-Needs Node 22 or newer and a built `HWDeck.exe`. About 150 checks on made-up data, in their own folders, so a running HW Deck isn't touched. Takes around 10 minutes and opens a few windows.
+Needs Node 22 or newer and a built `HWDeck.exe`. About 600 checks on made-up data, in their own folders, so a running HW Deck isn't touched. Takes around 25 minutes and opens a few windows.
 
 ## Releasing
 
-1. Bump the version in `src/app.cs` (`Version` and the two `Assembly...Version` lines).
+1. Bump the version in `src/app.cs` (`Version` and the two `Assembly...Version` lines) and in `demo/demo.js` (`VERSION`).
 2. Add a section at the top of `CHANGELOG.md`.
-3. Push a tag like `v1.1.1`. GitHub Actions builds the zip and the installer and publishes the release.
+3. Push the commit and its tag together (`git push origin main v1.1.1`). GitHub Actions builds the zip and the installer and publishes the release. The browser demo updates on every push to main, so a commit pushed on its own shows things in the demo that no download has yet.

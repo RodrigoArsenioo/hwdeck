@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4.1 (2026-10-13)
+
+- Memory shows in GB, with how much of it is in use ("34% of 64 GB"). Its lines are typed in GB too.
+- Hide a reading or a whole sensor from Storage with the eye on its row. The Hidden chip brings it back.
+- Storage hides an integrated GPU next to a discrete one, and readings that have only ever been 0, like empty fan headers (not a GPU's fans or error counts). They're under Hidden too.
+- Animations draw at most 30 frames a second (10 in Reduced), so HW Deck uses far less CPU and GPU while it's on screen. Fans out of sight stop turning.
+- The sessions and warnings popups open faster with long logs and free their memory when they close.
+- Fixed: a session kept running while the PC slept, so a forgotten one counted the night.
+- Fixed: a reading hovering on its line logged OK and YELLOW over and over, and its cell kept going back to normal.
+- Fixed: one uneven 12V-2x6 connector could log the same warning twice.
+- Fixed: a layout exported from the demo couldn't be imported in the app, and the other way round.
+- Fixed: maximized, the window covered an auto-hide taskbar so it couldn't come up.
+- Fixed: Keep sessions only applied to the list the next day.
+- Fixed: a damaged settings file could later cut sessions and warnings down to 30 days. Now it's kept aside and nothing is cut until you set the days again.
+- Fixed: a power cut or a crash at the wrong moment could empty a log or lose the session in progress. Files are written safely now, and the PC going to sleep saves everything first.
+- Fixed: a line that warns below (a pump too slow) showed the mildest value as the peak in the warning history.
+- Fixed: a warning whose reading went away (a drive unplugged) stayed ongoing until HW Deck quit.
+- Fixed: the timeline of a session over 16 hours had its times on top of each other.
+- Smaller fixes: Customize no longer redraws the whole dashboard, restoring the window no longer rebuilds it, the cell popup's longer graphs no longer redraw every minute, and Restart HWiNFO checks its maker's exact name before running it as admin.
+
 ## 1.4.0 (2026-10-12)
 
 - Try it in your browser at rodrigoarsenioo.github.io/hwdeck, with made-up readings.

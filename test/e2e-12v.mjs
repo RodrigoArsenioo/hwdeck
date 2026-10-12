@@ -40,16 +40,20 @@ ok('at 9.6 A: red', await until(`evalCell("${cid}", S.L.cells["${cid}"], true, t
 await pin([3, 3, 3, 3, 3, 3]); await p.sleep(4500);
 ok('even again: back to normal', await ev(`evalCell("${cid}", S.L.cells["${cid}"], true, true).lvl === 0`));
 
+const before = log().length;   // (what the uneven pins log from here on)
 await pin([6, 3, 3, 3, 3, 3]);   // 21 A in all, pin 1 at 1.7x its share
 await p.sleep(1500);
 ok('a pin over 1.5x its share: not yet (it has to last 3 s)', await ev(`evalCell("${cid}", S.L.cells["${cid}"], true, true).lvl === 0`));
 ok('after 3 s: yellow, "pin 1 carrying 1.7x its share"', await until(`(() => { const e = evalCell("${cid}", S.L.cells["${cid}"], true, true); return e.lvl === 1 && e.sub === "pin 1 carrying 1.7x its share"; })()`, 5000),
   await ev(`evalCell("${cid}", S.L.cells["${cid}"], true, true).sub`));
-ok('the warning history has it, with the pin', await until('true', 10) && await (async () => { for (let i = 0; i < 20; i++) { if (/YELLOW +12V-2x6 connector: \d.*\(pin 1 carrying 1\.7x its share\)/.test(log())) return true; await p.sleep(300); } return false; })(),
+ok('the warning history has it, with the pin', await until('true', 10) && await (async () => { for (let i = 0; i < 20; i++) { if (/YELLOW +12V-2x6 connector pins: \d.*\(pin 1 carrying 1\.7x its share\)/.test(log())) return true; await p.sleep(300); } return false; })(),
   log().split('\n').filter(l => /12V/.test(l)).slice(-3).join(' | '));
 await pin([2, 2, 2, 2, 2, 2]);   // 12 A in all: too little to judge
 await p.sleep(4500);
-ok('under 15 A in all, a spread means nothing: normal, the history says OK', await ev(`evalCell("${cid}", S.L.cells["${cid}"], true, true).lvl === 0`) && /OK +12V-2x6 connector: back to normal/.test(log()));
+const after = log().slice(before);
+ok('under 15 A in all, a spread means nothing: normal, the history says OK', await ev(`evalCell("${cid}", S.L.cells["${cid}"], true, true).lvl === 0`) && /OK +12V-2x6 connector pins: back to normal/.test(after),
+  after.split('\n').filter(l => /12V/.test(l)).join(' | '));
+ok('the uneven pins logged once', (after.match(/YELLOW +12V-2x6 connector pins:/g) || []).length === 1);
 
 await ev(`openDetail("${cid}")`); await p.sleep(1200);
 ok('its popup: the six pins, amps and watts', await until('document.querySelectorAll("#mextra .mpin").length === 6 && /A/.test(document.querySelector("#mextra .mpin .num").textContent)', 3000));

@@ -1,6 +1,7 @@
 // A pretend build with extras, for test/e2e-ext.mjs (built by run-all.ps1 into test\out\ext with test\ext\extras.js):
 // its own name and no update check, a group "Test extras" with a counter (a plain number) and a switch (kind "xtest"),
-// the messages "x.flip" (page to host) and "x.state" (host to page), and a file written when it quits
+// the messages "x.flip" (page to host) and "x.state" (host to page), an always-on line and a judged rule of its own,
+// and a file written when it quits
 using System.Collections.Generic;
 using System.IO;
 
@@ -28,7 +29,15 @@ partial class DeckForm
 {
     TestExtra tx;
     int secs;
-    partial void ExtStart() { tx = new TestExtra(); src.Extras.Add(tx); }
+    partial void ExtStart()
+    {
+        tx = new TestExtra(); src.Extras.Add(tx);
+        // an always-on line on the counter (steps aside while a cell's lines watch it the same way) and a judged rule on
+        // it (always stays): both past their line from the first second
+        alerts.Always["testalways"] = new Dictionary<string, object> { { "key", "x.test/count" }, { "name", "Test always" },
+            { "gates", new Dictionary<string, object> { { "mode", "y" }, { "dir", "above" }, { "y", 1.0 }, { "r", null }, { "hold", 0.0 } } } };
+        alerts.Own["testown"] = new Alerts.Judged { Key = "x.test/count", Name = "Test own", Unit = "", Hold = 0, Level = () => 1, Why = () => " (always)" };
+    }
     partial void ExtMessage(string t, Dictionary<string, object> m)
     {
         if (t != "x.flip") return;

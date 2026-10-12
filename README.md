@@ -16,7 +16,7 @@ Works on 64-bit Windows 10 and 11.
 
 ## Using it
 
-- In edit mode (the pencil, or E), drag sensors from Storage (the tab on the left) into your view, or press + on one.
+- In edit mode (the pencil, or E), drag sensors from Storage (the tab on the left) into your view, or press + on one. The eye on a row hides it from Storage; the Hidden chip brings it back.
 - Click a cell to see its graph, up to 7 days back.
 - Select a cell to set yellow and red lines (above, below, or both), or a curve on a fan. Select a category to set its width, height and look.
 - In Tiles, drag a tile's corner to make it any size (hold Alt for exact pixels), or type the size in its settings.
@@ -24,14 +24,14 @@ Works on 64-bit Windows 10 and 11.
 - Tiles, Overview and Grid are three ways to look at the same cells (keys 1, 2, 3).
 - Closing the window keeps it in the tray, still watching. Right-click the tray icon to quit.
 - The clock icon lists past warnings, the gamepad icon your sessions: games, and ones you record yourself.
-- Bottleneck (under HW Deck in the list) says what limits your fps while a game runs: the GPU, the CPU, or an fps cap.
+- Bottleneck (under HW Deck in the list) says what limits your fps: the GPU, the CPU, or an fps cap. It works without a game too.
 
 The free HWiNFO stops sharing after 12 hours. The arrow next to the views restarts it.
 
 ## Good to know
 
 - No account, no tracking. The only thing it does online is ask GitHub once a day if there's a new version (you can turn that off in Settings).
-- To update, run the new installer (or unzip the new zip over the old folder). Your layouts and history stay.
+- To update, run the new installer. For the zip, quit HW Deck from the tray first, then unzip the new one over the old folder. Your layouts and history stay.
 - To remove it: Windows Settings, Apps, HW Deck, Uninstall (for the zip, delete the folder). Your layouts and history stay.
 - Your layouts and history are in `%APPDATA%\HW Deck`.
 - Not made by or affiliated with HWiNFO.

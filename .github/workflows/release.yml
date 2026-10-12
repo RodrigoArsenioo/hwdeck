@@ -14,7 +14,9 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false   # (the build fetches from nuget: no token left in .git/config meanwhile)
 
       - name: Build
         shell: powershell
@@ -22,7 +24,7 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\fetch-deps.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pack.ps1
 
-      - uses: actions/attest-build-provenance@v4
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             dist/HWDeck-*.zip

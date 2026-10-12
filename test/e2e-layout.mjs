@@ -205,7 +205,10 @@ await click('#view .dc[data-cid="gpu1"]');
 const cn = await rect('#view .dc[data-cid="gpu1"] .corner'), tile = await rect('#view .dc[data-cid="gpu1"]');
 await p.drag({ x: cn.x, y: cn.y }, { x: cn.x, y: cn.y - tile.h * 0.5 }); await p.sleep(400);
 if ((await J('S.L.views.tiles.cell.gpu1')).size !== 'wide') console.log('corner debug', JSON.stringify({ cn, tile, sel: await E('sel'), hit: await E(`(() => { const e = document.elementFromPoint(${cn.x}, ${cn.y}); return e && (e.className.baseVal !== undefined ? 'svg ' + e.closest('[class]').className : e.className); })()`) }));
-ok('dragging a tile\'s corner up makes Big into Wide', (await J('S.L.views.tiles.cell.gpu1')).size === 'wide', JSON.stringify(await J('S.L.views.tiles.cell.gpu1')));
+// (Wide, or as tall as ends level with a column beside it, which wins a near tie: which one depends on the window's
+// size, so on the screen the test runs on)
+const c1 = await J('S.L.views.tiles.cell.gpu1'), wh1 = c1.size ? ({ wide: [2, 1], tall: [1, 2], big: [2, 2] })[c1.size] || [1, 1] : [c1.w, c1.h];
+ok('dragging a tile\'s corner up makes Big into Wide (or level with the column beside it)', wh1[0] === 2 && wh1[1] >= 0.9 && wh1[1] <= 1.1, JSON.stringify(c1));
 await click('#view .dc[data-cid="gpu1"]');   // clicking it again brings its settings back
 await click('#insp button[data-lay="vname-on"]');
 await E(`(() => { const i = $('lvName'); i.value = 'Hot spot'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`); await p.sleep(200);
