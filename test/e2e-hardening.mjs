@@ -23,6 +23,23 @@ ok('a fan curve is checked from the start, before the page ever saves', await un
 ok('log times carry their offset and use one fixed format', /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d[+-]\d\d:\d\d  MARK    app start/m.test(text(join(data, 'alerts.log'))));
 await E(`(() => { const c = S.L.cells.fan1; c.curve.tol = 100000; saveState(); })()`);
 ok('its episode ends under the same name', await untilFile(join(data, 'alerts.log'), /OK\s+Rear fan fan curve: back to normal/), text(join(data, 'alerts.log')).split('\n').slice(-2).join(' | '));
+
+// ---- a curve that doesn't warn: off it, no yellow and nothing logged; it still says how far off it is ----
+const fanYs = () => (text(join(data, 'alerts.log')).match(/YELLOW\s+Rear fan fan curve: /g) || []).length, fy0 = fanYs();
+await E(`(() => { const c = S.L.cells.fan1; c.curve.tol = 15; c.curve.warn = false; saveState(); return 1; })()`);
+await p.sleep(4000);   // (its hold is 1 s)
+ok('a curve set not to warn: off it, the cell stays white and nothing is logged, it says how far off it is', fanYs() === fy0 && await E('(() => { const e = evalCell("fan1", S.L.cells.fan1, true, true); return e.lvl === 0 && !e.offCurve && /% (under|over) its curve$/.test(e.sub); })()'),
+  fanYs() + ' vs ' + fy0 + ', ' + await E('JSON.stringify(evalCell("fan1", S.L.cells.fan1, true, true).sub)'));
+ok('it stays that way when the layout is loaded again', await E('Object.values(cleanLayout(JSON.parse(JSON.stringify(S.L))).cells).find(c => c.name === "Rear fan").curve.warn === false'));
+await E('selectCell("fan1")'); await p.sleep(250);
+ok('its settings: the box unticked, no hold, a line on what that means', await E('!!$("cWarn") && !$("cWarn").checked && !$("cHold") && !!$("cTol") && /never turns yellow/.test($("cHint").textContent) && !$("cStat").classList.contains("y")'),
+  await E('$("cHint") && $("cHint").textContent'));
+await E('(() => { const b = $("cWarn"); b.checked = true; b.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()'); await p.sleep(300);
+ok('ticked again: its hold is back with what tolerance and hold mean', await E('S.L.cells.fan1.curve.warn === undefined && !!$("cHold") && /Hold: how long/.test($("cHint").textContent)'));
+for (const t0 = Date.now(); fanYs() === fy0 && Date.now() - t0 < 10000;) await p.sleep(250);
+ok('and it warns again', fanYs() > fy0 && await E('evalCell("fan1", S.L.cells.fan1, true, true).lvl === 1'), text(join(data, 'alerts.log')).split('\n').slice(-2).join(' | '));
+await E(`(() => { S.L.cells.fan1.curve.tol = 100000; saveState(); clearSel(); return 1; })()`);
+await untilFile(join(data, 'alerts.log'), /OK\s+Rear fan fan curve: back to normal[^]*OK\s+Rear fan fan curve: back to normal/);
 const g = text(join(data, 'games.log')).trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).find(x => x.game === 'Test Game');
 ok('a session the last run left open ends when it was last seen, not at this start', g && g.end === prep.last, g ? `end ${g.end}, last seen ${prep.last}` : 'no line');
 ok('its report from 1.0.0 (no bottleneck, timeline or warning list) is written with them empty', !!g && g.g === 0 && g.c === 0 && g.f === 0 && g.tb === '' && Array.isArray(g.tf) && g.tf.length === 0 && Array.isArray(g.tl) && Array.isArray(g.wl) && g.wl.length === 0,

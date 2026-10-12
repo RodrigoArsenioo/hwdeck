@@ -2,12 +2,57 @@
 // HW Deck page. The host (app.cs) sends the catalog of HWiNFO readings, a tick of values once a second and the saved
 // files; this page owns the layout and draws it three ways (Tiles, Overview, Grid).
 //   layout   { v, cats: [{ id, name, collapsed, cells: [cellId] }], cells: { cellId: cell }, views? }
-//   cell     { key, match, name, dec, graph, gates: { mode none|y|yr, dir above|below, y, r, hold },
+//   cell     { key, match, name, dec, graph, gates: { mode none|y|yr, dir above|below, y, r, hold, other?: { y?, r? } },
+//              (other: lines on the other side too, e.g. bad above 2,600 and below 300)
 //              curve: { src, pts: [[temp, rpm]], tol, hold }, pred }   (pred: a predicted fan, no key)
 //   views    how each view is arranged and how its categories look (see "arrangements" below)
 
 const host = window.chrome && window.chrome.webview ? window.chrome.webview : null;
 const send = m => { if (host) host.postMessage(m); };
+// a build's own cell kinds and messages, from its web/extras.js (loaded only when the host says there is one; HW Deck
+// itself has none). EXT.kinds[kind] = { eval(out, r, c): fills the value, words, caption, level (true: that's all, no
+// lines), body(cid, r, where): html in place of the graph (where: tile, hero, row, band, grid), update(root, r, e, cid):
+// on every tick, detail(box, cid, r, e, full): its own section in the popup (full: just opened), desc(cid, r): the
+// popup's description, noGraph: the popup shows no graph, after(out, r, c, cid): changes the words once the lines had
+// their say, icon(r, c): its icon (an svg, 24 x 24 strokes like ICONS) }. EXT.kindOf(r): a kind for a reading that has none of its own (one of HWiNFO's); EXT.after(out, r, c,
+// cid): the same as a kind's after, for every cell; EXT.head(cat): html at the end of a category's header (its own
+// buttons); EXT.tag(cat, ids, n): an Overview card's tag instead of "all normal" (null: as usual, '': none).
+// EXT.msg(m) gets the host's "x.*" messages; the page sends its own with send({ t: 'x.something' })
+const EXT = window.EXT = { kinds: {}, msg: null, loaded: false, kindOf: null, after: null, head: null, tag: null };
+const xkOf = r => { if (!r) return null; const k = r.kind || (EXT.kindOf ? EXT.kindOf(r) : null); return k ? EXT.kinds[k] || null : null; };
+const xBody = (cid, r, where) => { const xk = xkOf(r); return xk && xk.body ? '<div class="xb" data-x="1">' + xk.body(cid, r, where) + '</div>' : null; };
+// HW Deck's own 12V-2x6 connector (a GPU that reports its pins): its most loaded pin as the value, with lines like any
+// cell (9.2 / 9.5 A to start with), the pins as bars, the pin table in its popup, and yellow when a pin carries 1.5x its
+// share for 3 s (the host keeps that in the warning log too)
+const CONN = 'hwdeck.0/12v';
+let c12Since = 0;
+const pinVals = i => (feed.c12keys && feed.c12keys[i] || []).map(k => { const r = BYKEY.get(k); return r && r.v != null ? r.v : null; });
+const CONN_LINES = { mode: 'yr', dir: 'above', y: 9.2, r: 9.5, hold: 0 };
+EXT.kinds['12v'] = {
+  body: () => '<span class="xpins">' + '<i><b></b></i>'.repeat(Math.max(1, feed.c12keys ? feed.c12keys[0].length : 6)) + '</span>',
+  update(root) {
+    const a = pinVals(0);
+    root.querySelectorAll('.xb .xpins b').forEach((b, i) => { const v = a[i]; b.style.height = (v == null ? 0 : Math.min(100, v / 9.5 * 100)) + '%'; b.className = v >= 9.5 ? 'r' : v >= 9.2 ? 'y' : ''; });
+  },
+  after(out) {
+    const c = feed.c12, now = Date.now() / 1000, a = pinVals(0), hot = c ? c[1] : -1;
+    if (c && c[0]) { if (!c12Since) c12Since = now; } else c12Since = 0;
+    if (out.lvl && hot >= 0 && a[hot] != null) out.sub = 'pin ' + (hot + 1) + ' at ' + fmt(a[hot], 1) + ' A';
+    else if (c12Since && now - c12Since >= 3) { out.lvl = Math.max(out.lvl, 1); out.col = out.lvl === 2 ? 'red' : 'yellow'; out.warm = 0; out.sub = 'pin ' + (hot + 1) + ' carrying ' + c[2] + 'x its share'; }
+  },
+  desc: () => 'The GPU\'s 12V-2x6 power connector, by its pins: the value is the most loaded one. A pin is rated 9.5 A (a healthy connector at a 600 W limit peaks near 9.1 A). A pin carrying 1.5x its share of the load, from 15 A up, is the early sign of a bad contact: the cell turns yellow and the warning history keeps it.',
+  detail(box, cid, r, e, full) {
+    if (full || !box.querySelector('.mpinwrap')) box.innerHTML = '<div class="msec">the pins</div><div class="mpinwrap"></div>';
+    const a = pinVals(0), w = pinVals(1);
+    let h = '';
+    for (let i = 0; i < a.length; i++) {
+      const v = a[i];
+      h += '<div class="mpin"><span class="lbl">pin ' + (i + 1) + '</span><span class="trk"><span style="width:' + (v == null ? 0 : Math.min(100, v / 9.5 * 100)) + '%;background:' +
+        (v >= 9.5 ? COLORS.red : v >= 9.2 ? COLORS.yellow : '#6f6f6f') + '"></span></span><span class="num">' + (v == null ? '--' : v.toFixed(2)) + ' A</span><span class="num">' + (w[i] == null ? '--' : w[i].toFixed(1)) + ' W</span></div>';
+    }
+    const el = box.querySelector('.mpinwrap'); if (el._h !== h) { el.innerHTML = h; el._h = h; }
+  }
+};
 const $ = id => document.getElementById(id);
 const app = $('app'), sectionsEl = $('sections'), dropmark = $('dropmark');
 const esc = s => String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -68,9 +113,9 @@ function setCatalog(m) {
     }
   }
   let unknown = -1;
-  READ = m.readings.map(([s, t, key, label, unit], idx) => {
+  READ = m.readings.map(([s, t, key, label, unit, kind], idx) => {
     if (!SENS[s]) { if (unknown < 0) { unknown = SENS.length; SENS.push({ key: 'unknown.0', name: 'Unknown sensor', short: 'Unknown' }); } s = unknown; }
-    const r = { idx, key, s, t: TYPES[t] || 'other', label, unit, v: null, mn: null, mx: null, av: null };
+    const r = { idx, key, s, t: TYPES[t] || 'other', label, unit, kind: kind || null, v: null, mn: null, mx: null, av: null };
     const o = old.get(key); if (o) { r.v = o.v; r.mn = o.mn; r.mx = o.mx; r.av = o.av; }
     r.hay = ((SENS[s] ? SENS[s].name : '') + ' ' + label + ' ' + unit + ' ' + r.t).toLowerCase();
     return r;
@@ -139,6 +184,8 @@ const tempUnit = r => r && isF(r.unit) ? '\u00b0F' : '\u00b0C';
 const cToU = (c, r) => r && isF(r.unit) ? Math.round(c * 9 / 5 + 32) : c;
 function iconOf(c, r) {
   if (c && c.pred) return ICONS.fan;
+  const xk = xkOf(r), xi = xk && xk.icon ? xk.icon(r, c) : null;
+  if (xi) return xi;
   if (isBneck(c) || (r && r.key === BNECK)) return ICONS.neck;
   if (!r) return ICONS.mem;
   if (isFanR(r)) return ICONS.fan;
@@ -229,10 +276,13 @@ function cleanLayout(L) {
     if (str(c.name) && c.name.trim()) cell.name = str(c.name, 200);
     if (Number.isInteger(c.dec) && c.dec >= 0 && c.dec <= 3) cell.dec = c.dec;
     const g = c.gates;
-    if (g && typeof g === 'object') cell.gates = { mode: ['y', 'yr'].includes(g.mode) ? g.mode : 'none', dir: g.dir === 'below' ? 'below' : 'above', y: fin(g.y), r: fin(g.r), hold: Math.min(1e9, Math.max(0, fin(g.hold) || 0)) };
+    if (g && typeof g === 'object') {
+      cell.gates = { mode: ['y', 'yr'].includes(g.mode) ? g.mode : 'none', dir: g.dir === 'below' ? 'below' : 'above', y: fin(g.y), r: fin(g.r), hold: Math.min(1e9, Math.max(0, fin(g.hold) || 0)) };
+      if (g.other && typeof g.other === 'object') { const o = {}; if (isFinite(fin(g.other.y))) o.y = fin(g.other.y); if (isFinite(fin(g.other.r))) o.r = fin(g.other.r); cell.gates.other = o; }
+    }
     const curveOf = cv => {
       const pts = cv && typeof cv === 'object' && Array.isArray(cv.pts) ? cv.pts.filter(p => Array.isArray(p) && p.length >= 2 && isFinite(fin(p[0])) && isFinite(fin(p[1]))).map(p => [p[0], p[1]]) : [];
-      return pts.length >= 2 ? { src: str(cv.src, 200) || '', pts, tol: Math.max(1, isFinite(fin(cv.tol)) ? cv.tol : 15), hold: Math.min(1e9, Math.max(0, isFinite(fin(cv.hold)) ? cv.hold : 10)) } : null;
+      return pts.length >= 2 ? Object.assign({ src: str(cv.src, 200) || '', pts, tol: Math.max(1, isFinite(fin(cv.tol)) ? cv.tol : 15), hold: Math.min(1e9, Math.max(0, isFinite(fin(cv.hold)) ? cv.hold : 10)) }, cv.warn === false ? { warn: false } : {}) : null;
     };
     const cv = curveOf(c.curve), off = curveOf(c.curveOff);
     if (cv) cell.curve = cv; else if (cell.pred) continue;   // a predicted fan is nothing without its curve
@@ -272,6 +322,20 @@ const isObj = x => !!x && typeof x === 'object' && !Array.isArray(x);
 const share = x => typeof x === 'number' && isFinite(x) && x > 0 ? Math.min(6, Math.max(0.5, Math.round(x * 2) / 2)) : undefined;
 const sid = s => typeof s === 'string' ? s : s.id;
 const clone = x => JSON.parse(JSON.stringify(x));
+// a tile's size in Tiles: w and h in tiles (a normal tile is 1 x 1), each 0.25 to 2. The sizes that have a name keep it
+// (wide 2 x 1, tall 1 x 2, big 2 x 2), so an older HW Deck still draws those; it draws any other size as a normal tile
+const SZ = { wide: [2, 1], tall: [1, 2], big: [2, 2] };
+// (a size a hair off a quarter step, a third of a pixel or less, from a snap or a px step, is that step: 0.9999 is 1, so four
+// tiles of 0.75 and one of 1 still fill a row of 4)
+const SNAPQ = 0.002;
+const szNum = x => { if (typeof x !== 'number' || !isFinite(x)) return 1; const v = Math.round(x * 1e4) / 1e4, q = Math.round(v * 4) / 4; return Math.min(2, Math.max(0.25, Math.abs(v - q) < SNAPQ ? q : v)); };
+const isSz = k => typeof k === 'string' && Object.prototype.hasOwnProperty.call(SZ, k);
+function sizeLook(w, h) {
+  w = szNum(w); h = szNum(h);
+  for (const k of Object.keys(SZ)) if (SZ[k][0] === w && SZ[k][1] === h) return { size: k };
+  return w === 1 && h === 1 ? {} : { w, h };
+}
+const cleanSize = x => typeof x.w === 'number' || typeof x.h === 'number' ? sizeLook(x.w, x.h) : isSz(x.size) ? { size: x.size } : {};
 // ids and catIds map what the file calls a cell or a category to what it is called here; anything that points at
 // nothing, or is out of range, goes; a category no row places gets a row of its own at the bottom (Grid: the last table)
 function cleanViews(V, L, ids, catIds) {
@@ -340,8 +404,8 @@ function cleanViews(V, L, ids, catIds) {
       for (const k of Object.keys(v.cell)) {
         const id = ids.get(k), x = v.cell[k];
         if (!id || !inCat.has(id) || !isObj(x)) continue;
-        const e = {};
-        if (vn === 'tiles' && ['wide', 'tall', 'big'].includes(x.size)) e.size = x.size;
+        const e = vn === 'tiles' ? cleanSize(x) : {};
+        if (vn === 'tiles' && x.nl === true) e.nl = true;   // it starts a new row of tiles
         if (typeof x.name === 'string' && x.name.trim()) e.name = x.name.slice(0, 200);
         if (Object.keys(e).length) cell[id] = e;
       }
@@ -363,7 +427,7 @@ const cleanSlot = s => s && typeof s === 'object' && s.layout && Array.isArray(s
 const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined, title: undefined, clock: true };
 // the title bar: your title (this PC's name when there is none), the feed's dot and the time of the last reading
 function renderTitle() {
-  setText($('title'), (S.title && S.title.trim()) || feed.pc || 'HW Deck');
+  setText($('title'), (S.title && S.title.trim()) || feed.pc || feed.brand || 'HW Deck');
   $('clock').hidden = !S.clock;
 }
 // animations, in Settings: Full (all of it), Reduced (lighter: quick number rolls, fans turned by a 10 Hz timer, graphs
@@ -392,10 +456,10 @@ function restore(json) {
 function pushUndo(before) { undoStack.push(before); if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
 function snap() { pushUndo(snapOf()); }
 // a change that changes nothing (Alt+arrow at the end of a list) leaves no undo step
-function mutate(fn, msg) { const before = snapOf(); fn(); tidyViews(S.L); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); afterChange(); if (msg) toast(msg, true); }
+function mutate(fn, msg) { if (nudge) flushNudge(); const before = snapOf(); fn(); tidyViews(S.L); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); afterChange(); if (msg) toast(msg, true); }
 function afterChange() { tidyViews(S.L); fixSel(); if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); }
-function undo() { if (!undoStack.length) return; retireToastUndo(); redoStack.push(snapOf()); restore(undoStack.pop()); fixSel(); afterChange(); }
-function redo() { if (!redoStack.length) return; retireToastUndo(); undoStack.push(snapOf()); restore(redoStack.pop()); fixSel(); afterChange(); }
+function undo() { if (nudge) flushNudge(); if (!undoStack.length) return; retireToastUndo(); redoStack.push(snapOf()); restore(undoStack.pop()); fixSel(); afterChange(); }
+function redo() { if (nudge) flushNudge(); if (!redoStack.length) return; retireToastUndo(); undoStack.push(snapOf()); restore(redoStack.pop()); fixSel(); afterChange(); }
 function syncUndo() { $('undo').disabled = !undoStack.length; $('redo').disabled = !redoStack.length; }
 function fixSel() { if (sel && !S.L.cells[sel]) sel = null; if (selCat && !S.L.cats.some(c => c.id === selCat)) selCat = null; }
 const layoutSig = L => JSON.stringify(L, (k, v) => k === 'collapsed' ? undefined : v);
@@ -414,7 +478,10 @@ function syncSaves() {
 let rowKeys = [], subT = 0, lastSub = '', lastTick = 0;
 function cellKeys() {
   const set = new Set();
-  for (const c of Object.values(S.L.cells)) { if (c.key) set.add(c.key); if (c.curve && c.curve.src) set.add(c.curve.src); }
+  for (const c of Object.values(S.L.cells)) {
+    if (c.key) set.add(c.key); if (c.curve && c.curve.src) set.add(c.curve.src);
+    if (c.key === CONN && feed.c12keys) for (const k of feed.c12keys[0].concat(feed.c12keys[1])) set.add(k);   // its pins
+  }
   return [...set];
 }
 function subscribe() {
@@ -436,10 +503,43 @@ function cellValue(c) {
 }
 const gatesBad = g => g.mode === 'yr' && Number.isFinite(g.r) && Number.isFinite(g.y) && (g.dir === 'below' ? g.r >= g.y : g.r <= g.y);
 const gatesOn = g => !!g && g.mode !== 'none' && Number.isFinite(g.y) && !gatesBad(g);
+// the lines on the other side (none when there are none or they don't make sense: past its own yellow, red before yellow)
+function otherOf(g) {
+  if (!gatesOn(g) || !g.other || typeof g.other !== 'object') return null;
+  const below = g.dir !== 'below', y = Number.isFinite(g.other.y) ? g.other.y : undefined, r = Number.isFinite(g.other.r) ? g.other.r : undefined;
+  const beyond = x => x === undefined || (below ? x < g.y : x > g.y);
+  if ((y === undefined && r === undefined) || !beyond(y) || !beyond(r) || (y !== undefined && r !== undefined && (below ? r > y : r < y))) return null;
+  return { y, r, below };
+}
+// where a value is by a cell's lines: 0, 1 (yellow) or 2 (red), and on which side (0 its own, 1 the other)
+function gateLevel(g, v) {
+  if (!gatesOn(g) || v == null) return { raw: 0, side: 0 };
+  const past = x => g.dir !== 'below' ? v >= x : v <= x;
+  if (g.mode === 'yr' && Number.isFinite(g.r) && past(g.r)) return { raw: 2, side: 0 };
+  if (past(g.y)) return { raw: 1, side: 0 };
+  const o = otherOf(g), po = x => x !== undefined && (o.below ? v <= x : v >= x);
+  if (o && po(o.r)) return { raw: 2, side: 1 };
+  if (o && po(o.y)) return { raw: 1, side: 1 };
+  return { raw: 0, side: 0 };
+}
+// a cell's lines for the graphs: y and r, and the other side's as y2 and r2
+function gateLines(g) {
+  if (!gatesOn(g)) return {};
+  const o = otherOf(g);
+  return { y: g.y, r: g.mode === 'yr' && Number.isFinite(g.r) ? g.r : undefined, y2: o ? o.y : undefined, r2: o ? o.r : undefined };
+}
 function evalCell(cid, c, peek, quick) {
+  const out = evalCell0(cid, c, peek, quick), r = c.key ? BYKEY.get(c.key) : null, xk = xkOf(r);
+  if (xk && xk.after) xk.after(out, r, c, cid);
+  if (EXT.after) EXT.after(out, r, c, cid);
+  return out;
+}
+function evalCell0(cid, c, peek, quick) {
   const r = c.key ? BYKEY.get(c.key) : null, live = feed.status === 'ok';
   const v = cellValue(c);
   const out = { v, lvl: 0, warm: 0, sub: '', curve: null, col: 'white' };
+  const xk = xkOf(r);
+  if (xk && xk.eval && xk.eval(out, r, c)) return out;
   if (isBneck(c)) {   // a call in words, no lines; its caption is the split of the last 15 min
     const b = bnStrip(), w = BN[v] ? BN[bnNow() || v] : null;
     out.txt = w ? w[0] : '--'; out.utxt = w ? w[1] : ''; out.strip = b;
@@ -452,14 +552,17 @@ function evalCell(cid, c, peek, quick) {
     if (c.pred && !BYKEY.get(c.curve && c.curve.src)) out.sub = 'its temperature is missing';
     return out;
   }
-  let raw = 0, hold = 0;
-  const g = c.gates, dec0 = decOfCell(c, r), pmOff = isPM(r) && !feed.pm;
+  let raw = 0, hold = 0, side = 0;
+  const g = c.gates, dec0 = decOfCell(c, r), pmOff = isPM(r) && !feed.pm, o = otherOf(g);
   if (gatesOn(g) && !pmOff) {
-    const above = g.dir !== 'below', past = x => above ? v >= x : v <= x;
-    if (g.mode === 'yr' && Number.isFinite(g.r) && past(g.r)) raw = 2; else if (past(g.y)) raw = 1;
+    const above = g.dir !== 'below';
+    ({ raw, side } = gateLevel(g, v));
     // closing in on yellow: border and graph warm toward it over the last 12% (at least 3 steps of the cell's
-    // precision: 3 degrees, 0.003 V), in steps
-    if (!raw) { const span = Math.max(Math.abs(g.y) * 0.12, dec0 > 1 ? 3 * Math.pow(10, -dec0) : 3), d = above ? g.y - v : v - g.y; if (d < span) out.warm = Math.round((1 - d / span) * 20) / 20; }
+    // precision: 3 degrees, 0.003 V), in steps; a yes/no reading is yes or no, nothing in between
+    if (!raw && !isYN(r)) {
+      const warm = (x, up) => { const span = Math.max(Math.abs(x) * 0.12, dec0 > 1 ? 3 * Math.pow(10, -dec0) : 3), d = up ? x - v : v - x; return d < span ? Math.round((1 - d / span) * 20) / 20 : 0; };
+      out.warm = Math.max(warm(g.y, above), o ? warm(o.y !== undefined ? o.y : o.r, !o.below) : 0);
+    }
     hold = g.hold || 0;
   }
   if (c.curve && !c.pred) {
@@ -467,7 +570,8 @@ function evalCell(cid, c, peek, quick) {
     if (exp != null) {
       const dev = exp > 0 ? (v - exp) / exp * 100 : 0;
       out.curve = { exp, dev, src };
-      if (Math.abs(dev) > c.curve.tol && raw < 1) { raw = 1; hold = c.curve.hold || 0; out.offCurve = true; }
+      // (a curve that doesn't warn only says how far off it is)
+      if (Math.abs(dev) > c.curve.tol && raw < 1 && c.curve.warn !== false) { raw = 1; hold = c.curve.hold || 0; out.offCurve = true; }
     }
   }
   // a gate only turns after the value stayed past it for the hold time; while the feed isn't live (HWiNFO stalled or
@@ -479,6 +583,7 @@ function evalCell(cid, c, peek, quick) {
   if (out.lvl) out.warm = 0;
   const dec = dec0;
   if (pmOff && gatesOn(g) && !out.curve) out.sub = 'lines count while a game is in front';
+  else if (out.lvl && side) out.sub = (o.below ? 'under ' : 'over ') + (out.lvl === 2 ? 'red ' + fmt(o.r, dec) : 'yellow ' + fmt(o.y, dec));
   else if (out.lvl === 2) out.sub = (g.dir === 'below' ? 'under red ' : 'over red ') + fmt(g.r, dec);
   else if (out.lvl === 1 && !out.offCurve) out.sub = (g.dir === 'below' ? 'under yellow ' : 'over yellow ') + fmt(g.y, dec);
   else if (out.curve) {
@@ -737,8 +842,10 @@ const isFanCell = c => c.pred || isFanR(BYKEY.get(c.key));
 function catHead(cat, inner) {
   return '<span class="grip" title="Drag to move the category: onto another one\'s edge to put them side by side or stack them">' + ICONS.grip + '</span><button class="ib chev" title="Collapse">' + ICONS.chev + '</button>' + (inner || '') +
     '<span class="cn" title="Click to select, double-click to rename">' + esc(cat.name) + '</span><span class="cnt">' + cat.cells.length + '</span>' +
-    '<span class="acts"><button class="ib ren" title="Rename">' + ICONS.pen + '</button><button class="ib del" title="Remove the category and its cells">' + ICONS.x + '</button></span>';
+    '<span class="acts"><button class="ib ren" title="Rename">' + ICONS.pen + '</button><button class="ib del" title="Remove the category and its cells">' + ICONS.x + '</button></span>' +
+    (EXT.head ? xHead(cat) : '');
 }
+const xHead = cat => { const h = EXT.head(cat); return h ? '<span class="xh" data-x="1">' + h + '</span>' : ''; };
 const catCls = cat => 'dcat' + (cat.collapsed ? ' collapsed' : '') + (cat.cells.length ? '' : ' isempty') + (cat.id === selCat ? ' csel' : '');
 const cellsOf = cat => cat.cells.filter(id => S.L.cells[id]);
 const catById = id => S.L.cats.find(c => c.id === id);
@@ -749,6 +856,7 @@ const stored = vn => S.L.views && S.L.views[vn] || null;
 const isCustom = vn => { const v = viewOf(vn); return !!(v && v.rows); };
 const catLook = (id, vn) => { const v = viewOf(vn || S.screen); return v && v.cat && v.cat[id] || {}; };
 const cellLook = (id, vn) => { const v = viewOf(vn || S.screen); return v && v.cell && v.cell[id] || {}; };
+const cellSize = id => { const l = cellLook(id, 'tiles'); return isSz(l.size) ? { w: SZ[l.size][0], h: SZ[l.size][1] } : { w: l.w || 1, h: l.h || 1 }; };
 // a category's cells in this view: its lead (the reading it shows first) moves to the front
 function idsIn(cat) {
   const ids = cellsOf(cat), lead = catLook(cat.id).lead, i = lead ? ids.indexOf(lead) : -1;
@@ -756,20 +864,24 @@ function idsIn(cat) {
 }
 const nameIn = cid => cellLook(cid).name || cellName(S.L.cells[cid]);
 const headTab = () => S.edit ? ' tabindex="0"' : '';
-function tileHtml(cid, lk) {
-  const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c), short = !!lk && lk.size === 'short', sz = short ? '' : cellLook(cid).size, nm = nameIn(cid);
-  const graph = c.graph === false ? '' : isBneck(c) ? '<span class="strip"></span>' : short ? '' : '<canvas></canvas>';
-  const nog = miss || c.graph === false || (short && !isBneck(c));
-  return '<div class="tile dc' + (c.pred ? ' pred' : '') + (short ? ' short' : '') + (sz ? ' sz-' + sz : '') + (miss ? ' missing' : '') + (nog ? ' nog' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + anim() + '" data-cid="' + esc(cid) + '" data-k="tile" tabindex="0">' +
+function tileHtml(cid, lk, pre) {
+  const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c), short = !!lk && lk.size === 'short', z = cellSize(cid), nm = nameIn(cid);
+  const xb = miss ? null : xBody(cid, r, short ? 'short' : 'tile');
+  const graph = xb != null ? xb : c.graph === false ? '' : isBneck(c) ? '<span class="strip"></span>' : short ? '' : '<canvas></canvas>';
+  const nog = xb == null && (miss || c.graph === false || (short && !isBneck(c)));
+  return '<div class="tile dc' + (c.pred ? ' pred' : '') + (short ? ' short' : '') + (miss ? ' missing' : '') + (nog ? ' nog' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + (pre ? pre[1] : '') + anim() + (pre ? ';' + pre[0] : '') + '" data-cid="' + esc(cid) + '" data-k="tile" tabindex="0"' +
+    (z.w !== 1 ? ' data-w="' + z.w + '"' : '') + (z.h !== 1 ? ' data-h="' + z.h + '"' : '') + (cellLook(cid, 'tiles').nl ? ' data-nl="1"' : '') + '>' +
     '<div class="tn">' + iconOf(c, r) + '<span>' + esc(nm) + '</span>' + (c.pred && !/predicted/i.test(nm) ? '<span class="badge">predicted</span>' : '') + '</div>' +
     '<div class="tv"><span class="v"></span><small class="u">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small></div><div class="tc"></div>' +
-    (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit && !short ? '<span class="corner" title="Drag to make it wider or taller">' + ICONS.corner + '</span>' : '') + '</div>';
+    (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit ? '<span class="corner" title="Drag to size it: it snaps to quarter steps, to the edges of other tiles and to the bottom of the columns beside it. Hold Alt for any size, double-click for a normal tile">' + ICONS.corner + '</span>' : '') + '</div>';
 }
 // Tiles: a block per category, a tile per cell (auto: blocks past 6 cells take the whole width)
 function blkHtml(cat, inRows) {
-  const ids = idsIn(cat), lk = catLook(cat.id), spans = !lk.size && ids.some(id => cellLook(id).size);
+  const ids = idsIn(cat), lk = catLook(cat.id), pm = packMemo.get(cat.id), pre = pm && pm.cids === ids.join('|') && pm.edit === S.edit ? pm : null;
+  const tgStyle = (lk.per ? '--per:' + lk.per + ';' : '') + (pre ? pre.tgStyle : '');
   return '<section class="blk ' + catCls(cat) + (!inRows && ids.length > 6 ? ' wide' : '') + (lk.title === 'hide' ? ' notitle' : '') + '" data-cat="' + esc(cat.id) + '"><h2 class="dch"' + headTab() + '>' + catHead(cat) + '</h2>' +
-    '<div class="tg dgrid' + (spans ? ' spans' : '') + (lk.size === 'short' ? ' shorts' : '') + (lk.per ? ' per" style="--per:' + lk.per : '') + '">' + ids.map(id => tileHtml(id, lk)).join('') + '</div></section>';
+    '<div class="tg dgrid' + (lk.size === 'short' ? ' shorts' : '') + (lk.per ? ' per' : '') + (pre ? ' pk' + pre.tgCls : '') + '"' + (tgStyle ? ' style="' + tgStyle + '"' : '') + '>' +
+    ids.map((id, j) => tileHtml(id, lk, pre ? pre.tiles[j] : null)).join('') + '</div></section>';
 }
 // Overview: a card per category (its first cell large, the rest rows with a 15 min graph), a small card, a list
 // (rows only) or a band (the name on the left, every cell side by side)
@@ -779,7 +891,7 @@ function cardHtml(cat) {
   const cls = catCls(cat) + (lk.title === 'hide' ? ' notitle' : '');
   const bits = cid => {
     const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c);
-    return { c, r, miss, u: esc(c.pred ? 'RPM' : unitOf(r)), cls: (miss ? ' missing' : '') + (cid === sel ? ' sel' : ''), on: c.graph !== false && !miss, bn: isBneck(c), nm: '<span class="nm">' + iconOf(c, r) + '<span>' + esc(nameIn(cid)) + '</span></span>' };
+    return { c, r, miss, u: esc(c.pred ? 'RPM' : unitOf(r)), cls: (miss ? ' missing' : '') + (cid === sel ? ' sel' : ''), on: c.graph !== false && !miss, bn: isBneck(c), xb: miss ? null : xBody(cid, r, lk.style === 'band' ? 'band' : 'row'), nm: '<span class="nm">' + iconOf(c, r) + '<span>' + esc(nameIn(cid)) + '</span></span>' };
   };
   const val = u => '<span class="val"><span class="v"></span><small class="u">' + u + '</small></span>';
   const rl = '<button class="btn rl">Re-link</button>';
@@ -788,7 +900,7 @@ function cardHtml(cat) {
       '<div class="dgrid bcells">' + ids.map(cid => {
         const b = bits(cid);
         return '<div class="bcell dc' + b.cls + '" data-cid="' + esc(cid) + '" data-k="row" tabindex="0"><div class="bl"><span class="lbl">' + b.nm + '<i></i></span>' + val(b.u) + '</div>' +
-          (b.on ? (b.bn ? '<span class="strip rsp"></span>' : '<canvas class="rsp"></canvas>') : b.miss && S.edit ? rl : '<span class="gph"></span>') + '</div>';
+          (b.xb != null ? b.xb : b.on ? (b.bn ? '<span class="strip rsp"></span>' : '<canvas class="rsp"></canvas>') : b.miss && S.edit ? rl : '<span class="gph"></span>') + '</div>';
       }).join('') + '</div></section>';
   const hero = lk.style !== 'list';
   return '<section class="card ' + cls + (lk.style === 'small' ? ' small' : '') + (lk.style === 'list' ? ' list' : '') + anim() + '" data-cat="' + esc(cat.id) + '"><div class="ch dch"' + headTab() + '>' + catHead(cat, icon) + '<span class="tag"></span></div>' +
@@ -796,8 +908,8 @@ function cardHtml(cat) {
       const b = bits(cid);
       if (i === 0 && hero) return '<div class="hero dc' + b.cls + '" data-cid="' + esc(cid) + '" data-k="hero" tabindex="0"><div><div class="nm">' + iconOf(b.c, b.r) + '<span>' + esc(nameIn(cid)) + '</span></div>' +
         '<div class="hv"><span class="v"></span><small class="u">' + b.u + '</small></div><div class="hc"></div>' + (b.miss && S.edit ? rl : '') + '</div>' +
-        (b.on ? (b.bn ? '<span class="strip"></span>' : '<canvas></canvas>') : '<span></span>') + '</div>';
-      const mid = b.on ? (b.bn ? '<span class="strip rsp"></span>' : '<canvas class="rsp"></canvas>') : b.miss && S.edit ? rl : '';
+        (b.xb != null ? xBody(cid, b.r, 'hero') : b.on ? (b.bn ? '<span class="strip"></span>' : '<canvas></canvas>') : '<span></span>') + '</div>';
+      const mid = b.xb != null ? b.xb : b.on ? (b.bn ? '<span class="strip rsp"></span>' : '<canvas class="rsp"></canvas>') : b.miss && S.edit ? rl : '';
       return '<div class="row dc' + b.cls + (mid ? '' : ' nog') + '" data-cid="' + esc(cid) + '" data-k="row" tabindex="0"><span class="lbl">' + b.nm + '<i></i></span>' + mid + val(b.u) + '</div>';
     }).join('') + '</div></section>';
 }
@@ -832,30 +944,66 @@ const manualRow = r => r.cols.length > 1 && r.cols.every(c => c.w);
 // your own arrangement: rows of columns, a column a stack of categories, each as tall as what it holds. A row without
 // widths of yours gets widths that follow its content (layoutPass); in edit mode the lines between columns and the
 // strip under a Tiles row are handles
-function arrHtml(cls, v, block) {
+function arrHtml(cls, v, block, auto) {
   const rows = visRows(v.rows), tiles = S.screen === 'tiles';
   let h = '';
   for (const r of rows) {
     const manual = manualRow(r);
     h += '<div class="lrow" data-r="' + r.i + '"' + (manual ? '' : ' data-auto="1"') + (tiles && r.h ? ' data-fill="1"' : '') + ' style="--cols:' + colTracks(manual ? r.cols : r.cols.map(() => ({}))) + '">';
     for (const c of r.cols) h += '<div class="lcol" data-c="' + c.i + '" data-min="' + colMin(c) + '">' + c.stack.map(s => block(catById(sid(s)), true)).join('') + '</div>';
-    if (S.edit) {
+    if (S.edit && !auto) {   // (Automatic has no handles: a drop makes it your own first)
       for (let k = 0; k < r.cols.length - 1; k++) h += '<span class="ldiv" data-k="' + k + '" title="Drag to change the widths, double-click to let them follow what each column holds"></span>';
       if (tiles) h += '<span class="lrs" title="Drag down to let its tiles grow into spare room (Fill), up to keep them as they are (Fit)"></span>';
     }
     h += '</div>';
   }
-  return '<div class="' + cls + ' arr' + (v.gap ? ' gap-' + v.gap : '') + '" id="view">' + h + '</div>';
+  return '<div class="' + cls + ' arr' + (auto ? ' auto' : '') + (v.gap ? ' gap-' + v.gap : '') + '" id="view">' + h + '</div>';
+}
+// Automatic: the categories in balanced columns (see below), in as many columns as the
+// window has room for (30rem each in Tiles, 27rem in Overview); the widths then follow what each column holds, as in a
+// row of your own, so the columns end about level. Making it your own starts from exactly this (lastAuto)
+const lastAuto = {};
+function autoRows(vn) {
+  // (empty categories, shown only in edit mode, go at the end: the others sit where they do outside edit mode)
+  const cats = S.L.cats.filter(c => cellsOf(c).length);
+  if (!cats.length) return S.L.cats.length ? [{ cols: [{ stack: S.L.cats.map(c => c.id) }] }] : [];
+  const v = viewOf(vn), sp = v && v.gap === 'tight' ? 0.6 : v && v.gap === 'roomy' ? 1.5 : 1, fs = cssScale();
+  const W = Math.max(1, sectionsEl.clientWidth - 36) / fs, gap = (vn === 'tiles' ? 1.7 : 0.92) * sp, min = vn === 'tiles' ? 30 : 27;
+  const n = Math.max(1, Math.min(MAXC[vn], cats.length, Math.floor((W + gap) / (min + gap) + 1e-6))), colW = (W - (n - 1) * gap) / n, g = 0.62 * sp;
+  // how tall a category comes out in a column that wide (rem, roughly: it only decides where categories go)
+  const tall = cat => {
+    if (cat.collapsed) return 2.4;
+    const ids = cellsOf(cat), lk = catLook(cat.id, vn);
+    if (vn === 'tiles') {
+      const short = lk.size === 'short', k = Math.max(1, lk.per ? Math.min(lk.per, Math.floor((colW + g) / (8.5 + g))) : Math.floor((colW + g) / ((short ? 15 : 10.5) + g)));
+      const area = ids.reduce((a, id) => { const z = cellSize(id); return a + Math.min(z.w, k) * z.h; }, 0);
+      return 2.2 + Math.max(1, Math.ceil(area / k - 1e-6)) * ((short ? 3.4 : 8.6) + g);
+    }
+    if (lk.style === 'band') return 5;
+    return 4.2 + (lk.style === 'list' ? 0 : lk.style === 'small' ? 4.6 : 7.3) + Math.max(0, ids.length - (lk.style === 'list' ? 0 : 1)) * 2.9;
+  };
+  // the biggest first, each into the column that is shortest so far (the columns come out about level); then each
+  // column in your order, and the columns in the order of their first category
+  const cols = Array.from({ length: n }, () => ({ stack: [], h: 0 })), at = new Map(cats.map((c, i) => [c.id, i]));
+  for (const c of cats.map(c => [c, tall(c)]).sort((a, b) => b[1] - a[1] || at.get(a[0].id) - at.get(b[0].id))) {
+    const col = cols.reduce((a, b) => b.h < a.h - 0.01 ? b : a); col.stack.push(c[0].id); col.h += c[1] + gap;
+  }
+  for (const c of cols) c.stack.sort((a, b) => at.get(a) - at.get(b));
+  const rows = [{ cols: cols.filter(c => c.stack.length).sort((a, b) => at.get(a.stack[0]) - at.get(b.stack[0])).map(c => ({ stack: c.stack })) }];
+  for (const c of S.L.cats) if (!cats.includes(c)) rows[0].cols[rows[0].cols.length - 1].stack.push(c.id);   // (empty ones, hidden outside edit mode)
+  return rows;
 }
 function buildTiles() {
   const v = viewOf('tiles');
   if (v && v.rows) return arrHtml('tl', v, blkHtml);
-  return '<div class="tl' + (v && v.gap ? ' gap-' + v.gap : '') + '" id="view">' + S.L.cats.map(cat => blkHtml(cat, false)).join('') + '</div>';
+  lastAuto.tiles = autoRows('tiles');
+  return arrHtml('tl', { gap: v && v.gap, rows: lastAuto.tiles }, blkHtml, true);
 }
 function buildOverview() {
   const v = viewOf('overview');
   if (v && v.rows) return arrHtml('ov', v, cardHtml);
-  return '<div class="ov' + (v && v.gap ? ' gap-' + v.gap : '') + '" id="view">' + S.L.cats.map(cardHtml).join('') + '</div>';
+  lastAuto.overview = autoRows('overview');
+  return arrHtml('ov', { gap: v && v.gap, rows: lastAuto.overview }, cardHtml, true);
 }
 function buildGrid() {
   const table = list => '<div class="gtable' + anim() + '"><table class="gt"><colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"><col class="c5"><col class="c6"><col class="c7"></colgroup>' +
@@ -863,10 +1011,10 @@ function buildGrid() {
     list.map(({ cat, ids, cont }) => '<tbody class="' + catCls(cat) + (cont ? ' cont' : '') + '" data-cat="' + esc(cat.id) + '"><tr class="ghdr"><td colspan="7">' +
       (cont ? '<span class="dchw"><span class="cn">' + esc(cat.name) + '</span><span class="contd">continued</span></span>' : '<span class="dchw dch"' + headTab() + '>' + catHead(cat) + '</span>') + '</td></tr>' +
       (ids || idsIn(cat)).map(cid => {
-        const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c);
+        const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c), xb = miss ? null : xBody(cid, r, 'grid');
         return '<tr class="dc' + (miss ? ' missing' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + '" data-cid="' + esc(cid) + '" data-k="grow" tabindex="0"><td class="gname">' + iconOf(c, r) + '<span>' + esc(nameIn(cid)) + '</span>' + (miss && S.edit ? '<button class="btn rl">Re-link</button>' : '') + '</td>' +
           '<td class="gval"><span class="v"></span><span class="u gu">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</span></td>' +
-          (isBneck(c) && !miss ? '<td class="gstrip" colspan="3">' + (c.graph !== false ? '<span class="strip"></span>' : '') + '</td>' : '<td class="gn"></td><td class="gn"></td><td class="gn"></td>') + '<td class="glines"></td><td class="ginfo"></td></tr>';
+          (xb != null ? '<td class="gstrip" colspan="3">' + xb + '</td>' : isBneck(c) && !miss ? '<td class="gstrip" colspan="3">' + (c.graph !== false ? '<span class="strip"></span>' : '') + '</td>' : '<td class="gn"></td><td class="gn"></td><td class="gn"></td>') + '<td class="glines"></td><td class="ginfo"></td></tr>';
       }).join('') + '</tbody>').join('') + '</table></div>';
   const v = viewOf('grid');
   if (v && v.rows) {   // your tables: each column of the one row is a table
@@ -917,10 +1065,16 @@ function buildView() {
   const tmp = document.createElement('div'); tmp.innerHTML = html;
   old.replaceWith(tmp.firstChild);
   app.classList.toggle('nocats', !S.L.cats.length && READ.length > 0);
+  for (const t of document.querySelectorAll('#view .tg.pk')) {
+    const pm = packMemo.get(t.parentElement.dataset.cat); if (!pm) continue;
+    t._pk = pm.key; t._H = pm.H; t._L = pm.L; t._tw = pm.tw; unitH.set(t, { narrow: t.classList.contains('narrow'), fs: pm.fs });   // the same tiles: their heights as read last time
+    tileKids(t).forEach((x, j) => { x._fit = pm.tiles[j][2]; x._nat = pm.tiles[j][3]; });
+  }
   E = new Map();
   for (const el of document.querySelectorAll('#view .dc')) {
-    const q = s => el.querySelector(s), cid = el.dataset.cid, c = S.L.cells[cid];
-    const r = { root: el, cid, kind: el.dataset.k, v: q('.v'), u: q('.u'), vbox: q('.tv, .hv, .val, .gval'), cap: q('.tc, .hc, .lbl i, .ginfo'), canvas: q('canvas'), strip: q('.strip'), lines: q('.glines') };
+    // (never inside a build's own body, .xb: that is extras.js's to fill)
+    const q = s => { for (const x of el.querySelectorAll(s)) if (!x.closest('.xb')) return x; return null; }, cid = el.dataset.cid, c = S.L.cells[cid];
+    const r = { root: el, cid, kind: el.dataset.k, v: q('.v'), u: q('.u'), vbox: q('.tv, .hv, .val, .gval'), cap: q('.tc, .hc, .lbl i, .ginfo'), canvas: q('canvas'), strip: q('.strip'), lines: q('.glines'), xb: el.querySelector('.xb') };
     if (r.kind === 'grow') r.td = el.children;
     if (c && isFanCell(c)) r.fan = q('.tn svg, .nm svg, .gname svg');
     if (r.canvas) { r.canvas._enter = enterNext; ro.observe(r.canvas); }
@@ -998,16 +1152,26 @@ function updateView(all) {
     if (r.kind === 'grow' && e.strip) { if (r.cap.title !== e.sub) r.cap.title = e.sub; if (r.td[1].title !== e.txt + ' ' + e.utxt) r.td[1].title = (e.txt + ' ' + e.utxt).trim(); }
     else if (r.kind === 'grow') {
       const f = x => x == null ? '' : fmtV(x, dec, rd);
-      setText(r.td[2], c.pred ? '' : f(rd && rd.mn)); setText(r.td[3], c.pred ? '' : f(rd && rd.mx));
-      setText(r.td[4], c.pred || !rd || rd.av == null ? '' : isYN(rd) ? Math.round(rd.av) + '% yes' : f(rd.av));
-      for (const i of [2, 3, 4]) if (r.td[i].title !== r.td[i]._t) r.td[i].title = r.td[i]._t || '';
+      if (!r.xb && isPM(rd)) {   // a game's own readings: HWiNFO's since it started mean nothing (0 and 3,258 fps), so this game session's
+        const gs = feed.gs && Array.isArray(feed.gs[c.key]) ? feed.gs[c.key] : null;
+        setText(r.td[2], gs ? f(gs[0]) : ''); setText(r.td[3], gs ? f(gs[2]) : ''); setText(r.td[4], gs ? f(gs[1]) : '');
+        const tt = gs ? 'This game session, while the game was in front' : 'Shown for a game session, while the game is in front';
+        for (const i of [2, 3, 4]) if (r.td[i].title !== tt) r.td[i].title = tt;
+      }
+      if (!r.xb && !isPM(rd)) {   // (a build's own body sits where min, max and average go)
+        setText(r.td[2], c.pred ? '' : f(rd && rd.mn)); setText(r.td[3], c.pred ? '' : f(rd && rd.mx));
+        setText(r.td[4], c.pred || !rd || rd.av == null ? '' : isYN(rd) ? Math.round(rd.av) + '% yes' : f(rd.av));
+        for (const i of [2, 3, 4]) if (r.td[i].title !== r.td[i]._t) r.td[i].title = r.td[i]._t || '';
+      }
       const cur = fmtV(e.v, dec, rd) + (unitOf(rd) && e.v != null ? ' ' + unitOf(rd) : c.pred && e.v != null ? ' RPM' : '');
       if (r.td[1].title !== cur) r.td[1].title = cur;
       if (r.cap && r.cap.title !== (e.sub || '')) r.cap.title = e.sub || '';
-      const g = c.gates, lh = gatesOn(g) ? '<span class="y">' + fmtL(g.y, dec) + '</span>' + (g.mode === 'yr' && Number.isFinite(g.r) ? '&nbsp; <span class="r">' + fmtL(g.r, dec) + '</span>' : '') : '';
+      const g = c.gates, gl = gateLines(g), two = gl.y2 !== undefined || gl.r2 !== undefined, ln = (y, r) => (y !== undefined ? '<span class="y">' + fmtL(y, dec) + '</span>' : '') + (r !== undefined ? (y !== undefined ? '&nbsp; ' : '') + '<span class="r">' + fmtL(r, dec) + '</span>' : '');
+      const lh = gatesOn(g) ? (two ? (g.dir === 'below' ? 'under ' : 'over ') : '') + ln(gl.y, gl.r) + (two ? ', ' + (g.dir === 'below' ? 'over ' : 'under ') + ln(gl.y2, gl.r2) : '') : '';
       if (r.lines._h !== lh) { r.lines.innerHTML = lh; r.lines._h = lh; }
     }
     if (r.fan) spinIcon(r.fan, e.v);
+    const xk = xkOf(rd); if (xk && xk.update) xk.update(r.root, rd, e, cid);
     if (r._lvl !== undefined && e.lvl > r._lvl) glow(r, e.lvl);
     r._lvl = e.lvl;
     if (r.canvas && sight.get(cid)) graphFeed(r.canvas, c, graphCol(e, r.kind === 'hero'));
@@ -1018,7 +1182,8 @@ function updateView(all) {
     const ids = cellsOf(cat), lv = cardLvl[cat.id] || 0;
     let n = 0; for (const id of ids) { const r = E.get(id); if (r && r._lvl) n++; }
     const fans = ids.length && ids.every(id => isFanCell(S.L.cells[id]));
-    const txt = n ? plural(n, 'warning') : fans ? ids.filter(id => !S.L.cells[id].pred && (cellValue(S.L.cells[id]) || 0) > 100).length + ' spinning' : 'all normal';
+    const own = !n && EXT.tag ? EXT.tag(cat, ids, n) : null;
+    const txt = own != null ? own : n ? plural(n, 'warning') : fans ? ids.filter(id => (cellValue(S.L.cells[id]) || 0) > 100).length + ' spinning' : 'all normal';
     if (k.tag) { setText(k.tag, txt); k.tag.className = 'tag' + (lv === 2 ? ' r' : lv === 1 ? ' y' : ''); }
     k.el.classList.toggle('warn-y', lv === 1); k.el.classList.toggle('warn-r', lv === 2);
   }
@@ -1033,9 +1198,124 @@ const fits = () => { layoutPass(); return sectionsEl.scrollHeight <= sectionsEl.
 // rows too narrow for their columns fold (one under the other, never saved), long Overview cards flow into
 // sub-columns, a band too narrow for its cells wraps them, a wide tile in a single column stays one wide
 const spOf = v => v.classList.contains('gap-tight') ? 0.6 : v.classList.contains('gap-roomy') ? 1.5 : 1;
-const sizeOf = t => /sz-big/.test(t.className) ? 'big' : /sz-wide/.test(t.className) ? 'wide' : /sz-tall/.test(t.className) ? 'tall' : '';
-// how many tile places some tiles take at k per row (a wide or big tile needs two of them side by side)
-const tileArea = (tiles, k) => tiles.reduce((a, t) => { const z = sizeOf(t); return a + (z === 'big' ? (k > 1 ? 4 : 2) : z === 'wide' ? (k > 1 ? 2 : 1) : z === 'tall' ? 2 : 1); }, 0);
+// a tile's size as drawn (see SZ), and how many tile places some tiles take at k per row
+const szOf = t => ({ w: +t.dataset.w || 1, h: +t.dataset.h || 1, nl: t.dataset.nl === '1' });
+const tileKids = tg => [...tg.children].filter(x => x.classList.contains('tile'));
+const tileArea = (tiles, k) => tiles.reduce((a, t) => { const s = szOf(t); return a + Math.min(s.w, k) * s.h; }, 0);
+// a category's tiles, k places to a row: each goes to the highest, then leftmost, spot where it fits, so a hole left
+// (a tile that starts a new row (nl) goes under all the tiles before it, and the ones after it stay there too)
+// beside a bigger tile takes a later one that fits it (all normal tiles: a plain grid in reading order). Sizes and
+// spots in tiles, a tile's gap included; a tile wider than the row is as wide as the row. Gives the spots and the height
+const PE = 1e-6, inRect = (a, b) => a.x >= b.x - PE && a.y >= b.y - PE && a.x + a.w <= b.x + b.w + PE && a.y + a.h <= b.y + b.h + PE;
+function packTiles(sz, k) {
+  let free = [{ x: 0, y: 0, w: k, h: Infinity }], H = 0;
+  const pos = [];
+  for (const s of sz) {
+    const w = Math.min(s.w, k), h = s.h;
+    if (s.nl && H > PE) free = free.map(f => f.y >= H - PE ? f : f.y + f.h > H + PE ? { x: f.x, y: H, w: f.w, h: f.y + f.h - H } : null).filter(Boolean);
+    let b = null;
+    for (const f of free) if (w <= f.w + SNAPQ && h <= f.h + SNAPQ && (!b || f.y < b.y - PE || (f.y <= b.y + PE && f.x < b.x))) b = f;
+    const p = { x: b.x, y: b.y, w, h };
+    pos.push(p); H = Math.max(H, p.y + h);
+    // the free room it takes splits into what is left around it; room inside other room goes
+    const nf = [];
+    for (const f of free) {
+      if (p.x >= f.x + f.w - PE || p.x + w <= f.x + PE || p.y >= f.y + f.h - PE || p.y + h <= f.y + PE) { nf.push(f); continue; }
+      if (p.x > f.x + PE) nf.push({ x: f.x, y: f.y, w: p.x - f.x, h: f.h });
+      if (p.x + w < f.x + f.w - PE) nf.push({ x: p.x + w, y: f.y, w: f.x + f.w - p.x - w, h: f.h });
+      if (p.y > f.y + PE) nf.push({ x: f.x, y: f.y, w: f.w, h: p.y - f.y });
+      if (p.y + h < f.y + f.h - PE) nf.push({ x: f.x, y: p.y + h, w: f.w, h: f.y + f.h - p.y - h });
+    }
+    const big = nf.filter(f => f.w >= 0.25 - PE && f.h >= 0.25 - PE);   // (no tile is smaller than 0.25 x 0.25)
+    free = big.filter((a, i) => !big.some((c, j) => j !== i && inRect(a, c) && (!inRect(c, a) || j < i)));
+  }
+  return { pos, H: Math.round(H * 1e6) / 1e6 };
+}
+// each tile's own height (rem) as it is on its own, at least the 8.6rem of a normal tile; read once per drawn view,
+// before the tiles are placed (a short category again when it turns narrow: its tiles stack and get taller). (Text
+// heights don't scale quite evenly with the text size: the fit tries sizes with what it read first, and the size it
+// keeps is read again, exactUnits)
+const unitH = new WeakMap();
+let exactUnits = false;
+// one tile high is the same everywhere in the view: at least the height most normal tiles have (the median of their
+// own heights), so a category whose tiles hold less (no caption, no graph) isn't a little shorter than the rest; a tile
+// that holds more still makes its row taller
+let tileUnit = 8.6;
+const natOf = (x, short) => short ? x._nat || 3.4 : Math.max(x._nat || 8.6, tileUnit);
+function setTileUnit(tgs) {
+  const n = [];
+  for (const t of tgs) if (!t.classList.contains('shorts') && !t.closest('.dcat.collapsed')) for (const x of tileKids(t)) n.push(x._nat || 8.6);
+  n.sort((a, b) => a - b);
+  tileUnit = n.length ? Math.max(8.6, Math.round(n[(n.length - 1) >> 1] * 1000) / 1000) : 8.6;
+}
+function measureUnits(tgs, fs) {
+  const need = tgs.filter(t => { if (t.closest('.dcat.collapsed')) return false; const u = unitH.get(t); return !u || u.narrow !== t.classList.contains('narrow') || (exactUnits && Math.abs(u.fs - fs) > 0.01); });
+  if (!need.length) return;
+  for (const t of need) { t.classList.remove('pk'); t.classList.add('meas'); }
+  const hs = need.map(t => tileKids(t).map(x => x.offsetHeight));
+  need.forEach((t, i) => {
+    if (!hs[i].some(Boolean)) return;
+    const short = t.classList.contains('shorts');
+    // a tile at the 8.6rem floor (most) is 8.6 whatever the rounding of its px: its placing stays as it was
+    tileKids(t).forEach((x, j) => { if (hs[i][j]) x._nat = short ? hs[i][j] / fs : hs[i][j] <= 8.6 * fs + 1 ? 8.6 : hs[i][j] / fs; });
+    unitH.set(t, { narrow: t.classList.contains('narrow'), fs });
+  });
+}
+// the packed tiles in rem: one tile high is a row, as tall as the tallest normal-height tile that starts in it (like a
+// grid row; at least the shortest tile of the category); any other height takes its share of the rows it spans. G: the
+// gap in rem; even (a Fill row): every row as tall as the tallest. Gives each tile's top and height (ty, th) and the
+// height of them all (TH)
+function placeTiles(sz, nat, k, G, even) {
+  const { pos, H } = packTiles(sz, k), nb = Math.max(1, Math.ceil(H - PE)), bh = Array(nb).fill(Math.min(...nat));
+  // (a tile 1 high or more starting on a row needs its own height over the rows it covers: smoothly less per row as it
+  // gets taller, so 1.001 high is no jump from 1)
+  pos.forEach((p, i) => { const r = Math.round(p.y); if (p.h >= 1 - PE && Math.abs(p.y - r) < PE) { const need = (nat[i] + G) / p.h - G; for (let b = r; b < Math.min(nb, r + Math.floor(p.h + PE)); b++) bh[b] = Math.max(bh[b], need); } });
+  if (even) bh.fill(Math.max(...bh));
+  const acc = [0]; for (let r = 0; r < nb; r++) acc.push(acc[r] + bh[r] + G);
+  const Y = u => { const r = Math.max(0, Math.min(nb - 1, Math.floor(u + PE))); return acc[r] + Math.max(0, u - r) * (bh[r] + G); };
+  for (const p of pos) { p.ty = Y(p.y); p.th = Y(p.y + p.h) - p.ty - G; }
+  return { pos, H, TH: Y(H) - G };
+}
+// the tiles of a category placed (CSS draws them from these numbers: a spot is (width + gap) / k wide; tops and heights
+// in rem, so they follow the text size and the width without being placed again; Fill adds --gr per tile high)
+function packTg(t, k) {
+  const tiles = tileKids(t);
+  if (!tiles.length) { t.classList.remove('pk'); t._H = 0; t._L = null; return 0; }
+  const short = t.classList.contains('shorts'), G = 0.62 * spOf($('view')), nat = tiles.map(x => natOf(x, short)), even = !short && !!t.closest('.lrow[data-fill]');
+  const key = k + ':' + G + ':' + even + ':' + tiles.map((x, j) => (x.dataset.w || 1) + 'x' + (x.dataset.h || 1) + (x.dataset.nl ? '/' : '') + '@' + nat[j].toFixed(3)).join(',');
+  if (t._pk !== key) {
+    const L = placeTiles(tiles.map(szOf), nat, k, G, even);
+    tiles.forEach((x, j) => {
+      const s = x.style, p = L.pos[j];
+      s.setProperty('--x', p.x); s.setProperty('--w', p.w); s.setProperty('--y', p.y); s.setProperty('--h', p.h);
+      s.setProperty('--ty', p.ty.toFixed(3)); s.setProperty('--th', p.th.toFixed(3));
+      x.classList.toggle('hx', p.h > 1 + PE);
+    });
+    t.style.setProperty('--H', L.H); t.style.setProperty('--TH', L.TH.toFixed(3)); t._pk = key; t._H = L.H; t._L = L;
+  }
+  if (t.style.getPropertyValue('--k') !== String(k)) t.style.setProperty('--k', k);
+  t.classList.add('pk'); t.classList.remove('meas');
+  return t._H;
+}
+// what each tile shows at the size it has now (W wide, the gap g, in px; see .tg.pk in deck.css): everything; no graph;
+// no caption; the name beside the value on one line; the value alone. Small tiles get tight padding
+const FITS = ['l0', 'l1', 'ns', 'ng', 'nc', 'ph', 'pw', 'nu', 'cq'];
+function tileFit(t, W, k, g, fs, gr) {
+  if (!t._L) return;
+  t._tw = W;
+  const short = t.classList.contains('shorts'), pw = (W + g) / k;
+  tileKids(t).forEach((x, j) => {
+    const p = t._L.pos[j]; if (!p) return;
+    const w = (p.w * pw - g) / fs, h = p.th + (gr ? p.h * gr / fs : 0);
+    const c = (short ? (h < 1.9 || w < 4 ? 'l0 ng nc ph' : h < 2.9 ? 'ng nc ph' : '')
+      : w < 4.5 ? (h >= 5.3 ? 'ns ng nc' : 'l0 ng nc ph') : h < 2.6 ? (w >= 9 ? 'l1 ng nc ph' : 'l0 ng nc ph') : h < 5.3 ? (w >= 7 ? 'l1 ng nc ph' : 'l0 ng nc ph') : h < 6.9 ? 'ng nc' : h < 7.9 ? 'ng' : '') + (w < 8 ? ' pw' : '') + (w < 4.5 ? ' nu' : '');
+    // (cq: sized by its own box, for a tile that isn't 1 x 1, shows less, or grows in a Fill row; a plain tile needn't)
+    const cq = c || Math.abs(p.w - 1) > PE || Math.abs(p.h - 1) > PE || gr ? c + ' cq' : c;
+    if (x._fit === cq) return;
+    x._fit = cq; const on = cq.split(' ');
+    for (const f of FITS) x.classList.toggle(f, on.includes(f));
+  });
+}
 // Overview: rows flow into this many sub-columns (each about 26rem, and 3 rows or more)
 const subCols = (w, rows, fs) => Math.max(1, Math.min(Math.floor((w + 2.2 * fs) / (28.2 * fs)), Math.floor(rows / 3)));
 // natural sizes, read off the view (nothing in it stretches)
@@ -1044,7 +1324,7 @@ function naturals(view, fs) {
   const h2 = q('.blk:not(.notitle) > .dch'), ch = q('.card:not(.band):not(.notitle) > .ch'), card = q('.card:not(.band)');
   let pad = 0; if (card) { const cs = getComputedStyle(card); pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 2; }
   const withMb = e => hgt(e) ? hgt(e) + mb(e) : 0;
-  return { T: hgt(q('.tile:not(.short):not(.sz-tall):not(.sz-big)')) || 8.6 * fs, Ts: hgt(q('.tile.short')) || 3.4 * fs, H: withMb(h2) || 2.2 * fs,
+  return { H: withMb(h2) || 2.2 * fs,
     rowH: hgt(q('.card .dgrid > .row')) || 2.9 * fs, heroH: hgt(q('.card .hero')) || 7.3 * fs, chH: withMb(ch) || 2.4 * fs, pad: pad || 1.8 * fs, bandH: hgt(q('.card.band:not(.bfold)')) || 5 * fs };
 }
 // a row of your own whose widths follow content. Tiles: the row is a run of equal tile tracks; each column gets whole
@@ -1055,7 +1335,9 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
   const C = cols.length, rg = parseFloat(getComputedStyle(cols[0]).rowGap) || 0;
   const desc = cols.map(c => [...c.children].filter(e => e.classList.contains('dcat')).map(b => {
     const tg = b.querySelector('.tg'), dg = b.querySelector('.dgrid');
-    return { tg, tiles: tg ? [...tg.children].filter(x => x.classList.contains('tile')) : [], collapsed: b.classList.contains('collapsed'), short: !!tg && tg.classList.contains('shorts'),
+    const tiles = tg ? tileKids(tg) : [];
+    const short = !!tg && tg.classList.contains('shorts');
+    return { tg, tiles, sz: tiles.map(szOf), nat: tiles.map(x => natOf(x, short)), packs: new Map(), collapsed: b.classList.contains('collapsed'), short: !!tg && tg.classList.contains('shorts'),
       per: tg && tg.classList.contains('per') ? +tg.style.getPropertyValue('--per') || 0 : 0, band: b.classList.contains('band'), hero: !!b.querySelector('.hero'),
       rows: b.querySelectorAll('.dgrid > .row').length, n: dg ? dg.children.length : 0 };
   }));
@@ -1070,8 +1352,8 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
         if (d.collapsed) return nat.H;
         if (!d.tiles.length) return nat.H + 5 * fs;   // an empty category (edit mode)
         const w = n * m + (n - 1) * g, kk = d.per ? Math.max(1, Math.min(d.per, Math.floor((w + g) / (8.5 * fs + g)))) : d.short ? Math.max(1, Math.floor((w + g) / (15 * fs + g))) : n;
-        const rows = Math.ceil(tileArea(d.tiles, kk) / kk);
-        return nat.H + rows * (d.short ? nat.Ts : nat.T) + (rows - 1) * g;
+        if (!d.packs.has(kk)) d.packs.set(kk, placeTiles(d.sz, d.nat, kk, g / fs, !d.short && !!row.dataset.fill).TH);
+        return nat.H + d.packs.get(kk) * fs;
       };
       const colH = (i, n) => stackH(i, d => catH(d, n));
       const k = cols.map(c => Math.max(1, Math.ceil(((+c.dataset.min || 0) * fs + g) / (m + g) - 1e-6)));
@@ -1127,10 +1409,11 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
 }
 // Tiles per row, Auto: as many as fit, evened out over the rows (3 tiles where 5 fit = 3 wider ones, no empty places)
 function balancedK(tg, W, fs, g) {
-  const tiles = [...tg.children].filter(x => x.classList.contains('tile')), min = (tg.classList.contains('shorts') ? 15 : 10.5) * fs;
-  const kmax = Math.max(1, Math.floor((W + g) / (min + g) + 1e-6)), rows = Math.max(1, Math.ceil(tileArea(tiles, kmax) / kmax));
-  let k = Math.min(kmax, Math.max(1, Math.ceil(tileArea(tiles, kmax) / rows)));
-  if (kmax > 1 && tiles.some(t => /sz-(wide|big)/.test(t.className))) k = Math.max(k, 2);
+  const tiles = tileKids(tg), min = (tg.classList.contains('shorts') ? 15 : 10.5) * fs;
+  const kmax = Math.max(1, Math.floor((W + g) / (min + g) + 1e-6)), a = tileArea(tiles, kmax), rows = Math.max(1, Math.ceil(a / kmax - PE));
+  let k = Math.min(kmax, Math.max(1, Math.ceil(a / rows - PE)));
+  const mw = tiles.reduce((m, t) => Math.max(m, szOf(t).w), 1);   // a wide tile gets its width where there is room
+  if (kmax > 1 && mw > 1) k = Math.max(k, Math.min(kmax, Math.ceil(mw - PE)));
   return k;
 }
 // a fit tries several text sizes: the natural sizes scale with it and a row's width doesn't change, so both are read
@@ -1147,7 +1430,8 @@ function layoutPass() {
   if (!view) return;
   for (const r of view.querySelectorAll('.lrow.grow')) r.classList.remove('grow');
   for (const t of view.querySelectorAll('.tg[data-ktrack]')) delete t.dataset.ktrack;
-  const g = 0.62 * fs * spOf(view), nat = naturalsNow(view, fs);
+  const g = 0.62 * fs * spOf(view), nat = naturalsNow(view, fs), tgs = [...view.querySelectorAll('.tg')];
+  measureUnits(tgs, fs); setTileUnit(tgs);
   // rows of your own: their widths first (rows don't change each other's width), then the widths and folds they get
   const rows = [...view.querySelectorAll(':scope > .lrow')].map(row => ({ row, cols: [...row.children].filter(e => e.classList.contains('lcol')) }));
   for (const r of rows) { const m = rowW.get(r.row); r.W = m && m[0] === layGen ? m[1] : r.row.clientWidth; rowW.set(r.row, [layGen, r.W]); r.cg = parseFloat(getComputedStyle(r.row).columnGap) || 0; }
@@ -1159,20 +1443,27 @@ function layoutPass() {
   }
   // then every width the rest depends on, read in one go
   const gs = document.querySelector('#view.gsplit.arr'), gw = gs ? gs.clientWidth : 0;
-  const tgs = [...view.querySelectorAll('.tg')], tw = tgs.map(t => t.clientWidth);
+  const tw = tgs.map(t => t.clientWidth);
   const vs = [...view.querySelectorAll('.card:not(.band) > .dgrid.vert')], vw = vs.map(d => d.clientWidth);
   const bands = [...view.querySelectorAll('.card.band')], bw = bands.map(b => b.clientWidth);
   if (gs) { const n = gs.children.length; gs.classList.toggle('fold', n > 1 && gw + 1 < (n * 30 + (n - 1) * 0.92) * fs); }
+  const flipped = [];   // short categories that turned narrow (or back): read again together after the others
   // tiles per row: Auto evened out (unless the row's tracks set it); short tiles too narrow for the name and the
-  // value side by side stack them; a wide tile where only one fits is one wide
+  // value side by side stack them; then the tiles are placed by their sizes
   tgs.forEach((t, i) => {
+    if (!tw[i]) return;   // not drawn (a folded category)
     let k;
     if (t.classList.contains('per')) k = Math.max(1, Math.min(+t.style.getPropertyValue('--per') || 1, Math.floor((tw[i] + g) / (8.5 * fs + g) + 1e-6)));
     else if (t.dataset.ktrack) k = +t.style.getPropertyValue('--k') || 1;
-    else { k = balancedK(t, tw[i], fs, g); t.classList.add('kset'); t.style.setProperty('--k', k); }
-    if (t.classList.contains('shorts')) t.classList.toggle('narrow', (tw[i] - (k - 1) * g) / k < 12 * fs);
-    for (const x of t.children) if (/sz-(wide|big)/.test(x.className)) x.classList.toggle('one', k < 2);
+    else { k = balancedK(t, tw[i], fs, g); t.classList.add('kset'); }
+    if (t.classList.contains('shorts')) {
+      const nw = (tw[i] - (k - 1) * g) / k < 12 * fs;
+      if (nw !== t.classList.contains('narrow')) { t.classList.toggle('narrow', nw); flipped.push([t, k, tw[i]]); return; }
+    }
+    packTg(t, k);
+    tileFit(t, tw[i], k, g, fs);
   });
+  if (flipped.length) { measureUnits(flipped.map(f => f[0]), fs); for (const [t, k, w] of flipped) { packTg(t, k); tileFit(t, w, k, g, fs); } }
   vs.forEach((d, i) => {
     const n = d.querySelectorAll(':scope > .row').length, sc = subCols(vw[i], n, fs);
     d.classList.toggle('sub', sc > 1);
@@ -1193,28 +1484,56 @@ function growPass() {
   if (!view || !view.classList.contains('tl') || !view.classList.contains('arr')) return;
   const rows = [...view.querySelectorAll(':scope > .lrow[data-fill]')];
   if (!rows.length) return;
-  const fs = parseFloat(document.documentElement.style.fontSize) || 13, T = naturals(view, fs).T;
+  const fs = parseFloat(document.documentElement.style.fontSize) || 13;
   const spare = sectionsEl.clientHeight - (view.offsetTop + view.offsetHeight) - (parseFloat(getComputedStyle(sectionsEl).paddingBottom) || 0) - 2;
   if (spare < 6) return;
-  // each column: how tall its content is now, and how many rows of growing tiles it has
+  // each column: how tall its content is now, and how many tiles high its growing tiles are (T: a normal tile's height,
+  // the largest category's shortest; tiles grow by T at most)
+  let T = 0;
   const info = rows.map(r => [...r.children].filter(e => e.classList.contains('lcol')).map(c => {
     const kids = [...c.children].filter(x => x.classList.contains('dcat')), gap = parseFloat(getComputedStyle(c).rowGap) || 0;
     let n = 0;
-    for (const b of kids) { if (b.classList.contains('collapsed')) continue; const tg = b.querySelector('.tg:not(.shorts)'); if (tg && tg.children.length) n += getComputedStyle(tg).gridTemplateRows.split(' ').filter(Boolean).length; }
+    for (const b of kids) { if (b.classList.contains('collapsed')) continue; const tg = b.querySelector('.tg.pk:not(.shorts)'); if (tg) { n += tg._H || 0; T = Math.max(T, Math.min(...tileKids(tg).map(x => natOf(x))) * fs); } }
     return { h: kids.reduce((a, b) => a + b.offsetHeight, 0) + Math.max(0, kids.length - 1) * gap, n };
   })).map((cs, i) => {   // a folded row: its columns one under the other, so they grow together
     if (!rows[i].classList.contains('fold') || cs.length < 2) return cs;
     const gap = parseFloat(getComputedStyle(rows[i]).rowGap) || 0;
     return [{ h: cs.reduce((a, c) => a + c.h, 0) + (cs.length - 1) * gap, n: cs.reduce((a, c) => a + c.n, 0) }];
   });
+  if (!T) return;
   const extra = d => info.reduce((a, cs) => a + Math.max(...cs.map(c => c.h + c.n * d)) - Math.max(...cs.map(c => c.h)), 0);
   let lo = 0, hi = T;
   if (extra(hi) > spare) for (let i = 0; i < 20; i++) { const mid = (lo + hi) / 2; if (extra(mid) <= spare) lo = mid; else hi = mid; }
   else lo = hi;
   if (lo < 2) return;
-  for (const r of rows) { r.classList.add('grow'); r.style.setProperty('--th', (T + lo).toFixed(1) + 'px'); r.style.setProperty('--gv', (1 + 0.3 * lo / T).toFixed(3)); }
+  for (const r of rows) { r.classList.add('grow'); r.style.setProperty('--gr', lo.toFixed(1) + 'px'); r.style.setProperty('--gv', (1 + 0.3 * lo / T).toFixed(3)); }
+  const g = 0.62 * fs * spOf(view);
+  for (const r of rows) for (const t of r.querySelectorAll('.tg.pk:not(.shorts)')) tileFit(t, t._tw, +t.style.getPropertyValue('--k') || 1, g, fs, +lo.toFixed(1));
 }
-// the size that fit, per view as it looks now (window, edit mode, categories, its arrangement and looks): switching
+// how each category's tiles were placed (their numbers and looks): the next drawing of the same tiles starts there, so
+// it needs one layout instead of two (placing checks it all again and changes only what differs)
+const packMemo = new Map();
+function rememberPacks() {
+  for (const t of document.querySelectorAll('#view .tg.pk')) {
+    const cat = t.parentElement.dataset.cat, kids = tileKids(t); if (!t._L || !cat) continue;
+    const st = t.style, v = k => st.getPropertyValue(k);
+    const u = unitH.get(t); if (!u) continue;
+    packMemo.set(cat, { cids: kids.map(x => x.dataset.cid).join('|'), edit: S.edit, key: t._pk, H: t._H, L: t._L, tw: t._tw, fs: u.fs,
+      tgStyle: '--k:' + v('--k') + ';--H:' + v('--H') + ';--TH:' + v('--TH'), tgCls: t.classList.contains('narrow') ? ' narrow' : '',
+      tiles: kids.map(x => { const s = x.style, f = k => s.getPropertyValue(k); return ['--x:' + f('--x') + ';--w:' + f('--w') + ';--y:' + f('--y') + ';--h:' + f('--h') + ';--ty:' + f('--ty') + ';--th:' + f('--th'),
+        (x.classList.contains('hx') ? ' hx' : '') + (x._fit ? ' ' + x._fit : ''), x._fit, x._nat]; }) });
+  }
+  if (packMemo.size > 400) packMemo.clear();
+}
+// edit mode: the room under a column's categories shows as a soft slot, only where there is real room (3 lines or
+// more: a thin one looked like a stray bar)
+function markSlots() {
+  if (!S.edit) return;
+  const fs = parseFloat(document.documentElement.style.fontSize) || 13, cols = [...document.querySelectorAll('#view .lrow:not(.fold) > .lcol')];
+  const room = cols.map(c => { const ks = [...c.children].filter(e => e.classList.contains('dcat')); return ks.length ? c.getBoundingClientRect().bottom - ks[ks.length - 1].getBoundingClientRect().bottom : 0; });
+  cols.forEach((c, i) => c.classList.toggle('slot', room[i] >= 3 * fs));
+}
+// the size that fit, per view as it looks now (window, categories, its arrangement and looks; edit mode fits as outside it, so both share it): switching
 // back to a view tries that one size instead of searching again
 // kept in this window's own storage too (a convenience: lost storage just means one search), so the first switch after
 // a restart is quick as well
@@ -1227,7 +1546,7 @@ function rememberFit(key, f) {
   clearTimeout(fitSaveT); fitSaveT = setTimeout(() => { try { localStorage.setItem('hwdeck.fit', JSON.stringify(fitMemo)); } catch (e) { /* no storage: fine */ } }, 2000);
 }
 // (the cells too: a name, a graph turned on or off, a missing reading change what fits)
-const fitKey = target => hashKey(JSON.stringify([S.screen, target, sectionsEl.clientWidth, sectionsEl.clientHeight, S.edit, S.L.cats.map(c => [c.id, cellsOf(c).length, c.collapsed]),
+const fitKey = target => hashKey(JSON.stringify([S.screen, target, sectionsEl.clientWidth, sectionsEl.clientHeight, S.L.cats.map(c => [c.id, cellsOf(c).length, c.collapsed]),
   viewOf(S.screen), S.L.cells, Object.keys(S.L.cells).filter(id => isMissing(S.L.cells[id]))]));
 function autofit() {
   const root = document.documentElement, v = $('view');
@@ -1237,45 +1556,55 @@ function autofit() {
   const at = f => { root.style.fontSize = f + 'px'; return fits(); };
   // the largest size that fits between lo (fits) and hi (doesn't), to 0.2 px
   const search = (lo, hi) => { while (hi - lo > 0.2) { const mid = (lo + hi) / 2; if (at(mid)) lo = mid; else hi = mid; } return lo; };
-  let lo;
+  // then a few more tries, so the margin left at the bottom is about the one at the sides, not a size step more
+  const refine = (lo, hi) => { for (let i = 0; i < 3 && hi - lo > 0.06; i++) { const mid = (lo + hi) / 2; if (at(mid)) lo = mid; else hi = mid; } return lo; };
+  let lo, ok = true;
   // (the remembered size is still tried: live values can change what fits)
   if (memo && at(memo)) lo = memo;
   else if (memo !== target && at(target)) lo = target;
   // edit mode, redrawn on every change: far too much to ever fit (3 windows tall) scrolls at once, no more tries
-  else if (S.edit && sectionsEl.scrollHeight > sectionsEl.clientHeight * 3) lo = target;
+  else if (S.edit && sectionsEl.scrollHeight > sectionsEl.clientHeight * 3) { lo = target; ok = false; }
   else {
     // from where this view fit last (an edit, a resize: usually close), else from how much of it fits at the full size,
     // each try steers by how much of the window the content fills (text and tiles scale together); halves the gap
     // once it has a size that fits and one that doesn't
     const avail = sectionsEl.clientHeight - 20, H = () => Math.max(1, $('view').offsetHeight);
-    let good = 0, bad = target, f = lastFit[S.screen] ? target * lastFit[S.screen] : target * avail / H();
+    let good = 0, bad = target, est = target, f = lastFit[S.screen] ? target * lastFit[S.screen] : target * avail / H();
     for (let i = 0; i < 6 && bad - good > 0.3; i++) {
       f = Math.min(bad - 0.1, Math.max(floor, f));
       if (f <= good) break;
-      if (at(f)) { good = f; const g2 = f * avail / H(); f = g2 - good < 0.25 ? bad : Math.min(g2, (good + bad) / 2 + 0.6); if (g2 - good < 0.25) break; }
+      if (at(f)) { good = f; const g2 = est = f * avail / H(); f = g2 - good < 0.25 ? bad : Math.min(g2, (good + bad) / 2 + 0.6); if (g2 - good < 0.25) break; }
       else { bad = f; f = good ? (good + bad) / 2 : f * avail / H(); if (f <= floor && !good) break; }
     }
-    if (good) lo = good;
-    else if (at(floor)) lo = search(floor, bad);
+    if (good) lo = refine(good, Math.min(bad, Math.max(good + 0.07, est + 0.05)));   // (no further than the content says fits)
+    else if (at(floor)) { lo = search(floor, bad); lo = refine(lo, Math.min(bad, lo + 0.2)); }
     else {
       // the smallest size didn't fit (tiles reflow, so a size between may): the largest that does, else scrolling at
       // the full size. Edit mode, redrawn on every change, skips the walk: so much that it scrolls anyway
       let found = 0;
       if (!S.edit) for (let fs = target - 0.5; fs > floor; fs -= 0.5) if (at(fs)) { found = fs; break; }
-      lo = found || target;
+      lo = found || target; ok = !!found;
     }
   }
+  // the tiles' heights read again at the size kept; a size that fit and no longer does goes down a little
   root.style.fontSize = lo + 'px';
+  const stale = [...v.querySelectorAll('.tg')].some(t => { const u = unitH.get(t); return u && Math.abs(u.fs - lo) > 0.01; });
+  exactUnits = stale; const still = stale ? fits() : true; exactUnits = false;
+  if (ok && !still) for (let i = 0; i < 8; i++) { lo = Math.max(floor, lo - 0.25); if (at(lo) || lo === floor) break; }
   lastFit[S.screen] = lo / target;
   rememberFit(key, lo);
-  app.classList.remove('fitting'); layoutPass(); growPass();
+  app.classList.remove('fitting'); layoutPass(); growPass(); markSlots(); rememberPacks();
   document.querySelector('.panes').style.setProperty('--sbw', (sectionsEl.offsetWidth - sectionsEl.clientWidth) + 'px');   // the right tab sits left of the scrollbar
   fitRatio = lo / target;
 }
 window.addEventListener('resize', () => {
   layGen++;
   if (S.L.cats.length) document.documentElement.style.fontSize = (cssScale() * fitRatio) + 'px';
-  clearTimeout(fitTimer); fitTimer = setTimeout(() => { autofit(); updateView(true); }, 250);
+  clearTimeout(fitTimer); fitTimer = setTimeout(() => {
+    // Automatic Tiles or Overview with room for more (or fewer) columns now: drawn again
+    if (S.screen !== 'grid' && !isCustom(S.screen) && lastAuto[S.screen] && JSON.stringify(autoRows(S.screen)) !== JSON.stringify(lastAuto[S.screen])) { renderView(false); return; }
+    autofit(); updateView(true);
+  }, 250);
   placeTabInd(true); drawRows();
 });
 
@@ -1381,7 +1710,11 @@ function renderChips() {
 }
 
 // ---------- adding and removing cells ----------
-function newCell(key) { const r = BYKEY.get(key); return { key, match: r ? matchOf(r) : undefined, u: r ? r.unit : undefined, graph: true }; }
+function newCell(key) {
+  const r = BYKEY.get(key), c = { key, match: r ? matchOf(r) : undefined, u: r ? r.unit : undefined, graph: true };
+  if (key === CONN) c.gates = Object.assign({}, CONN_LINES);   // a connector is only worth a cell with its lines
+  return c;
+}
 function addKeys(keys, catId, index, newCatName) {
   mutate(() => {
     let cat = catId && S.L.cats.find(c => c.id === catId);
@@ -1563,6 +1896,13 @@ function setLook(kind, id, key, val, vn) {
   if (!Object.keys(e).length) delete m[id];
   if (!Object.keys(m).length) delete v[kind];
 }
+// a tile's size (in tiles, see SZ); 1 x 1 takes it away
+function setSize(id, w, h) {
+  const v = vset('tiles'), m = v.cell || (v.cell = {}), e = m[id] || (m[id] = {});
+  delete e.size; delete e.w; delete e.h; Object.assign(e, sizeLook(w, h));
+  if (!Object.keys(e).length) delete m[id];
+  if (!Object.keys(m).length) delete v.cell;
+}
 // an Automatic view as rows, read off the screen, so making it your own moves nothing: the categories that share a top
 // are one row, left to right; Grid: each table a column
 function screenRows() {
@@ -1570,6 +1910,7 @@ function screenRows() {
     const cols = [...document.querySelectorAll('#view .gtable')].map(t => ({ stack: [...t.querySelectorAll('tbody.dcat:not(.cont)')].map(b => b.dataset.cat) }));
     return cols.some(c => c.stack.length) ? [{ cols }] : [];   // (an empty table goes when the view is tidied)
   }
+  if (lastAuto[S.screen] && !isCustom(S.screen)) return clone(lastAuto[S.screen]);
   const rows = [];
   for (const el of document.querySelectorAll('#view > .dcat')) {
     const r = el.getBoundingClientRect(); if (!r.width) continue;
@@ -1721,7 +2062,7 @@ function dropCat(d) {
   if (!t || t.zone === 'full') return;
   // an Automatic view stays automatic when only the order changes: a swap, a row of its own, Grid up and down
   if (d.auto && (t.zone === 'swap' || (vn === 'grid' && (t.zone === 'above' || t.zone === 'below')))) {
-    const order = d.rows.flatMap(r => r.cols.flatMap(c => c.stack.map(sid)));
+    const order = S.L.cats.map(c => c.id);   // (your order: Automatic columns read top to bottom, not in it)
     if (t.zone === 'swap') { const i = order.indexOf(src), j = order.indexOf(t.cat); order[i] = t.cat; order[j] = src; }
     else {
       const ref = t.zone === 'row' ? (t.at < d.rows.length ? sid(d.rows[t.at].cols[0].stack[0]) : null) : t.cat;
@@ -1753,13 +2094,205 @@ function widthsNow(ri, cols) {
   return w;
 }
 const heightTxt = h => h ? 'Fill' : 'Fit';
+// ---- tile sizes: its corner, the numbers in its settings, Ctrl+arrows ----
+// a drawn tile: its category (k tiles to a row), a spot's width p (a gap included), and at(w, h): how tall in px the
+// tile and all the category's tiles would be with this tile at w x h (the others as they are)
+function tileGeo(tile) {
+  const tg = tile && tile.parentElement; if (!tg || !tg.classList.contains('pk') || !tg._L) return null;
+  const kids = tileKids(tg), j = kids.indexOf(tile); if (j < 0) return null;
+  const k = +tg.style.getPropertyValue('--k') || 1, fs = parseFloat(document.documentElement.style.fontSize) || 13, g = 0.62 * fs * spOf($('view')), short = tg.classList.contains('shorts');
+  const row = tg.closest('.lrow'), grNow = () => row && row.classList.contains('grow') && !short ? parseFloat(row.style.getPropertyValue('--gr')) || 0 : 0;
+  const sz = kids.map(szOf), nat = kids.map(x => natOf(x, short)), tr = tg.getBoundingClientRect();
+  const at = (w, h) => { const s = sz.slice(); s[j] = { w, h, nl: sz[j].nl }; const L = placeTiles(s, nat, k, g / fs, !short && !!row && !!row.dataset.fill), p = L.pos[j], gr = grNow(); return { th: p.th * fs + p.h * gr, TH: L.TH * fs + L.H * gr, x: p.x, y: p.y }; };
+  return { tg, j, k, g, fs, tw: tr.width, p: (tr.width + g) / k, at, r: tile.getBoundingClientRect(), s: sz[j] };
+}
+const tileEl = cid => document.querySelector('#view .tile[data-cid="' + CSS.escape(cid) + '"]');
+const pxW = (G, w) => Math.min(w, G.k) * G.p - G.g;
+// the height (0.25 to 2) at which f (rising with it) comes closest to the target (cur: the size it has, kept when it is
+// already within half a pixel)
+function solveSize(f, target, cur) {
+  if (cur !== undefined && Math.abs(f(cur) - target) <= 0.5) return cur;
+  let lo = 0.25, hi = 2;
+  if (f(lo) >= target) return lo;
+  if (f(hi) <= target) return hi;
+  for (let i = 0; i < 14; i++) { const m = (lo + hi) / 2; if (f(m) < target) lo = m; else hi = m; }   // (to 0.0001 of a tile)
+  return Math.abs(f(lo) - target) < Math.abs(f(hi) - target) ? lo : hi;
+}
+// where a category's column ends, and where the columns beside it end (Automatic: the categories that start level with
+// it); a folded row has nothing beside it
+const lastBottom = c => { const ks = [...c.children].filter(e => e.classList.contains('dcat')); return ks.length ? ks[ks.length - 1].getBoundingClientRect().bottom : 0; };
+function colEnds(blk) {
+  const col = blk.closest('.lcol'), cols = [];
+  let own = null, row = null;
+  if (col) {
+    row = col.parentElement;
+    if (!row.classList.contains('fold')) for (const c of row.children) if (c.classList.contains('lcol')) { const b = lastBottom(c); if (c === col) own = b; else if (b) cols.push(b); }
+  } else {
+    const r = blk.getBoundingClientRect(); own = r.bottom;
+    for (const b of document.querySelectorAll('#view > .dcat')) if (b !== blk) { const q = b.getBoundingClientRect(); if (q.width && Math.abs(q.top - r.top) < 4) cols.push(q.bottom); }
+  }
+  return { own, cols, row };
+}
+const nearest = (xs, v, thr) => { let b = null; for (const x of xs) if (Math.abs(x - v) <= thr && (b === null || Math.abs(x - v) < Math.abs(b - v))) b = x; return b; };
+const setTileSz = (t, w, h) => { if (w !== 1) t.dataset.w = w; else delete t.dataset.w; if (h !== 1) t.dataset.h = h; else delete t.dataset.h; };
+const fmtSz = n => String(Math.round(n * 100) / 100);
+const r4 = n => Math.round(n * 1e4) / 1e4;
+// the lines a size snapped to
+const gdiv = [0, 1].map(() => { const d = document.createElement('div'); d.className = 'sguide'; document.body.appendChild(d); return d; });
+let guideBox = null;   // the view's box, read when a drag starts (no layout read on every move)
+function guides(lines) {
+  if (!lines || !lines.length) { for (const d of gdiv) d.classList.remove('on'); return; }
+  const vr = guideBox || sectionsEl.getBoundingClientRect();
+  gdiv.forEach((d, i) => {
+    const l = lines && lines[i]; d.classList.toggle('on', !!l); if (!l) return;
+    if (l.x != null) Object.assign(d.style, { left: Math.round(l.x) + 'px', top: vr.top + 'px', width: '1px', height: vr.height + 'px' });
+    else { const a = l.from != null ? l.from : vr.left, b = l.to != null ? l.to : vr.right; Object.assign(d.style, { left: a + 'px', top: Math.round(l.y) + 'px', width: (b - a) + 'px', height: '1px' }); }
+  });
+}
+// dragging the corner: its top-left stays, only its category is placed again until it is let go. Snaps to quarter
+// steps, to the edges of the other tiles and to the bottom of the columns beside it; Alt: any size, to the pixel
+function startCorner(tile) {
+  const G = tileGeo(tile); if (!G) return false;
+  const xs = [], ys = [];
+  const after = new Set(tileKids(G.tg).slice(G.j + 1));
+  for (const t of document.querySelectorAll('#view .tile')) if (t !== tile && !after.has(t)) { const r = t.getBoundingClientRect(); if (r.width) { xs.push(r.left, r.right); ys.push(r.top, r.bottom); } }
+  xs.push(G.tg.getBoundingClientRect().right);
+  guideBox = sectionsEl.getBoundingClientRect();
+  const w0 = Math.min(G.s.w, G.k), a0 = G.at(w0, G.s.h);
+  Object.assign(rs, G, { kind: 'corner', tile, cid: tile.dataset.cid, w0, h0: G.s.h, w: G.s.w, h: G.s.h, th0: a0.th, TH0: a0.TH, sx: a0.x, sy: a0.y, xs, ys, ends: colEnds(tile.closest('.dcat')) });
+  return true;
+}
+function moveCorner(ev) {
+  const R = rs, maxW = Math.min(2, R.k), thr = 7, lines = [], seen = new Map(), at0 = R.at;
+  R.at = (w, h) => { const key = w + '|' + h; if (!seen.has(key)) seen.set(key, at0(w, h)); return seen.get(key); };   // each size placed once per move
+  try { moveCorner0(ev, R, maxW, thr, lines); } finally { R.at = at0; }
+}
+function moveCorner0(ev, R, maxW, thr, lines) {
+  R.last = { clientX: ev.clientX, clientY: ev.clientY };
+  // a side the pointer hasn't moved along keeps its size as it is (a wide tile in a one-per-row category stays wide)
+  const dx = ev.clientX - R.x0, dy = ev.clientY - R.y0, mx = Math.abs(dx) >= 3, my = Math.abs(dy) >= 3;
+  let w = mx ? Math.min(maxW, Math.max(0.25, R.w0 + dx / R.p)) : R.s.w, level = false;
+  // the snap nearest to where the pointer is wins: a quarter step, another tile's edge, (height) a column beside it
+  // ending level, which wins a near tie
+  const best = cs => cs.reduce((a, c) => c && (!a || c[0] < a[0]) ? c : a, null);
+  if (!ev.altKey && mx) {
+    const at = R.r.left + pxW(R, w), wq = Math.min(maxW, Math.max(0.25, Math.round(w * 4) / 4)), nx = nearest(R.xs, at, thr), wx = nx === null ? null : (nx - R.r.left + R.g) / R.p;
+    const c = best([[Math.abs(R.r.left + pxW(R, wq) - at), wq], wx !== null && wx >= 0.25 - PE && wx <= maxW + PE ? [Math.abs(nx - at), wx, { x: nx }] : null]);
+    w = c[1]; if (c[2]) lines.push(c[2]);
+  }
+  const th = hh => R.at(w, hh).th, col = hh => R.ends.own + R.at(w, hh).TH - R.TH0;
+  let h = my ? solveSize(th, R.th0 + dy, R.h0) : R.h0;
+  if (!ev.altKey && my) {
+    const bottom = R.r.top + th(h), hq = Math.min(2, Math.max(0.25, Math.round(h * 4) / 4)), cs = [[Math.abs(R.r.top + th(hq) - bottom), hq]];
+    const ny = nearest(R.ys, bottom, thr), hy = ny === null ? null : solveSize(th, ny - R.r.top);
+    if (hy !== null && Math.abs(R.r.top + th(hy) - ny) < 0.6) cs.push([Math.abs(ny - bottom), hy, { y: ny }]);
+    // level with a column beside it, when this tile sets where its column ends
+    const E = R.ends;
+    if (E.own !== null && E.cols.length && col(Math.min(2, h + 0.05)) - col(Math.max(0.25, h - 0.05)) > 0.5) {
+      const c = nearest(E.cols, col(h), thr), hc = c === null ? null : solveSize(col, c);
+      if (hc !== null && Math.abs(col(hc) - c) < 0.6) { const rr = E.row ? E.row.getBoundingClientRect() : null; cs.push([Math.abs(c - col(h)) - 3, hc, { y: c, from: rr ? rr.left : null, to: rr ? rr.right : null }, true]); }
+    }
+    const c = best(cs);
+    h = c[1]; if (c[2]) lines.push(c[2]); level = !!c[3];
+  }
+  // it keeps its place under the pointer: growing into the room the next tiles take, or shrinking into a hole further
+  // up, would move it away; it goes as far as it can where it is (a size typed in its settings can move it)
+  const stays = (ww, hh) => { const a = R.at(ww, hh); return Math.abs(a.x - R.sx) < PE && Math.abs(a.y - R.sy) < PE; };
+  const edge = (a, b, ok) => { let lo = a, hi = b; for (let i = 0; i < 20; i++) { const m = (lo + hi) / 2; if (ok(m)) lo = m; else hi = m; } return a < b ? Math.floor(lo * 1e4) / 1e4 : Math.ceil(lo * 1e4) / 1e4; };
+  let full = false;
+  if (!stays(w, h)) {
+    full = true;
+    if (stays(w, R.h0)) h = edge(R.h0, h, hh => stays(w, hh));
+    else if (stays(R.s.w, h)) w = edge(R.s.w, w, ww => stays(ww, h));
+    else { w = R.s.w; h = R.h0; }
+  }
+  R.w = r4(w); R.h = r4(h);
+  setTileSz(R.tile, R.w, R.h);
+  packTg(R.tg, R.k); tileFit(R.tg, R.tw, R.k, R.g, R.fs);
+  if (R.tg.closest('.lrow.grow')) growPass();   // a Fill row shares its spare room again
+  guides(lines);
+  const pw = Math.round(pxW(R, R.w)), ph = Math.round(th(R.h));
+  if (sel === R.cid) for (const [k, v] of [['w', R.w], ['h', R.h], ['pw', pw], ['ph', ph]]) { const b = document.querySelector('#insp input[data-sz="' + k + '"]'); if (b) b.value = v; }
+  pill(fmtSz(R.w) + ' x ' + fmtSz(R.h) + ' tiles, ' + pw + ' x ' + ph + ' px' + (level ? ', level with the column beside it' : '') + (full ? ', as far as it goes in its place' : ''), ev.clientX + 14, ev.clientY + 10);
+}
+// the numbers in a tile's settings: in tiles, or in px at this window size
+function sizeInput(cid, which, v) {
+  const z = cellSize(cid);
+  if (!isFinite(v) || v <= 0) { renderInsp(); return; }
+  let w = z.w, h = z.h;
+  if (which === 'w') w = v; else if (which === 'h') h = v;
+  else {
+    const G = tileGeo(tileEl(cid)); if (!G) return;
+    if (which === 'pw') w = (v + G.g) / G.p; else h = solveSize(hh => G.at(Math.min(w, G.k), hh).th, v);
+  }
+  const off = x => x < 0.25 - 1e-3 || x > 2 + 1e-3;
+  if (off(w) || off(h)) toast('A tile is 0.25 to 2 tiles each way: this one is as close as it gets');
+  mutate(() => setSize(cid, w, h));
+  if (which === 'pw' || which === 'ph') exactPx(cid, which, v);
+}
+// a size typed in px: the view may find a new text size for it (a taller tile can make everything a little smaller),
+// so it is measured again and set once or twice more, in the same undo step
+function exactPx(cid, which, v) {
+  for (let i = 0; i < 2; i++) {
+    const G = tileGeo(tileEl(cid)), z = cellSize(cid); if (!G) return;
+    const now = which === 'pw' ? pxW(G, z.w) : G.at(Math.min(z.w, G.k), z.h).th;
+    if (Math.abs(now - v) <= 0.5) return;
+    const w = which === 'pw' ? (v + G.g) / G.p : z.w, h = which === 'ph' ? solveSize(hh => G.at(Math.min(w, G.k), hh).th, v) : z.h, was = JSON.stringify(sizeLook(z.w, z.h));
+    if (JSON.stringify(sizeLook(w, h)) === was) return;
+    setSize(cid, w, h); afterChange();
+  }
+}
+// Ctrl+arrows: a pixel wider, narrower, taller or shorter; with Shift to the next quarter step. Shown at once on its
+// category only; kept (one undo step, the view fitted again) once the keys rest, so a held key never queues redraws
+let nudge = null, nudgeT = 0;
+function flushNudge() {
+  clearTimeout(nudgeT);
+  const n = nudge; nudge = null; lpill.classList.remove('on');
+  if (!n || !S.L.cells[n.cid]) return;
+  keyLayout(() => mutate(() => setSize(n.cid, n.w, n.h)));
+  const e = tileEl(n.cid); if (e && n.cid === sel) e.focus({ preventScroll: true });
+}
+function nudgeSize(cid, dx, dy, quarter) {
+  if (nudge && nudge.cid !== cid) flushNudge();
+  const t = tileEl(cid), G = tileGeo(t); if (!G) return;
+  const z = nudge && nudge.cid === cid ? { w: nudge.w, h: nudge.h } : cellSize(cid);
+  const q = (v, d) => (d > 0 ? Math.floor(v * 4 + PE) + 1 : Math.ceil(v * 4 - PE) - 1) / 4, w0 = Math.min(z.w, G.k), lim = (v, mx) => r4(Math.min(mx, Math.max(0.25, v)));
+  // (only the side the arrow moves changes: a wide tile in a one-per-row category stays wide)
+  const w = !dx ? z.w : lim(quarter ? q(w0, dx) : (pxW(G, w0) + dx + G.g) / G.p, Math.min(2, G.k));
+  const h = !dy ? z.h : lim(quarter ? q(z.h, dy) : solveSize(hh => G.at(w0, hh).th, G.at(w0, z.h).th + dy, z.h), 2);
+  nudge = { cid, w, h };
+  setTileSz(t, w, h); packTg(G.tg, G.k); tileFit(G.tg, G.tw, G.k, G.g, G.fs);
+  const r = t.getBoundingClientRect();
+  pill(fmtSz(w) + ' x ' + fmtSz(h) + ' tiles, ' + Math.round(r.width) + ' x ' + Math.round(r.height) + ' px', r.right + 6, r.bottom + 6);
+  clearTimeout(nudgeT);
+  nudgeT = setTimeout(flushNudge, 350);
+}
+// a category: every tile one width or height; Line up the bottom: its tiles taller or shorter, all by the same factor, just
+// enough that its column ends level with the tallest one beside it
+function catSizeInput(id, which, v) {
+  const cat = catById(id); if (!cat || !isFinite(v) || v <= 0) { renderInsp(); return; }
+  if (v < 0.25 - 1e-3 || v > 2 + 1e-3) toast('A tile is 0.25 to 2 tiles each way: these are as close as it gets');
+  mutate(() => { for (const c of cellsOf(cat)) { const z = cellSize(c); setSize(c, which === 'w' ? v : z.w, which === 'h' ? v : z.h); } });
+}
+function fitRow(id) {
+  const blk = document.querySelector('#view .blk[data-cat="' + CSS.escape(id) + '"]'), tg = blk && blk.querySelector('.tg.pk'), tiles = tg ? tileKids(tg) : [];
+  const E = blk ? colEnds(blk) : null, G = tiles.length ? tileGeo(tiles[0]) : null;
+  if (!G || !E.cols.length) { toast('Nothing beside it to line up with'); return; }
+  const short = tg.classList.contains('shorts'), target = Math.max(...E.cols), base = tiles.map(szOf), nat = tiles.map(x => natOf(x, short));
+  const row = tg.closest('.lrow'), gr = row && row.classList.contains('grow') && !short ? parseFloat(row.style.getPropertyValue('--gr')) || 0 : 0;
+  const hs = f => base.map(s => r4(Math.min(2, Math.max(0.25, s.h * f))));
+  const TH = f => { const h = hs(f), L = placeTiles(base.map((s, i) => ({ w: s.w, h: h[i], nl: s.nl })), nat, G.k, G.g / G.fs, !short && !!row && !!row.dataset.fill); return L.TH * G.fs + L.H * gr; };
+  const TH1 = TH(1), end = f => E.own + TH(f) - TH1;
+  let lo = 0.125, hi = 8;
+  for (let i = 0; i < 24; i++) { const m = Math.sqrt(lo * hi); if (end(m) < target) lo = m; else hi = m; }
+  const f = Math.abs(end(lo) - target) < Math.abs(end(hi) - target) ? lo : hi, miss = Math.round(Math.abs(end(f) - target)), h = hs(f);
+  mutate(() => tiles.forEach((t, i) => setSize(t.dataset.cid, base[i].w, h[i])), miss > 1 ? 'As close as it gets: ' + miss + ' px off (a tile stays between 0.25 and 2 tiles tall)' : 'Its column now ends level with the tallest beside it');
+}
 function startHandle(ev, el) {
   const v = stored(S.screen);
   rs = { el, x0: ev.clientX, y0: ev.clientY, moved: false };
-  if (el.classList.contains('corner')) {
-    const tile = el.closest('.tile'), r = tile.getBoundingClientRect(), size = cellLook(tile.dataset.cid).size || '';
-    Object.assign(rs, { kind: 'corner', tile, cid: tile.dataset.cid, size, start: size, cw: r.width / (size === 'wide' || size === 'big' ? 2 : 1), ch: r.height / (size === 'tall' || size === 'big' ? 2 : 1) });
-  } else {
+  if (el.classList.contains('corner')) { if (!startCorner(el.closest('.tile'))) { rs = null; return; } }
+  else {
     const rowEl = el.closest('.lrow'), ri = +rowEl.dataset.r, row = v && v.rows && v.rows[ri];
     if (!row) { rs = null; return; }
     if (el.classList.contains('ldiv')) {
@@ -1789,34 +2322,26 @@ function moveHandle(ev) {
     const rowEl = document.querySelector('#view .lrow[data-r="' + rs.ri + '"]');
     if (rowEl) { if (rs.h) rowEl.dataset.fill = '1'; else delete rowEl.dataset.fill; layoutPass(); growPass(); }
     pill(heightTxt(rs.h), ev.clientX, ev.clientY - 36);
-  } else {
-    const tg = rs.tile.parentElement, per = +tg.style.getPropertyValue('--per') || 0;
-    const c0 = rs.start === 'wide' || rs.start === 'big' ? 2 : 1, r0 = rs.start === 'tall' || rs.start === 'big' ? 2 : 1;
-    const cols = Math.max(1, Math.min(per === 1 ? 1 : 2, Math.round(c0 + (ev.clientX - rs.x0) / rs.cw))), rws = Math.max(1, Math.min(2, Math.round(r0 + (ev.clientY - rs.y0) / rs.ch)));
-    rs.size = cols > 1 && rws > 1 ? 'big' : cols > 1 ? 'wide' : rws > 1 ? 'tall' : '';
-    for (const z of ['wide', 'tall', 'big']) rs.tile.classList.toggle('sz-' + z, rs.size === z);
-    tg.classList.add('spans'); layoutPass(); growPass();
-    pill(cols + ' x ' + rws, ev.clientX + 14, ev.clientY + 10);
-  }
+  } else moveCorner(ev);
 }
 function endHandle(cancel) {
   if (!rs) return;
   const h = rs; rs = null;
-  lpill.classList.remove('on'); h.el.classList.remove('on');
+  lpill.classList.remove('on'); h.el.classList.remove('on'); guides();
   justDragged = true; setTimeout(() => { justDragged = false; }, 0);
   if (!h.moved) return;
   if (cancel) { renderView(false); return; }
   const before = snapOf();
   if (h.kind === 'split') mutate(() => { const row = stored(S.screen).rows[h.ri]; row.cols.forEach((c, i) => { c.w = h.w[i]; }); });
   else if (h.kind === 'rowh') mutate(() => { const row = stored(S.screen).rows[h.ri]; if (h.h) row.h = 1; else delete row.h; });
-  else mutate(() => setLook('cell', h.cid, 'size', h.size));
+  else mutate(() => setSize(h.cid, h.w, h.h));
   if (snapOf() === before) renderView(false);   // back where it started: draw it as it was
 }
 document.addEventListener('pointermove', moveHandle);
 document.addEventListener('pointerup', () => endHandle(false));
 document.addEventListener('pointercancel', () => endHandle(true));
 function handleDblclick(el) {
-  if (el.classList.contains('corner')) { mutate(() => setLook('cell', el.closest('.tile').dataset.cid, 'size', '')); return; }
+  if (el.classList.contains('corner')) { mutate(() => setSize(el.closest('.tile').dataset.cid, 1, 1)); return; }
   const v = stored(S.screen), ri = +el.closest('.lrow').dataset.r, row = v && v.rows && v.rows[ri]; if (!row) return;
   if (el.classList.contains('ldiv')) mutate(() => { for (const c of row.cols) delete c.w; });
   else mutate(() => { delete row.h; });
@@ -2035,7 +2560,7 @@ sectionsEl.addEventListener('click', ev => {
   if (ev.target.closest('.rl')) { startRelink(ev.target.closest('.dc').dataset.cid); return; }
   if (ev.target.closest('.ldiv, .lrs, .corner')) return;
   const cell = ev.target.closest('#view .dc');
-  if (!S.edit) { if (cell) openDetail(cell.dataset.cid); return; }
+  if (!S.edit) { if (cell && !ev.target.closest('[data-x]')) openDetail(cell.dataset.cid); return; }
   if (cell) { selectCell(cell.dataset.cid); return; }
   // a category's header (its name, its empty space) selects the category; anywhere else: the view
   if (catEl && ev.target.closest('.dch, .ghdr, .bh') && !ev.target.closest('input')) { selectCat(catEl.dataset.cat); return; }
@@ -2147,14 +2672,21 @@ function endRelink(quiet) { if (!relinkFor && quiet) return; relinkFor = null; $
 $('relinkCancel').onclick = () => { endRelink(); renderView(false); };
 
 // ---------- the right panel: a cell's settings, a category's, or the view's ----------
+// the field that had the focus gets it back after the panel is drawn again (a size typed, then Tab or the arrows)
+function inspFocus(box) {
+  const a = document.activeElement;
+  if (!a || !box.contains(a)) return () => {};
+  const q = a.id ? '#' + CSS.escape(a.id) : a.dataset.sz ? '[data-sz="' + a.dataset.sz + '"]' : a.dataset.csz ? '[data-csz="' + a.dataset.csz + '"]' : null;
+  return () => { const e = q && box.querySelector(q); if (e && e !== document.activeElement) e.focus({ preventScroll: true }); };
+}
 function renderInsp() {
-  const box = $('insp');
+  const box = $('insp'), refocus = inspFocus(box);
   const c = sel && S.L.cells[sel], cat = !c && selCat ? catById(selCat) : null;
   syncDrawers();
   setText($('inspTitle'), c ? 'Cell' : cat ? 'Category' : S.screen === 'overview' ? 'Overview' : VNAME[S.screen] + ' view');
   if (!S.edit) return;
-  if (cat) { box.innerHTML = catPanel(cat); return; }
-  if (!c) { box.innerHTML = viewPanel(); return; }
+  if (cat) { box.innerHTML = catPanel(cat); refocus(); return; }
+  if (!c) { box.innerHTML = viewPanel(); refocus(); return; }
   const r = c.key ? BYKEY.get(c.key) : null, sen = r ? SENS[r.s] : null;
   const g = c.gates || { mode: 'none', dir: 'above', y: NaN, r: NaN, hold: 3 };
   const unit = c.pred ? 'RPM' : unitOf(r);
@@ -2174,8 +2706,12 @@ function renderInsp() {
     h += '<div class="fgrp"><span class="lab">Lines</span><div class="seg" id="iMode">' + [['none', 'None'], ['y', 'Yellow'], ['yr', 'Yellow + Red']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.mode === v ? 'on' : '') + '">' + t + '</button>').join('') + '</div>';
     if (g.mode !== 'none') {
       h += '<div class="seg" id="iDir">' + [['above', 'Bad when above'], ['below', 'Bad when below']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.dir === v ? 'on' : '') + '">' + t + '</button>').join('') + '</div>';
-      h += '<div class="two"><label class="fld gate-y"><span>Yellow ' + esc(unit) + '</span><input id="iY" type="number" step="any" value="' + num(g.y) + '"></label>' +
-           (g.mode === 'yr' ? '<label class="fld gate-r"><span>Red ' + esc(unit) + '</span><input id="iR" type="number" step="any" value="' + num(g.r) + '"></label>' : '<span></span>') + '</div>';
+      const o = g.other && typeof g.other === 'object' ? g.other : null, osd = g.dir === 'below' ? 'above' : 'below', side = (d, t) => o ? (d === 'below' ? 'Low: ' + t.toLowerCase() : 'High: ' + t.toLowerCase()) : t;
+      h += '<div class="two"><label class="fld gate-y"><span>' + side(g.dir, 'Yellow') + ' ' + esc(unit) + '</span><input id="iY" type="number" step="any" value="' + num(g.y) + '"></label>' +
+           (g.mode === 'yr' ? '<label class="fld gate-r"><span>' + side(g.dir, 'Red') + ' ' + esc(unit) + '</span><input id="iR" type="number" step="any" value="' + num(g.r) + '"></label>' : '<span></span>') + '</div>';
+      h += '<label class="chk"><input type="checkbox" id="iOther"' + (o ? ' checked' : '') + '> Also bad when ' + osd + '</label>';
+      if (o) h += '<div class="two"><label class="fld gate-y"><span>' + side(osd, 'Yellow') + ' ' + esc(unit) + '</span><input id="iOY" type="number" step="any" placeholder="none" value="' + num(o.y) + '"></label>' +
+        '<label class="fld gate-r"><span>' + side(osd, 'Red') + ' ' + esc(unit) + '</span><input id="iOR" type="number" step="any" placeholder="none" value="' + num(o.r) + '"></label></div>';
       h += '<label class="fld"><span>Hold before it turns (s)</span><input id="iHold" type="number" min="0" step="1" value="' + num(g.hold) + '"></label>';
       h += '<div class="err" id="gErr"></div><div class="scale" id="gScale"></div>';
     } else if (r) {
@@ -2198,7 +2734,14 @@ function renderInsp() {
         cv.pts.map((p, i) => '<input type="number" step="any" data-i="' + i + '" data-j="0" value="' + p[0] + '"><input type="number" step="any" data-i="' + i + '" data-j="1" value="' + p[1] + '"><button class="ib" data-del="' + i + '" title="Remove point">' + ICONS.x + '</button>').join('') + '</div>';
       h += '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><button class="linkbtn" id="cAdd">+ Add point</button><button class="linkbtn" id="cPaste">Paste points</button></div>';
       h += '<div id="cPasteBox" hidden><label class="fld"><span>Points as temp:rpm, Enter to apply</span><input id="cPasteIn" placeholder="40:500, 55:800, 65:1200"></label></div>';
-      if (!c.pred) h += '<div class="two"><label class="fld"><span>Tolerance &plusmn;%</span><input id="cTol" type="number" min="1" step="1" value="' + cv.tol + '"></label><label class="fld"><span>Hold (s)</span><input id="cHold" type="number" min="0" step="1" value="' + cv.hold + '"></label></div>';
+      if (!c.pred) {
+        const warn = cv.warn !== false;
+        h += '<label class="chk"><input type="checkbox" id="cWarn"' + (warn ? ' checked' : '') + '> Warn when it is off the curve</label>';
+        h += '<div class="two"><label class="fld"><span>Tolerance &plusmn;%</span><input id="cTol" type="number" min="1" step="1" value="' + cv.tol + '"></label>' +
+          (warn ? '<label class="fld"><span>Hold (s)</span><input id="cHold" type="number" min="0" step="1" value="' + cv.hold + '"></label>' : '') + '</div>';
+        h += '<span class="hint" id="cHint">' + (warn ? 'Tolerance: how far from the curve still counts as on it. Hold: how long it has to stay off before it warns (a fan takes a few seconds to catch up with the temperature).'
+          : 'Off the curve it never turns yellow, goes in the warning log or counts as a game session warning: it only says how far off it is. Tolerance: how far from the curve still counts as on it.') + '</span>';
+      }
       h += '<div class="cstat" id="cStat"></div>';
     }
     h += '</div>';
@@ -2206,6 +2749,7 @@ function renderInsp() {
   h += '<div class="fgrp"><div style="display:flex;gap:8px;flex-wrap:wrap">' + (isMissing(c) ? '<button class="btn" id="iRelink">Re-link</button>' : '') +
     '<button class="btn" id="iOpen">Open graphs</button><button class="btn warn" id="iRemove">Remove from view</button></div></div>';
   box.innerHTML = h;
+  refocus();
   tickInsp();
 }
 // new lines start a little past where the value is now, on its bad side, at the cell's decimals (nothing without a value)
@@ -2219,6 +2763,7 @@ function seedLines(c, r, again) {
 }
 function presetFor(r) {
   const sn = SENS[r.s] ? SENS[r.s].name : '';
+  if (r.key === CONN) return { txt: 'yellow 9.2, red 9.5 A (above)', g: Object.assign({}, CONN_LINES) };
   if (r.t === 'temp') {
     const gpu = /GPU/i.test(sn + r.label), y = cToU(gpu ? 80 : 85, r), red = cToU(gpu ? 90 : 95, r);
     return { txt: 'yellow ' + y + ', red ' + red + ' (above)', g: { mode: 'yr', dir: 'above', y, r: red, hold: 3 } };
@@ -2233,20 +2778,22 @@ function tickInsp() {
   const sc = $('gScale');
   if (sc && c.gates && c.gates.mode !== 'none') {
     const g = c.gates;
-    $('gErr').textContent = !Number.isFinite(g.y) ? 'Set the yellow value.' : gatesBad(g) ? 'Red has to be ' + (g.dir === 'below' ? 'below' : 'above') + ' yellow.' : (g.mode === 'yr' && !Number.isFinite(g.r)) ? 'Set the red value.' : '';
+    const og = g.other && typeof g.other === 'object' ? g.other : null, oset = og && (Number.isFinite(og.y) || Number.isFinite(og.r)), osd = g.dir === 'below' ? 'above' : 'below';
+    $('gErr').textContent = !Number.isFinite(g.y) ? 'Set the yellow value.' : gatesBad(g) ? 'Red has to be ' + (g.dir === 'below' ? 'below' : 'above') + ' yellow.' : (g.mode === 'yr' && !Number.isFinite(g.r)) ? 'Set the red value.' :
+      og && !oset ? 'Set a yellow or red value for when it is too ' + (osd === 'below' ? 'low' : 'high') + '.' : oset && !otherOf(g) ? 'When it is ' + (osd === 'below' ? 'low' : 'high') + ', its lines have to be ' + (osd === 'below' ? 'under ' : 'over ') + fmtL(g.y, decOfCell(c, c.key ? BYKEY.get(c.key) : null)) + (Number.isFinite(og.y) && Number.isFinite(og.r) ? ', with red ' + (osd === 'below' ? 'under' : 'over') + ' yellow' : '') + '.' : '';
     const s = c.key ? series(c.key, HLEN).filter(isFinite) : [];
     if (e.v != null) s.push(e.v);
     let mn = s.length ? Math.min(...s) : 0, mx = s.length ? Math.max(...s) : 1;
-    for (const x of [g.y, g.mode === 'yr' ? g.r : NaN]) if (Number.isFinite(x)) { mn = Math.min(mn, x); mx = Math.max(mx, x); }
+    const og2 = otherOf(g), marks = [g.y, g.mode === 'yr' ? g.r : NaN, og2 && og2.y !== undefined ? og2.y : NaN, og2 && og2.r !== undefined ? og2.r : NaN].filter(Number.isFinite);
+    for (const x of marks) { mn = Math.min(mn, x); mx = Math.max(mx, x); }
     const pad = (mx - mn || 1) * 0.15; mn -= pad; mx += pad;
     const P = x => Math.max(0, Math.min(100, (x - mn) / (mx - mn) * 100));
-    const py = Number.isFinite(g.y) ? P(g.y) : (g.dir === 'below' ? 0 : 100), pr = g.mode === 'yr' && Number.isFinite(g.r) ? P(g.r) : (g.dir === 'below' ? 0 : 100);
-    const bar = g.dir !== 'below'
-      ? '<i style="width:' + py + '%;background:#1f2a22"></i><i style="width:' + Math.max(0, pr - py) + '%;background:#4d4317"></i><i style="flex:1;background:#4a1e21"></i>'
-      : '<i style="width:' + pr + '%;background:#4a1e21"></i><i style="width:' + Math.max(0, py - pr) + '%;background:#4d4317"></i><i style="flex:1;background:#1f2a22"></i>';
+    // the scale in zones: normal, yellow, red, by where each stretch of it is by the lines (both sides)
+    const cuts = [mn, ...marks.filter(x => x > mn && x < mx).sort((x, y) => x - y), mx], zc = ['#1f2a22', '#4d4317', '#4a1e21'];
+    const bar = cuts.slice(1).map((z, i) => '<i style="width:' + Math.max(0, P(z) - P(cuts[i])) + '%;background:' + zc[gateLevel(g, (cuts[i] + z) / 2).raw] + '"></i>').join('');
     const r = c.key ? BYKEY.get(c.key) : null, dec = decOfCell(c, r);
     sc.innerHTML = '<div class="bar">' + bar + '</div>' + (e.v != null ? '<span class="mk" style="left:' + P(e.v) + '%"></span><span class="tk" style="left:' + P(e.v) + '%;top:-12px;color:var(--fg)">now ' + fmt(e.v, dec) + '</span>' : '') +
-      (Number.isFinite(g.y) ? '<span class="tk" style="left:' + py + '%">' + fmt(g.y, dec) + '</span>' : '') + (g.mode === 'yr' && Number.isFinite(g.r) ? '<span class="tk" style="left:' + pr + '%">' + fmt(g.r, dec) + '</span>' : '');
+      marks.map(x => '<span class="tk" style="left:' + P(x) + '%">' + fmt(x, dec) + '</span>').join('');
   }
   if ($('cChart') && c.curve) drawCurveSvg(c, e);
   const st = $('cStat');
@@ -2255,7 +2802,7 @@ function tickInsp() {
     if (c.pred) { st.className = 'cstat'; st.textContent = !src ? 'Its temperature reading is not on this PC: pick another one above' : src.v != null ? 'At ' + fmt(src.v, 0) + ' ' + tempUnit(src) + ' the curve gives ' + fmt(e.v, 0) + ' rpm' : 'Its temperature reading has no value yet'; }
     else if (e.curve) {
       const off = Math.abs(e.curve.dev) > c.curve.tol;
-      st.className = 'cstat' + (off ? ' y' : '');
+      st.className = 'cstat' + (off && c.curve.warn !== false ? ' y' : '');
       st.textContent = 'Now ' + fmt(e.v, 0) + ' rpm, the curve expects ' + fmt(e.curve.exp, 0) + ' at ' + fmt(e.curve.src.v, 0) + ' ' + tempUnit(e.curve.src) + ': ' + (off ? Math.abs(Math.round(e.curve.dev)) + '% ' + (e.curve.dev < 0 ? 'under' : 'over') : 'on curve');
     } else { st.className = 'cstat'; st.textContent = 'Waiting for values'; }
   }
@@ -2279,11 +2826,14 @@ function drawCurveSvg(c, e) {
   for (let x = xmin; x <= xmax; x += xstep) s += '<line x1="' + X(x) + '" x2="' + X(x) + '" y1="' + t + '" y2="' + (H - b) + '" stroke="#202020"/><text x="' + X(x) + '" y="' + (H - 7) + '" fill="#6a6a6a" font-size="9" text-anchor="middle">' + x + '\u00b0</text>';
   for (let v = 0; v <= ymax + 1e-9; v += ax.step) s += '<line x1="' + l + '" x2="' + (W - rr) + '" y1="' + Y(v) + '" y2="' + Y(v) + '" stroke="#202020"/><text x="' + (l - 4) + '" y="' + (Y(v) + 3) + '" fill="#6a6a6a" font-size="9" text-anchor="end">' + kLabel(v) + '</text>';
   if (!c.pred) { const tl = c.curve.tol / 100; s += '<path d="' + pts.map((p, i) => (i ? 'L' : 'M') + X(p[0]) + ' ' + Y(p[1] * (1 + tl))).join(' ') + ' ' + pts.slice().reverse().map(p => 'L' + X(p[0]) + ' ' + Y(p[1] * (1 - tl))).join(' ') + 'Z" fill="rgba(127,166,232,0.10)" stroke="none"/>'; }
+  // past its first and last points a fan keeps their speed: dashed to the edges
+  const p0 = pts[0], pn = pts[pts.length - 1];
+  if (pts.length) s += '<path d="M' + l + ' ' + Y(p0[1]) + ' L' + X(p0[0]) + ' ' + Y(p0[1]) + ' M' + X(pn[0]) + ' ' + Y(pn[1]) + ' L' + (W - rr) + ' ' + Y(pn[1]) + '" fill="none" stroke="#7fa6e8" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.6"/>';
   s += '<polyline points="' + pts.map(p => X(p[0]) + ',' + Y(p[1])).join(' ') + '" fill="none" stroke="#7fa6e8" stroke-width="1.6"/>';
   const src = BYKEY.get(c.curve.src);
   // where the fan is now goes under the points, so a point on top of it can still be dragged
   if (src && src.v != null && e.v != null) {
-    const off = e.curve && Math.abs(e.curve.dev) > c.curve.tol;
+    const off = e.curve && Math.abs(e.curve.dev) > c.curve.tol && c.curve.warn !== false;
     s += '<g pointer-events="none"><line x1="' + X(src.v) + '" x2="' + X(src.v) + '" y1="' + t + '" y2="' + (H - b) + '" stroke="#3a3a3a" stroke-dasharray="2 3"/><circle cx="' + X(src.v) + '" cy="' + Y(e.v) + '" r="4.5" fill="' + (off ? '#e6c84a' : '#e0e0e0') + '" stroke="none"/></g>';
   }
   c.curve.pts.forEach((p, i) => { s += '<circle class="pt" data-i="' + i + '" cx="' + X(p[0]) + '" cy="' + Y(p[1]) + '" r="5" fill="#0f0f0f" stroke="#7fa6e8" stroke-width="1.6"/>'; });
@@ -2309,6 +2859,7 @@ insp.addEventListener('input', e => {
     const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
     if (el) el.textContent = nameIn(sel);
   }
+  if (t.id === 'iOY' || t.id === 'iOR') { setCell(c => { const o = c.gates.other || (c.gates.other = {}), k = t.id === 'iOY' ? 'y' : 'r'; if (t.value === '' || !isFinite(Number(t.value))) delete o[k]; else o[k] = Number(t.value); }); tickInsp(); updateView(false); }
   if (t.id === 'iY' || t.id === 'iR' || t.id === 'iHold') { setCell(c => { const k = t.id === 'iY' ? 'y' : t.id === 'iR' ? 'r' : 'hold'; c.gates[k] = t.value === '' ? NaN : k === 'hold' ? Math.min(1e9, Math.max(0, Number(t.value) || 0)) : Number(t.value); }); tickInsp(); updateView(false); }
   if (t.id === 'cTol' || t.id === 'cHold') { if (t.value === '') return; setCell(c => { c.curve[t.id === 'cTol' ? 'tol' : 'hold'] = Math.max(t.id === 'cTol' ? 1 : 0, Number(t.value) || 0); }); tickInsp(); updateView(false); }
   if (t.dataset && t.dataset.i != null && t.closest('#cTab') && t.value !== '') { setCell(c => { c.curve.pts[Number(t.dataset.i)][Number(t.dataset.j)] = Number(t.value); }); tickInsp(); updateView(false); }
@@ -2319,6 +2870,8 @@ insp.addEventListener('change', e => {
   if (t.id === 'iDec') { setCell(c => { c.dec = Number(t.value); }, true); updateView(false); t.blur(); }
   if (t.id === 'iGraph') { setCell(c => { c.graph = t.value === '1'; }, true); renderView(false); t.blur(); }
   if (t.id === 'iSrc') { setCell(c => { c.curve.src = t.value; }, true); subscribe(); renderInsp(); updateView(false); }
+  if (t.id === 'cWarn') { setCell(c => { if (t.checked) delete c.curve.warn; else c.curve.warn = false; }, true); renderInsp(); updateView(false); }
+  if (t.id === 'iOther') { setCell(c => { if (t.checked) c.gates.other = c.gates.other || {}; else delete c.gates.other; }, true); renderInsp(); updateView(false); }
   if (t.id === 'iCurveOn') {
     setCell(c => {
       // off keeps the curve aside, so on brings it back
@@ -2468,7 +3021,7 @@ function catPanel(cat) {
     h += '<div class="fgrp"><span class="lab">Look in Tiles</span><div class="two"><label class="fld"><span>Tiles per row</span><select data-lay="per"><option value="">Auto</option>' +
       [1, 2, 3, 4, 5, 6, 7, 8].map(n => '<option' + (lk.per === n ? ' selected' : '') + '>' + n + '</option>').join('') + '</select></label>' + segL('Tile style', 'size', [['', 'Normal'], ['short', 'Short']], lk.size || '') + '</div>' +
       '<span class="hint">Short: no graph; the name over its 15 min max on the left, the value on the right. Wider tiles, so fewer to a row.</span><div class="two">' + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') +
-      '<label class="fld"><span>Shown first</span><select data-lay="lead">' + leadOpts + '</select></label></div></div>';
+      '<label class="fld"><span>Shown first</span><select data-lay="lead">' + leadOpts + '</select></label></div>' + catSizeHtml(cat, ids) + '</div>';
   else if (vn === 'overview') {
     const st = lk.style || '';
     h += '<div class="fgrp"><span class="lab">Look in Overview</span><div class="looks" data-lay="style">' + LOOKS.map(([k, t, rects]) => '<button class="look' + (st === k ? ' on' : '') + '" data-v="' + k + '"><span class="pic">' +
@@ -2480,15 +3033,34 @@ function catPanel(cat) {
       : 'Drag its handle onto another category: the left or right edge puts them side by side, the top or bottom stacks them, the middle swaps them, the gap between two rows gives it a row of its own.') + '</span></div>';
   return h;
 }
+// Tiles: the size of every tile in a category at once (empty when they differ), and Line up the bottom
+function catSizeHtml(cat, ids) {
+  if (!ids.length) return '';
+  const zs = ids.map(cellSize), same = k => zs.every(z => z[k] === zs[0][k]) ? zs[0][k] : '', blk = document.querySelector('#view .blk[data-cat="' + CSS.escape(cat.id) + '"]');
+  const num = k => '<label><input type="number" data-csz="' + k + '" value="' + same(k) + '" placeholder="mixed" min="0.25" max="2" step="0.05"><i>' + (k === 'w' ? 'wide' : 'tall') + '</i></label>';
+  return '<div class="fld"><span>Size of all its tiles</span><div class="szin">' + num('w') + num('h') + '</div></div>' +
+    '<div class="btnrow"><button class="btn" data-lay="fitrow"' + (blk && colEnds(blk).cols.length ? '' : ' disabled') + '>Line up the bottom</button></div>' +
+    '<span class="hint">Its tiles get a little taller or shorter, so its column ends level with the tallest column beside it.</span>';
+}
+// a tile's width or height in one click: quarter steps from 0.25 to 2 (no wider than its row of tiles)
+const QSZ = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const qsizes = (label, key, cur, per) => '<div class="fld"><span>' + label + '</span><div class="seg qs" data-lay="' + key + '">' +
+  QSZ.map(v => '<button data-v="' + v + '"' + (per && v > per ? ' disabled' : '') + ' class="' + (v === cur ? 'on' : '') + '">' + String(v).replace(/^0\./, '.') + '</button>').join('') + '</div></div>';
 function cellLayHtml(cid, c) {
   const vn = S.screen, V = VNAME[vn], cl = cellLook(cid), cat = catOf(cid), lk = cat ? catLook(cat.id) : {};
   let h = '<div class="fgrp"><span class="sub">In ' + V + '</span>';
   h += cl.name != null ? '<div class="fld"><span>Name in ' + V + '</span><div class="vname"><input id="lvName" value="' + esc(cl.name) + '" placeholder="' + esc(cellName(c)) + '"><button class="ib" data-lay="vname-x" title="The same name as in the other views">' + ICONS.x + '</button></div></div>'
     : '<button class="linkbtn" data-lay="vname-on" style="align-self:flex-start">Different name in ' + V + '</button>';
   if (vn === 'tiles') {
-    if (lk.size === 'short') h += '<span class="hint">Its category shows short tiles: they all have one size.</span>';
-    else h += segL('Size', 'csize', [['', 'Normal'], ['wide', 'Wide', lk.per === 1], ['tall', 'Tall'], ['big', 'Big', lk.per === 1]], cl.size || '') +
-      '<span class="hint">Or drag the corner of the tile.' + (lk.per === 1 ? ' Wide and Big need two or more tiles per row.' : '') + '</span>';
+    const z = cellSize(cid), G = tileGeo(tileEl(cid)), px = G ? [Math.round(pxW(G, z.w)), Math.round(G.at(Math.min(z.w, G.k), z.h).th)] : null, num = (k, v, min, max, step, u) => '<label><input type="number" data-sz="' + k + '" value="' + v + '"' +
+      (min != null ? ' min="' + min + '" max="' + max + '"' : ' title="At this window size"') + ' step="' + step + '"><i>' + u + '</i></label>';
+    h += '<div class="fld"><span>Size (a normal tile is 1 x 1)</span><div class="szin">' + num('w', z.w, 0.25, 2, 'any', 'wide') + num('h', z.h, 0.25, 2, 'any', 'tall') + '</div>' +
+      (px ? '<div class="szin">' + num('pw', px[0], null, null, 1, 'px') + num('ph', px[1], null, null, 1, 'px') + '</div>' : '') + '</div>' +
+      qsizes('Width', 'cw', z.w, lk.per) + qsizes('Height', 'ch', z.h) +
+      '<label class="chk"><input type="checkbox" data-lay="nl"' + (cl.nl ? ' checked' : '') + '> Starts a new row</label>' +
+      '<span class="hint">It and the tiles after it go under the ones before it, so a row ends early (say, four tiles of 0.75, then the next ones together on their own row).</span>' +
+      '<span class="hint">Or drag its corner: it snaps to quarter steps and to other tiles; hold Alt for any size. Ctrl+arrows: 1 px; with Shift: a quarter step.' +
+      (lk.per === 1 ? ' One tile per row: it can\'t be wider than the row.' : '') + '</span>';
   } else if (cat) {
     const first = idsIn(cat)[0] === cid, big = vn === 'overview' && lk.style !== 'list' && lk.style !== 'band';
     h += '<button class="btn" data-lay="lead-me" style="align-self:flex-start"' + (first ? ' disabled' : '') + '>' + (first ? (big ? 'This is the big reading' : 'It is shown first') : big ? 'Make it the big reading' : vn === 'grid' ? 'List it first' : 'Show it first') + '</button>';
@@ -2522,7 +3094,8 @@ function layoutAct(key, v) {
   else if (key === 'size' || key === 'title' || key === 'style') mutate(() => setLook('cat', id, key, v));
   else if (key === 'reset') mutate(() => { const w = vset(vn); if (w.cat) delete w.cat[id]; });
   else if (key === 'remove') removeCat(id);
-  else if (key === 'csize') mutate(() => setLook('cell', sel, 'size', v));
+  else if (key === 'cw' || key === 'ch') { const z = cellSize(sel); mutate(() => setSize(sel, key === 'cw' ? +v : z.w, key === 'ch' ? +v : z.h)); }
+  else if (key === 'fitrow') fitRow(id);
   else if (key === 'vname-on') { mutate(() => setLook('cell', sel, 'name', cellName(S.L.cells[sel]))); const f = $('lvName'); if (f) { f.focus(); f.select(); } }
   else if (key === 'vname-x') mutate(() => setLook('cell', sel, 'name', ''));
   else if (key === 'lead-me') { const c = catOf(sel); if (c) mutate(() => setLook('cat', c.id, 'lead', cellsOf(c)[0] === sel ? '' : sel)); }
@@ -2538,11 +3111,14 @@ insp.addEventListener('click', e => {
 insp.addEventListener('change', e => {
   if (!S.edit) return;
   const t = e.target;
+  if (t.dataset && t.dataset.sz && sel) { const id = sel, k = t.dataset.sz, v = parseFloat(t.value); setTimeout(() => sizeInput(id, k, v), 0); return; }
+  if (t.dataset && t.dataset.csz && selCat) { const id = selCat, k = t.dataset.csz, v = parseFloat(t.value); setTimeout(() => catSizeInput(id, k, v), 0); return; }
   if (t.id === 'lName') {
     const cat = selCat && catById(selCat), v = t.value.trim().slice(0, 200);
     if (cat && v && v !== cat.name) mutate(() => { cat.name = v; }); else if (cat) t.value = cat.name;
     return;
   }
+  if (t.dataset && t.dataset.lay === 'nl' && sel) { mutate(() => setLook('cell', sel, 'nl', t.checked || '')); return; }
   if (!selCat || !t.dataset || !t.dataset.lay) return;
   if (t.dataset.lay === 'per') mutate(() => setLook('cat', selCat, 'per', t.value ? +t.value : ''));
   if (t.dataset.lay === 'lead') mutate(() => setLook('cat', selCat, 'lead', t.value));
@@ -2632,7 +3208,7 @@ function openDetail(cid) {
 function closeDetail() { modalCid = null; modal.classList.remove('open'); pauseSpin(document.querySelector('#micon svg')); }
 function refreshModal(full) {
   const c = S.L.cells[modalCid]; if (!c) { closeDetail(); return; }
-  const r = c.key ? BYKEY.get(c.key) : null, e = evalCell(modalCid, c, true, true), dec = decOfCell(c, r), unit = c.pred ? 'RPM' : unitOf(r);
+  const r = c.key ? BYKEY.get(c.key) : null, e = evalCell(modalCid, c, true, true), dec = decOfCell(c, r), unit = c.pred ? 'RPM' : unitOf(r), xk = xkOf(r);
   const mi = $('micon'), ic = iconOf(c, r);
   if (mi._h !== ic) { mi.innerHTML = ic; mi._h = ic; sweepSpins(); }
   if (isFanCell(c)) spinIcon(mi.querySelector('svg'), e.v);
@@ -2641,19 +3217,22 @@ function refreshModal(full) {
   mv.style.color = COLORS[e.col] || COLORS.white;
   if (!mv._n) { mv.innerHTML = '<span></span><span class="u"></span>'; mv._n = mv.firstChild; mv._u = mv.lastChild; }
   odo(mv._n, e.txt != null ? e.txt : fmtV(e.v, dec, r)); setText(mv._u, e.txt != null ? (e.utxt ? ' ' + e.utxt : '') : e.v == null ? '' : ' ' + unit);
-  const g = c.gates, det = gatesOn(g) ? { y: g.y, r: g.mode === 'yr' && Number.isFinite(g.r) ? g.r : undefined } : {};
+  const g = c.gates, det = gateLines(g);
   if (full) {
     let d = c.pred ? 'Predicted from ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ' through its curve; there is no fan sensor.'
       : r ? '<span title="' + esc(r.key) + '">' + esc(SENS[r.s].name) + ', ' + esc(r.label) + '.</span>' : sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now.' : 'This reading is not on this PC.';
-    if (gatesOn(g)) d += ' Lines: yellow ' + fmtL(g.y, dec) + (det.r !== undefined ? ', red ' + fmtL(g.r, dec) : '') + ' ' + esc(unit) + (g.dir === 'below' ? ' (bad when below)' : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
-    if (c.curve && !c.pred) d += ' Follows a fan curve on ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ', within ' + fmtL(c.curve.tol, 1) + '%.';
+    if (gatesOn(g)) d += ' Lines: yellow ' + fmtL(g.y, dec) + (det.r !== undefined ? ', red ' + fmtL(g.r, dec) : '') + ' ' + esc(unit) + (g.dir === 'below' ? ' (bad when below)' : '') + (det.y2 !== undefined || det.r2 !== undefined ? ', and on the other side ' + [det.y2 !== undefined ? 'yellow ' + fmtL(det.y2, dec) : '', det.r2 !== undefined ? 'red ' + fmtL(det.r2, dec) : ''].filter(Boolean).join(', ') + (g.dir === 'below' ? ' (bad when above)' : ' (bad when below)') : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
+    if (c.curve && !c.pred) d += ' Follows a fan curve on ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ', within ' + fmtL(c.curve.tol, 1) + '%' + (c.curve.warn === false ? ' (it doesn\'t warn when off it)' : '') + '.';
     if (e.strip) d = 'What limits your fps while a game runs, worked out once a second from GPU usage and the busiest CPU thread. GPU bound: the GPU at 95% or more, ' +
       'normal for a game without an fps limit. CPU bound: the GPU under 85% with a CPU thread at 80% or more. FPS capped: neither is the limit, so an fps cap or vsync sets the pace. ' +
-      'The cell shows the most common call of the last 5 seconds. ' + bnFrom();
+      'The cell shows the most common call of the last 5 seconds. Over an hour or more the bar has a column per minute (10 minutes over 7 days), as tall as the time a game ran in it. ' + bnFrom();
+    if (xk && xk.desc) d = xk.desc(modalCid, r);
     $('mdesc').innerHTML = d;
   }
-  mgsec.hidden = !!e.strip;
+  mgsec.hidden = !!(xk && xk.noGraph);
+  mgraph.hidden = $('mstats').hidden = !!e.strip;   // the bottleneck: only the range tabs up here, its bar below
   if (e.strip) { lastBig = null; bnPanel($('mextra'), e, full); return; }
+  if (xk && xk.noGraph) { lastBig = null; xDetail(xk, r, e, full); return; }
   const sp = bucketArr(c, isYN(r));
   if (full) {   // the yellow line joins the scale when it is close above the data; decided once per opening
     modalGateInView = false;
@@ -2678,16 +3257,87 @@ function refreshModal(full) {
   if (c.curve) {
     if (full || !extra.querySelector('#mcurve')) extra.innerHTML = '<div class="msec">' + (c.pred ? 'its curve' : 'fan curve') + '</div><canvas id="mcurve"></canvas>';
     drawCurveChart(extra.querySelector('#mcurve'), c, e);
-  } else if (full) extra.innerHTML = '';
+  } else if (xk && xk.detail) xDetail(xk, r, e, full);
+  else if (full) extra.innerHTML = '';
 }
-// the bottleneck has no graph: its popup shows the last 15 min of calls as a bar, and each call's share
+// a build's own section in the popup (see EXT): its box is made when the popup opens, filled on every refresh
+function xDetail(xk, r, e, full) {
+  const extra = $('mextra');
+  if (full || !extra.querySelector(':scope > .xd')) extra.innerHTML = '<div class="xd" data-x="1"></div>';
+  if (xk.detail) xk.detail(extra.firstChild, modalCid, r, e, full);
+}
+// the bottleneck has no graph: its popup shows the calls as a bar and each call's share. The last 15 min second by
+// second; the longer ranges (the host's history) a column per minute, per 10 minutes over 7 days, as tall as the time
+// a game ran in it and split into the calls (gpu at the bottom, then cpu, capped on top)
+const BN_SPAN = { '15m': 'the last 15 minutes', '1h': 'the last hour', '6h': 'the last 6 hours', '12h': 'the last 12 hours', '24h': 'the last 24 hours', '7d': 'the last 7 days' };
+const BNP = { B: null, x: null, hist: null };
+function bnCols() {   // per column [gpu, cpu, capped] as parts of it (null: no game), and the seconds a column stands for
+  if (bigRange === '15m') return { n: HLEN, step: 1, end: nowTs, cols: series(BNECK, HLEN).map(x => BN[x] ? [x === 1 ? 1 : 0, x === 2 ? 1 : 0, x === 3 ? 1 : 0] : null) };
+  if (!histReady() || !Array.isArray(bigHist.sg)) return null;
+  if (BNP.hist === bigHist && BNP.B && BNP.B.step > 1) return BNP.B;   // (the same answer: nothing to work out again)
+  // each is that call's part of the whole minute (block); the one in progress, of it so far
+  const H = bigHist, n = H.sg.length, end = Number.isFinite(H.end) ? H.end : Math.floor(Date.now() / 1000 / H.step) * H.step;
+  const at = (a, i) => Array.isArray(a) && typeof a[i] === 'number' && a[i] > 0 ? Math.min(1, a[i]) : 0;
+  BNP.hist = H;
+  return { n, step: H.step, end, old: H.sg.every(x => x == null) && Array.isArray(H.avg) && H.avg.some(x => x != null),
+    cols: H.sg.map((x, i) => { const v = [at(H.sg, i), at(H.sc, i), at(H.sf, i)]; return v[0] + v[1] + v[2] > 0 ? v : null; }) };
+}
+function bnSvg(B) {
+  const W = B.n * 10, H = 60, gap = B.step > 1 && B.n <= 120 ? 1.6 : 0;
+  let h = '<line x1="0" x2="' + W + '" y1="' + H + '" y2="' + H + '"/>';
+  for (let i = 0; i < B.n;) {
+    const v = B.cols[i]; let j = i + 1;
+    if (B.step === 1) while (j < B.n && String(B.cols[j]) === String(v)) j++;   // seconds: a run of one call is one block
+    if (v) { let y = H; v.forEach((p, k) => { if (p <= 0) return; const hh = p * H; y -= hh; h += '<rect class="' + BN[k + 1][2] + '" x="' + (i * 10 + gap / 2).toFixed(1) + '" y="' + y.toFixed(2) + '" width="' + ((j - i) * 10 - gap).toFixed(1) + '" height="' + hh.toFixed(2) + '"/>'; }); }
+    i = j;
+  }
+  return { vb: '0 0 ' + W + ' ' + H, h };
+}
+function bnSum(B) {   // each call's share of the game time in the range, like the split of the last 15 min
+  const n = [0, 0, 0, 0];
+  for (const v of B.cols) if (v) v.forEach((p, k) => { n[k + 1] += p; });
+  const tot = n[1] + n[2] + n[3];
+  return { tot, secs: tot * B.step, split: tot ? [1, 2, 3].map(k => [BN[k][3], Math.round(n[k] * 100 / tot), BN[k][2]]) : [] };
+}
+const bnClock = (u, sec, day) => { const d = new Date(u * 1000), p = x => ('0' + x).slice(-2); return (day ? d.toLocaleDateString('en-GB', { weekday: 'short' }) + ' ' : '') + p(d.getHours()) + ':' + p(d.getMinutes()) + (sec ? ':' + p(d.getSeconds()) : ''); };
+function bnTicks(B) {
+  if (B.step === 1) return '<span>-15m</span><span>-10m</span><span>-5m</span><span>now</span>';
+  const t0 = B.end - (B.n - 1) * B.step, wk = B.n * B.step >= 2 * 86400;
+  return '<span>' + bnClock(t0, false, wk) + '</span><span>' + bnClock(t0 + B.n * B.step / 2, false, wk) + '</span><span>now</span>';
+}
 function bnPanel(box, e, full) {
-  if (full || !box.querySelector('.bnp')) box.innerHTML = '<div class="bnp"><div class="msec">last 15 minutes</div><div class="strip big"></div>' +
-    '<div class="sticks"><span>-15m</span><span>-10m</span><span>-5m</span><span>now</span></div><div class="mstats"></div></div>';
-  renderStrip(box.querySelector('.strip'), e.strip.segs, HLEN);
-  const lg = e.strip.tot ? bnLegend(e.strip) : '<span>no game in the last 15 minutes</span>', el = box.querySelector('.mstats');
-  if (el._h !== lg) { el.innerHTML = lg; el._h = lg; }
+  if (full || !box.querySelector('.bnp')) box.innerHTML = '<div class="bnp"><div class="bnw"><svg class="bnc" preserveAspectRatio="none"></svg><i class="bgd"></i><div class="btip"></div></div><div class="sticks"></div><div class="mstats"></div></div>';
+  const B = BNP.B = bnCols(), svg = box.querySelector('.bnc');
+  box.querySelector('.bnp').classList.toggle('loading', !B);
+  if (B) { const d = bnSvg(B); if (svg._h !== d.h) { svg.setAttribute('viewBox', d.vb); svg.innerHTML = d.h; svg._h = d.h; } }
+  const sum = B && bnSum(B);
+  const lg = !B ? '<span>loading...</span>' : sum.tot ? bnLegend(sum) + (B.step > 1 ? '<span><em>game time</em>' + (sum.secs < 59.5 ? Math.round(sum.secs) + 's' : durTxt(sum.secs)) + '</span>' : '') : B.old ? '<span>The split per minute is kept from HW Deck 1.3.0 on: nothing here yet</span>' : '<span>no game in ' + BN_SPAN[bigRange] + '</span>';
+  const el = box.querySelector('.mstats'); if (el._h !== lg) { el.innerHTML = lg; el._h = lg; }
+  const tk = B ? bnTicks(B) : '', st = box.querySelector('.sticks'); if (st._h !== tk) { st.innerHTML = tk; st._h = tk; }
+  bnHover(box);
 }
+// the read-out under the pointer: that second's call, or that minute's (block's) split and how long a game ran in it
+function bnHover(box) {
+  const w = box.querySelector('.bnw'); if (!w) return;
+  const B = BNP.B, r = w.getBoundingClientRect(), f = BNP.x === null ? -1 : (BNP.x - r.left) / Math.max(1, r.width);
+  if (!B || f < 0 || f > 1) { w.classList.remove('hv'); return; }
+  const i = Math.max(0, Math.min(B.n - 1, Math.floor(f * B.n))), v = B.cols[i], at = B.end - (B.n - 1 - i) * B.step;
+  let h = '<b>' + bnClock(at, B.step === 1, B.n * B.step >= 2 * 86400) + '</b>';
+  if (!v) h += '<span>no game</span>';
+  else if (B.step === 1) { const k = v.indexOf(1) + 1; h += '<span><i class="' + BN[k][2] + '"></i>' + BN[k][0] + ' ' + BN[k][1] + '</span>'; }
+  else {
+    const tot = v[0] + v[1] + v[2], s = Math.round(tot * B.step);
+    h += v.map((p, k) => p > 0 ? '<span><i class="' + BN[k + 1][2] + '"></i>' + BN[k + 1][3] + ' <em>' + Math.round(p / tot * 100) + '%</em></span>' : '').join('') +
+         '<span>a game for ' + (s >= 60 ? Math.round(s / 60) + ' min' : s + ' s') + '</span>';
+  }
+  const tip = w.querySelector('.btip'); if (tip._h !== h) { tip.innerHTML = h; tip._h = h; }
+  const gx = (i + 0.5) / B.n * r.width, tw = tip.offsetWidth;
+  w.querySelector('.bgd').style.left = gx.toFixed(1) + 'px';
+  tip.style.left = (gx + 12 + tw > r.width ? gx - 12 - tw : gx + 12).toFixed(1) + 'px';
+  w.classList.add('hv');
+}
+$('mextra').addEventListener('pointermove', ev => { const w = ev.target.closest && ev.target.closest('.bnw'); BNP.x = w ? ev.clientX : null; bnHover($('mextra')); });
+$('mextra').addEventListener('pointerleave', () => { BNP.x = null; bnHover($('mextra')); });
 modal.addEventListener('mousedown', e => { if (e.target === modal && performance.now() - openedAt > 450) closeDetail(); });
 $('mclose').onclick = closeDetail;
 function graphCtx(cv) {
@@ -2738,7 +3388,7 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
   yCaption(ctx, dpr, yn ? '' : unit || '');
   const yGy = det.y !== undefined ? Y(det.y) : null, rGy = det.r !== undefined ? Y(det.r) : null;
   const gateClose = yGy !== null && rGy !== null && Math.abs(yGy - rGy) < 15 * dpr;
-  for (const g of [['y', '#e6c84a'], ['r', '#e5484d']]) {
+  for (const g of [['y', '#e6c84a'], ['r', '#e5484d'], ['y2', '#e6c84a'], ['r2', '#e5484d']]) {
     const gv = det[g[0]];
     if (gv === undefined || gv < lo || gv > hi) continue;
     const gy = Y(gv);
@@ -2790,6 +3440,17 @@ function drawCurveChart(cv, c, e) {
     pts.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1] * (1 + tl))) : ctx.moveTo(X(p[0]), Y(p[1] * (1 + tl))));
     pts.slice().reverse().forEach(p => ctx.lineTo(X(p[0]), Y(p[1] * (1 - tl)))); ctx.closePath(); ctx.fillStyle = 'rgba(201,201,201,0.06)'; ctx.fill();
   }
+  // past its first and last points a fan keeps their speed: dashed (and its band, fainter) to the edges of the graph
+  const p0 = pts[0], pn = pts[pts.length - 1], x0 = X(p0[0]), xn = X(pn[0]);
+  if (!c.pred) {
+    const tl = c.curve.tol / 100; ctx.fillStyle = 'rgba(201,201,201,0.035)';
+    if (x0 > padL) ctx.fillRect(padL, Y(p0[1] * (1 + tl)), x0 - padL, Y(p0[1] * (1 - tl)) - Y(p0[1] * (1 + tl)));
+    if (xn < w - padR) ctx.fillRect(xn, Y(pn[1] * (1 + tl)), w - padR - xn, Y(pn[1] * (1 - tl)) - Y(pn[1] * (1 + tl)));
+  }
+  ctx.beginPath();
+  if (x0 > padL) { ctx.moveTo(padL, Y(p0[1])); ctx.lineTo(x0, Y(p0[1])); }
+  if (xn < w - padR) { ctx.moveTo(xn, Y(pn[1])); ctx.lineTo(w - padR, Y(pn[1])); }
+  ctx.strokeStyle = '#8f8f8f'; ctx.globalAlpha = 0.65; ctx.lineWidth = 1.4 * dpr; ctx.setLineDash([5 * dpr, 4 * dpr]); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
   ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1])));
   ctx.strokeStyle = '#8f8f8f'; ctx.lineWidth = 1.8 * dpr; ctx.lineJoin = 'round'; ctx.stroke();
   ctx.fillStyle = '#bdbdbd'; for (const p of pts) { ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 3 * dpr, 0, 7); ctx.fill(); }
@@ -2884,7 +3545,7 @@ function fillPrev() {
 }
 function drawPrev() {
   const c = S.L.cells[HP.cid]; if (!c || isBneck(c)) { HP.rev0 = 0; return; }
-  const r = c.key ? BYKEY.get(c.key) : null, g = c.gates, det = gatesOn(g) ? { y: g.y, r: g.mode === 'yr' && Number.isFinite(g.r) ? g.r : undefined } : {};
+  const r = c.key ? BYKEY.get(c.key) : null, g = c.gates, det = gateLines(g);
   const sp = bucketArr(c), vals = sp.filter(x => x !== null);
   let gate = false;
   if (vals.length > 1 && det.y !== undefined) { const hi = Math.max(...vals), spn = Math.max(1.2, hi - Math.min(...vals)); gate = det.y > hi && det.y < hi + spn * 1.2; }
@@ -3133,66 +3794,119 @@ function gxItemRow(it, spec) {
   if (!(top > lo)) top = lo + 1;
   return gxRow(spec ? spec[1] : esc(it.n), lo, top, a, m, y, r, esc(u), spec ? spec[4] : decFor({ unit: u }), !!(spec && spec[5]), it.below, !spec);
 }
-// minute by minute: fps with its 1% low as a band, and what limited it; gaps are minutes the game wasn't in front
-function gxTimeline(x, sp) {
-  const tb = typeof x.tb === 'string' ? x.tb : '', tf = Array.isArray(x.tf) ? x.tf : [], tl = Array.isArray(x.tl) ? x.tl : [];
-  const N = Math.max(tb.length, tf.length);
-  if (N < 2 || (!/[gcf]/.test(tb) && !tf.some(v => gxN(v) !== null))) return '';
-  let h = '<div class="gx-tl"><div class="gx-ch">over time<span>per minute, gaps are time the game was not in front</span></div>';
-  const fv = tf.map(gxN), have = fv.filter(v => v !== null);
+// minute by minute: fps and its 1% low, and what limited it as each minute's share of the time in front (gpu, cpu,
+// capped); gaps are minutes the game wasn't in front. Sessions before 1.3.0 only kept the call that held most of each
+// minute: those minutes show that call alone
+const GX_BN = [['gpu', 'gpu-bound'], ['cpu', 'cpu-bound'], ['cap', 'capped']];
+const gxTl = [];   // per session in the list: its minutes, for the hover read-out
+function gxMinutes(x) {
+  const tb = typeof x.tb === 'string' ? x.tb : '', tf = Array.isArray(x.tf) ? x.tf : [], tl = Array.isArray(x.tl) ? x.tl : [], tc = Array.isArray(x.tc) ? x.tc : [];
+  const N = Math.max(tb.length, tf.length, tc.length), sh = [], one = [];
+  for (let m = 0; m < N; m++) {
+    const c = tc[m], k = tb[m] ? 'gcf'.indexOf(tb[m]) : -1;
+    let s = null;
+    if (Array.isArray(c) && c.length === 3) { const a = c.map(v => Math.max(0, +v || 0)), n = a[0] + a[1] + a[2]; if (n) s = a.map(v => v / n); }
+    else if (k >= 0) { s = [0, 0, 0]; s[k] = 1; one[m] = true; }
+    sh.push(s);
+  }
+  const fv = [], lv = [];
+  for (let m = 0; m < N; m++) { fv.push(gxN(tf[m])); lv.push(gxN(tl[m])); }
+  return { N, fv, lv, sh, one };
+}
+const gxHasTl = D => D.N >= 2 && (D.sh.some(Boolean) || D.fv.some(v => v !== null));
+function gxTimeline(x, sp, gi) {
+  const D = gxMinutes(x), N = D.N;
+  if (!gxHasTl(D)) return '';
+  const T = gxTl[gi] = Object.assign({ start: x.start }, D);
+  let h = '<div class="gx-tl" data-g="' + gi + '"><div class="gx-ch">over time<span>per minute, gaps are time the game was not in front</span></div><div class="gx-hz">';
+  const have = D.fv.filter(v => v !== null);
   if (have.length) {
-    const mx = Math.max(...have, 1), step = mx > 300 ? 200 : mx > 150 ? 100 : mx > 60 ? 50 : 20, top = Math.ceil(mx * 1.1 / step) * step;
-    const W = N * 10, H = 46, X = m => ((m + 0.5) / N * W).toFixed(1), Y = v => (H - Math.max(0, Math.min(top, v)) / top * H).toFixed(1);
-    let grid = '', band = '', line = '', yl = '';
-    for (let v = step; v < top; v += step) { grid += '<line x1="0" x2="' + W + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/>'; yl += '<span style="top:' + Y(v) + 'px">' + v + '</span>'; }
-    let run = [];
-    const flush = () => {
-      if (run.length) {
-        const lows = run.filter(m => gxN(tl[m]) !== null);
-        if (lows.length === run.length) band += '<polygon points="' + run.map(m => X(m) + ',' + Y(fv[m])).join(' ') + ' ' + run.slice().reverse().map(m => X(m) + ',' + Y(tl[m])).join(' ') + '"/>';
-        line += run.length > 1 ? '<polyline points="' + run.map(m => X(m) + ',' + Y(fv[m])).join(' ') + '"/>' : '<polyline points="' + (+X(run[0]) - 3) + ',' + Y(fv[run[0]]) + ' ' + (+X(run[0]) + 3) + ',' + Y(fv[run[0]]) + '"/>';
-      }
-      run = [];
-    };
-    for (let m = 0; m < N; m++) { if (fv[m] !== null && fv[m] !== undefined) run.push(m); else flush(); }
-    flush();
-    h += '<div class="gx-tr"><span class="l">fps</span><svg class="gx-fpsc" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + grid + band + line + '</svg><span class="gx-yax">' + yl + '</span></div>';
+    // round steps, about 4 of them, from a little under the lowest 1% low to a little over the highest fps
+    const all = have.concat(D.lv.filter(v => v !== null)), mn = Math.min(...all), mx = Math.max(...all), sp0 = Math.max(1, mx - mn);
+    const raw = Math.max(5, sp0 * 1.25 / 4), pw = Math.pow(10, Math.floor(Math.log10(raw))), step = [1, 2, 2.5, 5, 10].map(s => s * pw).find(s => s >= raw);
+    let lo = Math.max(0, Math.floor((mn - sp0 * 0.08) / step) * step), top = Math.ceil((mx + sp0 * 0.08) / step) * step;
+    if (top - lo < 2 * step) { top += step; lo = Math.max(0, lo - step); }
+    T.lo = lo; T.top = top;
+    const W = N * 10, H = 140, X = m => ((m + 0.5) * 10).toFixed(1), Y = v => (H - (Math.max(lo, Math.min(top, v)) - lo) / (top - lo) * H).toFixed(1);
+    let grid = '', band = '', yl = '';
+    for (let v = lo; v <= top + 1e-9; v += step) { grid += '<line x1="0" x2="' + W + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/>'; yl += '<span style="top:' + (+Y(v) / H * 100).toFixed(2) + '%">' + +v.toFixed(1) + '</span>'; }
+    // runs of minutes with a value; a minute on its own between gaps is a short dash
+    const runs = arr => { const out = []; let cur = null; arr.forEach((v, m) => { if (v === null) { cur = null; return; } if (!cur) out.push(cur = []); cur.push(m); }); return out; };
+    const line = (arr, cls) => runs(arr).map(r => '<polyline class="' + cls + '" points="' + (r.length > 1 ? r.map(m => X(m) + ',' + Y(arr[m])).join(' ') : (+X(r[0]) - 3) + ',' + Y(arr[r[0]]) + ' ' + (+X(r[0]) + 3) + ',' + Y(arr[r[0]])) + '"/>').join('');
+    for (const r of runs(D.fv)) if (r.length > 1 && r.every(m => D.lv[m] !== null)) band += '<polygon points="' + r.map(m => X(m) + ',' + Y(D.fv[m])).join(' ') + ' ' + r.slice().reverse().map(m => X(m) + ',' + Y(D.lv[m])).join(' ') + '"/>';
+    h += '<div class="gx-tr f"><span class="l">fps</span><span class="gx-plot"><svg class="gx-fpsc" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + grid + band + line(D.lv, 'lo') + line(D.fv, 'fp') + '</svg>' +
+         '<i class="gx-gd"></i><i class="gx-dot lo"></i><i class="gx-dot fp"></i></span><span class="gx-yax">' + yl + '</span></div>';
   }
-  if (/[gcf]/.test(tb)) {
-    let seg = '';
-    for (let m = 0; m < tb.length;) {
-      const ch = tb[m]; let e = m;
-      while (e + 1 < tb.length && tb[e + 1] === ch) e++;
-      const k = ch === 'g' ? 'gpu' : ch === 'c' ? 'cpu' : ch === 'f' ? 'cap' : null;
-      if (k) seg += '<span class="b-' + k + '" style="left:' + (m / N * 100).toFixed(3) + '%;width:' + ((e - m + 1) / N * 100).toFixed(3) + '%"></span>';
-      m = e + 1;
-    }
-    h += '<div class="gx-tr s"><span class="l">limited by</span><span class="gx-strip">' + seg + '</span><span></span></div>';
+  if (D.sh.some(Boolean)) {
+    // a column per minute, its share of each call stacked: gpu at the bottom, then cpu, capped on top
+    const H2 = 40, gap = N <= 120 ? 1.6 : 0;
+    let cols = '';
+    D.sh.forEach((s, m) => {
+      if (!s) return;
+      let y = H2;
+      s.forEach((v, k) => { if (v <= 0) return; const hh = v * H2; y -= hh; cols += '<rect class="b-' + GX_BN[k][0] + '" x="' + (m * 10 + gap / 2).toFixed(1) + '" y="' + y.toFixed(2) + '" width="' + (10 - gap).toFixed(1) + '" height="' + hh.toFixed(2) + '"/>'; });
+    });
+    h += '<div class="gx-tr s"><span class="l">limited by</span><span class="gx-plot"><svg class="gx-bnc" viewBox="0 0 ' + N * 10 + ' ' + H2 + '" preserveAspectRatio="none"><line x1="0" x2="' + N * 10 + '" y1="' + H2 + '" y2="' + H2 + '"/>' + cols + '</svg><i class="gx-gd"></i></span><span></span></div>';
   }
+  h += '<div class="gx-tip"></div></div>';
   // clock ticks: start and end, and the round half hours (quarters, fives) between them; none past the end, which a
-  // last minute cut short leaves before the right edge
-  const t0 = x.start, t1 = x.start + N * 60, every = N > 90 ? 30 : N > 40 ? 15 : N > 15 ? 5 : 1;
+  // last minute cut short leaves before the right edge, and none that would read the same as the end
+  const t0 = x.start, t1 = x.start + N * 60, t2 = Math.min(t1, x.end), every = N > 90 ? 30 : N > 40 ? 15 : N > 15 ? 5 : 1;
   let tk = '<span class="e0">' + hhmm(t0) + '</span>';
-  for (let u = Math.ceil(t0 / 60 / every) * every * 60; u < Math.min(t1, x.end); u += every * 60) {
+  for (let u = Math.ceil(t0 / 60 / every) * every * 60; u < t2; u += every * 60) {
     const pc = (u - t0) / (t1 - t0) * 100;
-    if (pc > 9 && pc < 91) tk += '<span style="left:' + pc.toFixed(2) + '%">' + hhmm(u) + '</span>';
+    if (pc > 9 && pc < 91 && hhmm(u) !== hhmm(t2)) tk += '<span style="left:' + pc.toFixed(2) + '%">' + hhmm(u) + '</span>';
   }
-  tk += '<span class="e1">' + hhmm(Math.min(t1, x.end)) + '</span>';
+  tk += '<span class="e1">' + hhmm(t2) + '</span>';
   h += '<div class="gx-tr"><span></span><span class="gx-ticks">' + tk + '</span><span></span></div>';
-  const away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0;
-  h += '<div class="gx-tr"><span></span><span class="gx-leg">' + (sp.n ? '<span><b class="b-cpu"></b>cpu-bound <i>' + sp.pc(sp.c) + '%</i></span><span><b class="b-gpu"></b>gpu-bound <i>' + sp.pc(sp.g) + '%</i></span><span><b class="b-cap"></b>capped <i>' + sp.pc(sp.f) + '%</i></span>' : '') +
+  const away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0, of = { gpu: 'g', cpu: 'c', cap: 'f' };
+  h += '<div class="gx-tr"><span></span><span class="gx-leg">' + (have.length ? '<span><b class="ln fp"></b>fps</span><span><b class="ln lo"></b>1% low</span>' : '') +
+       (sp.n ? GX_BN.map(([k, t]) => '<span><b class="b-' + k + '"></b>' + t + ' <i>' + sp.pc(sp[of[k]]) + '%</i></span>').join('') : '') +
        (away >= 60 ? '<span><b class="aw"></b>not in front ' + durTxt(away) + '</span>' : '') + '</span><span></span></div>';
   return h + '</div>';
 }
-// the main readings HWiNFO had in a gpu and a cpu column, then the other cells with lines, then the timeline
-function gxDetail(x, sp) {
+// the hover read-out: the minute under the pointer, a guide through both charts, its fps, 1% low and split
+let gxHz = null;
+function gxHover(hz, e) {
+  if (gxHz && gxHz !== hz) gxHz.classList.remove('hv');
+  gxHz = hz;
+  if (!hz) return;
+  const tl = hz.closest('.gx-tl'), T = gxTl[+tl.dataset.g], plot = hz.querySelector('.gx-plot');
+  if (!T || !plot) return;
+  const pr = plot.getBoundingClientRect(), f = (e.clientX - pr.left) / Math.max(1, pr.width);
+  if (f < 0 || f > 1) { hz.classList.remove('hv'); return; }
+  const m = Math.max(0, Math.min(T.N - 1, Math.floor(f * T.N))), at = ((m + 0.5) / T.N * 100).toFixed(3) + '%';
+  for (const g of hz.querySelectorAll('.gx-gd')) g.style.left = at;
+  for (const [cls, arr] of [['fp', T.fv], ['lo', T.lv]]) {
+    const d = hz.querySelector('.gx-dot.' + cls); if (!d) continue;
+    const v = arr[m];
+    d.style.display = v === null ? 'none' : '';
+    if (v !== null) { d.style.left = at; d.style.top = ((1 - (Math.max(T.lo, Math.min(T.top, v)) - T.lo) / (T.top - T.lo)) * 100).toFixed(2) + '%'; }
+  }
+  const s = T.sh[m], fpsAt = T.fv[m] !== null || T.lv[m] !== null;
+  let h = '<b>' + hhmm(T.start + m * 60) + '</b>';
+  if (fpsAt) h += '<span>fps <em>' + gxF(T.fv[m]) + '</em></span><span>1% low <em>' + gxF(T.lv[m]) + '</em></span>';
+  if (s && T.one[m]) { const k = s.indexOf(1); h += '<span><i class="b-' + GX_BN[k][0] + '"></i>mostly ' + GX_BN[k][1] + '</span>'; }
+  else if (s) h += GX_BN.map(([k, t], j) => s[j] > 0.005 ? '<span><i class="b-' + k + '"></i>' + t + ' <em>' + Math.round(s[j] * 100) + '%</em></span>' : '').join('');
+  if (!s && !fpsAt) h += '<span>not in front</span>';
+  const tip = hz.querySelector('.gx-tip');
+  if (tip._h !== h) { tip.innerHTML = h; tip._h = h; }
+  const hr = hz.getBoundingClientRect(), gx = pr.left - hr.left + (m + 0.5) / T.N * pr.width, tw = tip.offsetWidth;
+  tip.style.left = (gx + 14 + tw > hr.width ? gx - 14 - tw : gx + 14).toFixed(1) + 'px';
+  hz.classList.add('hv');
+}
+$('glist').addEventListener('pointermove', e => gxHover(e.target.closest && e.target.closest('.gx-hz'), e));
+$('glist').addEventListener('pointerleave', () => gxHover(null));
+// the main readings HWiNFO had in a gpu and a cpu column, then the other cells with lines, then the timeline (lazy: a
+// place for it, drawn when the session first opens)
+function gxDetail(x, sp, gi, lazy) {
   const main = {}, extra = [], col = { gpu: '', cpu: '' };
   for (const it of gxItems(x)) { if (it.main && GX_MAIN[it.n] && !main[it.n]) main[it.n] = it; else extra.push(it); }
   for (const n in GX_MAIN) if (main[n]) col[GX_MAIN[n][0]] += gxItemRow(main[n], GX_MAIN[n]);
   let h = '';
   if (col.gpu || col.cpu) h += '<div class="gx-rd">' + (col.gpu ? '<div><div class="gx-ch">gpu</div>' + col.gpu + '</div>' : '') + (col.cpu ? '<div><div class="gx-ch">cpu and memory</div>' + col.cpu + '</div>' : '') + '</div>';
   if (extra.length) h += '<div class="gx-xc"><div class="gx-ch">cells with lines</div><div class="gx-rd">' + extra.map(it => gxItemRow(it, null)).join('') + '</div></div>';
-  const tl = gxTimeline(x, sp);
+  const tl = !lazy ? gxTimeline(x, sp, gi) : gxHasTl(gxMinutes(x)) ? '<div class="gx-tlz" data-g="' + gi + '"></div>' : '';
   return '<div class="gx-in">' + (h ? '<div class="gx-key"><span><i class="sw" style="background:#555"></i>avg</span><span><i class="sw" style="background:#bdbdbd"></i>max</span>' +
          '<span><i class="tk"></i>yellow line</span><span class="end">bars end at the red line, or at a typical limit</span></div>' + h : tl ? '' : '<div class="gx-nil">no readings were recorded for this session</div>') + tl + '</div>';
 }
@@ -3202,7 +3916,7 @@ function renderGames(text) {
     try { const x = line.trim() ? JSON.parse(line) : null; if (x && typeof x === 'object' && Number.isFinite(x.start) && Number.isFinite(x.end) && x.end >= x.start) ss.push(x); } catch (e) { }
   }
   ss.sort((a, b) => b.start - a.start);
-  lastGameCount = ss.length;
+  lastGameCount = ss.length; gxTl.length = 0; gxSs = ss;
   const now = Date.now() / 1000, week = now - 7 * 86400, recent = ss.filter(x => x.start >= week), per = {};
   for (const x of recent) per[x.game] = (per[x.game] || 0) + (x.end - x.start);
   const top = Object.keys(per).sort((a, b) => per[b] - per[a])[0];
@@ -3242,7 +3956,7 @@ function renderGames(text) {
          '<span class="gx-c gx-num gx-fps">' + gxF(x.fps) + '</span><span class="gx-c gx-num gx-lo">' + gxF(x.low) + '</span>' +
          '<span class="gx-c">' + (sp.n ? gxNbar(sp) + '<span class="gx-sub">' + sp.top[0] + ' ' + sp.top[1] + '%</span>' : '<span class="gx-sub">--</span>') + '</span>' +
          '<span class="gx-c gx-st">' + st + '</span></div>' +
-         '<div class="gx-det"><div>' + gxDetail(x, sp) + '</div></div></div>';
+         '<div class="gx-det"><div>' + gxDetail(x, sp, i, i > 0) + '</div></div></div>';
   });
   const list = $('glist');
   list.innerHTML = h ? '<div class="gx-cols"><span></span><span>game</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
@@ -3250,7 +3964,13 @@ function renderGames(text) {
   const first = list.querySelector('.gx-sess');
   if (first) first.classList.add('open');   // the newest session opens with the popup
 }
-$('glist').addEventListener('click', e => { const r = e.target.closest('.gx-row'); if (r) r.parentNode.classList.toggle('open'); });
+let gxSs = [];   // the sessions as listed, for the timelines drawn when they open
+$('glist').addEventListener('click', e => {
+  const r = e.target.closest('.gx-row'); if (!r) return;
+  const z = r.parentNode.querySelector('.gx-tlz'), x = z && gxSs[+z.dataset.g];
+  if (x) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g);
+  r.parentNode.classList.toggle('open');
+});
 function showGame() {
   $('gameDot').classList.toggle('on', !!feed.game);
   $('gamesBtn').title = feed.game ? 'Game sessions: ' + feed.game + ' running, ' + durTxt(Math.max(60, nowTs - feed.gameSince)) + (feed.front ? '' : ' (in the background)') : 'Game sessions';
@@ -3267,14 +3987,14 @@ function renderSettings() {
       (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' (Windows asks apps for less motion.)' : '') + '</small></div><span class="seg seg3" id="sMotion">' +
       [['full', 'Full'], ['reduced', 'Reduced'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionMode() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
     '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>The free version turns its shared memory off after 12 hours; a restart turns it back on (Windows asks for permission).</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
-    '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub once a day if there is a new version. Nothing else is sent.') + '</small></div>' +
-      '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">Get it</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>' +
+    (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub once a day if there is a new version. Nothing else is sent.') + '</small></div>' +
+      '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">Get it</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>') +
     '<div class="setrow"><div>Your files<small class="k">' + esc(feed.dataDir) + '</small><small>Layouts, slots, the logs and 7 days of history.</small></div><button class="btn" id="sData">Open</button></div>' +
     '<div class="setrow" style="display:block"><div style="margin-bottom:8px">Keys</div><div class="keys2">' +
       [['E', 'edit layout on or off'], ['1 2 3', 'Tiles, Overview, Grid'], ['Enter', 'open (or select) the cell in focus'], ['Ctrl+S', 'save to the loaded slot'], ['Ctrl+Z, Ctrl+Shift+Z', 'undo, redo'],
        ['Alt + arrows', 'move the selected cell, or swap the selected category with its neighbour'], ['Shift + Alt + arrows', 'the selected category: wider, narrower, its row taller, shorter'],
        ['R  B  S  U', 'the selected category: own row, beside the row above, stack under the left one, unstack'], ['Del', 'remove the selected cell or category'], ['Esc', 'close a popup, then select nothing']].map(k => '<span class="kbd">' + k[0] + '</span><span>' + k[1] + '</span>').join('') + '</div></div>' +
-    '<div class="setrow"><div>HW Deck ' + esc(feed.version) + '<small>Reads HWiNFO\'s shared memory on this PC.</small></div></div>';
+    '<div class="setrow"><div>' + (feed.brand && feed.brand !== 'HW Deck' ? esc(feed.brand) + ', built on HW Deck ' : 'HW Deck ') + esc(feed.version) + '<small>Reads HWiNFO\'s shared memory on this PC.</small></div></div>';
 }
 $('setBtn').onclick = () => { renderSettings(); setmodal.classList.add('open'); };
 function syncUpd() { const d = $('setDot'); d.classList.toggle('on', !!feed.latest); $('setBtn').title = feed.latest ? 'Settings (HW Deck ' + feed.latest + ' is out)' : 'Settings'; }
@@ -3324,7 +4044,11 @@ function retireToastUndo() { $('toastUndo').hidden = true; toastDepth = -1; }
 // ---------- keys ----------
 document.addEventListener('keydown', ev => {
   if (drag && drag.started) { if (ev.key === 'Escape') endDrag(true); ev.preventDefault(); return; }   // nothing else mid-drag
-  if (rs) { if (ev.key === 'Escape') endHandle(true); ev.preventDefault(); return; }
+  if (rs) {
+    if (ev.key === 'Escape') endHandle(true);
+    else if (ev.key === 'Alt' && rs.kind === 'corner' && rs.last) moveCorner(Object.assign({ altKey: true }, rs.last));   // Alt: any size, at once
+    ev.preventDefault(); return;
+  }
   // fields that take typing (a checkbox doesn't; a select takes letters and digits for its options)
   const typing = ev.target.closest && ev.target.closest('textarea, select, input:not([type=checkbox]):not([type=radio])');
   const ctrl = ev.ctrlKey || ev.metaKey, k = (ev.key || '').toLowerCase();
@@ -3342,8 +4066,13 @@ document.addEventListener('keydown', ev => {
     }
     return;
   }
-  if (typing) return;
+  if (typing && !(ctrl && ev.key.startsWith('Arrow') && ev.target.dataset && ev.target.dataset.sz)) return;
   if (ctrl && (k === 'z' || k === 'y')) { ev.preventDefault(); if (cmodal.classList.contains('open')) return; k === 'y' || ev.shiftKey ? redo() : undo(); return; }
+  if (ctrl && S.edit && sel && S.screen === 'tiles' && !preview && !anyModalOpen() && ev.key.startsWith('Arrow')) {
+    ev.preventDefault();
+    nudgeSize(sel, ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowLeft' ? -1 : 0, ev.key === 'ArrowDown' ? 1 : ev.key === 'ArrowUp' ? -1 : 0, ev.shiftKey);
+    return;
+  }
   if (anyModalOpen() || ctrl) return;
   const dc = ev.target.matches && ev.target.matches('#view .dc') ? ev.target : null;
   if (dc && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); if (S.edit) selectCell(dc.dataset.cid); else openDetail(dc.dataset.cid); return; }
@@ -3386,6 +4115,7 @@ document.addEventListener('keydown', ev => {
     const el = document.querySelector('#view .dc[data-cid="' + id + '"]'); if (el) el.focus();
   }
 });
+document.addEventListener('keyup', ev => { if (ev.key === 'Alt' && rs && rs.kind === 'corner' && rs.last) { ev.preventDefault(); moveCorner(Object.assign({ altKey: false }, rs.last)); } });
 window.addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });   // the fit owns the scale
 
 // ---------- window chrome: the title bar is the caption, the edges resize ----------
@@ -3434,6 +4164,9 @@ function showFeed() {
 function onHost(m) {
   if (m.t === 'state') {
     feed.fake = !!m.fake; feed.dataDir = m.dataDir || ''; feed.version = m.version || ''; feed.nonClient = m.nonClient !== false; feed.pc = typeof m.pc === 'string' ? m.pc : '';
+    feed.brand = typeof m.brand === 'string' && m.brand ? m.brand : 'HW Deck'; feed.updatable = m.updatable !== false; document.title = feed.brand;
+    // a build with extras: its cell kinds come with extras.js, the view is drawn again once they are in
+    if (m.ext && !EXT.loaded) { EXT.loaded = true; const sc = document.createElement('script'); sc.src = 'extras.js'; sc.onload = () => { renderView(false); renderStorage(); renderInsp(); }; document.head.appendChild(sc); }
     S.slots = (m.slots || []).slice(0, 5).map(cleanSlot);
     while (S.slots.length < 5) S.slots.push(null);
     const st = m.state;
@@ -3455,6 +4188,7 @@ function onHost(m) {
     const sameKeys = READ.length === m.readings.length && m.readings.every((x, i) => READ[i].key === x[2]);
     setCatalog(m);
     feed.bnIn = Array.isArray(m.bneck) ? m.bneck : [null, null, 0];
+    feed.c12keys = Array.isArray(m.c12) && m.c12.length === 2 ? m.c12 : null;
     lastSub = ''; subscribe();
     // the same readings with new names (a rename in HWiNFO): no rebuild under someone typing in a field
     const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp input, #insp select, #insp textarea, .cn-in');
@@ -3473,6 +4207,8 @@ function onHost(m) {
   } else if (m.t === 'tick') {
     const was = feed.status, first = !feed.got;
     feed.status = m.status; feed.age = m.age; feed.got = true; feed.game = m.game; feed.front = m.front; feed.gameSince = m.gameSince; feed.pm = !!m.pm;
+    feed.c12 = Array.isArray(m.c12) ? m.c12 : null;
+    feed.gs = m.gs && typeof m.gs === 'object' ? m.gs : null;   // this game session's min, average, max of the game's own readings
     if (lastTick && m.ts - lastTick > 2) for (const k in holdSince) delete holdSince[k];   // seconds we didn't see (hidden): holds start again
     nowTs = lastTick = m.ts;
     if (S.clock) setText($('clock'), hhmmss(m.ts));
@@ -3491,6 +4227,7 @@ function onHost(m) {
   else if (m.t === 'games') renderGames(m.log);
   else if (m.t === 'toast') toast(m.text, false, m.ms);
   else if (m.t === 'restarted') restartDone();
+  else if (typeof m.t === 'string' && m.t.startsWith('x.')) { if (EXT.msg) EXT.msg(m); }
   else if (m.t === 'imported') {
     const d = cleanSlot(m.data), i = m.slot;
     if (!d || !(i >= 0 && i < 5)) { toast('That file is not an HW Deck layout'); return; }

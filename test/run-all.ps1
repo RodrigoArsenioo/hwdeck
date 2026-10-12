@@ -1,19 +1,22 @@
 # Runs every check on made-up data: the end-to-end test, a clean restart, the restart test, the scale test, the
 # release checks (a prepared data folder), an unreadable working view, a restart that has to wait, sleep and the
-# end of a Windows session, a held history file, the bottleneck with a made-up game, the game sessions popup and report,
-# the layouts, the tile looks, and a window left open for a few minutes. Uses its own data folders under test\ and debug ports 9230-9239; the real
+# end of a Windows session, a held history file, the 12V-2x6 connector, the bottleneck with a made-up game, the game sessions popup and report,
+# a build with extras, the layouts, tile sizes, lines on both sides, a game session's numbers, the tile looks, and a window
+# left open for a few minutes. Uses its own data folders under test\ and debug ports 9230-9239; the real
 # HW Deck (if running) is left alone.
 #   powershell -File test\run-all.ps1
 $d = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $d
+# below normal priority, and so is every copy it starts: a game or work on this PC comes first
+(Get-Process -Id $PID).PriorityClass = 'BelowNormal'
 $failed = 0
 # test windows sit behind other windows: keep Chromium from treating a covered window as hidden (it would slow its
 # timers and stop its frames)
 $awake = '--disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling'
 Add-Type -Namespace HWDeckTest -Name Win -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);'
-function Start-Deck([string]$data, [int]$port, [int]$fake) {
+function Start-Deck([string]$data, [int]$port, [int]$fake, [string]$exe = "$d\HWDeck.exe") {
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port $awake"
-  $p = Start-Process "$d\HWDeck.exe" -ArgumentList '--fake', $fake, '--data', "$d\test\$data" -WorkingDirectory $d -PassThru
+  $p = Start-Process $exe -ArgumentList '--fake', $fake, '--data', "$d\test\$data" -WorkingDirectory $d -PassThru
   Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
   # it opens on the screen under the mouse: move it to the main screen (same size, no focus) and behind every other
   # window, so it doesn't cover anything. Leave the test windows alone while they run: a minimized or tray window gets
@@ -98,10 +101,30 @@ $lock.Close()
 Run 'held history' test/e2e-held.mjs 9233 test/data-held
 if (-not $p.WaitForExit(8000)) { Stop-Process -Id $p.Id -Force }   # the test quits it itself
 
+# the 12V-2x6 connector on made-up pins (port 9233 again, HWDECK_FAKEPINS)
+if (Test-Path "$d\test\data-12v") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-12v" }
+$env:HWDECK_FAKEPINS = '1'
+$p = Start-Deck 'data-12v' 9233 300
+Remove-Item Env:HWDECK_FAKEPINS
+Run '12V-2x6 connector' test/e2e-12v.mjs 9233 test/data-12v
+Quit-Deck $p 9233
+
 # the bottleneck with a made-up game (port 9236): the test quits the app itself, to check the saved history
 if (Test-Path "$d\test\data-bn") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-bn" }
 $p = Start-Deck 'data-bn' 9236 300
 Run 'bottleneck' test/e2e-bneck.mjs 9236 test/data-bn
+if (-not $p.WaitForExit(8000)) { Stop-Process -Id $p.Id -Force }
+
+# a build with extras (port 9236 again): test\ext\extras-test.cs compiled in, test\ext\extras.js next to the page, in
+# test\out\ext; the test quits it itself, to check its stop hook
+$x = "$d\test\out\ext"
+if (Test-Path $x) { Remove-Item -Recurse -Force -LiteralPath $x }
+New-Item -ItemType Directory "$x\web" | Out-Null
+Copy-Item "$d\web\*" "$x\web\"; Copy-Item "$d\test\ext\extras.js" "$x\web\"; Copy-Item "$d\*.dll" $x
+$null = powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\build.ps1" "$x\HWDeck.exe" "$d\test\ext\extras-test.cs"
+if (Test-Path "$d\test\data-ext") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-ext" }
+$p = Start-Deck 'data-ext' 9236 300 "$x\HWDeck.exe"
+Run 'extras' test/e2e-ext.mjs 9236 test/data-ext
 if (-not $p.WaitForExit(8000)) { Stop-Process -Id $p.Id -Force }
 
 # the game sessions popup and a made-up session's report (port 9237): a cell with lines on the CPU temperature, a fan
@@ -118,6 +141,14 @@ if (Test-Path "$d\test\data-lay") { Remove-Item -Recurse -Force -LiteralPath "$d
 $p = Start-Deck 'data-lay' 9238 300
 Run 'layouts' test/e2e-layout.mjs 9238 test/data-lay
 Quit-Deck $p 9238
+
+# tile sizes, lines on both sides, a game session's own numbers (port 9238 again, a fresh copy each)
+foreach ($t in @(@('tile sizes', 'test/e2e-sizes.mjs', 'data-sz'), @('lines on both sides', 'test/e2e-lines2.mjs', 'data-l2'), @('game session numbers', 'test/e2e-gamestats.mjs', 'data-gs'))) {
+  if (Test-Path "$d\test\$($t[2])") { Remove-Item -Recurse -Force -LiteralPath "$d\test\$($t[2])" }
+  $p = Start-Deck $t[2] 9238 300
+  Run $t[0] $t[1] 9238 "test/$($t[2])"
+  Quit-Deck $p 9238
+}
 
 # tile looks (port 9239): every kind of tile in many layouts, measured for what looks broken; screenshots in test\out\gallery
 if (Test-Path "$d\test\data-gal") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-gal" }

@@ -81,7 +81,7 @@ cl = await J(`(() => { const L = ${BUILD}; L.cats[0].id = 'bad id!'; L.views = {
 ok('a category with an unsafe id gets a new one and the views follow it', /^c/.test(cl.cats[0].id) && cl.views.tiles.rows[0].cols[1].stack[0] === cl.cats[0].id && cl.views.tiles.cat[cl.cats[0].id].per === 2, cl.cats[0].id);
 
 // ---- Automatic stays exactly as before ----
-ok('Automatic Tiles: the blocks sit straight in the view (no rows)', await E('!document.querySelector("#view.arr") && document.querySelectorAll("#view > .blk").length === 7'));
+ok('Automatic Tiles: balanced columns, nothing of its own kept, no handles', !(await rows('tiles')) && await E('!!document.querySelector("#view.arr.auto") && document.querySelectorAll("#view .lcol > .blk").length === 7 && !document.querySelector("#view .ldiv, #view .lrs")'));
 
 // ---- making the view your own by dropping on an edge ----
 let a = await p.center(grip('game')), b = await rect(cat('disp'));
@@ -91,7 +91,7 @@ ok('dropping on the bottom edge of an Automatic category makes Tiles your own an
 ok('the toast says Tiles uses your own arrangement now', (await E('$("toastTxt").textContent')).includes('your own arrangement'), await E('$("toastTxt").textContent'));
 ok('the view is drawn in rows now', await E('document.querySelectorAll("#view.arr .lrow").length') === r.length);
 await E('undo()'); await p.sleep(300);
-ok('Undo: Automatic again', !(await rows('tiles')) && await E('!document.querySelector("#view.arr")'));
+ok('Undo: Automatic again', !(await rows('tiles')) && await E('!!document.querySelector("#view.arr.auto")'));
 
 // swap in Automatic keeps it automatic
 const order0 = await J('S.L.cats.map(c => c.id)');
@@ -109,7 +109,7 @@ await E(`(() => { mutate(() => { S.L.views = { tiles: { gap: 'tight', rows: [
 await p.sleep(500);
 ok('rows, columns and the stack are drawn', await E('document.querySelectorAll("#view .lrow").length === 4 && document.querySelectorAll("#view .lrow")[1].querySelectorAll(".lcol")[1].querySelectorAll(".blk").length === 2'));
 ok('the rows are Fill Fill Fill Fit', (await E('[...document.querySelectorAll("#view > .lrow")].map(r => r.dataset.fill ? "fill" : "fit").join(" ")')) === 'fill fill fill fit', await E('[...document.querySelectorAll("#view > .lrow")].map(r => r.dataset.fill ? "fill" : "fit").join(" ")'));
-const cols = await E(`(() => { const t = document.querySelector('${cat('fans')} .tg'); return getComputedStyle(t).gridTemplateColumns.split(' ').length; })()`);
+const cols = await E(`(() => { const ts = [...document.querySelectorAll('${cat('fans')} .tile')].map(t => t.getBoundingClientRect().top); return ts.filter(t => Math.abs(t - ts[0]) < 1).length; })()`);
 ok('Fans: 5 tiles per row', cols === 5, cols);
 ok('Home: short tiles without graphs', await E(`(() => { const t = [...document.querySelectorAll('${cat('home')} .tile')]; return t.length === 4 && t.every(x => x.classList.contains('short') && !x.querySelector('canvas')); })()`));
 ok('a name in this view only', await E(`document.querySelector('#view .dc[data-cid="fans0"] .tn span').textContent === 'Fan sides'`));
@@ -199,7 +199,7 @@ await click('#insp button[data-lay="reset"]');
 ok('Reset its look', !(await J('S.L.views.tiles.cat && S.L.views.tiles.cat.gpu')));
 // a tile's size and its corner
 await click('#view .dc[data-cid="gpu1"]');
-await click('#insp .seg[data-lay="csize"] button[data-v="big"]');
+await click('#insp .seg[data-lay="cw"] button[data-v="2"]'); await click('#insp .seg[data-lay="ch"] button[data-v="2"]');
 ok('a cell\'s size from its settings', (await J('S.L.views.tiles.cell.gpu1')).size === 'big');
 await click('#view .dc[data-cid="gpu1"]');
 const cn = await rect('#view .dc[data-cid="gpu1"] .corner'), tile = await rect('#view .dc[data-cid="gpu1"]');
@@ -308,7 +308,7 @@ ok('state.json has the views', !!(saved.L && saved.L.views && saved.L.views.grid
 await click('#screens button[data-s="tiles"]'); await p.sleep(500);
 await E('clearSel()'); await p.sleep(200);
 await click('#insp button[data-lay="auto"]');
-ok('Back to automatic', !(await rows('tiles')) && await E('!document.querySelector("#view.arr")') && !!(await J('S.L.views.tiles.cell')));
+ok('Back to automatic', !(await rows('tiles')) && await E('!!document.querySelector("#view.arr.auto")') && !!(await J('S.L.views.tiles.cell')));
 
 // ---- edit mode shows the view at its real size: Storage and the settings are drawers over it ----
 await E(`(() => { setEdit(false); showScreen('tiles'); })()`); await p.sleep(900);

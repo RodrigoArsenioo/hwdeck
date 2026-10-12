@@ -25,20 +25,44 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.2.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.2.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.3.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.0.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.2.0";
+    public const string Version = "1.3.0";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
 }
 
 class Sensor { public string Key, Name; }
-class Reading { public string Key, Label, Unit, Orig; public int Sensor, Type; }   // Type: HWiNFO's, 1 temp .. 8 other
+class Reading { public string Key, Label, Unit, Orig, Kind; public int Sensor, Type; }   // Type: HWiNFO's, 1 temp .. 8 other; Kind: see Extra
+
+// what this build calls itself and where it keeps its things. A build with extras (see Extra) may change these in
+// its own Brand.Custom; HW Deck itself has none, so the call compiles away
+static partial class Brand
+{
+    public static string Name = "HW Deck";      // the window, the tray, messages, the Start with Windows entry
+    public static string DataDir = null;        // the data folder when no --data is given (null: %APPDATA%\<Name>)
+    public static bool Updates = true;          // asks GitHub once a day for a new HW Deck
+    static partial void Custom();
+    static Brand() { Custom(); }
+}
+
+// readings from somewhere else than HWiNFO, which a build with extras adds (HW Deck itself has none): one group, shown
+// as a sensor in Storage, with its readings after HWiNFO's. Values follows Readings (NaN: no value); bump Version
+// whenever the readings themselves change. A reading with a Kind is drawn by the build's web\extras.js
+abstract class Extra
+{
+    public string Key = "", Name = "";                              // the group: "x.screens", "Screens"
+    public readonly List<Reading> Readings = new List<Reading>();    // their Key: the group's Key + "/" + an id of its own
+    public double[] Values = new double[0];
+    public int Version = 0;
+    public virtual void Poll() { }                                  // every tick, four times a second: keep it cheap
+    public virtual void Second() { }                                // once a second, before the history takes its sample
+}
 
 // the readings and their latest values; Min, Max and Avg are HWiNFO's own (since it started or was reset)
 abstract class Source
@@ -242,6 +266,18 @@ class FakeSource : Source
                 r.Label = nm[2]; if (nm[3].Length > 0) r.Unit = nm[3];
                 taken.Add(i); break;
             }
+        // tests (HWDECK_FAKEPINS=1): a 12V-2x6 connector's six pins on the GPU, from made-up currents and powers there
+        if (Environment.GetEnvironmentVariable("HWDECK_FAKEPINS") == "1")
+            foreach (var spec in new[] { new[] { "4", "Current" }, new[] { "5", "Power" } })
+            {
+                int k = 0;
+                for (int i = 0; i < count && k < 6; i++)
+                {
+                    var r = Readings[i];
+                    if (taken.Contains(i) || r.Type != int.Parse(spec[0]) || !Sensors[r.Sensor].Name.StartsWith("dGPU")) continue;
+                    r.Label = "GPU 12VHPWR Pin" + (++k) + " " + spec[1]; taken.Add(i);
+                }
+            }
         fpsI = Readings.FindIndex(r => r.Label == "Framerate"); lowI = Readings.FindIndex(r => r.Label == "Framerate (1% low)");
         Size(count); sum = new double[count]; pin = new double[count];
         for (int i = 0; i < count; i++) { Min[i] = double.MaxValue; Max[i] = double.MinValue; pin[i] = double.NaN; }
@@ -278,21 +314,36 @@ class DeckSource : Source
 {
     public readonly Source Inner;
     public readonly Bottleneck Bneck = new Bottleneck();
-    int innerVersion = -1;
+    public readonly Connector Conn = new Connector();
+    public readonly List<Extra> Extras = new List<Extra>();     // a build's own readings (see Extra), after HW Deck's
+    int innerVersion = -1, extraVersion = -1, connAt = -1;
+    int[] extraAt = new int[0];                                 // where each extra's readings start
     public DeckSource(Source inner) { Inner = inner; }
     public override void Poll()
     {
         Inner.Poll();
+        foreach (var x in Extras) x.Poll();
         Status = Inner.Status; Age = Inner.Age; PmProc = Inner.PmProc;
-        if (Inner.Version != innerVersion)
+        int ev = Extras.Count; foreach (var x in Extras) ev = ev * 31 + x.Version;
+        if (Inner.Version != innerVersion || ev != extraVersion)
         {
-            innerVersion = Inner.Version;
+            innerVersion = Inner.Version; extraVersion = ev;
             Sensors = new List<Sensor>(Inner.Sensors); Readings = new List<Reading>(Inner.Readings);
+            extraAt = new int[Extras.Count]; connAt = -1;
+            Conn.Find(Inner);
             // nothing from HWiNFO yet, nothing of its own either: the page's setup steps go by an empty catalog
             if (Readings.Count > 0)
             {
                 Sensors.Add(new Sensor { Key = "hwdeck.0", Name = "HW Deck" });
                 Readings.Add(new Reading { Key = Bottleneck.Key, Label = "Bottleneck", Unit = "", Sensor = Sensors.Count - 1, Type = 8 });
+                if (Conn.Has) { connAt = Readings.Count; Readings.Add(new Reading { Key = Connector.Key, Label = "12V-2x6 connector", Unit = "A", Kind = "12v", Sensor = Sensors.Count - 1, Type = 4 }); }
+                for (int j = 0; j < Extras.Count; j++)
+                {
+                    var x = Extras[j];
+                    Sensors.Add(new Sensor { Key = x.Key, Name = x.Name });
+                    extraAt[j] = Readings.Count;
+                    foreach (var r in x.Readings) Readings.Add(new Reading { Key = r.Key, Label = r.Label, Unit = r.Unit ?? "", Kind = r.Kind, Sensor = Sensors.Count - 1, Type = r.Type });
+                }
             }
             Bneck.Find(Inner);
             Version++;
@@ -302,12 +353,26 @@ class DeckSource : Source
         Array.Copy(Inner.Values, Values, m); Array.Copy(Inner.Min, Min, m); Array.Copy(Inner.Max, Max, m); Array.Copy(Inner.Avg, Avg, m);
         for (int i = m; i < Values.Length; i++) { Values[i] = Min[i] = Max[i] = Avg[i] = double.NaN; }
         if (Values.Length > n) Values[n] = Bneck.Value;
+        Conn.Poll(Inner);
+        if (connAt >= 0 && connAt < Values.Length) Values[connAt] = Conn.Worst;
+        CopyExtras();
+    }
+    void CopyExtras()
+    {
+        if (Values.Length <= Inner.Readings.Count) return;      // no HWiNFO yet: no extras either
+        for (int j = 0; j < Extras.Count && j < extraAt.Length; j++)
+        {
+            var x = Extras[j]; var v = x.Values;
+            for (int i = 0; i < x.Readings.Count && extraAt[j] + i < Values.Length; i++) Values[extraAt[j] + i] = i < v.Length ? v[i] : double.NaN;
+        }
     }
     // once a second, before the history takes its sample
     public void Second(bool game)
     {
+        foreach (var x in Extras) x.Second();   // first: the bottleneck may go by a build's own measurements
         Bneck.Second(Inner, game);
         if (Values.Length > Inner.Readings.Count) Values[Inner.Readings.Count] = Bneck.Value;
+        CopyExtras();
     }
 }
 
@@ -323,7 +388,15 @@ class Bottleneck
     char last = '-';
     public char Call = '-';                 // this second's; '-' no game, no readings or HWiNFO not sharing
     public double Value = double.NaN;       // this second's call for the history: 1 gpu, 2 cpu, 3 capped
+    // and as three readings only the history keeps (not in the catalog): 1 for the call this second, 0 for the others
+    // and with no game, so a minute's averages are the share of it each call held (the long ranges of its popup)
+    public static readonly string[] ShareKeys = { Key + ".g", Key + ".c", Key + ".f" };
+    public readonly double[] Shares = new double[3];
     public object[] Inputs = new object[3]; // for the page: the GPU usage key, the Max CPU/Thread Usage key, how many per-thread ones
+    // a build's own measurements to go by when HWiNFO doesn't share these (see Extra): the reading's key, for the page,
+    // and how to read it now (NaN: no value)
+    public string OwnGpuKey = null, OwnCpuKey = null;
+    public Func<double> OwnGpu = null, OwnCpu = null;
     public void Find(Source src)
     {
         gpuI = Games.GpuUsage(src); maxI = -1;
@@ -336,13 +409,16 @@ class Bottleneck
             else if (Named(ThreadRe, r)) th.Add(i);
         }
         threads = th.ToArray();
-        Inputs = new object[] { gpuI >= 0 ? src.Readings[gpuI].Key : null, maxI >= 0 ? src.Readings[maxI].Key : null, threads.Length };
+        Inputs = new object[] { gpuI >= 0 ? src.Readings[gpuI].Key : OwnGpu != null ? OwnGpuKey : null,
+                                maxI >= 0 ? src.Readings[maxI].Key : threads.Length == 0 && OwnCpu != null ? OwnCpuKey : null, threads.Length };
     }
     static double At(Source src, int i) { return i >= 0 && i < src.Values.Length && !double.IsInfinity(src.Values[i]) ? src.Values[i] : double.NaN; }
     public void Second(Source src, bool game)
     {
         double gpu = At(src, gpuI), cpu = At(src, maxI);
         if (maxI < 0) foreach (int i in threads) { double v = At(src, i); if (!double.IsNaN(v) && (double.IsNaN(cpu) || v > cpu)) cpu = v; }
+        if (gpuI < 0 && OwnGpu != null) gpu = OwnGpu();
+        if (maxI < 0 && threads.Length == 0 && OwnCpu != null) cpu = OwnCpu();
         char call = '-';
         if (game && src.Status == "ok" && !double.IsNaN(gpu) && !double.IsNaN(cpu))
         {
@@ -352,6 +428,46 @@ class Bottleneck
         Call = call;
         // 6. each second's call as it is, the same ones the game report counts; the page shows the most common of the last 5 s
         Value = call == 'g' ? 1 : call == 'c' ? 2 : call == 'f' ? 3 : double.NaN;
+        Shares[0] = call == 'g' ? 1 : 0; Shares[1] = call == 'c' ? 1 : 0; Shares[2] = call == 'f' ? 1 : 0;
+    }
+}
+
+// a GPU's 12V-2x6 (12VHPWR) power connector, when HWiNFO reports its pins ("GPU 12VHPWR Pin1 Current" ... and their
+// Power): its most loaded pin as a reading of HW Deck's own (a pin is rated 9.5 A; a healthy connector at a 600 W limit
+// peaks near 9.1 A a pin), and whether one pin carries 1.5x its share of the load, the early sign of a bad contact
+// (judged from 15 A up: at idle a spread means nothing). Its cell draws the pins (kind "12v" in deck.js)
+class Connector
+{
+    public const string Key = "hwdeck.0/12v";
+    static readonly Regex PinA = new Regex(@"^GPU 12VHPWR Pin(\d+) Current$"), PinW = new Regex(@"^GPU 12VHPWR Pin(\d+) Power$");
+    int[] a = new int[0], w = new int[0];
+    public object[] Keys = new object[0];       // for the page: the pins' current keys, then their power keys
+    public double Worst = double.NaN, Share;    // the most loaded pin (A); its load against the average
+    public int Hot = -1;                        // which pin that is (from 0)
+    public bool Lopsided;                       // a pin over 1.5x its share, at 15 A or more in all
+    public double[] A = new double[0], W = new double[0];
+    public bool Has { get { return a.Length >= 2; } }
+    public void Find(Source src)
+    {
+        var ma = new SortedDictionary<int, int>(); var mw = new SortedDictionary<int, int>();
+        for (int i = 0; i < src.Readings.Count; i++)
+        {
+            var r = src.Readings[i]; Match m;
+            if ((m = PinA.Match(r.Label)).Success || (!string.IsNullOrEmpty(r.Orig) && (m = PinA.Match(r.Orig)).Success)) { int k = int.Parse(m.Groups[1].Value); if (!ma.ContainsKey(k)) ma[k] = i; }
+            else if ((m = PinW.Match(r.Label)).Success || (!string.IsNullOrEmpty(r.Orig) && (m = PinW.Match(r.Orig)).Success)) { int k = int.Parse(m.Groups[1].Value); if (!mw.ContainsKey(k)) mw[k] = i; }
+        }
+        a = ma.Values.ToArray(); w = mw.Values.ToArray();
+        Keys = new object[] { a.Select(i => (object)src.Readings[i].Key).ToList(), w.Select(i => (object)src.Readings[i].Key).ToList() };
+    }
+    public void Poll(Source src)
+    {
+        Func<int, double> at = i => i < src.Values.Length ? src.Values[i] : double.NaN;
+        A = a.Select(at).ToArray(); W = w.Select(at).ToArray();
+        double max = double.NaN, tot = 0; int n = 0; Hot = -1;
+        for (int i = 0; i < A.Length; i++) if (!double.IsNaN(A[i])) { tot += A[i]; n++; if (double.IsNaN(max) || A[i] > max) { max = A[i]; Hot = i; } }
+        Worst = n > 0 ? max : double.NaN;
+        Share = n > 0 && tot > 0 ? max / (tot / n) : 0;
+        Lopsided = n >= 2 && tot >= 15 && Share >= 1.5;
     }
 }
 
@@ -365,6 +481,9 @@ class History
     {
         public float[] Sec = NaNs(SecLen), MAvg = NaNs(MinLen), MMax = NaNs(MinLen), TAvg = NaNs(TenLen), TMax = NaNs(TenLen);
         public double MSum, MPeak = double.MinValue, TSum, TPeak = double.MinValue; public int MCnt, TCnt;
+        public bool Share;   // 1 or 0 a second (the bottleneck's calls): a minute holds its part of the whole minute, not of the seconds sampled
+        public double MVal(int len) { return Share ? MSum / len : MSum / MCnt; }
+        public double TVal(int len) { return Share ? TSum / len : TSum / TCnt; }
     }
     readonly Dictionary<string, Track> tracks = new Dictionary<string, Track>();
     readonly long[] secAt = new long[SecLen];
@@ -382,10 +501,11 @@ class History
 
     static float[] NaNs(int n) { var a = new float[n]; for (int i = 0; i < n; i++) a[i] = float.NaN; return a; }
 
-    // once a second
-    public void Sample(Source src)
+    // once a second; moreKeys / more: readings only the history keeps (not in the catalog), NaN for none
+    public void Sample(Source src, string[] moreKeys = null, double[] more = null)
     {
         if (held && Source.Unix() >= retryAt) Load();
+        if (moreKeys != null) foreach (var k in moreKeys) { Track t; if (!tracks.TryGetValue(k, out t)) tracks[k] = t = new Track(); t.Share = true; }
         if (src.Version != version)
         {
             version = src.Version;
@@ -412,21 +532,67 @@ class History
                 t.MSum += v; t.MCnt++; if (v > t.MPeak) t.MPeak = v;
                 t.TSum += v; t.TCnt++; if (v > t.TPeak) t.TPeak = v;
             }
+        if (src.Status == "ok" && moreKeys != null && more != null)
+            for (int i = 0; i < moreKeys.Length && i < more.Length; i++)
+            {
+                double v = more[i];
+                if (double.IsNaN(v) || double.IsInfinity(v)) continue;
+                var t = tracks[moreKeys[i]];
+                t.Sec[si] = (float)v;
+                t.MSum += v; t.MCnt++; if (v > t.MPeak) t.MPeak = v;
+                t.TSum += v; t.TCnt++; if (v > t.TPeak) t.TPeak = v;
+            }
         secAt[si] = now;
     }
 
     void CloseMin(Track t)
     {
-        if (curMin >= 0) { int k = curMin % MinLen; t.MAvg[k] = t.MCnt > 0 ? (float)(t.MSum / t.MCnt) : float.NaN; t.MMax[k] = t.MCnt > 0 ? (float)t.MPeak : float.NaN; }
+        if (curMin >= 0) { int k = curMin % MinLen; t.MAvg[k] = t.MCnt > 0 ? (float)t.MVal(60) : float.NaN; t.MMax[k] = t.MCnt > 0 ? (float)t.MPeak : float.NaN; }
         t.MSum = 0; t.MCnt = 0; t.MPeak = double.MinValue;
     }
     void CloseTen(Track t)
     {
-        if (curTen >= 0) { int k = curTen % TenLen; t.TAvg[k] = t.TCnt > 0 ? (float)(t.TSum / t.TCnt) : float.NaN; t.TMax[k] = t.TCnt > 0 ? (float)t.TPeak : float.NaN; }
+        if (curTen >= 0) { int k = curTen % TenLen; t.TAvg[k] = t.TCnt > 0 ? (float)t.TVal(600) : float.NaN; t.TMax[k] = t.TCnt > 0 ? (float)t.TPeak : float.NaN; }
         t.TSum = 0; t.TCnt = 0; t.TPeak = double.MinValue;
     }
 
     static object R(double v) { return double.IsNaN(v) || double.IsInfinity(v) ? null : (object)Math.Round(v, 3); }
+
+    // history from elsewhere (a build moving its old history over, see Extra): one reading's closed minutes as unix
+    // minute, average, peak. They fill the 24 h of minutes and, ten at a time, the 7 days of blocks, but only where
+    // this history has nothing for that reading yet; a slot still holding an older minute (or block) is cleared for
+    // every reading first. Returns how many minutes went in
+    public int Import(string key, IList<int> minutes, IList<float> avg, IList<float> peak)
+    {
+        Track t;
+        if (!tracks.TryGetValue(key, out t)) { t = new Track(); tracks[key] = t; }
+        long now = Source.Unix();
+        int cm = curMin >= 0 ? curMin : (int)(now / 60), ct = curTen >= 0 ? curTen : (int)(now / 600), n = 0;
+        var blocks = new Dictionary<int, double[]>();   // block: sum of averages, count, peak
+        for (int i = 0; i < minutes.Count && i < avg.Count && i < peak.Count; i++)
+        {
+            int m = minutes[i];
+            if (m >= cm || float.IsNaN(avg[i])) continue;
+            if (m > cm - MinLen)
+            {
+                int k = m % MinLen;
+                if (minAt[k] != m) { foreach (var o in tracks.Values) { o.MAvg[k] = float.NaN; o.MMax[k] = float.NaN; } minAt[k] = m; }
+                if (float.IsNaN(t.MAvg[k])) { t.MAvg[k] = avg[i]; t.MMax[k] = peak[i]; n++; }
+            }
+            double[] b;
+            if (!blocks.TryGetValue(m / 10, out b)) blocks[m / 10] = b = new double[] { 0, 0, double.MinValue };
+            b[0] += avg[i]; b[1]++; if (!float.IsNaN(peak[i]) && peak[i] > b[2]) b[2] = peak[i];
+        }
+        foreach (var kv in blocks)
+        {
+            int bl = kv.Key;
+            if (bl >= ct || bl <= ct - TenLen) continue;
+            int k = bl % TenLen;
+            if (tenAt[k] != bl) { foreach (var o in tracks.Values) { o.TAvg[k] = float.NaN; o.TMax[k] = float.NaN; } tenAt[k] = bl; }
+            if (float.IsNaN(t.TAvg[k])) { t.TAvg[k] = (float)(kv.Value[0] / kv.Value[1]); t.TMax[k] = kv.Value[2] > double.MinValue ? (float)kv.Value[2] : t.TAvg[k]; }
+        }
+        return n;
+    }
 
     // the last 15 min, oldest first, ending at the second `now`; null where nothing was measured
     public object[] Seconds(string key, long now)
@@ -458,7 +624,7 @@ class History
                 if (b == cur)
                 {
                     int c = week ? t.TCnt : t.MCnt;
-                    if (c > 0) { avg[i] = R(week ? t.TSum / c : t.MSum / c); max[i] = R(week ? t.TPeak : t.MPeak); }
+                    if (c > 0) { avg[i] = R(week ? t.TVal(600) : t.MVal(60)); max[i] = R(week ? t.TPeak : t.MPeak); }
                 }
                 else if (b >= 0)
                 {
@@ -467,7 +633,7 @@ class History
                 }
             }
         }
-        return new Dictionary<string, object> { { "key", key }, { "range", week ? "7d" : range }, { "step", week ? 600 : 60 }, { "span", span * (week ? 600 : 60) }, { "avg", avg }, { "max", max } };
+        return new Dictionary<string, object> { { "key", key }, { "range", week ? "7d" : range }, { "step", week ? 600 : 60 }, { "span", span * (week ? 600 : 60) }, { "avg", avg }, { "max", max }, { "end", (long)(week ? curTen : curMin) * (week ? 600 : 60) } };   // end: where the last column starts
     }
 
     // a copy of what is closed (cheap, on the UI thread); the writing happens on a pool thread unless the app is quitting
@@ -541,8 +707,8 @@ class History
         foreach (var kv in tracks) { var t = kv.Value; if (t.MCnt > 0 || t.TCnt > 0) openAcc[kv.Key] = new[] { t.MCnt, t.MSum, t.MPeak, t.TCnt, t.TSum, t.TPeak }; }
         foreach (var t in tracks.Values)   // their values so far; the sums go on, so a cancelled shutdown loses nothing
         {
-            if (t.MCnt > 0 && curMin >= 0) { int k = curMin % MinLen; t.MAvg[k] = (float)(t.MSum / t.MCnt); t.MMax[k] = (float)t.MPeak; }
-            if (t.TCnt > 0 && curTen >= 0) { int k = curTen % TenLen; t.TAvg[k] = (float)(t.TSum / t.TCnt); t.TMax[k] = (float)t.TPeak; }
+            if (t.MCnt > 0 && curMin >= 0) { int k = curMin % MinLen; t.MAvg[k] = (float)t.MVal(60); t.MMax[k] = (float)t.MPeak; }
+            if (t.TCnt > 0 && curTen >= 0) { int k = curTen % TenLen; t.TAvg[k] = (float)t.TVal(600); t.TMax[k] = (float)t.TPeak; }
         }
         if (curMin >= 0) minAt[curMin % MinLen] = curMin;
         if (curTen >= 0) tenAt[curTen % TenLen] = curTen;
@@ -628,10 +794,10 @@ class History
 // to normal for 3 s (with its peak), in alerts.log, the same format as the tailored dashboard
 class Alerts
 {
-    class Rule { public string Id, Key, Name, Unit, Mode, Dir, Src; public double Y, R, Tol, Hold, CurveHold; public int Dec; public double[][] Pts; }
+    class Rule { public string Id, Key, Name, Unit, Mode, Dir, Src; public double Y, R, Tol, Hold, CurveHold, OY = double.NaN, OR = double.NaN; public bool CurveWarn = true; public int Dec; public double[][] Pts; public Func<int> Level; public Func<string> Why; }
     class St
     {
-        public long Since; public int Logged, Calm, Dec; public double Peak, PeakDev; public string Name, Unit;
+        public long Since; public int Logged, Calm, Dec; public double Peak, PeakDev; public string Name, Unit; public bool Below;
         public string PeakTxt { get { return (Fmt(Peak, Dec) + " " + Unit).Trim(); } }
     }
     List<Rule> rules = new List<Rule>();
@@ -643,6 +809,14 @@ class Alerts
     public class Warm { public string Name, Unit; public double Peak; public bool New, Below; }
     public readonly List<Warm> Hot = new List<Warm>();
     public HashSet<string> Skip = new HashSet<string>();   // readings with no verdict right now (PresentMon away from the game)
+    // lines a build keeps whatever the layout holds (see Extra): its own checks in the warning log, as cell-like entries
+    // { key, name, gates }, judged like a cell's; their ids start "x:"
+    public readonly Dictionary<string, IDictionary<string, object>> Always = new Dictionary<string, IDictionary<string, object>>();
+    // rules judged by code instead of by lines: the level now (0, 1 yellow, 2 red) and why (added to the log line), the
+    // reading whose value the log shows. HW Deck's own: a 12V-2x6 connector cell's uneven pins; a build adds its own
+    public class Judged { public string Key = null, Name = null, Unit = null; public double Hold = 0; public Func<int> Level = null; public Func<string> Why = null; }
+    public readonly Dictionary<string, Judged> Own = new Dictionary<string, Judged>();
+    public Connector Conn;
 
     public static double Num(object o, double d) { try { double v = o == null ? d : Convert.ToDouble(o, System.Globalization.CultureInfo.InvariantCulture); return double.IsInfinity(v) ? d : v; } catch { return d; } }
     static object F(IDictionary<string, object> d, string k) { object o; return d != null && d.TryGetValue(k, out o) ? o : null; }
@@ -670,36 +844,48 @@ class Alerts
     {
         var list = new List<Rule>();
         var cells = F(layout as IDictionary<string, object>, "cells") as IDictionary<string, object>;
-        if (cells != null)
-            foreach (var kv in cells)
+        var all = cells != null ? cells.ToList() : new List<KeyValuePair<string, object>>();
+        foreach (var kv in Always) all.Add(new KeyValuePair<string, object>("x:" + kv.Key, kv.Value));
+        foreach (var kv in all)
+        {
+            var c = kv.Value as IDictionary<string, object>;
+            string key = F(c, "key") as string;
+            if (c == null || key == null || true.Equals(F(c, "pred")) || key == Bottleneck.Key) continue;   // a call, not a level: no lines
+            var g = F(c, "gates") as IDictionary<string, object>;
+            var cv = F(c, "curve") as IDictionary<string, object>;
+            string mode = g != null ? F(g, "mode") as string : null;
+            bool gated = mode == "y" || mode == "yr";
+            if (!gated && cv == null) continue;
+            var rd = src.Readings.FirstOrDefault(x => x.Key == key);
+            string name = Clean(F(c, "name") as string);
+            var rule = new Rule { Id = kv.Key, Key = key, Name = name.Length > 0 ? name : (rd != null ? Clean(rd.Label) : key), Unit = rd != null ? rd.Unit : "",
+                                  Mode = gated ? mode : "none", Dir = g != null && "below".Equals(F(g, "dir")) ? "below" : "above",
+                                  Y = gated ? Num(F(g, "y"), double.NaN) : double.NaN, R = mode == "yr" ? Num(F(g, "r"), double.NaN) : double.NaN,
+                                  Hold = gated ? Math.Max(0, Math.Min(1e9, Num(F(g, "hold"), 0))) : 0 };
+            rule.Dec = (int)Math.Max(0, Math.Min(3, Num(F(c, "dec"), DecFor(rule.Unit))));
+            // lines on the other side too (gates.other: y and/or r, past its own yellow the other way, red further than yellow)
+            var og = gated ? F(g, "other") as IDictionary<string, object> : null;
+            if (og != null && !double.IsNaN(rule.Y))
             {
-                var c = kv.Value as IDictionary<string, object>;
-                string key = F(c, "key") as string;
-                if (c == null || key == null || true.Equals(F(c, "pred")) || key == Bottleneck.Key) continue;   // a call, not a level: no lines
-                var g = F(c, "gates") as IDictionary<string, object>;
-                var cv = F(c, "curve") as IDictionary<string, object>;
-                string mode = g != null ? F(g, "mode") as string : null;
-                bool gated = mode == "y" || mode == "yr";
-                if (!gated && cv == null) continue;
-                var rd = src.Readings.FirstOrDefault(x => x.Key == key);
-                string name = Clean(F(c, "name") as string);
-                var rule = new Rule { Id = kv.Key, Key = key, Name = name.Length > 0 ? name : (rd != null ? Clean(rd.Label) : key), Unit = rd != null ? rd.Unit : "",
-                                      Mode = gated ? mode : "none", Dir = g != null && "below".Equals(F(g, "dir")) ? "below" : "above",
-                                      Y = gated ? Num(F(g, "y"), double.NaN) : double.NaN, R = mode == "yr" ? Num(F(g, "r"), double.NaN) : double.NaN,
-                                      Hold = gated ? Math.Max(0, Math.Min(1e9, Num(F(g, "hold"), 0))) : 0 };
-                rule.Dec = (int)Math.Max(0, Math.Min(3, Num(F(c, "dec"), DecFor(rule.Unit))));
-                if (cv != null)
-                {
-                    rule.Src = F(cv, "src") as string; rule.Tol = Math.Max(1, Num(F(cv, "tol"), 15)); rule.CurveHold = Math.Max(0, Math.Min(1e9, Num(F(cv, "hold"), 10)));
-                    var pts = F(cv, "pts") as System.Collections.IList;   // object[] from state.json, ArrayList from a page message
-                    if (pts != null)
-                        rule.Pts = pts.Cast<object>().Select(p => p as System.Collections.IList).Where(p => p != null && p.Count >= 2)
-                                      .Select(p => new[] { Num(p[0], double.NaN), Num(p[1], double.NaN) }).Where(p => !double.IsNaN(p[0]) && !double.IsNaN(p[1]))
-                                      .OrderBy(p => p[0]).ToArray();
-                    if (rule.Pts == null || rule.Pts.Length < 2) rule.Pts = null;
-                }
-                list.Add(rule);
+                bool down = rule.Dir != "below";
+                double oy = Num(F(og, "y"), double.NaN), orr = Num(F(og, "r"), double.NaN);
+                Func<double, bool> beyond = x => double.IsNaN(x) || (down ? x < rule.Y : x > rule.Y);
+                bool ok = !(double.IsNaN(oy) && double.IsNaN(orr)) && beyond(oy) && beyond(orr) && (double.IsNaN(oy) || double.IsNaN(orr) || (down ? orr <= oy : orr >= oy));
+                if (ok) { rule.OY = oy; rule.OR = orr; }
             }
+            if (cv != null)
+            {
+                rule.Src = F(cv, "src") as string; rule.Tol = Math.Max(1, Num(F(cv, "tol"), 15)); rule.CurveHold = Math.Max(0, Math.Min(1e9, Num(F(cv, "hold"), 10)));
+                rule.CurveWarn = !false.Equals(F(cv, "warn"));   // off: the page only says how far off it is, nothing is logged
+                var pts = F(cv, "pts") as System.Collections.IList;   // object[] from state.json, ArrayList from a page message
+                if (pts != null)
+                    rule.Pts = pts.Cast<object>().Select(p => p as System.Collections.IList).Where(p => p != null && p.Count >= 2)
+                                  .Select(p => new[] { Num(p[0], double.NaN), Num(p[1], double.NaN) }).Where(p => !double.IsNaN(p[0]) && !double.IsNaN(p[1]))
+                                  .OrderBy(p => p[0]).ToArray();
+                if (rule.Pts == null || rule.Pts.Length < 2) rule.Pts = null;
+            }
+            list.Add(rule);
+        }
         // the history pairs lines by name: cells with the same name get their sensor's name, then a number
         foreach (var grp in list.GroupBy(r => r.Name).Where(x => x.Count() > 1).ToList())
         {
@@ -710,6 +896,16 @@ class Alerts
             }
         }
         foreach (var grp in list.GroupBy(r => r.Name).Where(x => x.Count() > 1).ToList()) { int n = 1; foreach (var r in grp.Skip(1)) r.Name += " #" + (++n); }
+        // a 12V-2x6 connector cell also watches its pins' balance
+        foreach (var r in list.Where(x => x.Key == Connector.Key && x.Level == null).ToList())
+            list.Add(new Rule { Id = r.Id + ":uneven", Key = r.Key, Name = r.Name, Unit = r.Unit, Dec = 2, Mode = "none", Hold = 3,
+                                Level = () => Conn != null && Conn.Lopsided ? 1 : 0,
+                                Why = () => Conn == null ? "" : " (pin " + (Conn.Hot + 1) + " carrying " + Math.Round(Conn.Share, 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + "x its share)" });
+        foreach (var kv in Own)
+        {
+            var j = kv.Value;
+            list.Add(new Rule { Id = "o:" + kv.Key, Key = j.Key, Name = j.Name, Unit = j.Unit ?? "", Dec = DecFor(j.Unit), Mode = "none", Hold = j.Hold, Level = j.Level, Why = j.Why });
+        }
         rules = list;
         // an episode whose line is gone (cell removed, gates off, another layout loaded) ends here, not at the next start
         foreach (var id in state.Keys.Where(k => !rules.Any(r => r.Id == k)).ToList())
@@ -747,16 +943,22 @@ class Alerts
             if (!index.TryGetValue(r.Key, out i) || i >= src.Values.Length) continue;
             double v = src.Values[i];
             if (double.IsNaN(v)) continue;
-            int raw = 0; double hold = r.Hold, dev = 0; bool off = false, under = false; string extra = "";
+            int raw = 0; double hold = r.Hold, dev = 0; bool off = false, under = false, other = false; string extra = "";
             bool skip = Skip.Contains(r.Key);
+            if (r.Level != null && !skip) { raw = Math.Max(0, Math.Min(2, r.Level())); if (raw > 0 && r.Why != null) extra = r.Why(); }
             bool gatesOk = !skip && r.Mode != "none" && !double.IsNaN(r.Y) && !(r.Mode == "yr" && !double.IsNaN(r.R) && (r.Dir == "below" ? r.R >= r.Y : r.R <= r.Y));
             if (gatesOk)
             {
                 Func<double, bool> past = x => r.Dir == "below" ? v <= x : v >= x;
                 if (r.Mode == "yr" && !double.IsNaN(r.R) && past(r.R)) raw = 2; else if (past(r.Y)) raw = 1;
+                else
+                {
+                    Func<double, bool> po = x => !double.IsNaN(x) && (r.Dir != "below" ? v <= x : v >= x);
+                    if (po(r.OR)) { raw = 2; other = true; } else if (po(r.OY)) { raw = 1; other = true; }
+                }
             }
             int si;
-            if (!skip && raw == 0 && r.Pts != null && r.Pts.Length > 0 && r.Src != null && index.TryGetValue(r.Src, out si) && si < src.Values.Length && !double.IsNaN(src.Values[si]))
+            if (!skip && raw == 0 && r.CurveWarn && r.Pts != null && r.Pts.Length > 0 && r.Src != null && index.TryGetValue(r.Src, out si) && si < src.Values.Length && !double.IsNaN(src.Values[si]))
             {
                 double exp = Interp(r.Pts, src.Values[si]);
                 if (exp > 0 && Math.Abs((v - exp) / exp * 100) > r.Tol)
@@ -773,7 +975,8 @@ class Alerts
             {
                 s.Calm = 0;
                 // the worst moment: furthest past the line, or furthest off the curve
-                bool worse = off ? dev > s.PeakDev : r.Dir == "below" ? v < s.Peak : v > s.Peak;
+                if (s.Logged == 0) s.Below = !off && (r.Dir == "below") != other;   // which way this episode is bad
+                bool worse = off ? dev > s.PeakDev : s.Below ? v < s.Peak : v > s.Peak;
                 if (s.Logged == 0 || worse) { s.Peak = v; s.PeakDev = dev; s.Unit = r.Unit; s.Dec = r.Dec; }
                 if (s.Logged == 0) s.Name = r.Name + (off ? " fan curve" : "");   // one name for the whole episode
                 bool fresh = s.Logged != lvl && (s.Logged == 0 || lvl > s.Logged);
@@ -783,7 +986,7 @@ class Alerts
                     NewAlerts++;
                 }
                 if (lvl > s.Logged) s.Logged = lvl;
-                Hot.Add(new Warm { Name = s.Name, Unit = r.Unit, Peak = Math.Round(s.Peak, Math.Max(0, Math.Min(3, s.Dec))), New = fresh, Below = off ? under : r.Dir == "below" });
+                Hot.Add(new Warm { Name = s.Name, Unit = r.Unit, Peak = Math.Round(s.Peak, Math.Max(0, Math.Min(3, s.Dec))), New = fresh, Below = off ? under : s.Below });
             }
             else if (s.Logged > 0 && raw == 0)
             {
@@ -1000,12 +1203,16 @@ class Games
                    // its name in the report, its unit, "m" for a main reading
                    public Dictionary<string, double[]> Items = new Dictionary<string, double[]>(); public Dictionary<string, string[]> Names = new Dictionary<string, string[]>();
                    // seconds in front each bottleneck call held (G gpu, C cpu, F capped); per minute since Start, Tb holds the
-                   // call that held most of it ('-' none), Tf and Tl the fps and 1% low averages in front (null none). MinAt is
-                   // the minute in progress, MG, MC, MF its seconds per call, MFs / MFn and MLs / MLn its fps sums
+                   // call that held most of it ('-' none), Tc its seconds per call ([g, c, f], null none), Tf and Tl the fps
+                   // and 1% low averages in front (null none). MinAt is the minute in progress, MG, MC, MF its seconds per
+                   // call, MFs / MFn and MLs / MLn its fps sums
                    public int G, C, F, MinAt = -1, MG, MC, MF, MFn, MLn; public double MFs, MLs; public string Tb = "";
+                   public List<int[]> Tc = new List<int[]>();
                    public List<double?> Tf = new List<double?>(), Tl = new List<double?>();
                    // what crossed a line (up to 5): its name, unit, worst value and which way worse is
-                   public List<string> WarnNames = new List<string>(), WarnUnits = new List<string>(); public List<double> WarnPeaks = new List<double>(); public List<bool> WarnBelow = new List<bool>(); }
+                   public List<string> WarnNames = new List<string>(), WarnUnits = new List<string>(); public List<double> WarnPeaks = new List<double>(); public List<bool> WarnBelow = new List<bool>();
+                   // the game's own readings (PresentMon's: fps, frame times) while it was in front: min, sum, samples, max
+                   public Dictionary<string, double[]> Pm = new Dictionary<string, double[]>(); }
     // a gated cell's lines (NaN: none) and name, for the report
     public class Lines { public double Y = double.NaN, R = double.NaN; public bool Below; public string Name; }
     readonly Dictionary<string, Lines> lastLines = new Dictionary<string, Lines>();   // the lines each item had during the session
@@ -1151,6 +1358,8 @@ class Games
             if (r.Tb.Length < r.MinAt) r.Tb += new string('-', r.MinAt - r.Tb.Length);
             while (r.Tf.Count < r.MinAt) { r.Tf.Add(null); r.Tl.Add(null); }
             if (r.Tb.Length == r.MinAt) r.Tb += r.MG + r.MC + r.MF == 0 ? "-" : r.MC >= r.MG && r.MC >= r.MF ? "c" : r.MG >= r.MF ? "g" : "f";
+            while (r.Tc.Count < r.MinAt) r.Tc.Add(null);
+            if (r.Tc.Count == r.MinAt) r.Tc.Add(r.MG + r.MC + r.MF == 0 ? null : new[] { r.MG, r.MC, r.MF });
             if (r.Tf.Count == r.MinAt) { r.Tf.Add(r.MFn > 0 ? (double?)Math.Round(r.MFs / r.MFn) : null); r.Tl.Add(r.MLn > 0 ? (double?)Math.Round(r.MLs / r.MLn) : null); }
         }
         r.MinAt = next; r.MG = r.MC = r.MF = r.MFn = r.MLn = 0; r.MFs = r.MLs = 0;
@@ -1159,6 +1368,7 @@ class Games
     static void Fill(Report r)
     {
         if (r.Tb == null) r.Tb = "";
+        if (r.Tc == null) r.Tc = new List<int[]>();   // (an older one's minutes so far stay without it: the page goes by Tb there)
         if (r.Tf == null || r.Tl == null || r.Tf.Count != r.Tl.Count) { r.Tf = new List<double?>(); r.Tl = new List<double?>(); }
         if (r.WarnNames == null || r.WarnUnits == null || r.WarnPeaks == null || r.WarnBelow == null || r.WarnNames.Count != r.WarnPeaks.Count || r.WarnNames.Count != r.WarnUnits.Count || r.WarnNames.Count != r.WarnBelow.Count)
         { r.WarnNames = new List<string>(); r.WarnUnits = new List<string>(); r.WarnPeaks = new List<double>(); r.WarnBelow = new List<bool>(); }
@@ -1179,6 +1389,13 @@ class Games
 
     // once a second from the form's timer: follow the open session; write its line once it ended. call: this second's
     // bottleneck call ('g', 'c', 'f', '-')
+    // this session's min, average and max of each of the game's own readings, for the page (null: no session)
+    public Dictionary<string, object> SessionPm()
+    {
+        if (!polled || rep == null || rep.Pm == null) return null;   // (before the first look: still the last run's)
+        return rep.Pm.Where(kv => kv.Value != null && kv.Value.Length == 4 && kv.Value[2] > 0)
+                     .ToDictionary(kv => kv.Key, kv => (object)new object[] { Math.Round(kv.Value[0], 2), Math.Round(kv.Value[1] / kv.Value[2], 2), Math.Round(kv.Value[3], 2) });
+    }
     public void Sample(Source src, Dictionary<string, int> index, Dictionary<string, Lines> gated, Alerts alerts, bool pmOk, HashSet<string> pmKeys, char call)
     {
         var hot = alerts.Hot.ToArray(); alerts.Hot.Clear();
@@ -1208,6 +1425,15 @@ class Games
         // and PresentMon follows whatever window is in front instead
         if (front && pmOk)
         {
+            foreach (var key in pmKeys)
+            {
+                int pi; double[] a;
+                if (!index.TryGetValue(key, out pi) || pi >= src.Values.Length || double.IsNaN(src.Values[pi]) || src.Values[pi] <= 0) continue;   // 0: no frames
+                double pv = src.Values[pi];
+                if (rep.Pm == null) rep.Pm = new Dictionary<string, double[]>();
+                if (!rep.Pm.TryGetValue(key, out a)) rep.Pm[key] = a = new[] { pv, 0, 0, pv };
+                a[0] = Math.Min(a[0], pv); a[1] += pv; a[2]++; a[3] = Math.Max(a[3], pv);
+            }
             if (fpsI >= 0 && fpsI < src.Values.Length && src.Values[fpsI] > 0) { rep.FpsSum += src.Values[fpsI]; rep.FpsN++; rep.MFs += src.Values[fpsI]; rep.MFn++; }
             if (lowI >= 0 && lowI < src.Values.Length && src.Values[lowI] > 0) { rep.LowSum += src.Values[lowI]; rep.LowN++; rep.MLs += src.Values[lowI]; rep.MLn++; }
         }
@@ -1276,14 +1502,14 @@ class Games
         for (int i = 0; i < r.WarnNames.Count; i++) wl.Add(new object[] { r.WarnNames[i], r.WarnPeaks[i], r.WarnUnits[i] });
         var d = new Dictionary<string, object> { { "game", r.Game }, { "start", r.Start }, { "end", end }, { "from", r.From }, { "secs", r.Secs }, { "front", r.Front },
                                                  { "fps", avg(r.FpsSum, r.FpsN) }, { "low", avg(r.LowSum, r.LowN) }, { "items", items }, { "warns", r.Warns },
-                                                 { "g", r.G }, { "c", r.C }, { "f", r.F }, { "wl", wl }, { "tf", r.Tf }, { "tl", r.Tl }, { "tb", r.Tb } };
+                                                 { "g", r.G }, { "c", r.C }, { "f", r.F }, { "wl", wl }, { "tf", r.Tf }, { "tl", r.Tl }, { "tb", r.Tb }, { "tc", r.Tc } };
         try { File.AppendAllText(logPath, json.Serialize(d) + "\r\n"); }
         catch (Exception ex) { log("game report write failed: " + ex.Message); }
     }
     public void Flush() { if (rep != null) { try { File.WriteAllText(curPath, json.Serialize(rep)); } catch { } } }
 }
 
-class DeckForm : Form
+partial class DeckForm : Form
 {
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
@@ -1338,16 +1564,18 @@ class DeckForm : Form
         Directory.CreateDirectory(dataDir);
         Directory.CreateDirectory(P("slots"));
         fake = fakeN > 0;
+        if (NoFocus) focusAtStart = GetForegroundWindow();
         src = new DeckSource(fake ? (Source)new FakeSource(fakeN) : new HwSource());
+        alerts.Conn = src.Conn;
         hist = new History(dataDir);
         games = new Games(dataDir, Log);
-        runName = custom ? "HW Deck (" + Path.GetFileName(data) + " " + ((uint)data.ToLowerInvariant().Aggregate(2166136261u, (h, ch) => (h ^ ch) * 16777619u)).ToString("x8") + ")" : "HW Deck";
+        runName = custom ? Brand.Name + " (" + Path.GetFileName(data) + " " + ((uint)data.ToLowerInvariant().Aggregate(2166136261u, (h, ch) => (h ^ ch) * 16777619u)).ToString("x8") + ")" : Brand.Name;
         settings = ReadFile("settings") as Dictionary<string, object> ?? new Dictionary<string, object>();
         var st = ReadFile("state", true) as Dictionary<string, object>;
         if (st != null && st.ContainsKey("L")) layout = st["L"];
         TrimAlerts();
 
-        Text = "HW Deck";
+        Text = Brand.Name;
         // sizes in logical pixels, scaled to the screen (225% on a 4K screen would otherwise make a postage stamp)
         float k = 1f;
         try { k = GetDpiForSystem() / 96f; } catch { }   // DeviceDpi still says 96 before the window exists
@@ -1371,7 +1599,7 @@ class DeckForm : Form
         // the browser cache goes to LocalAppData, never next to the exe (Program Files is read-only); a run with its
         // own --data folder gets its own cache too, so a test instance can't clash with the real one
         wv.CreationProperties = new CoreWebView2CreationProperties { UserDataFolder = customData ? P("WebView2")
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HW Deck", "WebView2") };
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Brand.Name, "WebView2") };
         Controls.Add(wv);
         wv.CoreWebView2InitializationCompleted += OnWvReady;
         HandleCreated += delegate
@@ -1396,7 +1624,7 @@ class DeckForm : Form
         // the notification area draws small icons: take the frame made for that size, not a scaled large one
         Icon trayIcon = null;
         try { if (File.Exists(icoPath)) trayIcon = new Icon(icoPath, SystemInformation.SmallIconSize); } catch { }
-        tray = new NotifyIcon { Icon = trayIcon ?? Icon ?? SystemIcons.Application, Text = "HW Deck", Visible = true };
+        tray = new NotifyIcon { Icon = trayIcon ?? Icon ?? SystemIcons.Application, Text = Brand.Name, Visible = true };
         var menu = new ContextMenu();
         menu.MenuItems.Add("Open HW Deck", delegate { ShowWin(); });
         menu.MenuItems.Add(new MenuItem("Restart HWiNFO", delegate { RestartHwinfo(); }) { Enabled = !fake });
@@ -1426,12 +1654,20 @@ class DeckForm : Form
         timer.Tick += OnTick;
         timer.Start();   // history, warnings and games run from the start, page or not
         if (Environment.GetEnvironmentVariable("HWDECK_TRACE") == "1") UiTrace.Start(this, Path.Combine(dataDir, "trace.log"));
+        ExtStart();
         Log("start " + AppInfo.Version + " (pid " + Process.GetCurrentProcess().Id + (fake ? ", fake " + fakeN : "") + ", data " + dataDir + ")");
     }
 
     long savedAt;
     bool ended;
-    void SaveAll() { SaveData(); EndMark(); }
+    void SaveAll() { try { ExtStop(); } catch { } SaveData(); EndMark(); }
+
+    // ---- extras: a build may add readings (Extra), cell kinds (web\extras.js) and messages of its own ("x.*" both
+    // ways); HW Deck itself has none, so these calls compile away ----
+    partial void ExtStart();                                            // the end of the constructor: add to src.Extras
+    partial void ExtMessage(string t, Dictionary<string, object> m);    // a message from the page whose type starts "x."
+    partial void ExtSecond(long now);                                   // once a second, after the history sample
+    partial void ExtStop();                                             // quitting or the session ending: save what it keeps
     void SaveData()
     {
         if (Source.Unix() - savedAt < 5) return;   // the window closing and the app exiting both ask
@@ -1465,10 +1701,10 @@ class DeckForm : Form
         wvFailed = true;
         Log("webview failed: " + ex);
         bool missing = ex is WebView2RuntimeNotFoundException;
-        if (MessageBox.Show("HW Deck draws its window with the Microsoft Edge WebView2 Runtime, and it could not start" +
+        if (MessageBox.Show(Brand.Name + " draws its window with the Microsoft Edge WebView2 Runtime, and it could not start" +
                             (missing ? ": it isn't installed on this PC." : ":\n\n" + (ex != null ? ex.Message : "unknown error")) +
                             "\n\nWindows 11 has it built in; on Windows 10 it may be missing. Open Microsoft's download page?",
-                            "HW Deck", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                            Brand.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
             Try(() => Process.Start("https://go.microsoft.com/fwlink/p/?LinkId=2124703"));
         exiting = true; tray.Visible = false; Application.Exit();
     }
@@ -1555,7 +1791,13 @@ class DeckForm : Form
                     }
                     break;
                 case "hist":
-                    { var h = hist.Range(m["key"] as string, m["range"] as string); h["t"] = "hist"; Post(h); }
+                    {
+                        string key = m["key"] as string, range = m["range"] as string;
+                        var h = hist.Range(key, range);
+                        // the bottleneck: the share of each minute (block) each call held (an average of the calls means nothing)
+                        if (key == Bottleneck.Key) for (int i = 0; i < 3; i++) h["s" + "gcf"[i]] = hist.Range(Bottleneck.ShareKeys[i], range)["avg"];
+                        h["t"] = "hist"; Post(h);
+                    }
                     break;
                 case "alerts": { var r = Msg("alerts"); r["log"] = Tail("alerts.log"); Post(r); } break;
                 case "alerts:clear": Wipe("alerts.log"); { var r = Msg("alerts"); r["log"] = ""; Post(r); } break;
@@ -1574,6 +1816,7 @@ class DeckForm : Form
                 // tests, made-up data only: a game in place of the processes, a reading held at a value
                 case "fakeGame": if (fake) games.Pretend(m.ContainsKey("game") ? m["game"] as string : null, m.ContainsKey("front") && true.Equals(m["front"])); break;
                 case "fakePin": if (fake) ((FakeSource)src.Inner).Pin(m["key"] as string, m["v"] == null ? double.NaN : Convert.ToDouble(m["v"], System.Globalization.CultureInfo.InvariantCulture)); break;
+                default: if (t != null && t.StartsWith("x.")) ExtMessage(t, m); break;
             }
         }
         catch (Exception ex) { Log("message " + t + " failed: " + ex.Message); }
@@ -1611,6 +1854,7 @@ class DeckForm : Form
         var r = Msg("state");
         r["state"] = ReadFile("state"); r["slots"] = slots; r["fake"] = fake; r["dataDir"] = dataDir; r["version"] = AppInfo.Version; r["pc"] = Environment.MachineName;
         r["nonClient"] = nonClient;
+        r["ext"] = File.Exists(Path.Combine(appDir, "web", "extras.js")); r["brand"] = Brand.Name; r["updatable"] = Brand.Updates;
         Post(r);
         SendSettings();
     }
@@ -1629,7 +1873,7 @@ class DeckForm : Form
     const string ReleasesPage = "https://github.com/RodrigoArsenioo/hwdeck/releases/";
     long updNext;
     volatile bool updBusy, updLogged;
-    bool UpdatesOn() { return !settings.ContainsKey("updates") || !false.Equals(settings["updates"]); }
+    bool UpdatesOn() { return Brand.Updates && (!settings.ContainsKey("updates") || !false.Equals(settings["updates"])); }
     static int[] Ver(string s)
     {
         var m = Regex.Match(s ?? "", @"^v?(\d+)\.(\d+)\.(\d+)$");
@@ -1829,7 +2073,8 @@ class DeckForm : Form
             lastSecond = now;
             // a game seen running by the last poll, not one in its 30 s grace after closing (plain reads of fields the game poll sets)
             src.Second(games.Game != null && now - games.Seen <= 6);
-            hist.Sample(src);
+            hist.Sample(src, Bottleneck.ShareKeys, src.Bneck.Shares);
+            ExtSecond(now);
             // HWiNFO's PresentMon follows whatever presents frames (the desktop, a browser, this app): its fps only
             // mean something while the game is in front and PresentMon follows the game's own process
             if (pmVersion != src.Version)
@@ -1847,13 +2092,13 @@ class DeckForm : Form
                 if (!paused && now - notOkSince >= 10)
                 {
                     paused = true; alerts.Mark("HWiNFO stopped sharing, warnings paused");
-                    tray.Text = "HW Deck: HWiNFO isn't sharing, warnings paused";
+                    tray.Text = Brand.Name + ": HWiNFO isn't sharing, warnings paused";
                 }
             }
             else
             {
                 notOkSince = 0;
-                if (paused) { paused = false; alerts.Lines.Add(AppInfo.Stamp() + "  INFO    HWiNFO back, warnings on"); tray.Text = "HW Deck"; }   // not a MARK: it ends nothing
+                if (paused) { paused = false; alerts.Lines.Add(AppInfo.Stamp() + "  INFO    HWiNFO back, warnings on"); tray.Text = Brand.Name; }   // not a MARK: it ends nothing
             }
             // no verdicts from the sleep mark to the wake (or a minute on, if Windows never said it woke)
             if (asleep && Environment.TickCount - sleptAt > 60000) asleep = false;
@@ -1879,8 +2124,9 @@ class DeckForm : Form
             var r = Msg("catalog");
             r["ver"] = src.Version;
             r["sensors"] = src.Sensors.Select(x => (object)new object[] { x.Key, x.Name }).ToList();
-            r["readings"] = src.Readings.Select(x => (object)new object[] { x.Sensor, x.Type, x.Key, x.Label, x.Unit }).ToList();
+            r["readings"] = src.Readings.Select(x => (object)new object[] { x.Sensor, x.Type, x.Key, x.Label, x.Unit, x.Kind }).ToList();
             r["bneck"] = src.Bneck.Inputs;
+            r["c12"] = src.Conn.Has ? src.Conn.Keys : null;
             Post(r);
         }
         var want = new HashSet<string>(subCells); want.UnionWith(subRows);
@@ -1898,6 +2144,8 @@ class DeckForm : Form
         tk["i"] = ix; tk["v"] = vs; tk["mn"] = mn; tk["mx"] = mx; tk["av"] = av;
         tk["game"] = games.Game; tk["front"] = games.InFront; tk["gameSince"] = games.Since;   // plain reads of fields the game poll sets
         tk["pm"] = pmOk || !second && lastPm; lastPm = (bool)tk["pm"];
+        if (src.Conn.Has) tk["c12"] = new object[] { src.Conn.Lopsided, src.Conn.Hot, Math.Round(src.Conn.Share, 1) };
+        var gs = games.SessionPm(); if (gs != null) tk["gs"] = gs;
         Post(tk);
     }
 
@@ -2044,8 +2292,8 @@ exit $code
     int lastDrag; Point lastDragAt; bool dragArmed;
     void Win(string a)
     {
-        if (a == "min") WindowState = FormWindowState.Minimized;
-        else if (a == "max") { WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized; SaveWin(); }
+        if (a == "min") KeepFocus(() => WindowState = FormWindowState.Minimized);
+        else if (a == "max") { KeepFocus(() => WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized); SaveWin(); }
         else if (a == "close") HideToTray();
         else if (a == "drag")
         {
@@ -2162,6 +2410,17 @@ exit $code
         catch { }
     }
 
+    // made-up data (tests, demos), or HWDECK_NOFOCUS=1 (a test copy on real data): opens without taking the focus from
+    // whatever you are working in
+    bool NoFocus { get { return fake || Environment.GetEnvironmentVariable("HWDECK_NOFOCUS") == "1"; } }
+    protected override bool ShowWithoutActivation { get { return NoFocus; } }
+    IntPtr focusAtStart;   // NoFocus: what had the focus when this copy started, given back if the first show took it
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        if (focusAtStart != IntPtr.Zero && focusAtStart != Handle && GetForegroundWindow() == Handle) SetForegroundWindow(focusAtStart);
+        focusAtStart = IntPtr.Zero;
+    }
     protected override void SetVisibleCore(bool value)
     {
         if (startHidden) { startHidden = false; base.SetVisibleCore(false); if (!IsHandleCreated) CreateHandle(); return; }
@@ -2169,12 +2428,22 @@ exit $code
     }
 
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    // a copy that keeps the focus (NoFocus): a window change that took it gives it back to whatever had it (once the
+    // focus is ours, handing it back is allowed)
+    void KeepFocus(Action a)
+    {
+        IntPtr was = NoFocus ? GetForegroundWindow() : IntPtr.Zero;
+        a();
+        if (was != IntPtr.Zero && was != Handle && GetForegroundWindow() == Handle) SetForegroundWindow(was);
+    }
     public volatile bool showAsked;         // a second launch before this window existed
     public void ShowWin()
     {
         if (!IsHandleCreated) { showAsked = true; return; }
         showAsked = false;
         Try(() => wv.Visible = true);
+        if (NoFocus) { KeepFocus(() => { Show(); if (WindowState == FormWindowState.Minimized) WindowState = restoreMax ? FormWindowState.Maximized : FormWindowState.Normal; }); return; }
         Show();
         if (WindowState == FormWindowState.Minimized) WindowState = restoreMax ? FormWindowState.Maximized : FormWindowState.Normal;
         Activate(); SetForegroundWindow(Handle);
@@ -2230,12 +2499,12 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
-        string data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HW Deck");
+        string data = Brand.DataDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), Brand.Name);
         int fake = 0; bool min = false, custom = false, after = false;
         string appDir = AppDomain.CurrentDomain.BaseDirectory;
         if (new[] { @"web\index.html", @"web\deck.js", @"web\deck.css", "Microsoft.Web.WebView2.WinForms.dll", "Microsoft.Web.WebView2.Core.dll", "WebView2Loader.dll" }.Any(f => !File.Exists(Path.Combine(appDir, f))))
         {
-            MessageBox.Show("HW Deck is missing some of its files. Extract the whole zip into a folder first, then start HWDeck.exe from there.", "HW Deck", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(Brand.Name + " is missing some of its files. Extract the whole zip into a folder first, then start it from there.", Brand.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         for (int i = 0; i < args.Length; i++)
@@ -2252,7 +2521,7 @@ static class Program
                     if (data.Length > 3) data = data.TrimEnd('\\');   // "X\" and "X" are one folder (and one running copy)
                     Directory.CreateDirectory(data); custom = true;
                 }
-                catch (Exception ex) { MessageBox.Show("HW Deck can't use that data folder:\n\n" + (d ?? "") + "\n" + ex.Message, "HW Deck", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+                catch (Exception ex) { MessageBox.Show(Brand.Name + " can't use that data folder:\n\n" + (d ?? "") + "\n" + ex.Message, Brand.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
             }
             else if (a == "--after" && i + 1 < args.Length)
             {
@@ -2289,7 +2558,7 @@ static class Program
         catch (Exception ex)
         {
             Crash(data, ex);
-            MessageBox.Show("HW Deck couldn't start:\n\n" + ex.Message, "HW Deck", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(Brand.Name + " couldn't start:\n\n" + ex.Message, Brand.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
         // the flag first, then the handle: a window made in between still sees the flag (HandleCreated shows it)

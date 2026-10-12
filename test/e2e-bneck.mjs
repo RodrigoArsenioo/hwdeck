@@ -42,7 +42,7 @@ const shown = () => ev(`(() => { const el = ${cell}; return el ? (el.querySelect
 const cap = () => ev(`(() => { const el = ${cell}; return el ? el.querySelector('.tc, .hc, .lbl i, .ginfo').textContent : null; })()`);
 const untilShown = async (want, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await shown() === want) return true; await p.sleep(200); } return false; };
 
-ok('no game: "--", no game running', await untilShown('--', 4000) && await cap() === 'no game running', await shown() + ' / ' + await cap());
+ok('no game: "--", no game running', await untilShown('--', 9000) && await cap() === 'no game running', await shown() + ' / ' + await cap());
 
 // ---- the calls ----
 await pin(gpuKey, 99); await pin(cpuKey, 50);
@@ -61,7 +61,7 @@ await pin(gpuKey, 90);
 await p.sleep(4000);
 ok('the GPU between 85 and 95% keeps the previous call', await shown() === 'FPS capped', await shown());
 ok('its caption is the split of the last 15 min', /^gpu \d+%, cpu \d+%, capped \d+%$/.test(await cap()), await cap());
-ok('the tile has a bar of the calls in three greys instead of a graph', await ev(`(() => { const el = ${cell}; const k = [...el.querySelectorAll('.strip span')].map(s => s.className); return !el.querySelector('canvas') && ['b-gpu', 'b-cpu', 'b-cap'].every(x => k.includes(x)); })()`),
+ok('the tile has a bar of the calls in three colours instead of a graph', await ev(`(() => { const el = ${cell}; const k = [...el.querySelectorAll('.strip span')].map(s => s.className); return !el.querySelector('canvas') && ['b-gpu', 'b-cpu', 'b-cap'].every(x => k.includes(x)); })()`),
   await ev(`[...${cell}.querySelectorAll('.strip span')].map(s => s.className + ' ' + s.style.left + ' ' + s.style.width).join(' | ')`));
 ok('the host sends the call as a number (3 = capped)', await ev('BYKEY.get(BNECK).v === 3'), await ev('BYKEY.get(BNECK).v'));
 
@@ -74,8 +74,26 @@ ok('the hover preview shows the bar and the split, no graph', await ev('HP.shown
 ok('and the call in words', await ev('hprev.querySelector(".pv").textContent === "FPScapped"'), await ev('hprev.querySelector(".pv").textContent'));
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 300 }); await p.sleep(250);
 c = await p.center(`#view .dc[data-cid="${cid}"]`); await p.click(c.x, c.y); await p.sleep(600);
-ok('the popup shows the bar of the last 15 min and the split instead of a graph', await ev('modal.classList.contains("open") && $("mgraphsec").hidden && $("mextra").querySelectorAll(".bnp .strip span").length >= 3 && /gpu\\d+%.*cpu\\d+%.*capped\\d+%/.test($("mextra").querySelector(".mstats").textContent)'),
+ok('the popup shows the bar of the last 15 min and the split instead of a graph, the range tabs above it', await ev('modal.classList.contains("open") && !$("mgraphsec").hidden && $("mgraph").hidden && $("mstats").hidden && !!$("mrng").offsetWidth && $("mextra").querySelectorAll(".bnp .bnc rect").length >= 3 && /gpu\\d+%.*cpu\\d+%.*capped\\d+%/.test($("mextra").querySelector(".mstats").textContent)'),
   await ev('$("mextra").textContent'));
+// over an hour and more: the host's history, a column per minute (10 minutes over 7 days), each split into the calls
+const rangeOk = async (r, n) => {
+  c = await p.center(`#mrng button[data-r="${r}"]`); await p.click(c.x, c.y);
+  const got = await until(`histReady() && Array.isArray(bigHist.sg) && bigHist.sg.length === ${n} && bigHist.sc.length === ${n} && bigHist.sf.length === ${n} && !document.querySelector('.bnp.loading')`, 5000);
+  await p.sleep(300);
+  return got && await ev(`(() => { const H = bigHist, last = [H.sg, H.sc, H.sf].map(a => a.slice(-3).reduce((x, y) => x + (y || 0), 0));
+    return H.sg.every((x, i) => (x || 0) + (H.sc[i] || 0) + (H.sf[i] || 0) <= 1.0001) && last.every(x => x > 0) && document.querySelectorAll('.bnp .bnc rect').length >= 3 &&
+      /gpu\\d+%cpu\\d+%capped\\d+%game time\\d+[ms]/.test($('mextra').querySelector('.mstats').textContent); })()`);
+};
+ok('1 h: a column per minute, each call\'s share of it, the split and the game time', await rangeOk('1h', 60), await ev('$("mextra").querySelector(".mstats").textContent + " | " + JSON.stringify(bigHist && [bigHist.range, bigHist.sg && bigHist.sg.slice(-3), bigHist.sc && bigHist.sc.slice(-3), bigHist.sf && bigHist.sf.slice(-3)])'));
+ok('its game time is no more than the game has run (a minute counts for the part of it with a game, not of the seconds seen)', await ev(`bnSum(BNP.B).secs <= nowTs - ${a0} + 3 && bnSum(BNP.B).secs >= 5`), await ev(`[bnSum(BNP.B).secs, nowTs - ${a0}]`));
+const bb = await ev('(() => { const b = document.querySelector(".bnp .bnc").getBoundingClientRect(); return { x: b.right - b.width / 120, y: b.top + b.height / 2 }; })()');
+await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bb.x, y: bb.y }); await p.sleep(300);
+ok('hovering a minute reads out its split and how long a game ran in it', await ev('document.querySelector(".bnp .bnw").classList.contains("hv") && /^\\d\\d:\\d\\d(gpu|cpu|capped) \\d+%.*a game for \\d+ s$/.test(document.querySelector(".bnp .btip").textContent)'), await ev('document.querySelector(".bnp .btip").textContent'));
+await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await p.sleep(200);
+for (const [r, n] of [['6h', 360], ['12h', 720], ['24h', 1440], ['7d', 1008]]) ok(r + ': the same from the host\'s history (' + n + ' columns)', await rangeOk(r, n), await ev('$("mextra").querySelector(".mstats").textContent'));
+c = await p.center('#mrng button[data-r="15m"]'); await p.click(c.x, c.y); await p.sleep(400);
+ok('back to 15 min: the seconds again', await ev('$("mextra").querySelectorAll(".bnp .bnc rect").length >= 3 && !/game time/.test($("mextra").querySelector(".mstats").textContent)'));
 ok('its title says the call', await ev('$("mval").textContent.trim() === "FPS capped" && /most common call of the last 5 seconds/.test($("mdesc").textContent)'), await ev('$("mval").textContent'));
 const desc = await ev('$("mdesc").textContent');
 ok('it says which readings it goes by, found by their names', /goes by GPU Core Load \(dGPU\) and Max CPU\/Thread Usage \(CPU[^)]*\)\.$/.test(desc), desc.split('. ').pop());
@@ -121,13 +139,15 @@ if (g) {
   ok('gpu-bound counts only its time in front (not the background time at 99%)', Math.abs(g.g - (a1 - a0)) <= 2, `g ${g.g}, gpu-bound in front ${a1 - a0} s, in the background ${b1 - b0} s`);
   ok('cpu-bound and capped add up to the rest', g.c >= 2 && g.f >= 20, `c ${g.c}, f ${g.f}`);
   ok('a call per minute (- with none in front) for the timeline', typeof g.tb === 'string' && g.tb.length >= 2 && /^[gcf-]+$/.test(g.tb) && /[gcf]/.test(g.tb) && g.tf.length === g.tb.length, JSON.stringify({ tb: g.tb, tf: g.tf }));
+  ok('and each minute\'s seconds per call, in front only', Array.isArray(g.tc) && g.tc.length === g.tb.length && g.tc.every((x, i) => x === null ? g.tb[i] === '-' : x.length === 3) &&
+    [0, 1, 2].every(k => g.tc.reduce((a, x) => a + (x ? x[k] : 0), 0) === [g.g, g.c, g.f][k]), JSON.stringify({ tc: g.tc, tb: g.tb }));
 }
 
 // ---- the game log: what limited a session in its row and its timeline; lines from before it still show ----
 const old = JSON.stringify({ game: 'Old Game', start: 1700000000, end: 1700003600, from: 1700000000, secs: 3600, front: 3600, fps: 120, low: 90, items: [['GPU temp', '°C', 60, 70]], warns: 0 });
 await ev(`renderGames(${JSON.stringify(old + '\r\n' + text(join(data, 'games.log')))})`);
-const lim = await ev('[...document.querySelectorAll("#glist .gx-sess")].map(s => [s.querySelector(".gx-gn").textContent, s.querySelectorAll(".gx-row .gx-nbar span").length, s.querySelector(".gx-row .gx-nbar + .gx-sub, .gx-row .gx-c:nth-child(6) .gx-sub").textContent, !!s.querySelector(".gx-strip span"), s.querySelector(".gx-det").textContent])');
-ok('a session shows what limited it (row and timeline); one from before (no g, c, f) still shows, without it', lim.length === 2 && lim[0][0] === 'Bench Game' && lim[0][1] >= 2 && /^(gpu-bound|cpu-bound|capped) \d+%$/.test(lim[0][2]) && lim[0][3] && /cpu-bound \d+%gpu-bound \d+%capped \d+%/.test(lim[0][4]) &&
+const lim = await ev('[...document.querySelectorAll("#glist .gx-sess")].map(s => [s.querySelector(".gx-gn").textContent, s.querySelectorAll(".gx-row .gx-nbar span").length, s.querySelector(".gx-row .gx-nbar + .gx-sub, .gx-row .gx-c:nth-child(6) .gx-sub").textContent, !!s.querySelector(".gx-bnc rect"), s.querySelector(".gx-det").textContent])');
+ok('a session shows what limited it (row and timeline); one from before (no g, c, f) still shows, without it', lim.length === 2 && lim[0][0] === 'Bench Game' && lim[0][1] >= 2 && /^(gpu-bound|cpu-bound|capped) \d+%$/.test(lim[0][2]) && lim[0][3] && /gpu-bound \d+%cpu-bound \d+%capped \d+%/.test(lim[0][4]) &&
   lim[1][0] === 'Old Game' && lim[1][1] === 0 && lim[1][2] === '--' && !lim[1][3] && /core temp60\.070\.0/.test(lim[1][4]), JSON.stringify(lim.map(x => x.slice(0, 4))));
 ok('no warning lines for it', !/Bottleneck/.test(text(join(data, 'alerts.log'))));
 
@@ -138,6 +158,6 @@ ok('no page errors', errs.length === 0, errs.join(' | '));
 p.evaluate(`send({ t: 'exit' })`).catch(() => {});
 t0 = Date.now(); let gone = false;
 while (!gone && Date.now() - t0 < 10000) { await p.sleep(300); try { await fetch(`http://127.0.0.1:${port}/json`); } catch (e) { gone = true; } }
-ok('saved in hist.bin at exit', gone && readFileSync(join(data, 'hist.bin')).includes(Buffer.from('hwdeck.0/bneck')), gone ? 'exited' : 'still running');
+ok('saved in hist.bin at exit, with each call\'s share for the long ranges', gone && ['hwdeck.0/bneck', 'hwdeck.0/bneck.g', 'hwdeck.0/bneck.c', 'hwdeck.0/bneck.f'].every(k => readFileSync(join(data, 'hist.bin')).includes(Buffer.from(k))), gone ? 'exited' : 'still running');
 p.close();
 console.log(done() ? 'ALL PASS' : 'SOME FAILED');

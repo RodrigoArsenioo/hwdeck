@@ -7,6 +7,7 @@
   --fg: #e0e0e0; --hi: #fff; --muted: #8c8c8c; --dim: #737373;
   --edit: #7fa6e8; --edit-soft: rgba(127, 166, 232, 0.14);
   --ok: #3fa66b; --yellow: #e6c84a; --red: #e5484d;
+  --bn-gpu: #4f86d6; --bn-cpu: #b896f2; --bn-cap: #5e5e5e;   /* the bottleneck's calls: never yellow or red (those warn) */
   --f-body: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
   --f-num: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
   --f-mono: 'Cascadia Mono', 'Cascadia Code', Consolas, monospace;
@@ -139,7 +140,7 @@ nav#screens .ind.still { transition: none; }
 
 /* the view's scroller; the drop marker lives in it */
 .viewwrap { min-height: 0; position: relative; display: flex; flex-direction: column; }
-#sections { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; padding: 4px 18px 16px; scrollbar-width: thin; scrollbar-color: #2a2a2a transparent; scrollbar-gutter: stable; }   /* the same width with or without a scrollbar: a fit can't flip the layout */
+#sections { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; padding: 4px 18px 18px; scrollbar-width: thin; scrollbar-color: #2a2a2a transparent; scrollbar-gutter: stable; }   /* the same width with or without a scrollbar: a fit can't flip the layout */
 #view { font-size: 1rem; }   /* text in the views follows the fit (the chrome around them stays in px) */
 .dropmark { position: absolute; background: var(--edit); border-radius: 2px; pointer-events: none; z-index: 20; box-shadow: 0 0 0 3px var(--edit-soft); display: none; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -172,7 +173,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .dch .acts, .dch .chev { display: none; }
 .app.editing .dch .grip, .app.editing .dch .acts, .app.editing .dch .chev { display: inline-flex; }
 .dch .acts { gap: 1px; margin-left: auto; }
-.dch .ib { padding: 4px; color: #6a6a6a; }
+.dch .ib { padding: 4px; margin: -4px 0; color: #6a6a6a; }   /* as tall as its icon in the layout: edit mode's headers no taller than outside it */
 .dch .ib svg { width: 13px; height: 13px; }
 .dch .cnt { color: var(--dim); font-weight: 400; font-variant-numeric: tabular-nums; display: none; text-transform: none; letter-spacing: 0; }
 .app.editing .dch .cnt { display: inline-block; background: #1c1c1c; border-radius: 999px; padding: 0 0.55em; font-size: 0.85em; line-height: 1.5; margin-left: 0.15rem; }
@@ -186,7 +187,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .dcat.collapsed .dch .chev svg { transform: rotate(-90deg); }
 .app:not(.editing) .dcat.isempty { display: none; }
 .app.fitting .notitle > .dch, .app.fitting .card.notitle > .ch, .app.fitting .card.band.notitle > .bh,
-.app.fitting .dcat.isempty, .app.fitting .dch .grip, .app.fitting .dch .chev, .app.fitting .dch .acts, .app.fitting .dch .cnt { display: none !important; }   /* while edit mode works out the text size: as outside it */
+.app.fitting .dcat.isempty, .app.fitting .rl, .app.fitting .dch .grip, .app.fitting .dch .chev, .app.fitting .dch .acts, .app.fitting .dch .cnt { display: none !important; }   /* while edit mode works out the text size: as outside it */
 .dc.sel { outline: 2px solid var(--edit); outline-offset: -1px; }
 .dc.dragging { opacity: 0.35; }
 .app.editing .dc { cursor: grab; touch-action: none; }
@@ -229,7 +230,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .tv { flex: none; font-family: var(--f-num); font-size: 2.15rem; font-weight: 600; line-height: 1.15; margin-top: 0.23rem; white-space: nowrap; font-variant-numeric: tabular-nums; transition: color 350ms; color: #e8e8e8; }
 .tv small { font-size: 0.88rem; color: #666; font-weight: 400; margin-left: 0.23rem; }
 .tc { flex: none; font-size: max(0.88rem, 10px); color: #7b7b7b; margin-top: 0.08rem; margin-bottom: 0.46rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 300ms; min-height: 1.2em; }
-.tile canvas { flex: 1 1 0; height: auto; min-height: 1.6rem; max-height: 3.23rem; width: 100%; display: block; margin-top: auto; }
+.tile canvas { flex: 1 1 0; height: auto; min-height: 1.6rem; max-height: 3.23rem; width: 100%; display: block; margin-top: auto; contain: size; }   /* its bitmap never sizes the tile */
 .tile.bn:not(.short) .strip { margin-top: auto; }
 
 /* ---------- Overview: a card per category, its first cell large, the rest as rows with a 15 min graph ---------- */
@@ -252,10 +253,13 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .hc { font-size: max(0.92rem, 10px); color: #7b7b7b; margin-top: 0.38rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16rem; transition: color 300ms; min-height: 1.2em; }
 .hero canvas { width: 100%; height: 4.9rem; display: block; }
 .card { container-type: inline-size; }
-.row { display: grid; grid-template-columns: minmax(min(8rem, 45%), 1fr) minmax(0, 9.85rem) 7.1rem; align-items: center; gap: 0.77rem; padding: calc(0.46rem * (0.6 + 0.4 * var(--sp, 1))) 0; border-bottom: 1px solid #1c1c1c; cursor: pointer; transition: background 150ms; }
-.row:last-child { border-bottom: 0; }
+.row { display: grid; grid-template-columns: minmax(min(8rem, 45%), 1fr) minmax(0, 9.85rem) 7.1rem; align-items: center; gap: 0.77rem; padding: calc(0.46rem * (0.6 + 0.4 * var(--sp, 1))) 0.62rem; margin: 0 -0.62rem; border-radius: 0.55rem; background: var(--rowline); cursor: pointer; transition: background 150ms; }
+/* a row reaches 0.62rem past its text on both sides (padding, then the same back as margin: the text stays where it
+   was), so its hover light has room around the icon and the words; its line under it is only as wide as the text */
+.row { --rowline: linear-gradient(#1c1c1c, #1c1c1c) 50% 100% / calc(100% - 1.24rem) 1px no-repeat; }
+.row:last-child { --rowline: none; }
 .row.nog > .lbl { grid-column: 1 / 3; } .row.nog > .val { grid-column: 3; }
-.row:hover { background: rgba(255,255,255,0.02); }
+.row:hover { background-color: rgba(255,255,255,0.035); }
 .row canvas.rsp { display: block; width: 100%; height: 1.85rem; min-width: 0; }
 .row .val { font-size: 1.05rem; }
 .row .lbl .nm { display: flex; align-items: center; gap: 0.4rem; }
@@ -292,13 +296,25 @@ table.gt { width: 100%; border-collapse: collapse; font-size: 0.96rem; table-lay
    bound, dark capped), a gap where no game ran ---------- */
 .strip { position: relative; display: block; height: 0.62rem; background: #1f1f1f; border-radius: 0.15rem; overflow: hidden; min-width: 0; }
 .strip span { position: absolute; top: 0; bottom: 0; }
-.b-gpu { background: #6f6f6f; } .b-cpu { background: #d2d2d2; } .b-cap { background: #3e3e3e; }
+.b-gpu { background: var(--bn-gpu); } .b-cpu { background: var(--bn-cpu); } .b-cap { background: var(--bn-cap); }
 i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
 .tile .strip { flex: none; margin-top: auto; margin-bottom: 0.3rem; }
 .hero .strip { align-self: end; margin-bottom: 0.45rem; }
 .gt td.gstrip { padding-left: 0.77rem; padding-right: 0.3rem; }
 .gt tr.bn td.gval .gu { width: auto; }
 .strip.big { height: 12px; border-radius: 4px; }
+/* the bottleneck's popup bar: blocks of calls (15 min) or a column per minute (10 minutes over 7 days), its read-out */
+.bnp .bnw { position: relative; margin-top: 4px; }
+.bnp .bnc { display: block; width: 100%; height: 60px; overflow: visible; transition: opacity 200ms; }
+.bnp.loading .bnc { opacity: 0.35; }
+.bnc line { stroke: #2c2c2c; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.bnc rect.b-gpu { fill: var(--bn-gpu); } .bnc rect.b-cpu { fill: var(--bn-cpu); } .bnc rect.b-cap { fill: var(--bn-cap); }
+.bnp .bgd { position: absolute; top: -3px; bottom: -3px; width: 1px; margin-left: -0.5px; background: rgba(232,232,232,0.35); opacity: 0; pointer-events: none; }
+.bnp .btip { position: absolute; bottom: calc(100% + 8px); display: grid; gap: 3px; padding: 6px 9px; background: #1f1f1f; border: 1px solid #333; border-radius: 8px; font-size: 12px; color: #8a8a8a;
+  white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; transition: opacity 120ms; box-shadow: 0 6px 16px rgba(0,0,0,0.45); z-index: 2; }
+.bnp .bnw.hv .bgd, .bnp .bnw.hv .btip { opacity: 1; }
+.bnp .btip b { color: #e8e8e8; font-weight: 600; } .bnp .btip em { font-style: normal; color: #e8e8e8; }
+.bnp .btip span { display: inline-flex; align-items: center; gap: 6px; } .bnp .btip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 .sticks { display: flex; justify-content: space-between; font-size: 11px; color: #555; margin: 5px 0 6px; font-variant-numeric: tabular-nums; }
 .gt td.gname .rl { margin: 0 0 0 0.5rem; vertical-align: middle; }
 .gt tr.ghdr td { color: #6f6f6f; text-transform: uppercase; font-size: 0.81rem; letter-spacing: 0.08em; text-align: left; padding: 0.92rem 0.3rem 0.3rem; }
@@ -319,29 +335,52 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .lcol > .dcat { flex: none; }
 /* edit mode: the room under a column's categories shows as a soft slot, a gap below them (layout unchanged: it
    starts where the categories end, its first gap clipped away; nothing moved, so the view scrolls no further) */
-.app.editing .lrow:not(.fold) > .lcol::after { content: ''; flex: 1 1 0; min-height: 0; margin-top: calc(-1 * var(--rg));
+.app.editing .lrow:not(.fold) > .lcol.slot::after { content: ''; flex: 1 1 0; min-height: 0; margin-top: calc(-1 * var(--rg));
   background: rgba(255, 255, 255, 0.022); clip-path: inset(var(--rg) 0 0 0 round 0.9rem); pointer-events: none; }
-.lrow.grow .tg:not(.shorts) { grid-auto-rows: var(--th); }
-.lrow.grow .tile:not(.short) { container-type: inline-size; }
-.lrow.grow .tile canvas { max-height: min(60cqw, 100%); }
-.lrow.grow .tile.sz-tall canvas, .lrow.grow .tile.sz-big canvas { max-height: 100%; }
-.lrow.grow .tile:not(.short) .tv { font-size: calc(2.15rem * var(--gv, 1)); }
-.lrow.grow .tile.sz-big .tv { font-size: calc(3.1rem * var(--gv, 1)); }
+/* Fill: a growing row's tiles are taller by --gr each (a graph no taller than 60% of its width unless the tile is tall) */
+.lrow.grow .tg.pk:not(.shorts) { --grx: var(--gr, 0px); }
+.lrow.grow .tg.pk > .tile:not(.hx) canvas { max-height: min(60cqw, 100%); }
+.lrow.grow .tg.pk > .tile:not(.short):not(.l0):not(.l1):not(.ns) .tv { font-size: calc(min(clamp(2.15rem, min(15.7cqw, 19cqh), 3.1rem), 26cqw) * var(--gv, 1)); }
 /* Overview: a long card in a wide column flows its rows into sub-columns, the big reading across them */
 .dgrid.vert.sub { display: grid; grid-template-columns: repeat(var(--sc), minmax(0, 1fr)); grid-template-rows: auto repeat(var(--sr), auto); grid-auto-flow: column; column-gap: calc(2.2rem * var(--sp, 1)); }
 .dgrid.vert.sub.nohero { grid-template-rows: repeat(var(--sr), auto); }
 .dgrid.vert.sub > .hero { grid-column: 1 / -1; grid-row: 1; }
-.dgrid.vert.sub > .row { border-bottom: 1px solid #1c1c1c; }
+.dgrid.vert.sub > .row { --rowline: linear-gradient(#1c1c1c, #1c1c1c) 50% 100% / calc(100% - 1.24rem) 1px no-repeat; }
 .gsplit.arr { grid-template-columns: var(--gt); align-items: start; }   /* every table as long as what it holds */
 .gsplit.arr.fold { grid-template-columns: minmax(0, 1fr); }
 /* tiles per row: exactly that many when there is room, fewer when the block is narrow */
 .tg.per { grid-template-columns: repeat(auto-fill, minmax(max(8.5rem, calc((100% - (var(--per) - 1) * 0.62rem * var(--sp, 1)) / var(--per) - 0.1px)), 1fr)); }
-.tg.spans { grid-auto-flow: row dense; }
-.tile.sz-wide, .tile.sz-big { grid-column: span 2; }
-.tile.sz-tall, .tile.sz-big { grid-row: span 2; }
-.tile.one { grid-column: auto; }   /* one tile per row: a wide tile can't be wider */
-.tile.sz-big .tv { font-size: 3.1rem; }
-.tile.sz-tall canvas, .tile.sz-big canvas { max-height: none; }
+/* tiles placed by their sizes (packTg): a spot is (the width + a gap) / k wide, w spots less the gap; tops and heights
+   worked out in rem (--ty, --th), plus --gr per tile high in a Fill row. The value grows on bigger tiles (3.1rem on a
+   2 x 2) and shrinks on narrow ones. While the tiles' own heights are read (meas) they keep them */
+.tg.meas { align-items: start; }
+.tg.pk { display: block; position: relative; --g: calc(0.62rem * var(--sp, 1)); --grx: 0px; height: calc(var(--TH) * 1rem + var(--H) * var(--grx)); }
+.tg.pk > .tile { position: absolute; min-height: 0; overflow: hidden;
+  left: calc(var(--x) * (100% + var(--g)) / var(--k)); top: calc(var(--ty) * 1rem + var(--y) * var(--grx));
+  width: calc(var(--w) * (100% + var(--g)) / var(--k) - var(--g)); height: calc(var(--th) * 1rem + var(--h) * var(--grx)); }
+.tg.pk > .tile canvas { max-height: none; min-height: 0; }
+.tg.pk > .tile.cq { container-type: size; }   /* only where the look follows the tile's own size (tileFit) */
+.tg.pk > .tile.cq:not(.short) .tv { font-size: min(clamp(2.15rem, min(15.7cqw, 19cqh), 3.1rem), 26cqw); }
+/* small tiles (tileFit): no graph (ng), no caption either (nc), the name beside the value on one line (l1), the value
+   alone (l0); tight padding when short (ph) or narrow (pw), no unit when very narrow (nu) */
+.tg.pk > .tile.ng canvas, .tg.pk > .tile.ng > .strip, .tg.pk > .tile.ng > .xb { display: none; }
+.tg.pk > .tile.nc .tc { display: none; }
+.tg.pk > .tile.ph { padding-top: 0.3rem; padding-bottom: 0.3rem; }
+.tg.pk > .tile.pw { padding-left: 0.4rem; padding-right: 0.4rem; }
+.tg.pk > .tile.nu .tv small { display: none; }
+.tg.pk > .tile.l1:not(.short) { flex-direction: row; align-items: center; gap: 0.5rem; }
+.tg.pk > .tile.l1:not(.short) .tn { flex: 1 1 auto; min-width: 0; }
+.tg.pk > .tile.l1:not(.short) .tv { margin: 0; font-size: min(1.45rem, 60cqh, 24cqw); }
+.tg.pk > .tile.l0 { flex-direction: row; align-items: center; justify-content: center; }
+.tg.pk > .tile.l0 .tn, .tg.pk > .tile.l0 .tc, .tg.pk > .tile.l0 .rl { display: none; }
+.tg.pk > .tile.l0 { padding-top: 0; padding-bottom: 0; }
+.tg.pk > .tile.l0 .tv, .tg.pk > .tile.l0.short .tv { margin: 0; line-height: 1; font-size: min(1.45rem, 85cqh, 30cqw); justify-self: center; }
+/* narrow and tall (ns): the name over the value, on up to two lines, no icon */
+.tg.pk > .tile.ns .tn { white-space: normal; align-items: flex-start; }
+.tg.pk > .tile.ns .tn svg { display: none; }
+.tg.pk > .tile.ns .tn > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; overflow-wrap: anywhere; }
+.tg.pk > .tile.ns:not(.short) .tv { font-size: min(2.15rem, 30cqw); }
+.tg.pk > .tile.short.l0 { grid-template-columns: minmax(0, 1fr); grid-template-areas: "v"; }
 /* short tiles: name and caption on the left, the value on the right, no graph (a strip stays) */
 .tile.short { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "n v" "c v" "s s" "r r"; align-items: center; column-gap: 0.77rem;
                padding: calc(0.62rem * (0.75 + 0.25 * var(--sp, 1))) calc(0.92rem * (0.75 + 0.25 * var(--sp, 1))); }
@@ -399,8 +438,20 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .lpill { position: fixed; z-index: 125; pointer-events: none; background: #1d2638; border: 1px solid #3a4f75; color: #c9dafa; border-radius: 7px; padding: 3px 9px; font-size: 12px;
          white-space: nowrap; font-variant-numeric: tabular-nums; box-shadow: 0 8px 22px rgba(0,0,0,0.5); transform: translateX(-50%); display: none; }
 .lpill.on { display: block; }
+/* what a tile's size snapped to while its corner is dragged */
+.sguide { position: fixed; z-index: 124; pointer-events: none; background: var(--edit); opacity: 0; box-shadow: 0 0 0 0.5px rgba(127, 166, 232, 0.5); }
+.sguide.on { opacity: 0.85; }
+/* a tile's size as numbers: width and height side by side, the unit inside the box */
+.szin { display: flex; gap: 6px; }
+.szin + .szin { margin-top: 2px; }
+.szin label { position: relative; flex: 1 1 0; min-width: 0; }
+.szin input { width: 100%; padding-right: 38px !important; }
+.szin i { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-style: normal; color: #6a6a6a; font-size: 11px; pointer-events: none; }
 .tile .corner { position: absolute; right: 3px; bottom: 3px; width: 16px; height: 16px; display: none; align-items: center; justify-content: center; cursor: nwse-resize; z-index: 3; touch-action: none; border-radius: 4px; }
 .app.editing .tile.sel .corner { display: flex; }
+.app.editing .tile:not(.sel):hover .corner { display: flex; opacity: 0.55; }   /* any tile can be sized from its corner */
+.tg.pk > .tile.pw .corner, .tg.pk > .tile.ph .corner { width: 11px; height: 11px; right: 1px; bottom: 1px; }   /* small tiles: a smaller corner */
+.tg.pk > .tile.pw .corner svg, .tg.pk > .tile.ph .corner svg { width: 9px; height: 9px; }
 .tile .corner { background: #151515; box-shadow: 0 0 0 2px #151515; }
 .tile .corner:hover { background: #1b2436; }
 .tile .corner svg { width: 12px; height: 12px; stroke: var(--edit); fill: none; stroke-width: 2; stroke-linecap: round; }
@@ -466,6 +517,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 8px; padding: 2px; background: var(--panel); width: 100%; }
 .seg button { flex: 1; background: none; border: 0; color: var(--muted); font-size: 12.5px; padding: 4px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
 .seg button.on { background: #262626; color: var(--hi); }
+.seg.qs button { padding: 4px 0; min-width: 0; font-size: 11.5px; font-variant-numeric: tabular-nums; }   /* quarter-step sizes: eight to a row */
 .seg button.on[data-v="y"] { box-shadow: inset 0 -2px 0 var(--yellow); }
 .seg button.on[data-v="yr"] { box-shadow: inset 0 -2px 0 var(--red); }
 .fgrp { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
@@ -594,10 +646,8 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 #gmodal .gx-fps { color: #e8e8e8; font-weight: 600; font-size: 13px; }
 #gmodal .gx-lo { color: #9a9a9a; }
 #gmodal .gx-c > .gx-nbar { margin: 6.5px 0; }
-#gmodal .gx-nbar, #gmodal .gx-strip { position: relative; display: block; height: 5px; border-radius: 3px; overflow: hidden; background: #232323; }
-#gmodal .gx-nbar span, #gmodal .gx-strip span { position: absolute; top: 0; bottom: 0; }
-#gmodal .gx-strip { height: 7px; background: none; }
-#gmodal .gx-strip::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; margin-top: -0.5px; background: #333; }
+#gmodal .gx-nbar { position: relative; display: block; height: 5px; border-radius: 3px; overflow: hidden; background: #232323; }
+#gmodal .gx-nbar span { position: absolute; top: 0; bottom: 0; }
 #gmodal .gx-st { justify-items: end; text-align: right; font-size: 12px; }
 #gmodal .gx-st > * { max-width: 100%; }
 #gmodal .gx-st .gx-ok { color: #4a4a4a; }
@@ -635,13 +685,33 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 #gmodal .gx-tl .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; }
 #gmodal .gx-tr { display: grid; grid-template-columns: 64px minmax(0, 1fr) 34px; gap: 18px; align-items: center; }
 #gmodal .gx-tr .l { font-size: 12px; color: #8a8a8a; }
-#gmodal .gx-fpsc { display: block; width: 100%; height: 46px; }
-#gmodal .gx-fpsc line { stroke: #2a2a2a; stroke-width: 1; vector-effect: non-scaling-stroke; stroke-dasharray: 2 3; }
-#gmodal .gx-fpsc polygon { fill: #2a2a2a; }
-#gmodal .gx-fpsc polyline { fill: none; stroke: #b5b5b5; stroke-width: 1.3; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
-#gmodal .gx-yax { position: relative; height: 46px; font-size: 10px; color: #4f4f4f; font-variant-numeric: tabular-nums; }
+/* the charts: fps (its 1% low under it, the band between), what limited each minute; a hover guide runs through both */
+#gmodal .gx-hz { position: relative; }
+#gmodal .gx-plot { position: relative; display: block; }
+#gmodal .gx-fpsc, #gmodal .gx-bnc { display: block; width: 100%; overflow: visible; }
+#gmodal .gx-fpsc { height: 140px; }
+#gmodal .gx-bnc { height: 40px; }
+#gmodal .gx-fpsc line { stroke: #262626; stroke-width: 1; vector-effect: non-scaling-stroke; }
+#gmodal .gx-fpsc polygon { fill: rgba(255,255,255,0.04); }
+#gmodal .gx-fpsc polyline { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+#gmodal .gx-fpsc polyline.fp { stroke: #e0e0e0; } #gmodal .gx-fpsc polyline.lo { stroke: #7c7c7c; stroke-width: 1.3; }
+#gmodal .gx-bnc line { stroke: #2c2c2c; stroke-width: 1; vector-effect: non-scaling-stroke; }
+#gmodal .gx-bnc rect.b-gpu { fill: var(--bn-gpu); } #gmodal .gx-bnc rect.b-cpu { fill: var(--bn-cpu); } #gmodal .gx-bnc rect.b-cap { fill: var(--bn-cap); }
+#gmodal .gx-yax { position: relative; height: 140px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
 #gmodal .gx-yax span { position: absolute; left: 0; transform: translateY(-50%); }
-#gmodal .gx-tr.s { margin-top: 8px; }
+#gmodal .gx-tr.f { margin-top: 10px; }
+#gmodal .gx-tr.s { margin-top: 12px; }
+#gmodal .gx-gd { position: absolute; top: -4px; bottom: -4px; width: 1px; margin-left: -0.5px; background: rgba(232,232,232,0.3); opacity: 0; pointer-events: none; transition: opacity 120ms; }
+#gmodal .gx-dot { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+#gmodal .gx-dot.fp { background: #f2f2f2; box-shadow: 0 0 0 3px rgba(255,255,255,0.12); } #gmodal .gx-dot.lo { background: #9a9a9a; }
+#gmodal .gx-hz.hv .gx-gd, #gmodal .gx-hz.hv .gx-dot { opacity: 1; }
+#gmodal .gx-tip { position: absolute; top: 0; display: grid; gap: 3px; padding: 7px 10px; background: #202020; border: 1px solid #333; border-radius: 7px; font-size: 11.5px; color: #8a8a8a; white-space: nowrap;
+  font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; transition: opacity 120ms; z-index: 2; }
+#gmodal .gx-hz.hv .gx-tip { opacity: 1; }
+#gmodal .gx-tip b { color: #e8e8e8; font-weight: 600; }
+#gmodal .gx-tip em { font-style: normal; color: #e8e8e8; }
+#gmodal .gx-tip span { display: inline-flex; align-items: center; gap: 6px; }
+#gmodal .gx-tip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 #gmodal .gx-ticks { position: relative; height: 14px; margin-top: 2px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
 #gmodal .gx-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 #gmodal .gx-ticks span.e0 { transform: none; left: 0; } #gmodal .gx-ticks span.e1 { transform: none; right: 0; }
@@ -649,10 +719,8 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 #gmodal .gx-leg span { display: inline-flex; align-items: center; gap: 6px; }
 #gmodal .gx-leg b { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 #gmodal .gx-leg b.aw { height: 1px; width: 10px; background: #444; border-radius: 0; }
+#gmodal .gx-leg b.ln { height: 2px; width: 12px; border-radius: 1px; } #gmodal .gx-leg b.ln.fp { background: #e0e0e0; } #gmodal .gx-leg b.ln.lo { background: #7c7c7c; }
 #gmodal .gx-leg i { color: #e8e8e8; font-style: normal; }
-#gmodal .gx-nbar span.b-gpu, #gmodal .gx-strip span.b-gpu, #gmodal .gx-leg b.b-gpu { background: #6f6f6f; }
-#gmodal .gx-nbar span.b-cpu, #gmodal .gx-strip span.b-cpu, #gmodal .gx-leg b.b-cpu { background: #d2d2d2; }
-#gmodal .gx-nbar span.b-cap, #gmodal .gx-strip span.b-cap, #gmodal .gx-leg b.b-cap { background: #3e3e3e; }
 /* HW Deck: its generic detail (the other cells with lines, an empty session) and its own key swatch */
 #gmodal .gx-key .sw { width: 14px; height: 5px; border-radius: 2px; display: inline-block; }
 #gmodal .gx-nil { font-size: 12px; color: #6f6f6f; padding-top: 12px; border-top: 1px solid #222; }
@@ -739,3 +807,24 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
   .card.warn-y { border-style: dashed; } .card.warn-r { border-style: double; border-width: 3px; }
   .dc.sel { outline-color: Highlight; }
 }
+
+/* ---------- the 12V-2x6 connector: its pins as bars in the cell, as a table in its popup ---------- */
+.xpins { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0.23rem; align-items: end; height: 1.6rem; }
+.xpins i { display: block; background: #2a2a2a; border-radius: 0.12rem; position: relative; height: 100%; overflow: hidden; }
+.xpins i b { position: absolute; left: 0; right: 0; bottom: 0; background: #6f6f6f; }
+.xpins i b.y { background: var(--yellow, #e6c84a); } .xpins i b.r { background: var(--red, #e5484d); }
+.tile .xb .xpins { margin-bottom: 0.3rem; }
+.gt .xpins { height: 0.9rem; width: 9rem; }
+.mpin { display: grid; grid-template-columns: 46px 1fr 70px 70px; gap: 12px; align-items: center; padding: 4px 0; font-size: 12.5px; }
+.mpin .lbl { color: #7a7a7a; }
+.mpin .trk { height: 9px; background: #222; border-radius: 5px; overflow: hidden; display: block; }
+.mpin .trk span { display: block; height: 100%; border-radius: 5px; }
+.mpin .num { text-align: right; color: #a8a8a8; font-variant-numeric: tabular-nums; }
+/* a short tile at its smallest in a narrow short category: just the value, centred (after the narrow rules above) */
+.tg.pk.shorts > .tile.short.l0 { grid-template-columns: minmax(0, 1fr); grid-template-areas: "v"; }
+.tg.pk.shorts > .tile.short.l0 .tv { justify-self: center; margin: 0; }
+/* a missing reading's Re-link button (edit mode only) sits over the tile, where its graph would be, so a tile is as tall
+   in edit mode as outside it */
+.tg.pk > .tile > .rl { position: absolute; left: 0.9rem; bottom: 0.6rem; margin: 0; z-index: 2; }
+.tg.pk > .tile.short > .rl { left: auto; right: 0.9rem; bottom: auto; top: 50%; transform: translateY(-50%); }
+.app.editing .tg.pk > .tile.short.missing .tv { visibility: hidden; }

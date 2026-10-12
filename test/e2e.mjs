@@ -23,6 +23,7 @@ const storage = async on => { await E(`(() => { DR.L.pinned = ${on}; DR.L.hover 
 ok('catalog arrives', await until('READ.length === 301 && feed.got'), await E('READ.length'));   // 300 made up and HW Deck's own bottleneck
 ok('first run is empty, edit mode on', await E('S.L.cats.length === 0 && S.edit && !!document.querySelector("#view.empty")'));
 ok('5 empty slots', await E('S.slots.every(s => !s)'));
+ok('no extras in HW Deck itself: no extras.js, its own title, its readings have no kind', await E(`!EXT.loaded && !document.querySelector('script[src="extras.js"]') && document.title === "HW Deck" && READ.every(r => r.kind === null)`));
 ok('the status is only a dot (its tooltip says demo data)', (await E('$("dot").title')).includes('Demo data') && !(await E('!!document.getElementById("stat")')), await E('$("dot").title'));
 ok('Storage draws only the rows in sight', await E('document.querySelectorAll("#vspace .vrow").length < 50 && rows.length > 300'), await E('[document.querySelectorAll("#vspace .vrow").length, rows.length]'));
 ok('the type filters wrap instead of hiding (Other is visible)', await E('(() => { const b = [...document.querySelectorAll(".chip")].pop(), r = b.getBoundingClientRect(), s = document.querySelector(".storage").getBoundingClientRect(); return r.right <= s.right && b.textContent.startsWith("Other"); })()'));
@@ -87,6 +88,7 @@ await p.key('a', 'KeyA', 65, 2); await p.type('My GPU'); await p.key('Enter', 'E
 ok('double-click renames a category', await E(`S.L.cats.find(c => c.id === "${cat1}").name === "My GPU"`), await E('S.L.cats.map(c => c.name)'));
 const busy = await E('S.L.cats.find(c => c.cells.length >= 2).id');
 const k1 = await E(`S.L.cats.find(c => c.id === "${busy}").cells[0]`);
+await storage(false);   // the renamed category's settings may have opened over the cell (on the side away from it)
 c = await p.center(`#view .dc[data-cid="${k1}"]`); await p.click(c.x, c.y); await p.sleep(150);
 await p.key('ArrowRight', 'ArrowRight', 39, 1); await p.sleep(200);
 ok('Alt+Right moves the selected cell one place', await E(`S.L.cats.find(c => c.id === "${busy}").cells[1] === "${k1}"`));
@@ -139,6 +141,7 @@ await p.key('Escape', 'Escape', 27); await p.sleep(200);
 ok('Esc closes it', await E('!$("modal").classList.contains("open")'));
 await click('#editBtn');
 ok('pencil off: Storage and the settings go, the view fits itself', await E('!S.edit && getComputedStyle(document.querySelector(".storage")).display === "none" && parseFloat(document.documentElement.style.fontSize) > 9'));
+await p.sleep(700);   // (the view settles first: a cell redrawn under a still pointer gets no hover until it moves)
 c = await p.center('#view .dc'); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y }); await p.sleep(800);
 ok('resting on a cell shows the hover preview', await E('HP.shown && $("hprev").classList.contains("on")'));
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 300 }); await p.sleep(250);

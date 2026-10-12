@@ -16,7 +16,8 @@ Works on 64-bit Windows 10 and 11.
 
 - In edit mode (the pencil, or E), drag sensors from Storage (the tab on the left) into your view, or press + on one.
 - Click a cell to see its graph, up to 7 days back.
-- Select a cell to set yellow and red lines, or a curve on a fan. Select a category to set its width, height and look.
+- Select a cell to set yellow and red lines (above, below, or both), or a curve on a fan. Select a category to set its width, height and look.
+- In Tiles, drag a tile's corner to make it any size (hold Alt for exact pixels), or type the size in its settings.
 - Drop a category on the edge of another to put them side by side or stack them. Each view can be arranged its own way.
 - Tiles, Overview and Grid are three ways to look at the same cells (keys 1, 2, 3).
 - Closing the window keeps it in the tray, still watching. Right-click the tray icon to quit.

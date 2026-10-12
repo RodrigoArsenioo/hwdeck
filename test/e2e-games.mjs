@@ -30,14 +30,19 @@ await host({ t: 'fakePin', key: cpuKey, v: 40 });   // under its lines until the
 const now = Math.floor(Date.now() / 1000), d0 = new Date(); d0.setHours(0, 0, 0, 0);
 const at = (daysAgo, h, m) => Math.floor(d0.getTime() / 1000) - daysAgo * 86400 + h * 3600 + m * 60;
 const s1 = Math.min(at(1, 18, 51), now - 3 * 3600), mins = 88;
-const tf = [], tl = []; let tb = '';
-for (let m = 0; m < mins; m++) { const away = m >= 33 && m < 56; tf.push(away ? null : 150 + Math.round(30 * Math.sin(m / 4))); tl.push(away ? null : 70 + (m % 5)); tb += away ? '-' : m % 9 < 5 ? 'c' : m % 9 < 8 ? 'g' : 'f'; }
+// (the first 10 minutes only have the call that held most of each, like a session from before 1.3.0 picked up after an update)
+const tf = [], tl = [], tc = []; let tb = '';
+for (let m = 0; m < mins; m++) {
+  const away = m >= 33 && m < 56, c = m % 9 < 5 ? 40 : 15, f = m % 9 === 8 ? 30 : 5, g = 60 - c - f;
+  tf.push(away ? null : 150 + Math.round(30 * Math.sin(m / 4))); tl.push(away ? null : 70 + (m % 5));
+  tb += away ? '-' : c >= g && c >= f ? 'c' : g >= f ? 'g' : 'f'; tc.push(away || m < 10 ? null : [g, c, f]);
+}
 const full = { game: 'Marvel Rivals', start: s1, end: s1 + mins * 60, from: s1, secs: mins * 60, front: 65 * 60, fps: 161, low: 72,
   items: [['GPU temp', '\u00b0C', 64, 70.6, 80, 88, 1, null, 0], ['GPU hotspot', '\u00b0C', 72.3, 79.4, 90, null, 1, null, 0], ['GPU memory', '\u00b0C', 71, 78, null, null, 1, null, 0],
     ['GPU power', 'W', 314, 447, 400, 600, 1, null, 0], ['GPU usage', '%', 77, 99, null, null, 1, null, 0], ['CPU temp', '\u00b0C', 58.4, 66.1, 85, 95, 1, null, 0],
     ['CPU power', 'W', 84.6, 121.9, null, null, 1, null, 0], ['CPU usage', '%', 71, 100, null, null, 1, null, 0], ['VRAM', 'MB', 12000, 15155, null, null, 1, 32607, 0],
     ['RAM', 'MB', 40000, 44544, null, null, 1, 65459, 0], ['Rear fan', 'RPM', 1200, 1450, 500, null, 0, null, 1]],
-  warns: 1, g: 1400, c: 2340, f: 160, wl: [['GPU power', 583, 'W']], tf, tl, tb };
+  warns: 1, g: 1400, c: 2340, f: 160, wl: [['GPU power', 583, 'W']], tf, tl, tb, tc };
 const old = { game: 'Old Game', start: s1 - 86400, end: s1 - 86400 + 3600, from: s1 - 86400, secs: 3600, front: 3600, fps: 120, low: 90,
   items: [['GPU temp', '\u00b0C', 60, 70], ['Temperature 9', '\u00b0C', 50, 61]], warns: 0 };
 writeFileSync(join(data, 'games.log'), JSON.stringify(old) + '\r\n' + JSON.stringify(full) + '\r\n' + 'not json\r\n');
@@ -60,8 +65,31 @@ ok('bars end at the red line (power: 447 of 600 W)', await ev(`(() => { const r 
   await ev(`[...document.querySelectorAll("${det} .gx-rd .gx-rr")].find(x => x.querySelector(".l").textContent === "power").querySelector(".gx-bar").innerHTML`));
 ok('VRAM against the card\'s memory (used + free)', await ev(`(() => { const r = [...document.querySelectorAll("${det} .gx-rd .gx-rr")].find(x => x.querySelector(".l").textContent === "VRAM"); return Math.abs(parseFloat(r.querySelector(".gx-bar .m").style.width) - 46.5) < 0.2; })()`));
 ok('other cells with lines under their own heading (a line that warns below is only a tick)', /cells with lines/.test(await T(det + ' .gx-xc')) && await ev(`(() => { const r = document.querySelector("${det} .gx-xc .gx-rr"); return r.querySelector(".l").textContent === "Rear fan" && r.textContent.includes("1,450") && !!r.querySelector(".gx-bar .y") && r.querySelector("b").className === ""; })()`), await T(det + ' .gx-xc'));
-ok('the timeline: fps with its 1% low band, a gap while not in front', await ev(`(() => { const s = document.querySelector("${det} .gx-fpsc"); return !!s && s.querySelectorAll("polyline").length === 2 && s.querySelectorAll("polygon").length === 2; })()`), await ev(`document.querySelector("${det} .gx-tl") && document.querySelector("${det} .gx-tl").textContent`));
-ok('what limited it, minute by minute, and the split', await ev(`document.querySelectorAll("${det} .gx-strip span").length > 10`) && /cpu-bound 60%gpu-bound 36%capped 4%not in front 23m/.test(await T(det + ' .gx-leg')), await T(det + ' .gx-leg'));
+ok('the timeline: fps and its 1% low as lines, the band between, a gap while not in front', await ev(`(() => { const s = document.querySelector("${det} .gx-fpsc"); return !!s && s.querySelectorAll("polyline.fp").length === 2 && s.querySelectorAll("polyline.lo").length === 2 && s.querySelectorAll("polygon").length === 2; })()`), await ev(`document.querySelector("${det} .gx-tl") && document.querySelector("${det} .gx-tl").textContent`));
+ok('the fps chart is tall, with round numbers along its side', await ev(`(() => { const s = document.querySelector("${det} .gx-fpsc"), y = [...document.querySelectorAll("${det} .gx-yax span")].map(x => +x.textContent); return s.getBoundingClientRect().height >= 130 && y.length >= 3 && y.length <= 7 && y.every((v, i) => !i || v > y[i - 1]) && y[0] <= 70 && y[y.length - 1] >= 180; })()`),
+  await ev(`[...document.querySelectorAll("${det} .gx-yax span")].map(x => x.textContent)`));
+ok('what limited it, minute by minute, and the split', await ev(`document.querySelectorAll("${det} .gx-bnc rect").length > 60`) && /^fps1% lowgpu-bound 36%cpu-bound 60%capped 4%not in front 23m$/.test(await T(det + ' .gx-leg')), await T(det + ' .gx-leg'));
+// minute 12: 15 s gpu-bound, 40 s cpu-bound, 5 s capped, stacked in that order from the bottom; minute 3 has only its call
+const colOf = m => ev(`[...document.querySelectorAll("${det} .gx-bnc rect")].filter(r => Math.abs(+r.getAttribute("x") - ${m * 10} - 0.8) < 0.01).map(r => r.getAttribute("class") + ":" + (+r.getAttribute("height")).toFixed(1) + "@" + (+r.getAttribute("y")).toFixed(1)).join()`);
+ok('each minute shows its share of each call (gpu, cpu, capped from the bottom)', await colOf(12) === 'b-gpu:10.0@30.0,b-cpu:26.7@3.3,b-cap:3.3@0.0', await colOf(12));
+ok('a minute with only its main call (an older session) shows that call alone', await colOf(3) === 'b-cpu:40.0@0.0', await colOf(3));
+ok('minutes not in front stay empty', await colOf(40) === '', await colOf(40));
+ok('the calls have their own colours (not yellow or red), the same in the legend', await ev(`(() => { const f = c => getComputedStyle(document.querySelector("${det} .gx-bnc rect." + c)).fill, b = c => getComputedStyle(document.querySelector("${det} .gx-leg b." + c)).backgroundColor;
+  const fs = ['b-gpu', 'b-cpu', 'b-cap'].map(f); return new Set(fs).size === 3 && ['b-gpu', 'b-cpu', 'b-cap'].every(c => f(c) === b(c)) && !fs.some(x => /230, 200, 74|229, 72, 77/.test(x)); })()`),
+  await ev(`['b-gpu', 'b-cpu', 'b-cap'].map(c => getComputedStyle(document.querySelector("${det} .gx-bnc rect." + c)).fill)`));
+// the hover read-out: the minute under the pointer
+const hoverAt = async (m, chart) => { const r = await ev(`(() => { const e = document.querySelector("${det} ${chart}"); e.scrollIntoView({ block: "center" }); const b = e.getBoundingClientRect(); return { x: b.left + (${m} + 0.5) / ${mins} * b.width, y: b.top + b.height / 2 }; })()`);
+  await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y }); await p.sleep(250); return T(det + ' .gx-tip'); };
+const hhmm = u => { const d = new Date(u * 1000); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); };
+let tip = await hoverAt(12, '.gx-fpsc');
+ok('hovering a minute reads it out: time, fps, 1% low, the split', tip === hhmm(s1 + 12 * 60) + 'fps 1541% low 72gpu-bound 25%cpu-bound 67%capped 8%' && await ev(`document.querySelector("${det} .gx-hz").classList.contains("hv")`), tip);
+ok('a guide runs through both charts at that minute, a dot on each line', await ev(`(() => { const g = [...document.querySelectorAll("${det} .gx-gd")].map(x => x.getBoundingClientRect().left), d = document.querySelector("${det} .gx-dot.fp").getBoundingClientRect(); return g.length === 2 && Math.abs(g[0] - g[1]) < 1 && Math.abs(d.left + d.width / 2 - g[0]) < 2 && getComputedStyle(document.querySelector("${det} .gx-gd")).opacity === "1"; })()`));
+tip = await hoverAt(3, '.gx-bnc');
+ok('over an older minute it says which call held most of it', tip === hhmm(s1 + 3 * 60) + 'fps 1701% low 73mostly cpu-bound', tip);
+tip = await hoverAt(40, '.gx-bnc');
+ok('over a gap: not in front', tip === hhmm(s1 + 40 * 60) + 'not in front', tip);
+await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await p.sleep(250);
+ok('the read-out goes when the pointer leaves', await ev(`!document.querySelector("${det} .gx-hz").classList.contains("hv")`));
 ok('clock ticks from start to end', /^\d\d:\d\d.*\d\d:\d\d$/.test(await T(det + ' .gx-ticks')), await T(det + ' .gx-ticks'));
 
 // ---- a line from 1.0.0 ----
@@ -103,9 +131,12 @@ ok('a gated cell that is not a main reading goes by the cell\'s name, with its l
 ok('what crossed a line: name and worst value', g.warns >= 2 && Array.isArray(g.wl) && g.wl.length === 1 && g.wl[0][0] === 'Hot CPU' && g.wl[0][1] === 91.5 && g.wl[0][2] === '\u00b0C', JSON.stringify({ warns: g.warns, wl: g.wl }));
 ok('a timeline per minute: fps, 1% low, what limited it', Array.isArray(g.tf) && g.tf.length >= 3 && g.tf.length === g.tl.length && g.tf.length === g.tb.length && g.tf.every(v => v > 0) && g.tl.every((v, i) => v > 0 && v < g.tf[i]) && /^[gcf]+$/.test(g.tb),
   JSON.stringify({ tf: g.tf, tl: g.tl, tb: g.tb }));
+ok('and each minute\'s seconds per call, the most of them the call it shows', Array.isArray(g.tc) && g.tc.length === g.tb.length && g.tc.every((x, i) => Array.isArray(x) && x.length === 3 && x[0] + x[1] + x[2] > 0 && x[0] + x[1] + x[2] <= 61 &&
+  'gcf'[x[1] >= x[0] && x[1] >= x[2] ? 1 : x[0] >= x[2] ? 0 : 2] === g.tb[i]) && g.tc.reduce((a, x) => a + x[0], 0) === g.g && g.tc.reduce((a, x) => a + x[1], 0) === g.c && g.tc.reduce((a, x) => a + x[2], 0) === g.f,
+  JSON.stringify({ tc: g.tc, tb: g.tb, g: g.g, c: g.c, f: g.f }));
 await click('#gamesBtn');
 await until('[...document.querySelectorAll("#glist .gx-gn")].some(x => x.textContent === "Bench Game")', 5000);
-ok('the popup shows it on top, open, with its warning and the timeline', await ev('(() => { const s = document.querySelector("#glist .gx-sess"); return s.classList.contains("open") && s.querySelector(".gx-gn").textContent === "Bench Game" && /2 warningsHot CPU 91\\.5 °C/.test(s.querySelector(".gx-st").textContent) && !!s.querySelector(".gx-fpsc polyline") && !!s.querySelector(".gx-strip span"); })()'),
+ok('the popup shows it on top, open, with its warning and the timeline', await ev('(() => { const s = document.querySelector("#glist .gx-sess"); return s.classList.contains("open") && s.querySelector(".gx-gn").textContent === "Bench Game" && /2 warningsHot CPU 91\\.5 °C/.test(s.querySelector(".gx-st").textContent) && !!s.querySelector(".gx-fpsc polyline") && !!s.querySelector(".gx-bnc rect"); })()'),
   await ev('document.querySelector("#glist .gx-sess").textContent.slice(0, 300)'));
 ok('its cpu temp row shows the yellow tick and a red max', await ev('(() => { const r = [...document.querySelectorAll("#glist .gx-sess.open .gx-rd .gx-rr")].find(x => x.querySelector(".l").textContent === "temp"); return !!r && !!r.querySelector(".gx-bar .y") && r.querySelector("b").className === "r"; })()'));
 await ev('$("gmodal").classList.remove("open")');
