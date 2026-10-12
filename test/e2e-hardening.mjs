@@ -195,10 +195,10 @@ ok('a click on its row shuts it', await E('!document.querySelector("#glist .gx-s
 await logClick('#gclear');
 ok('Clear asks first, naming how many sessions go', await E('$("cmodal").classList.contains("open") && $("cdesc").textContent.includes("(1 session)")'), await E('$("cdesc").textContent'));
 await logClick('#cyes');
-ok('Clear empties the game log and keeps the old one as games.log.bak', await until('/No game sessions yet/.test($("glist").textContent) && !document.querySelector("#glist .gx-sess") && $("gsum").textContent === ""', 5000) && /"game":"Test Game"/.test(text(join(data, 'games.log.bak'))), await E('$("glist").textContent.slice(0, 100)'));
+ok('Clear empties the game log and keeps the old one as games.log.bak', await until('/No sessions yet/.test($("glist").textContent) && !document.querySelector("#glist .gx-sess") && $("gsum").textContent === ""', 5000) && /"game":"Test Game"/.test(text(join(data, 'games.log.bak'))), await E('$("glist").textContent.slice(0, 100)'));
 await E('$("gmodal").classList.remove("open")'); await p.sleep(300);
 await logClick('#gamesBtn');
-ok('opened again, the cleared game log comes back empty', await until('/No game sessions yet/.test($("glist").textContent) && !document.querySelector("#glist .gx-cols")', 5000) && text(join(data, 'games.log')).trim() === '', text(join(data, 'games.log')).slice(0, 200));
+ok('opened again, the cleared game log comes back empty', await until('/No sessions yet/.test($("glist").textContent) && !document.querySelector("#glist .gx-cols")', 5000) && text(join(data, 'games.log')).trim() === '', text(join(data, 'games.log')).slice(0, 200));
 await E('$("gmodal").classList.remove("open")'); await p.sleep(300);
 
 // ---- HWiNFO gone ----

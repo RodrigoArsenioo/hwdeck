@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.0 (2026-10-12)
+
+- Try it in your browser at rodrigoarsenioo.github.io/hwdeck, with made-up readings.
+- Game sessions have a new layout: a summary on top, a chart of the fps and what limited it, and your readings in three columns with their yellow and red lines.
+- Customize what a session shows: add, rename, hide or reorder categories, and put any reading in them.
+- Record sessions of your own with Start session, for a benchmark or a render. Several can run at once, even next to a game.
+- Delete a single session.
+- Choose in Settings how many days sessions and warnings are kept (30 by default).
+- The bottleneck is grey instead of coloured, and it works with no game running too.
+- Fan curves: no PREDICTED tag and no tolerance band. Points stay sorted, so two at the same temperature make a step.
+- Fixed: a fast click outside a popup didn't close it.
+- Fixed: a click on a cell right after the window opened could be lost.
+- Fixed: maximizing hid a few pixels at the top of the window.
+- Fixed: on start, the dashboard showed placeholders for a moment and then jumped.
+- Fixed: Enter in the days fields cancelled the question it opened.
+
 ## 1.3.0 (2026-10-12)
 
 - Tiles can be any size, from a quarter of a tile to two tiles each way. Drag a tile's corner (it snaps to quarter steps, to the edges of other tiles and to the bottom of the column beside it; hold Alt for any size), type the size in tiles or pixels, or use Ctrl+arrows.

@@ -243,15 +243,18 @@ const fmtV = (v, dec, r) => isYN(r) ? (v == null || !isFinite(v) ? '--' : v >= 0
 const unitOf = r => !r || r.unit === 'Yes/No' ? '' : r.unit;
 function valTxt(r) { if (!r || r.v == null) return '--'; if (r.key === BNECK) return BN[r.v] ? BN[r.v][0] + ' ' + BN[r.v][1] : '--'; return isYN(r) ? fmtV(r.v, 0, r) : fmt(r.v, decFor(r)) + (r.unit ? ' ' + r.unit : ''); }
 const fmtL = (x, dec) => (+x).toLocaleString('en-US', { maximumFractionDigits: dec == null ? 1 : dec });
+// a curve's points go by temperature, a tie by rpm (two points at one temperature: a step)
+const ptOrd = (a, b) => a[0] - b[0] || a[1] - b[1];
 function interp(pts, x) {
   if (!pts || !pts.length || x == null || !isFinite(x)) return null;
-  const p = pts.slice().sort((a, b) => a[0] - b[0]);
+  const p = pts.slice().sort(ptOrd);
   if (x <= p[0][0]) return p[0][1];
   for (let i = 1; i < p.length; i++) if (x <= p[i][0]) { const [x0, y0] = p[i - 1], [x1, y1] = p[i]; return y0 + (y1 - y0) * (x - x0) / (x1 - x0 || 1); }
   return p[p.length - 1][1];
 }
 const mixHex = (a, b, w) => '#' + [1, 3, 5].map(i => Math.round(parseInt(a.substr(i, 2), 16) * (1 - w) + parseInt(b.substr(i, 2), 16) * w).toString(16).padStart(2, '0')).join('');
 const durTxt = sec => { const m = Math.max(0, Math.round(sec / 60)); return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + ('0' + (m % 60)).slice(-2) + 'm'; };
+const durS = sec => sec < 59.5 ? Math.max(0, Math.round(sec)) + 's' : durTxt(sec);   // (a session of your own can be under a minute)
 const plural = (n, one, many) => n.toLocaleString('en-US') + ' ' + (n === 1 ? one : many || one + 's');
 const hhmm = u => { const d = new Date(u * 1000); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); };
 const hhmmss = u => hhmm(u) + ':' + ('0' + new Date(u * 1000).getSeconds()).slice(-2);
@@ -281,7 +284,7 @@ function cleanLayout(L) {
       if (g.other && typeof g.other === 'object') { const o = {}; if (isFinite(fin(g.other.y))) o.y = fin(g.other.y); if (isFinite(fin(g.other.r))) o.r = fin(g.other.r); cell.gates.other = o; }
     }
     const curveOf = cv => {
-      const pts = cv && typeof cv === 'object' && Array.isArray(cv.pts) ? cv.pts.filter(p => Array.isArray(p) && p.length >= 2 && isFinite(fin(p[0])) && isFinite(fin(p[1]))).map(p => [p[0], p[1]]) : [];
+      const pts = cv && typeof cv === 'object' && Array.isArray(cv.pts) ? cv.pts.filter(p => Array.isArray(p) && p.length >= 2 && isFinite(fin(p[0])) && isFinite(fin(p[1]))).map(p => [p[0], p[1]]).sort(ptOrd) : [];
       return pts.length >= 2 ? Object.assign({ src: str(cv.src, 200) || '', pts, tol: Math.max(1, isFinite(fin(cv.tol)) ? cv.tol : 15), hold: Math.min(1e9, Math.max(0, isFinite(fin(cv.hold)) ? cv.hold : 10)) }, cv.warn === false ? { warn: false } : {}) : null;
     };
     const cv = curveOf(c.curve), off = curveOf(c.curveOff);
@@ -303,7 +306,31 @@ function cleanLayout(L) {
   for (const id of Object.keys(out.cells)) if (!listed.has(id)) delete out.cells[id];
   const views = cleanViews(L && L.views, out, ids, catIds);
   if (views) out.views = views;
+  const gm = cleanGames(L && L.games);
+  if (gm) out.games = gm;
   return out;
+}
+// a game report's setup (see gxLayout): its categories in order, the built-in ones (summary, time, lines) at most once,
+// up to 16, each list with up to GX_MAX readings: a main one by its name (head) or any by its key
+const GX_HEADS = ['GPU temp', 'GPU hotspot', 'GPU memory', 'GPU power', 'GPU usage', 'CPU temp', 'CPU power', 'CPU usage', 'VRAM', 'RAM'], GX_MAX = 8;
+function cleanGames(g) {
+  if (!g || typeof g !== 'object' || !Array.isArray(g.secs)) return undefined;
+  const secs = [], seen = new Set();
+  for (const s of g.secs.slice(0, 16)) {
+    if (!s || typeof s !== 'object' || !['summary', 'time', 'list'].includes(s.kind)) continue;   // (1.4's 'lines' is gone)
+    const id = s.kind !== 'list' ? s.kind : idOk(s.id) && !['summary', 'time', 'lines'].includes(s.id) ? s.id : nid('g');
+    if (seen.has(id)) continue; seen.add(id);
+    const o = { id, kind: s.kind }, name = typeof s.name === 'string' ? s.name.trim().slice(0, 40) : '';
+    if (name && s.kind === 'list') o.name = name;
+    if (s.kind === 'list') {
+      if (!o.name) o.name = 'Category';
+      o.cells = (Array.isArray(s.cells) ? s.cells : []).filter(c => c && typeof c === 'object' && (GX_HEADS.includes(c.head) || (typeof c.key === 'string' && c.key && c.key.length <= 200))).slice(0, GX_MAX)
+        .map(c => { const x = GX_HEADS.includes(c.head) ? { head: c.head } : { key: c.key }; if (typeof c.name === 'string' && c.name.trim()) x.name = c.name.trim().slice(0, 40); return x; });
+    }
+    if (s.hide === true) o.hide = true;
+    secs.push(o);
+  }
+  return secs.length ? { secs } : undefined;
 }
 // ---------- arrangements (1.2): per view, rows of columns, each column a stack of categories; plus looks ----------
 //   views    { tiles?, overview?, grid? }: a view that isn't there is Automatic (placed as HW Deck always did)
@@ -457,7 +484,23 @@ function pushUndo(before) { undoStack.push(before); if (undoStack.length > 80) u
 function snap() { pushUndo(snapOf()); }
 // a change that changes nothing (Alt+arrow at the end of a list) leaves no undo step
 function mutate(fn, msg) { if (nudge) flushNudge(); const before = snapOf(); fn(); tidyViews(S.L); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); afterChange(); if (msg) toast(msg, true); }
-function afterChange() { tidyViews(S.L); fixSel(); if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); }
+// every tile measured again (a build's cells got their bodies): once things settle, never under a drag
+const xSeen = new Set(); let rmT = 0;
+function remeasureSoon(ms) { clearTimeout(rmT); rmT = setTimeout(() => { if ((drag && drag.started) || rs) { remeasureSoon(); return; } packMemo.clear(); renderView(false); }, ms == null ? 400 : ms); }
+// a start: the view stays out of sight until what it shows is in (the readings, their values, a build's extras.js and
+// its first data), then it is measured and comes in; before, it drew placeholders first and jumped once they filled
+// in (a Smart Life tile without its bar). In the tray the page gets none of it, so this waits for the window to open;
+// whatever is still missing 2.5 s after the page shows, it comes in anyway
+const boot = { cat: false, tick: false, x: false, t: 0 };
+function bootCheck(force) {
+  if (!app.classList.contains('boot')) return;
+  if (!force && !(boot.cat && boot.tick && (!feed.ext || (EXT.ready && boot.x)))) return;
+  clearTimeout(boot.t); app.classList.remove('boot'); packMemo.clear(); renderView(true);
+}
+function bootArm() { if (app.classList.contains('boot') && !document.hidden && !boot.t) boot.t = setTimeout(() => bootCheck(true), 2500); }
+document.addEventListener('visibilitychange', bootArm);
+let onLayout = null;   // (the sessions popup: Customize and the open sessions drawn again)
+function afterChange() { tidyViews(S.L); fixSel(); if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); if (onLayout) onLayout(); }
 function undo() { if (nudge) flushNudge(); if (!undoStack.length) return; retireToastUndo(); redoStack.push(snapOf()); restore(undoStack.pop()); fixSel(); afterChange(); }
 function redo() { if (nudge) flushNudge(); if (!redoStack.length) return; retireToastUndo(); undoStack.push(snapOf()); restore(redoStack.pop()); fixSel(); afterChange(); }
 function syncUndo() { $('undo').disabled = !undoStack.length; $('redo').disabled = !redoStack.length; }
@@ -487,10 +530,10 @@ function cellKeys() {
 function subscribe() {
   clearTimeout(subT);
   subT = setTimeout(() => {
-    const cells = cellKeys(), m = JSON.stringify([cells, rowKeys]);
+    const cells = cellKeys(), rows = gzKeys.length ? [...new Set(rowKeys.concat(gzKeys))] : rowKeys, m = JSON.stringify([cells, rows]);   // (Storage's rows in sight, and Customize's)
     dropRings(new Set(cells));
     if (m === lastSub) return; lastSub = m;
-    send({ t: 'sub', cells, rows: rowKeys });
+    send({ t: 'sub', cells, rows });
   }, 60);
 }
 
@@ -541,9 +584,10 @@ function evalCell0(cid, c, peek, quick) {
   const xk = xkOf(r);
   if (xk && xk.eval && xk.eval(out, r, c)) return out;
   if (isBneck(c)) {   // a call in words, no lines; its caption is the split of the last 15 min
-    const b = bnStrip(), w = BN[v] ? BN[bnNow() || v] : null;
-    out.txt = w ? w[0] : '--'; out.utxt = w ? w[1] : ''; out.strip = b;
-    out.col = w && live ? 'white' : 'grey';
+    // (no game: what the GPU and CPU say right now, the strip and the history stay a game's)
+    const b = bnStrip(), w = BN[v] ? BN[bnNow() || v] : null, lw = !w && BN[feed.bnl] ? BN[feed.bnl] : null;
+    out.txt = w ? w[0] : lw ? lw[0] : '--'; out.utxt = w ? w[1] : lw ? lw[1] : ''; out.strip = b;
+    out.col = (w || lw) && live ? 'white' : 'grey';
     out.sub = w ? bnSplit(b) : !bnInputs() ? 'needs GPU usage and CPU thread usage' : feed.game && !live ? 'waiting for HWiNFO' : 'no game running';
     return out;
   }
@@ -871,7 +915,7 @@ function tileHtml(cid, lk, pre) {
   const nog = xb == null && (miss || c.graph === false || (short && !isBneck(c)));
   return '<div class="tile dc' + (c.pred ? ' pred' : '') + (short ? ' short' : '') + (miss ? ' missing' : '') + (nog ? ' nog' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + (pre ? pre[1] : '') + anim() + (pre ? ';' + pre[0] : '') + '" data-cid="' + esc(cid) + '" data-k="tile" tabindex="0"' +
     (z.w !== 1 ? ' data-w="' + z.w + '"' : '') + (z.h !== 1 ? ' data-h="' + z.h + '"' : '') + (cellLook(cid, 'tiles').nl ? ' data-nl="1"' : '') + '>' +
-    '<div class="tn">' + iconOf(c, r) + '<span>' + esc(nm) + '</span>' + (c.pred && !/predicted/i.test(nm) ? '<span class="badge">predicted</span>' : '') + '</div>' +
+    '<div class="tn">' + iconOf(c, r) + '<span>' + esc(nm) + '</span></div>' +
     '<div class="tv"><span class="v"></span><small class="u">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small></div><div class="tc"></div>' +
     (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit ? '<span class="corner" title="Drag to size it: it snaps to quarter steps, to the edges of other tiles and to the bottom of the columns beside it. Hold Alt for any size, double-click for a normal tile">' + ICONS.corner + '</span>' : '') + '</div>';
 }
@@ -1546,7 +1590,7 @@ function rememberFit(key, f) {
   clearTimeout(fitSaveT); fitSaveT = setTimeout(() => { try { localStorage.setItem('hwdeck.fit', JSON.stringify(fitMemo)); } catch (e) { /* no storage: fine */ } }, 2000);
 }
 // (the cells too: a name, a graph turned on or off, a missing reading change what fits)
-const fitKey = target => hashKey(JSON.stringify([S.screen, target, sectionsEl.clientWidth, sectionsEl.clientHeight, S.L.cats.map(c => [c.id, cellsOf(c).length, c.collapsed]),
+const fitKey = target => hashKey(JSON.stringify([S.screen, target, !!EXT.ready, sectionsEl.clientWidth, sectionsEl.clientHeight, S.L.cats.map(c => [c.id, cellsOf(c).length, c.collapsed]),
   viewOf(S.screen), S.L.cells, Object.keys(S.L.cells).filter(id => isMissing(S.L.cells[id]))]));
 function autofit() {
   const root = document.documentElement, v = $('view');
@@ -2530,10 +2574,14 @@ for (const k of ['L', 'R']) {
 }
 $('undo').onclick = undo; $('redo').onclick = redo;
 $('toastUndo').onclick = () => { if (toastDepth >= 0 && undoStack.length === toastDepth) undo(); $('toast').classList.remove('show'); retireToastUndo(); };
+// the clean view: a cell opens when a press that started on it is let go, by the cell it was, not by the element (a
+// redraw between press and release, as when a fresh window settles, made the browser drop the click)
+let press = null, openedByUp = 0;
 sectionsEl.addEventListener('pointerdown', ev => {
+  press = null;
   if (ev.button !== 0 || ev.target.closest('button,input') || (host && zoneAt(ev))) return;   // the window edge: a resize
   hidePrev();
-  if (!S.edit) return;
+  if (!S.edit) { const c = ev.target.closest('#view .dc'); if (c && !ev.target.closest('[data-x]')) press = { cid: c.dataset.cid, x: ev.clientX, y: ev.clientY }; return; }
   const hd = ev.target.closest('.ldiv, .lrs, .corner');
   if (hd) { startHandle(ev, hd); ev.preventDefault(); return; }
   const g = ev.target.closest('.dch .grip');
@@ -2545,6 +2593,13 @@ sectionsEl.addEventListener('pointerdown', ev => {
     if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp')) document.activeElement.blur();
     ev.preventDefault(); cell.focus({ preventScroll: true });   // no text selection painted across the view while dragging
   }
+});
+sectionsEl.addEventListener('pointerup', ev => {
+  const p = press; press = null;
+  if (!p || S.edit || ev.button !== 0 || Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 8 || !S.L.cells[p.cid]) return;
+  const at = document.elementFromPoint(ev.clientX, ev.clientY), cell = at && at.closest('#view .dc');
+  if (cell && cell.dataset.cid !== p.cid) return;   // (let go over another cell)
+  openedByUp = performance.now(); openDetail(p.cid);
 });
 sectionsEl.addEventListener('click', ev => {
   if (justDragged) return;
@@ -2560,7 +2615,7 @@ sectionsEl.addEventListener('click', ev => {
   if (ev.target.closest('.rl')) { startRelink(ev.target.closest('.dc').dataset.cid); return; }
   if (ev.target.closest('.ldiv, .lrs, .corner')) return;
   const cell = ev.target.closest('#view .dc');
-  if (!S.edit) { if (cell && !ev.target.closest('[data-x]')) openDetail(cell.dataset.cid); return; }
+  if (!S.edit) { if (cell && !ev.target.closest('[data-x]') && performance.now() - openedByUp > 500) openDetail(cell.dataset.cid); return; }   // (already open from the release)
   if (cell) { selectCell(cell.dataset.cid); return; }
   // a category's header (its name, its empty space) selects the category; anywhere else: the view
   if (catEl && ev.target.closest('.dch, .ghdr, .bh') && !ev.target.closest('input')) { selectCat(catEl.dataset.cat); return; }
@@ -2818,14 +2873,13 @@ const kLabel = v => v >= 1000 ? (v / 1000).toLocaleString('en-US', { maximumFrac
 function curveRange(src) { return isF(src && src.unit) ? { min: 32, max: 212, step: 36 } : { min: 0, max: 100, step: 20 }; }
 function drawCurveSvg(c, e) {
   const box = $('cChart'); const W = 270, H = 160, l = 34, rr = 8, t = 8, b = 22;
-  const pts = c.curve.pts.slice().sort((a, b) => a[0] - b[0]);
+  const pts = c.curve.pts.slice().sort(ptOrd);
   const src0 = BYKEY.get(c.curve.src), fh = isF(src0 && src0.unit), xmin = fh ? 68 : 20, xmax = fh ? 212 : 100, xstep = fh ? 36 : 20;
   const ax = niceAxis(Math.max(500, Math.max(...pts.map(p => p[1]), e.v || 0) * 1.15), 4), ymax = ax.max;
   const X = v => l + (Math.max(xmin, Math.min(xmax, v)) - xmin) / (xmax - xmin) * (W - l - rr), Y = v => t + (1 - v / ymax) * (H - t - b);
   let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" id="cSvg">';
   for (let x = xmin; x <= xmax; x += xstep) s += '<line x1="' + X(x) + '" x2="' + X(x) + '" y1="' + t + '" y2="' + (H - b) + '" stroke="#202020"/><text x="' + X(x) + '" y="' + (H - 7) + '" fill="#6a6a6a" font-size="9" text-anchor="middle">' + x + '\u00b0</text>';
   for (let v = 0; v <= ymax + 1e-9; v += ax.step) s += '<line x1="' + l + '" x2="' + (W - rr) + '" y1="' + Y(v) + '" y2="' + Y(v) + '" stroke="#202020"/><text x="' + (l - 4) + '" y="' + (Y(v) + 3) + '" fill="#6a6a6a" font-size="9" text-anchor="end">' + kLabel(v) + '</text>';
-  if (!c.pred) { const tl = c.curve.tol / 100; s += '<path d="' + pts.map((p, i) => (i ? 'L' : 'M') + X(p[0]) + ' ' + Y(p[1] * (1 + tl))).join(' ') + ' ' + pts.slice().reverse().map(p => 'L' + X(p[0]) + ' ' + Y(p[1] * (1 - tl))).join(' ') + 'Z" fill="rgba(127,166,232,0.10)" stroke="none"/>'; }
   // past its first and last points a fan keeps their speed: dashed to the edges
   const p0 = pts[0], pn = pts[pts.length - 1];
   if (pts.length) s += '<path d="M' + l + ' ' + Y(p0[1]) + ' L' + X(p0[0]) + ' ' + Y(p0[1]) + ' M' + X(pn[0]) + ' ' + Y(pn[1]) + ' L' + (W - rr) + ' ' + Y(pn[1]) + '" fill="none" stroke="#7fa6e8" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.6"/>';
@@ -2892,7 +2946,7 @@ insp.addEventListener('keydown', e => {
   if (e.target.id !== 'cPasteIn' || e.key !== 'Enter') return;
   const items = e.target.value.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
   const pts = items.map(s => s.split(/\s*[:=]\s*|\s+/)).filter(p => p.length === 2 && p[0] !== '' && p[1] !== '' && p.every(x => isFinite(Number(x)))).map(p => p.map(Number));
-  if (pts.length >= 2) { setCell(c => { c.curve.pts = pts; }, true); renderInsp(); updateView(false); toast(plural(pts.length, 'point') + ' set' + (items.length > pts.length ? ', ' + (items.length - pts.length) + ' skipped (write them as temp:rpm)' : '')); }
+  if (pts.length >= 2) { setCell(c => { c.curve.pts = pts.sort(ptOrd); }, true); renderInsp(); updateView(false); toast(plural(pts.length, 'point') + ' set' + (items.length > pts.length ? ', ' + (items.length - pts.length) + ' skipped (write them as temp:rpm)' : '')); }
   else toast('Write the points as temp:rpm, separated by commas');
 });
 insp.addEventListener('click', e => {
@@ -2925,7 +2979,7 @@ insp.addEventListener('click', e => {
   if (e.target.closest('#iOpen')) openDetail(sel);
   if (e.target.closest('#cAdd')) {
     // a new point goes into the widest gap, or past the last one while there is room on the chart
-    const pts = c.curve.pts.slice().sort((a, b) => a[0] - b[0]), top = curveRange(BYKEY.get(c.curve.src)).max;
+    const pts = c.curve.pts.slice().sort(ptOrd), top = curveRange(BYKEY.get(c.curve.src)).max;
     let at = -1, gap = 0;
     for (let i = 1; i < pts.length; i++) if (pts[i][0] - pts[i - 1][0] > gap) { gap = pts[i][0] - pts[i - 1][0]; at = i; }
     const last = pts[pts.length - 1] || [60, 1000];
@@ -2951,7 +3005,25 @@ document.addEventListener('pointermove', e => {
   tickInsp(); updateView(false);
   const ins = $('cTab').querySelectorAll('input[data-i="' + dragPt.i + '"]'); if (ins.length === 2) { ins[0].value = c.curve.pts[dragPt.i][0]; ins[1].value = c.curve.pts[dragPt.i][1]; }
 });
-document.addEventListener('pointerup', () => { if (dragPt) { const moved = dragPt.moved; dragPt = null; if (moved) { saveState(); syncSaves(); renderInsp(); } } });
+document.addEventListener('pointerup', () => {
+  if (!dragPt) return;
+  const moved = dragPt.moved, c = S.L.cells[sel], was = c && c.curve ? JSON.stringify(c.curve.pts) : '';
+  dragPt = null; if (c && c.curve) c.curve.pts.sort(ptOrd);   // (also a point only clicked: the table may have been left unsorted under it)
+  if (moved || (c && c.curve && JSON.stringify(c.curve.pts) !== was)) { saveState(); syncSaves(); renderInsp(); }
+});
+// the points table goes back in order once you leave it (not while you type in it: rows would jump under you)
+insp.addEventListener('focusout', e => {
+  if (!e.target.closest('#cTab') || (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('#cTab'))) return;
+  setTimeout(() => {
+    const c = S.L.cells[sel]; if (!c || !c.curve || dragPt || document.activeElement && document.activeElement.closest && document.activeElement.closest('#cTab')) return;
+    const was = JSON.stringify(c.curve.pts), now = c.curve.pts.slice().sort(ptOrd);
+    if (JSON.stringify(now) === was) return;
+    c.curve.pts = now; saveState(); syncSaves();
+    for (const el of document.querySelectorAll('#cTab input[data-i]')) { const q = now[+el.dataset.i]; if (q) el.value = q[+el.dataset.j]; }
+    tickInsp(); updateView(false);
+  }, 0);
+});
+insp.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.closest && e.target.closest('#cTab')) e.target.blur(); });
 
 // ---------- the right panel for a category, for the view, and the layout bits of a cell ----------
 const segL = (label, key, opts, cur) => '<div class="fld"><span>' + label + '</span><div class="seg" data-lay="' + key + '">' +
@@ -3338,7 +3410,8 @@ function bnHover(box) {
 }
 $('mextra').addEventListener('pointermove', ev => { const w = ev.target.closest && ev.target.closest('.bnw'); BNP.x = w ? ev.clientX : null; bnHover($('mextra')); });
 $('mextra').addEventListener('pointerleave', () => { BNP.x = null; bnHover($('mextra')); });
-modal.addEventListener('mousedown', e => { if (e.target === modal && performance.now() - openedAt > 450) closeDetail(); });
+// a press outside the popup closes it, however soon after it opened and wherever (the same spot as the cell too)
+modal.addEventListener('mousedown', e => { if (e.target === modal) closeDetail(); });
 $('mclose').onclick = closeDetail;
 function graphCtx(cv) {
   const dpr = window.devicePixelRatio || 1, w = cv.clientWidth * dpr, h = cv.clientHeight * dpr;
@@ -3424,7 +3497,7 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
 function drawCurveChart(cv, c, e) {
   const { ctx, w, h, dpr } = graphCtx(cv);
   const padL = 58 * dpr, padR = 10 * dpr, padT = 12 * dpr, padB = 38 * dpr;
-  const pts = c.curve.pts.slice().sort((a, b) => a[0] - b[0]);
+  const pts = c.curve.pts.slice().sort(ptOrd);
   const src = BYKEY.get(c.curve.src), cr = curveRange(src);
   const ax = niceAxis(Math.max(500, Math.max(...pts.map(p => p[1]), e.v || 0) * 1.12), 5), yMax = ax.max;
   const X = t => padL + (t - cr.min) / (cr.max - cr.min) * (w - padL - padR), Y = v => h - padB - v / yMax * (h - padT - padB);
@@ -3435,18 +3508,9 @@ function drawCurveChart(cv, c, e) {
   ctx.textAlign = 'center'; ctx.fillStyle = '#555'; ctx.fillText((src ? src.label : 'temperature') + ' ' + tempUnit(src), (padL + w - padR) / 2, h - padB + 22 * dpr);
   yCaption(ctx, dpr, 'RPM');
   ctx.save(); ctx.beginPath(); ctx.rect(padL, padT - 6 * dpr, w - padL - padR, h - padT - padB + 6 * dpr); ctx.clip();
-  if (!c.pred) {   // the tolerance band
-    const tl = c.curve.tol / 100; ctx.beginPath();
-    pts.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1] * (1 + tl))) : ctx.moveTo(X(p[0]), Y(p[1] * (1 + tl))));
-    pts.slice().reverse().forEach(p => ctx.lineTo(X(p[0]), Y(p[1] * (1 - tl)))); ctx.closePath(); ctx.fillStyle = 'rgba(201,201,201,0.06)'; ctx.fill();
-  }
-  // past its first and last points a fan keeps their speed: dashed (and its band, fainter) to the edges of the graph
+  // (the tolerance isn't drawn: it only decides whether the fan is on its curve)
+  // past its first and last points a fan keeps their speed: dashed to the edges of the graph
   const p0 = pts[0], pn = pts[pts.length - 1], x0 = X(p0[0]), xn = X(pn[0]);
-  if (!c.pred) {
-    const tl = c.curve.tol / 100; ctx.fillStyle = 'rgba(201,201,201,0.035)';
-    if (x0 > padL) ctx.fillRect(padL, Y(p0[1] * (1 + tl)), x0 - padL, Y(p0[1] * (1 - tl)) - Y(p0[1] * (1 + tl)));
-    if (xn < w - padR) ctx.fillRect(xn, Y(pn[1] * (1 + tl)), w - padR - xn, Y(pn[1] * (1 - tl)) - Y(pn[1] * (1 + tl)));
-  }
   ctx.beginPath();
   if (x0 > padL) { ctx.moveTo(padL, Y(p0[1])); ctx.lineTo(x0, Y(p0[1])); }
   if (xn < w - padR) { ctx.moveTo(xn, Y(pn[1])); ctx.lineTo(w - padR, Y(pn[1])); }
@@ -3667,7 +3731,7 @@ $('clearBtn').onclick = () => askConfirm('Clear the view?', 'Back to the first r
 const wmodal = $('wmodal');
 let lastLogCount = 0;
 $('logBtn').onclick = () => { wmodal.classList.add('open'); $('wlist').innerHTML = '<div class="wempty">loading...</div>'; if (host) send({ t: 'alerts' }); else renderWarnings(''); };
-$('wclear').onclick = () => askConfirm('Clear warning history?', 'This wipes the warning log (' + lastLogCount + ' crossings in the last 7 days). A copy is kept as alerts.log.bak first, so it can be brought back.', 'Clear history', () => send({ t: 'alerts:clear' }));
+$('wclear').onclick = () => askConfirm('Clear warning history?', 'This wipes the warning log (' + lastLogCount + ' crossings in the last ' + (feed.warnDays || 30) + ' days). A copy is kept as alerts.log.bak first, so it can be brought back.', 'Clear history', () => send({ t: 'alerts:clear' }));
 function fmtDur(ms) { const s = Math.max(0, Math.round(ms / 1000)); if (s < 60) return s + 's'; const m = Math.round(s / 60); return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; }
 function renderWarnings(log) {
   const open = {}, eps = [];
@@ -3691,7 +3755,8 @@ function renderWarnings(log) {
     const ep = { when, day: m[1], time: m[2].slice(0, 5), level: m[3], name, detail, end: null, peak: null, interrupted: false };
     open[name] = ep; eps.push(ep);
   }
-  const recent = eps.filter(ep => ep.when.getTime() >= Date.now() - 7 * 86400000);
+  const N = feed.warnDays || 30, recent = eps.filter(ep => ep.when.getTime() >= Date.now() - N * 86400000);
+  setText($('wdays'), String(N));
   const groups = [], lastOf = {};
   for (const ep of recent) {
     const g = lastOf[ep.name], prevEnd = g ? (g.end || g.last.when) : null;
@@ -3706,7 +3771,7 @@ function renderWarnings(log) {
   }
   lastLogCount = recent.length;
   const nRed = recent.filter(ep => ep.level === 'RED').length, nYel = recent.length - nRed;
-  $('wsum').innerHTML = groups.length ? '<span>crossings in the last 7 days:</span><span><b style="color:#e5484d">' + nRed + '</b> red</span><span><b style="color:#e6c84a">' + nYel + '</b> yellow</span><span>' + plural(groups.length, 'row') + '</span>' : '';
+  $('wsum').innerHTML = groups.length ? '<span>crossings in the last ' + N + ' days:</span><span><b style="color:#e5484d">' + nRed + '</b> red</span><span><b style="color:#e6c84a">' + nYel + '</b> yellow</span><span>' + plural(groups.length, 'row') + '</span>' : '';
   const today = localDay(new Date()), y = new Date(); y.setDate(y.getDate() - 1); const yest = localDay(y);
   let hh = '', lastDay = null;
   groups.reverse().forEach((g, gi) => {
@@ -3728,15 +3793,39 @@ function renderWarnings(log) {
       hh += '</div>';
     }
   });
-  $('wlist').innerHTML = hh || '<div class="wempty ico chk">Nothing crossed a line in the last 7 days. Quiet machine.</div>';
+  $('wlist').innerHTML = hh || '<div class="wempty ico chk">Nothing crossed a line in the last ' + N + ' days. Quiet machine.</div>';
 }
 $('wlist').addEventListener('click', e => { const r = e.target.closest('.wgrp'); if (!r) return; r.classList.toggle('open'); const sub = document.querySelector('.wsub[data-sub="' + r.dataset.g + '"]'); if (sub) sub.classList.toggle('open'); });
 
 // ---------- game sessions ----------
 const gmodal = $('gmodal');
 let lastGameCount = 0;
-$('gamesBtn').onclick = () => { gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; if (host) send({ t: 'games' }); else renderGames(''); };
-$('gclear').onclick = () => askConfirm('Clear game sessions?', 'This wipes the game log (' + lastGameCount + (lastGameCount === 1 ? ' session' : ' sessions') + '). A copy is kept as games.log.bak first, so it can be brought back.', 'Clear sessions', () => send({ t: 'games:clear' }));
+$('gamesBtn').onclick = () => { gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; recKey = null; renderRec(); if (host) send({ t: 'games' }); else renderGames(''); };
+// ---- sessions of your own: Start records one (the host follows it like a game's, beside any game), each running one
+// shows on top with its name (change it there), its time so far and Stop ----
+let recKey = null, recHold = 0;
+const recClock = s => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + ':' + ('0' + m).slice(-2) : m) + ':' + ('0' + x).slice(-2); };
+function renderRec() {
+  const box = $('grun'), rs = feed.rec || [], k = rs.map(x => x[0]).join();
+  if (k !== recKey) {   // (drawn again only when one starts or stops: a name being typed stays)
+    recKey = k; box.hidden = !rs.length;
+    box.innerHTML = rs.map(x => '<div class="gx-rec" data-start="' + x[0] + '"><span class="rdot"></span><input class="gx-rn" value="' + esc(x[1]) + '" maxlength="60" spellcheck="false" title="Its name: type a new one">' +
+      '<span class="gx-rs">recording since ' + hhmm(x[0]) + '</span><span class="gx-rt"></span><button class="btn" data-rec="stop">Stop</button></div>').join('');
+  }
+  for (const el of box.children) setText(el.querySelector('.gx-rt'), recClock(Math.max(0, nowTs - +el.dataset.start)));
+  $('grec').disabled = rs.length >= 8 || Date.now() < recHold;
+}
+// the next free 'Session n'
+function recName() {
+  let n = 0;
+  for (const nm of gxSs.filter(x => x.custom).map(x => x.game).concat((feed.rec || []).map(x => x[1]))) { const m = /^Session (\d+)$/.exec(nm || ''); if (m) n = Math.max(n, +m[1]); }
+  return 'Session ' + (n + 1);
+}
+$('grec').onclick = () => { send({ t: 'rec', act: 'start', name: recName() }); recHold = Date.now() + 2000; $('grec').disabled = true; setTimeout(renderRec, 2050); };   // (back on when the hold ends, not at the next tick)
+$('grun').addEventListener('click', e => { const b = e.target.closest('[data-rec="stop"]'); if (!b) return; b.disabled = true; send({ t: 'rec', act: 'stop', start: +b.closest('.gx-rec').dataset.start }); });
+$('grun').addEventListener('change', e => { if (!e.target.matches('.gx-rn')) return; const v = e.target.value.trim(); if (v) send({ t: 'rec', act: 'name', start: +e.target.closest('.gx-rec').dataset.start, name: v.slice(0, 60) }); });
+$('grun').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.gx-rn')) e.target.blur(); });
+$('gclear').onclick = () => askConfirm('Clear all sessions?', 'This wipes the session log (' + lastGameCount + (lastGameCount === 1 ? ' session' : ' sessions') + '). A copy is kept as games.log.bak first, so it can be brought back.', 'Clear sessions', () => send({ t: 'games:clear' }));
 // layout A, the tailored dashboard's popup: a week strip, columns that line up down the list, a session opens into
 // avg / max bars against its lines and a minute by minute timeline
 const GX_CHEV = '<svg class="gx-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg>';
@@ -3756,43 +3845,47 @@ function gxNbar(sp) {
   for (const [k, v] of [['gpu', sp.g], ['cpu', sp.c], ['cap', sp.f]]) { if (v && sp.n) h += '<span class="b-' + k + '" style="left:' + (x / sp.n * 100).toFixed(2) + '%;width:' + (v / sp.n * 100).toFixed(2) + '%"></span>'; x += v; }
   return h + '</span>';
 }
-// a reading: its bar runs from lo to the red line (or a typical limit), avg dark, max light, the yellow line as a tick.
-// Lines that warn below are only a tick: the max says nothing about them
-function gxRow(label, lo, hi, avg, max, y, r, unit, dec, peakOnly, below, wide) {
-  const A = gxN(avg), M = gxN(max), sc = v => Math.max(0, Math.min(100, (v - lo) / Math.max(1e-9, hi - lo) * 100));
-  let b = '<span class="gx-bar">';
-  if (M !== null) {
-    if (A !== null && !peakOnly) b += '<i class="a" style="width:' + sc(A).toFixed(1) + '%"></i><i class="m" style="left:' + sc(A).toFixed(1) + '%;width:' + Math.max(0, sc(M) - sc(A)).toFixed(1) + '%"></i>';
-    else b += '<i class="m solo" style="left:0;width:' + sc(M).toFixed(1) + '%"></i>';
-  } else if (A !== null && !peakOnly) b += '<i class="a" style="width:' + sc(A).toFixed(1) + '%;border-radius:3px"></i>';
-  if (gxN(y) !== null && y > lo && y < hi) b += '<i class="y" style="left:' + sc(y).toFixed(1) + '%"></i>';
+// a reading's row: avg and max as a bar, its yellow and red lines as ticks (the bar runs a little past the red line,
+// so a max beyond it shows), the max coloured by the lines it passed. Lines that warn below are only ticks
+function gxRow(label, lo, hi, avg, max, y, r, unit, dec, peakOnly, below, sc) {
+  const A = gxN(avg), M = gxN(max), P = v => Math.max(0, Math.min(100, (v - lo) / Math.max(1e-9, hi - lo) * 100));
+  const lvl = below || M === null ? 0 : gxN(r) !== null && M >= r ? 2 : gxN(y) !== null && M >= y ? 1 : 0, lc = lvl === 2 ? ' r' : lvl === 1 ? ' y' : '';
+  let b = '<span class="gx-mb">';
+  if (M !== null && !peakOnly && A !== null) b += '<i class="a" style="width:' + P(A).toFixed(1) + '%"></i><i class="m' + lc + '" style="left:' + P(A).toFixed(1) + '%;width:' + Math.max(0, P(M) - P(A)).toFixed(1) + '%"></i>';
+  else if (M !== null) b += '<i class="m solo' + lc + '" style="left:0;width:' + P(M).toFixed(1) + '%"></i>';
+  else if (A !== null && !peakOnly) b += '<i class="a solo" style="width:' + P(A).toFixed(1) + '%"></i>';
+  if (gxN(y) !== null && y > lo && y < hi) b += '<i class="t ty" style="left:' + P(y).toFixed(1) + '%"></i>';
+  if (gxN(r) !== null && r > lo && r < hi) b += '<i class="t tr" style="left:' + P(r).toFixed(1) + '%"></i>';
   b += '</span>';
-  const cls = below ? '' : M !== null && gxN(r) !== null && M >= r ? ' class="r"' : M !== null && gxN(y) !== null && M >= y ? ' class="y"' : '';
-  const av = peakOnly ? '<i class="pk">peak</i>' : '<i>' + gxF(A, dec) + '</i>';
-  return '<div class="gx-rr' + (wide ? ' x' : '') + '"><span class="l"' + (wide ? ' title="' + label + '"' : '') + '>' + label + '</span>' + b + '<span class="gx-v">' + av + '<b' + cls + '>' + gxF(M, dec) + '</b><u>' + unit + '</u></span></div>';
+  const av = peakOnly ? (sc ? 'of ' + sc : 'peak') : gxF(A, dec);
+  return '<div class="gx-rw"><span class="n" title="' + label + '">' + label + '</span>' + b + '<span class="a">' + av + '</span><span class="m' + lc + '">' + gxF(M, dec) + '<u>' + unit + '</u></span></div>';
 }
-// the main readings by their names in the report: column, label, where the bar starts, where it ends with no red line
-// (0: from the session's own values), decimals, peak only
+// the main readings a report finds by their HWiNFO names: their name in the details, where a bar starts, where it ends
+// with no red line (0: from the session's own values), decimals, peak only (memory: its peak against what there is)
 const GX_MAIN = {
-  'GPU temp': ['gpu', 'core temp', 30, 90, 1], 'GPU hotspot': ['gpu', 'hotspot', 30, 110, 1], 'GPU memory': ['gpu', 'mem temp', 30, 110, 1],
-  'GPU power': ['gpu', 'power', 0, 0, 0], 'GPU usage': ['gpu', 'usage', 0, 100, 0],
-  'CPU temp': ['cpu', 'temp', 30, 100, 1], 'CPU power': ['cpu', 'power', 0, 0, 1], 'CPU usage': ['cpu', 'usage', 0, 100, 0],
-  'VRAM': ['cpu', 'VRAM', 0, 0, 1, true], 'RAM': ['cpu', 'RAM', 0, 0, 1, true] };
+  'GPU temp': ['GPU', 30, 90, 1], 'GPU hotspot': ['GPU hotspot', 30, 110, 1], 'GPU memory': ['GPU memory', 30, 110, 1],
+  'GPU power': ['GPU power', 0, 0, 0], 'GPU usage': ['GPU usage', 0, 100, 0],
+  'CPU temp': ['CPU', 30, 100, 1], 'CPU power': ['CPU power', 0, 0, 1], 'CPU usage': ['CPU usage', 0, 100, 0],
+  'VRAM': ['VRAM', 0, 0, 1, true], 'RAM': ['RAM', 0, 0, 1, true] };
 // a session's readings: name, unit, avg, max (all an older line has), then its lines, 1 for a main reading, the scale
-// of VRAM / RAM and 1 for lines that warn below
+// of VRAM / RAM, 1 for lines that warn below and (from 1.4.0) its key
 function gxItems(x) {
   return (Array.isArray(x.items) ? x.items : []).filter(it => Array.isArray(it) && it.length >= 4).map(it => ({ n: String(it[0]), u: typeof it[1] === 'string' ? it[1] : '',
-    a: gxN(it[2]), m: gxN(it[3]), y: gxN(it[4]), r: gxN(it[5]), main: it.length > 6 ? it[6] === 1 : !!GX_MAIN[it[0]], hi: gxN(it[7]), below: it[8] === 1 }));
+    a: gxN(it[2]), m: gxN(it[3]), y: gxN(it[4]), r: gxN(it[5]), main: it.length > 6 ? it[6] === 1 : !!GX_MAIN[it[0]], hi: gxN(it[7]), below: it[8] === 1, key: typeof it[9] === 'string' ? it[9] : null }));
 }
 const gxTop = v => { if (!(v > 0)) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); return [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find(s => s * p >= v) * p; };
-function gxItemRow(it, spec) {
+function gxItemRow(it, label, spec) {
+  if (!it) return '<div class="gx-rw nil" title="Not recorded in this session: a reading you add is recorded from the next game on"><span class="n">' + label + '</span><span class="gx-mb"></span><span class="a"></span><span class="m">--</span></div>';
   let { a, m, y, r, hi, u } = it;
-  if (spec && u === 'MB') { [a, m, y, r, hi] = [a, m, y, r, hi].map(v => v === null ? null : v / 1024); u = 'GB'; }
+  if (u === 'MB' && (spec ? spec[4] : (hi || m || 0) > 2048)) { [a, m, y, r, hi] = [a, m, y, r, hi].map(v => v === null ? null : v / 1024); u = 'GB'; }
   const F = /°F/.test(u), deg = c => F ? Math.round(c * 9 / 5 + 32) : c;
   const base = a !== null ? a : m, lo = /°/.test(u) ? Math.max(0, Math.min(deg(30), Math.floor((base === null ? deg(40) : base) / 10) * 10 - 10)) : 0;
-  let top = !it.below && r !== null && r > lo ? r : spec && spec[3] ? (spec[2] === 30 ? deg(spec[3]) : spec[3]) : hi !== null ? hi : u === '%' ? 100 : gxTop(Math.max(m || 0, y || 0, a || 0) * 1.15);
+  // the bar ends a little past the red line (both lines show as ticks), else at a typical limit, the scale, or the values
+  let top = !it.below && r !== null && r > lo ? r + (r - lo) * 0.12 : spec && spec[2] ? (spec[1] === 30 ? deg(spec[2]) : spec[2]) : hi !== null ? hi : u === '%' ? 100 : gxTop(Math.max(m || 0, y || 0, a || 0) * 1.15);
+  if (y !== null && !it.below && y >= top) top = y + (y - lo) * 0.12;
   if (!(top > lo)) top = lo + 1;
-  return gxRow(spec ? spec[1] : esc(it.n), lo, top, a, m, y, r, esc(u), spec ? spec[4] : decFor({ unit: u }), !!(spec && spec[5]), it.below, !spec);
+  const peak = !!(spec && spec[4]) || (hi !== null && a === null);
+  return gxRow(label, lo, top, a, m, y, r, esc(u), spec ? spec[3] : decFor({ unit: u }), peak, it.below, hi !== null ? fmt(hi, u === 'GB' ? 0 : decFor({ unit: u })) : '');
 }
 // minute by minute: fps and its 1% low, and what limited it as each minute's share of the time in front (gpu, cpu,
 // capped); gaps are minutes the game wasn't in front. Sessions before 1.3.0 only kept the call that held most of each
@@ -3817,8 +3910,8 @@ const gxHasTl = D => D.N >= 2 && (D.sh.some(Boolean) || D.fv.some(v => v !== nul
 function gxTimeline(x, sp, gi) {
   const D = gxMinutes(x), N = D.N;
   if (!gxHasTl(D)) return '';
-  const T = gxTl[gi] = Object.assign({ start: x.start }, D);
-  let h = '<div class="gx-tl" data-g="' + gi + '"><div class="gx-ch">over time<span>per minute, gaps are time the game was not in front</span></div><div class="gx-hz">';
+  const T = gxTl[gi] = Object.assign({ start: x.start, custom: !!x.custom }, D);
+  let h = '<div class="gx-tl" data-g="' + gi + '"><div class="gx-ch">over time<span>' + (x.custom ? 'per minute' : 'per minute, gaps are time the game was not in front') + '</span></div><div class="gx-hz">';
   const have = D.fv.filter(v => v !== null);
   if (have.length) {
     // round steps, about 4 of them, from a little under the lowest 1% low to a little over the highest fps
@@ -3859,7 +3952,7 @@ function gxTimeline(x, sp, gi) {
   }
   tk += '<span class="e1">' + hhmm(t2) + '</span>';
   h += '<div class="gx-tr"><span></span><span class="gx-ticks">' + tk + '</span><span></span></div>';
-  const away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0, of = { gpu: 'g', cpu: 'c', cap: 'f' };
+  const away = !x.custom && typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0, of = { gpu: 'g', cpu: 'c', cap: 'f' };   // (yours count every second: no time away)
   h += '<div class="gx-tr"><span></span><span class="gx-leg">' + (have.length ? '<span><b class="ln fp"></b>fps</span><span><b class="ln lo"></b>1% low</span>' : '') +
        (sp.n ? GX_BN.map(([k, t]) => '<span><b class="b-' + k + '"></b>' + t + ' <i>' + sp.pc(sp[of[k]]) + '%</i></span>').join('') : '') +
        (away >= 60 ? '<span><b class="aw"></b>not in front ' + durTxt(away) + '</span>' : '') + '</span><span></span></div>';
@@ -3888,7 +3981,7 @@ function gxHover(hz, e) {
   if (fpsAt) h += '<span>fps <em>' + gxF(T.fv[m]) + '</em></span><span>1% low <em>' + gxF(T.lv[m]) + '</em></span>';
   if (s && T.one[m]) { const k = s.indexOf(1); h += '<span><i class="b-' + GX_BN[k][0] + '"></i>mostly ' + GX_BN[k][1] + '</span>'; }
   else if (s) h += GX_BN.map(([k, t], j) => s[j] > 0.005 ? '<span><i class="b-' + k + '"></i>' + t + ' <em>' + Math.round(s[j] * 100) + '%</em></span>' : '').join('');
-  if (!s && !fpsAt) h += '<span>not in front</span>';
+  if (!s && !fpsAt) h += '<span>' + (T.custom ? 'nothing recorded' : 'not in front') + '</span>';
   const tip = hz.querySelector('.gx-tip');
   if (tip._h !== h) { tip.innerHTML = h; tip._h = h; }
   const hr = hz.getBoundingClientRect(), gx = pr.left - hr.left + (m + 0.5) / T.N * pr.width, tw = tip.offsetWidth;
@@ -3897,27 +3990,204 @@ function gxHover(hz, e) {
 }
 $('glist').addEventListener('pointermove', e => gxHover(e.target.closest && e.target.closest('.gx-hz'), e));
 $('glist').addEventListener('pointerleave', () => gxHover(null));
-// the main readings HWiNFO had in a gpu and a cpu column, then the other cells with lines, then the timeline (lazy: a
-// place for it, drawn when the session first opens)
-function gxDetail(x, sp, gi, lazy) {
-  const main = {}, extra = [], col = { gpu: '', cpu: '' };
-  for (const it of gxItems(x)) { if (it.main && GX_MAIN[it.n] && !main[it.n]) main[it.n] = it; else extra.push(it); }
-  for (const n in GX_MAIN) if (main[n]) col[GX_MAIN[n][0]] += gxItemRow(main[n], GX_MAIN[n]);
-  let h = '';
-  if (col.gpu || col.cpu) h += '<div class="gx-rd">' + (col.gpu ? '<div><div class="gx-ch">gpu</div>' + col.gpu + '</div>' : '') + (col.cpu ? '<div><div class="gx-ch">cpu and memory</div>' + col.cpu + '</div>' : '') + '</div>';
-  if (extra.length) h += '<div class="gx-xc"><div class="gx-ch">cells with lines</div><div class="gx-rd">' + extra.map(it => gxItemRow(it, null)).join('') + '</div></div>';
-  const tl = !lazy ? gxTimeline(x, sp, gi) : gxHasTl(gxMinutes(x)) ? '<div class="gx-tlz" data-g="' + gi + '"></div>' : '';
-  return '<div class="gx-in">' + (h ? '<div class="gx-key"><span><i class="sw" style="background:#555"></i>avg</span><span><i class="sw" style="background:#bdbdbd"></i>max</span>' +
-         '<span><i class="tk"></i>yellow line</span><span class="end">bars end at the red line, or at a typical limit</span></div>' + h : tl ? '' : '<div class="gx-nil">no readings were recorded for this session</div>') + tl + '</div>';
+// ---- a session's details: a summary, the chart, then its readings in categories (Customize: your own categories, any
+// reading, 8 to a category). The setup lives in the layout (L.games), the default is below ----
+const gxDefault = () => ({ secs: [
+  { id: 'summary', kind: 'summary' }, { id: 'time', kind: 'time' },
+  { id: 'temps', kind: 'list', name: 'Temperatures', cells: ['GPU temp', 'GPU hotspot', 'GPU memory', 'CPU temp'].map(head => ({ head })) },
+  { id: 'power', kind: 'list', name: 'Power and load', cells: ['GPU power', 'GPU usage', 'CPU power', 'CPU usage'].map(head => ({ head })) },
+  { id: 'memory', kind: 'list', name: 'Memory', cells: [{ head: 'VRAM' }, { head: 'RAM' }] }] });
+const gxLayout = () => S.L.games && Array.isArray(S.L.games.secs) ? S.L.games : gxDefault();
+const gxSecName = s => s.kind === 'summary' ? 'Summary' : s.kind === 'time' ? 'Over time' : s.name || 'Category';
+// (a reading added by its key goes by the name its cell has in your layout, else by HWiNFO's)
+const gxCellName = c => { if (c.name) return c.name; if (c.head) return GX_MAIN[c.head][0]; const cid = Object.keys(S.L.cells).find(id => S.L.cells[id].key === c.key); return cid ? nameIn(cid) : BYKEY.get(c.key) ? BYKEY.get(c.key).label : c.key; };
+const gxCellFrom = c => c.head ? 'found by its HWiNFO name' : BYKEY.get(c.key) ? SENS[BYKEY.get(c.key).s].short : 'not on this PC';
+const gxFind = (items, c) => c.head ? items.find(it => it.main && it.n === c.head) || null : items.find(it => it.key === c.key) || null;
+function gxSummary(x, sp, items) {
+  const away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0;
+  const hot = items.filter(it => /°/.test(it.u) && it.m !== null).reduce((a, b) => !a || b.m > a.m ? b : a, null);
+  const hl = hot && !hot.below ? (hot.r !== null && hot.m >= hot.r ? 'r' : hot.y !== null && hot.m >= hot.y ? 'y' : '') : '';
+  const wn = Math.max(0, +x.warns || 0), wl = Array.isArray(x.wl) ? x.wl.filter(w => Array.isArray(w) && w.length >= 3) : [];
+  const split = sp.n ? GX_BN.map(([k], j) => '<span><i class="b-' + k + '"></i>' + ['gpu', 'cpu', 'capped'][j] + ' <b>' + sp.pc(sp[['g', 'c', 'f'][j]]) + '%</b></span>').join('') : '';
+  return '<div class="gx-s5">' +
+    '<div><em>average fps</em><b>' + gxF(x.fps) + '</b><span>1% low <i>' + gxF(x.low) + '</i></span></div>' +
+    (x.custom ? '<div><em>length</em><b>' + durS(x.end - x.start) + '</b><span>' + hhmm(x.start) + ' to ' + hhmm(x.end) + '</span></div>'
+      : '<div><em>played</em><b>' + durTxt(x.end - x.start) + '</b><span>' + (away >= 60 ? durTxt(x.front) + ' in front' : 'all of it in front') + '</span></div>') +
+    '<div><em>hottest</em><b class="' + hl + '">' + (hot ? gxF(hot.m, 1) + '<small>' + esc(hot.u) + '</small>' : '--') + '</b><span>' + (hot ? esc(hot.main && GX_MAIN[hot.n] ? GX_MAIN[hot.n][0] : hot.n) : '') + '</span></div>' +
+    '<div class="w2"><em>limited by</em>' + (sp.n ? gxNbar(sp) + '<span class="gx-split">' + split + '</span>' : '<b>--</b>') + '</div>' +
+    '<div><em>warnings</em><b class="' + (wn ? 'y' : '') + '">' + wn + '</b><span>' + (wl.length ? esc(wl[0][0]) + ' ' + esc(gxF(wl[0][1], gxN(wl[0][1]) % 1 ? 1 : 0)) + ' ' + esc(wl[0][2]) : wn ? '' : 'none') + '</span></div></div>';
 }
-function renderGames(text) {
+// (lazy: the chart gets a place, drawn when the session first opens)
+function gxDetail(x, sp, gi, lazy, foot) {
+  const items = gxItems(x), G = gxLayout(), D = gxMinutes(x);
+  if (!items.length && !gxHasTl(D)) return '<div class="gx-in"><div class="gx-nil">no readings were recorded for this session</div>' + (foot || '') + '</div>';
+  let h = '', grp = '';
+  const flush = () => { if (grp) { h += '<div class="gx-groups">' + grp + '</div>'; grp = ''; } };
+  const group = (name, rows) => '<div class="gx-grp"><div class="gx-ch">' + esc(name) + '<span>avg &nbsp; max</span></div>' + rows + '</div>';
+  for (const s of G.secs) {
+    if (s.hide) continue;
+    if (s.kind === 'summary') { flush(); h += gxSummary(x, sp, items); }
+    else if (s.kind === 'time') {
+      flush(); h += !lazy ? gxTimeline(x, sp, gi) : gxHasTl(D) ? '<div class="gx-tlz" data-g="' + gi + '"></div>' : '';
+      // (a session of a minute or two has a point or so: it says why there is no chart yet)
+      if (!gxHasTl(D) && D.N < 2 && (D.sh.some(Boolean) || D.fv.some(v => v !== null))) h += '<div class="gx-tl"><div class="gx-ch">over time<span>per minute</span></div><div class="gx-tln">The chart starts once a session has run for 2 minutes.</div></div>';
+    }
+    else if (s.kind === 'list') {
+      const found = s.cells.map(c => gxFind(items, c));
+      if (!found.some(Boolean)) continue;   // (none of it recorded in this session: the category stays out)
+      grp += group(s.name, s.cells.map((c, j) => gxItemRow(found[j], esc(gxCellName(c)), c.head ? GX_MAIN[c.head] : null)).join(''));
+    }
+  }
+  flush();
+  if (h.includes('gx-rw')) h += '<div class="gx-key"><span><i class="sw" style="background:#555"></i>average</span><span><i class="sw" style="background:#bdbdbd"></i>max</span><span><i class="tk"></i>yellow line</span><span><i class="tk r"></i>red line</span>' +
+    '<span class="end">a max past a line takes its colour</span></div>';
+  return '<div class="gx-in">' + h + (foot || '') + '</div>';
+}
+// the list drawn again (a Customize change), the sessions that were open still open
+let gxText = '';
+function rerenderGames() {
+  if (!gmodal.classList.contains('open')) return;
+  const open = [...document.querySelectorAll('#glist .gx-sess.open')].map(s => gxSs[+s.dataset.g] && gxSs[+s.dataset.g].start);
+  renderGames(gxText, open);
+}
+
+// ---- Customize: the categories (order, shown or not, names) and each one's readings, like the main layout's ----
+const GZ = { on: false, sel: null, q: '', t: 'all', shut: new Set(), counts: { all: 0 } };
+function gzEdit(fn) {   // a change to the setup: an undo step, saved with the layout, the details drawn again (onLayout)
+  mutate(() => { const G = S.L.games = JSON.parse(JSON.stringify(gxLayout())); fn(G); });
+}
+onLayout = () => { if (GZ.on) renderGz(); rerenderGames(); };
+// the readings to add: Storage's list (search by sensor, label or unit, the type chips, grouped by sensor), only
+// the rows in sight drawn; + puts one in the selected category, its tick takes it out again
+const GZROW = 30;
+let gzRows = [], gzKeys = [];
+function gzCompute() {
+  const toks = GZ.q.toLowerCase().split(/\s+/).filter(Boolean), counts = new Map(), hits = [];
+  GZ.counts = { all: 0 };
+  for (const r of READ) {
+    if (r.key === BNECK || !SENS[r.s] || toks.some(t => !r.hay.includes(t))) continue;   // (the bottleneck has its own place: the summary)
+    GZ.counts.all++; GZ.counts[r.t] = (GZ.counts[r.t] || 0) + 1;
+    if (GZ.t === 'all' || r.t === GZ.t) { hits.push(r); counts.set(r.s, (counts.get(r.s) || 0) + 1); }
+  }
+  gzRows = []; let cur = -1;
+  for (const r of hits) {
+    if (r.s !== cur) { cur = r.s; gzRows.push({ g: true, s: r.s, n: counts.get(r.s) }); }
+    if (!GZ.shut.has(SENS[r.s].key)) gzRows.push({ r });
+  }
+}
+function gzChips() {
+  const el = document.querySelector('#gcz .chips'); if (!el) return;
+  el.innerHTML = ['all', 'temp', 'volt', 'fan', 'power', 'current', 'clock', 'usage', 'other'].filter(t => GZ.counts[t] || t === GZ.t)
+    .map(t => '<button class="chip' + (GZ.t === t ? ' on' : '') + '" data-gz="chip" data-t="' + t + '">' + (t === 'all' ? 'All' : TYPE_NAME[t]) + ' ' + (GZ.counts[t] || 0).toLocaleString('en-US') + '</button>').join('');
+}
+function gzDraw() {
+  const vl = document.querySelector('#gcz .gz-list'), sp = vl && vl.firstElementChild; if (!sp) return;
+  const s = gxLayout().secs.find(x => x.id === GZ.sel), have = new Set(s ? s.cells.map(c => c.key) : []), full = !s || s.cells.length >= GX_MAX;
+  sp.style.height = gzRows.length * GZROW + 'px';
+  const top = vl.scrollTop, hgt = vl.clientHeight || 300, keys = [];
+  const a = Math.max(0, Math.floor(top / GZROW) - 4), b = Math.min(gzRows.length, Math.ceil((top + hgt) / GZROW) + 4);
+  let h = gzRows.length ? '' : '<div class="vempty">No readings match' + (GZ.q ? ' "' + esc(GZ.q) + '"' : ' this type') + '. <button class="linkbtn" data-gz="qclear">Show all</button></div>';
+  for (let i = a; i < b; i++) {
+    const row = gzRows[i];
+    if (row.g) {
+      const sn = SENS[row.s]; if (!sn) continue;
+      h += '<div class="vrow g' + (GZ.shut.has(sn.key) ? ' collapsed' : '') + '" style="top:' + i * GZROW + 'px" data-gz="tw" data-sk="' + esc(sn.key) + '"><button class="tw" title="Collapse">' + ICONS.chev + '</button><span class="gn" title="' + esc(sn.name) + '">' + esc(sn.name) + '</span><span class="gc">' + row.n + '</span></div>';
+    } else {
+      const r = row.r, inIt = have.has(r.key);
+      keys.push(r.key);
+      h += '<div class="vrow r" style="top:' + i * GZROW + 'px" data-key="' + esc(r.key) + '"><span class="ti t-' + r.t + '"></span><span class="lbl" title="' + esc(r.label) + '">' + esc(r.label) + '</span><span class="val"></span>' +
+        (inIt ? '<button class="inv" data-gz="out" title="In ' + esc(s.name) + ': click to take it out">' + ICONS.check + '</button>'
+          : '<button class="add" data-gz="add"' + (full ? ' disabled title="' + (s ? esc(s.name) + ' has ' + GX_MAX + ' readings, the most a category takes' : 'Add a category first') + '"' : ' title="Add to ' + esc(s.name) + '"') + '>+</button>') + '</div>';
+    }
+  }
+  if (sp._h !== h) { sp.innerHTML = h; sp._h = h; }
+  for (const el of sp.children) if (el.dataset.key) setText(el.children[2], valTxt(BYKEY.get(el.dataset.key)));
+  if (keys.join('\n') !== gzKeys.join('\n')) { gzKeys = keys; subscribe(); }
+}
+function renderGz() {
+  const box = $('gcz');
+  if (!GZ.on) { box.hidden = true; box.innerHTML = ''; $('gcustom').classList.remove('on'); if (gzKeys.length) { gzKeys = []; subscribe(); } return; }
+  $('gcustom').classList.add('on');
+  const secs = gxLayout().secs, lists = secs.filter(s => s.kind === 'list');
+  if (!lists.some(s => s.id === GZ.sel)) GZ.sel = lists.length ? lists[0].id : null;
+  const info = s => s.kind === 'summary' ? 'fps, played, hottest, limited by, warnings' : s.kind === 'time' ? 'the chart, minute by minute' : plural(s.cells.length, 'reading');
+  let h = '<div class="gz-head"><span>Every session\'s details, top to bottom</span><span class="sp"></span><button class="btn" data-gz="reset">Reset to the default</button><button class="btn gz-done" data-gz="done">Done</button></div><div class="gz">';
+  h += '<div class="gz-secs" data-list="secs"><div class="gx-ch">categories<span>drag to move</span></div>' + secs.map((s, i) => '<div class="gz-s' + (s.id === GZ.sel ? ' on' : '') + (s.hide ? ' off' : '') + '" data-i="' + i + '" data-id="' + esc(s.id) + '"><span class="grip" title="Drag to move it"></span>' +
+    (s.kind === 'list' ? '<input class="gz-name" data-gz="name" value="' + esc(s.name) + '" maxlength="40" spellcheck="false" title="Its name">' : '<span class="nm">' + esc(gxSecName(s)) + '</span>') +
+    '<span class="x">' + esc(info(s)) + '</span><button class="tog2' + (s.hide ? '' : ' on') + '" data-gz="hide" title="Show it or not"></button>' +
+    (s.kind === 'list' ? '<button class="ib" data-gz="del" title="Remove the category">' + ICONS.x + '</button>' : '<span class="gz-ph"></span>') + '</div>').join('') +
+    '<button class="linkbtn" data-gz="addsec">+ New category</button></div>';
+  const s = secs.find(x => x.id === GZ.sel);
+  h += '<div class="gz-cells">';
+  if (s) {
+    h += '<div class="gx-ch">' + esc(s.name) + ': its readings<span>' + s.cells.length + ' of ' + GX_MAX + '</span></div><div data-list="cells">' +
+      s.cells.map((c, j) => '<div class="gz-c" data-i="' + j + '"><span class="grip" title="Drag to move it"></span><input class="gz-name" data-gz="cname" value="' + esc(gxCellName(c)) + '" maxlength="40" spellcheck="false" title="Its name in the details">' +
+        '<span class="x">' + esc(gxCellFrom(c)) + '</span><button class="ib" data-gz="cdel" title="Take it out">' + ICONS.x + '</button></div>').join('') + '</div>';
+    if (s.cells.length >= GX_MAX) h += '<div class="gz-note">A category takes ' + GX_MAX + ' readings at most: take one out, or start a new category.</div>';
+  } else h += '<div class="gz-note">Add a category (on the left) to put readings in.</div>';
+  h += '<div class="gz-note">A reading you add is recorded from your next session on: the sessions before it have no value for it.</div></div>';
+  h += '<div class="gz-add"><div class="gx-ch">readings<span>' + (s ? '+ adds to ' + esc(s.name) : '') + '</span></div><div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>' +
+    '<input id="gzQ" type="search" placeholder="Search sensors, labels, units" autocomplete="off" spellcheck="false" value="' + esc(GZ.q) + '"></div><div class="chips"></div><div class="vlist gz-list"><div class="vspace"></div></div></div></div>';
+  const ae = document.activeElement, f = ae && ae.id === 'gzQ' ? [ae.selectionStart] : null, old = box.querySelector('.gz-list'), st = old ? old.scrollTop : 0;
+  box.innerHTML = h; box.hidden = false;
+  const vl = box.querySelector('.gz-list'); vl.addEventListener('scroll', gzDraw);
+  gzCompute(); gzChips(); gzDraw(); vl.scrollTop = st; gzDraw();
+  if (f) { const q = $('gzQ'); if (q) { q.focus(); q.setSelectionRange(f[0], f[0]); } }
+}
+$('gcustom').onclick = () => { GZ.on = !GZ.on; GZ.q = ''; GZ.t = 'all'; renderGz(); };
+$('gcz').addEventListener('click', e => {
+  const b = e.target.closest('[data-gz]'), row = e.target.closest('.gz-s');
+  if (!b) { if (row && !e.target.closest('input') && row.querySelector('.gz-name')) { GZ.sel = row.dataset.id; renderGz(); } return; }
+  const k = b.dataset.gz, i = row ? +row.dataset.i : -1, ci = e.target.closest('.gz-c') ? +e.target.closest('.gz-c').dataset.i : -1, rk = (e.target.closest('#gcz .vrow.r') || { dataset: {} }).dataset.key;
+  if (k === 'tw') { const sk = b.dataset.sk; if (GZ.shut.has(sk)) GZ.shut.delete(sk); else GZ.shut.add(sk); gzCompute(); gzDraw(); return; }
+  if (k === 'chip') { GZ.t = b.dataset.t; gzCompute(); gzChips(); document.querySelector('#gcz .gz-list').scrollTop = 0; gzDraw(); return; }
+  if (k === 'qclear') { GZ.q = ''; GZ.t = 'all'; renderGz(); return; }
+  if (k === 'done') { GZ.on = false; renderGz(); }
+  else if (k === 'reset') { mutate(() => { delete S.L.games; }); GZ.sel = null; renderGz(); rerenderGames(); }
+  else if (k === 'hide') gzEdit(G => { G.secs[i].hide = !G.secs[i].hide; if (!G.secs[i].hide) delete G.secs[i].hide; });
+  else if (k === 'del') gzEdit(G => { G.secs.splice(i, 1); });
+  else if (k === 'addsec') { const id = nid('g'); gzEdit(G => { G.secs.push({ id, kind: 'list', name: 'New category', cells: [] }); }); GZ.sel = id; renderGz(); const n = document.querySelector('#gcz .gz-s.on .gz-name'); if (n) { n.focus(); n.select(); } }
+  else if (k === 'add' && rk) gzEdit(G => { const s = G.secs.find(x => x.id === GZ.sel); if (s && s.cells.length < GX_MAX && !s.cells.some(c => c.key === rk)) s.cells.push({ key: rk }); });
+  else if (k === 'out' && rk) gzEdit(G => { const s = G.secs.find(x => x.id === GZ.sel), j = s ? s.cells.findIndex(c => c.key === rk) : -1; if (j >= 0) s.cells.splice(j, 1); });
+  else if (k === 'cdel') gzEdit(G => { G.secs.find(x => x.id === GZ.sel).cells.splice(ci, 1); });
+});
+$('gcz').addEventListener('change', e => {
+  const t = e.target, k = t.dataset && t.dataset.gz; if (!k) return;
+  const v = t.value.trim().slice(0, 40);
+  if (k === 'name') { const i = +t.closest('.gz-s').dataset.i; gzEdit(G => { if (v) G.secs[i].name = v; }); }
+  if (k === 'cname') { const j = +t.closest('.gz-c').dataset.i; gzEdit(G => { const c = G.secs.find(x => x.id === GZ.sel).cells[j]; delete c.name; if (v && v !== gxCellName(c)) c.name = v; }); }
+});
+$('gcz').addEventListener('input', e => { if (e.target.id === 'gzQ') { GZ.q = e.target.value; gzCompute(); gzChips(); document.querySelector('#gcz .gz-list').scrollTop = 0; gzDraw(); } });
+// (Enter in the search adds the first reading it shows that isn't in the category yet)
+$('gcz').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.gz-name')) e.target.blur(); if (e.key === 'Enter' && e.target.id === 'gzQ') { const r = document.querySelector('#gcz .vrow.r .add:not([disabled])'); if (r) r.click(); } });
+// a category or a reading dragged by its grip to another place in its list
+$('gcz').addEventListener('pointerdown', e => {
+  const g = e.target.closest('.grip'); if (!g || e.button !== 0) return;
+  const row = g.parentNode, list = row.parentNode, rows = [...list.children].filter(x => x.dataset.i != null), from = +row.dataset.i;
+  e.preventDefault(); row.classList.add('drag');
+  let to = from;
+  const move = ev => {
+    to = rows.findIndex(r => { const b = r.getBoundingClientRect(); return ev.clientY < b.top + b.height / 2; }); if (to < 0) to = rows.length;
+    for (const r of rows) r.classList.toggle('drop', +r.dataset.i === to && to !== from && to !== from + 1);
+    list.classList.toggle('dropend', to === rows.length && from !== rows.length - 1);
+  };
+  const up = () => {
+    document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up);
+    row.classList.remove('drag'); for (const r of rows) r.classList.remove('drop'); list.classList.remove('dropend');
+    const at = to > from ? to - 1 : to; if (at === from) return;
+    gzEdit(G => { const arr = list.dataset.list === 'secs' ? G.secs : G.secs.find(x => x.id === GZ.sel).cells; arr.splice(at, 0, arr.splice(from, 1)[0]); });
+  };
+  document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
+});
+function renderGames(text, keep) {
+  gxText = text || '';
   const ss = [];
   for (const line of (text || '').split(/\r?\n/)) {
     try { const x = line.trim() ? JSON.parse(line) : null; if (x && typeof x === 'object' && Number.isFinite(x.start) && Number.isFinite(x.end) && x.end >= x.start) ss.push(x); } catch (e) { }
   }
   ss.sort((a, b) => b.start - a.start);
   lastGameCount = ss.length; gxTl.length = 0; gxSs = ss;
-  const now = Date.now() / 1000, week = now - 7 * 86400, recent = ss.filter(x => x.start >= week), per = {};
+  const now = Date.now() / 1000, week = now - 7 * 86400, recent = ss.filter(x => x.start >= week && !x.custom), per = {};   // (the week's numbers are games')
   for (const x of recent) per[x.game] = (per[x.game] || 0) + (x.end - x.start);
   const top = Object.keys(per).sort((a, b) => per[b] - per[a])[0];
   const total = recent.reduce((p, x) => p + (x.end - x.start), 0);
@@ -3930,7 +4200,7 @@ function renderGames(text) {
   const dayMins = days.map(d => { const k = localDay(d); return recent.filter(x => dayKey(x.start) === k).reduce((p, x) => p + (x.end - x.start) / 60, 0); });
   const peak = Math.max(60, ...dayMins);
   days.forEach((d, i) => { const v = dayMins[i]; wk += '<span class="gx-wd' + (i === 6 ? ' today' : '') + '" title="' + (v ? durTxt(v * 60) : 'nothing') + '"><i' + (v ? '' : ' class="z"') + ' style="height:' + (v ? Math.max(3, Math.round(v / peak * 22)) : 2) + 'px"></i><em>' + GX_WD[d.getDay()][0].toUpperCase() + '</em></span>'; });
-  $('gsum').innerHTML = ss.length ? '<div class="gx-sum"><div class="gx-sumtxt">' +
+  $('gsum').innerHTML = ss.some(x => !x.custom) ? '<div class="gx-sum"><div class="gx-sumtxt">' +
     '<div class="gx-stat"><em>last 7 days</em><b>' + recent.length + '<small>' + (recent.length === 1 ? 'session' : 'sessions') + '</small></b></div>' +
     '<div class="gx-stat"><em>played</em><b>' + (total ? durTxt(total) : '0m') + '</b></div>' +
     (top ? '<div class="gx-stat"><em>most played</em><b>' + esc(top) + '<small>' + durTxt(per[top]) + '</small></b></div>' : '') +
@@ -3945,35 +4215,53 @@ function renderGames(text) {
       const d = new Date(x.start * 1000), same = byDay[dk];
       const name = dk === today ? 'today' : dk === yest ? 'yesterday' : now - x.start < 6 * 86400 ? GX_WD[d.getDay()] : '';
       const date = (name && name !== 'today' && name !== 'yesterday' ? '' : GX_WD[d.getDay()].slice(0, 3) + ' ') + d.getDate() + ' ' + GX_MON[d.getMonth()];   // "thursday 8 oct", "yesterday sat 10 oct"
-      h += '<div class="gx-day"><div>' + (name ? name + '<span>' + date + '</span>' : date) + '</div><div class="gx-tot">' + same.n + (same.n === 1 ? ' session, ' : ' sessions, ') + durTxt(same.t) + '</div></div>';
+      h += '<div class="gx-day"><div>' + (name ? name + '<span>' + date + '</span>' : date) + '</div><div class="gx-tot">' + same.n + (same.n === 1 ? ' session, ' : ' sessions, ') + durS(same.t) + '</div></div>';
     }
     const sp = gxSplit(x), away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0;
     const wn = Math.max(0, +x.warns || 0), wl = Array.isArray(x.wl) ? x.wl.filter(w => Array.isArray(w) && w.length >= 3) : [];
     const st = wn ? '<span class="gx-wv">' + wn + (wn === 1 ? ' warning' : ' warnings') + '</span>' + (wl.length ? '<span class="gx-sub" title="' + esc(wl.map(w => w[0] + ' ' + gxF(w[1], gxN(w[1]) % 1 ? 1 : 0) + ' ' + w[2]).join(', ')) + '">' + esc(wl[0][0]) + ' ' + esc(gxF(wl[0][1], gxN(wl[0][1]) % 1 ? 1 : 0)) + ' ' + esc(wl[0][2]) + '</span>' : '') : '<span class="gx-ok">none</span>';
-    h += '<div class="gx-sess" data-g="' + i + '"><div class="gx-row">' + GX_CHEV +
-         '<span class="gx-gm"><span class="gx-gn">' + esc(x.game) + '</span><span class="gx-sub">' + hhmm(x.start) + ' to ' + hhmm(x.end) + (x.from - x.start > 90 ? ', tracked from ' + hhmm(x.from) : '') + '</span></span>' +
-         '<span class="gx-c gx-num"><span>' + durTxt(x.end - x.start) + '</span>' + (away >= 60 ? '<span class="gx-sub">' + durTxt(x.front) + ' in front</span>' : '') + '</span>' +
+    h += '<div class="gx-sess' + (x.custom ? ' cust' : '') + '" data-g="' + i + '"><div class="gx-row">' + GX_CHEV +
+         '<span class="gx-gm"><span class="gx-gn">' + esc(x.game) + '</span><span class="gx-sub">' + hhmm(x.start) + ' to ' + hhmm(x.end) + (x.custom ? ', started by you' : x.from - x.start > 90 ? ', tracked from ' + hhmm(x.from) : '') + '</span></span>' +
+         '<span class="gx-c gx-num"><span>' + durS(x.end - x.start) + '</span>' + (x.custom ? '' : away >= 60 ? '<span class="gx-sub">' + durTxt(x.front) + ' in front</span>' : '') + '</span>' +
          '<span class="gx-c gx-num gx-fps">' + gxF(x.fps) + '</span><span class="gx-c gx-num gx-lo">' + gxF(x.low) + '</span>' +
          '<span class="gx-c">' + (sp.n ? gxNbar(sp) + '<span class="gx-sub">' + sp.top[0] + ' ' + sp.top[1] + '%</span>' : '<span class="gx-sub">--</span>') + '</span>' +
          '<span class="gx-c gx-st">' + st + '</span></div>' +
-         '<div class="gx-det"><div>' + gxDetail(x, sp, i, i > 0) + '</div></div></div>';
+         '<div class="gx-det"><div>' + gxDetail(x, sp, i, i > 0, gxActs(x, i)) + '</div></div></div>';
   });
   const list = $('glist');
-  list.innerHTML = h ? '<div class="gx-cols"><span></span><span>game</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
-                     : '<div class="wempty ico pad">No game sessions yet. They show up here when a game you played for over a minute closes.</div>';
+  list.innerHTML = h ? '<div class="gx-cols"><span></span><span>session</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
+                     : '<div class="wempty ico pad">No sessions yet. A game shows up here once you played it for over a minute and it closed; Start session records one of your own.</div>';
   const first = list.querySelector('.gx-sess');
-  if (first) first.classList.add('open');   // the newest session opens with the popup
+  if (Array.isArray(keep)) {   // (drawn again: what was open stays open, at once)
+    list.classList.add('still');
+    for (const el of list.querySelectorAll('.gx-sess')) { const x = gxSs[+el.dataset.g]; if (!x || !keep.includes(x.start)) continue; const z = el.querySelector('.gx-tlz'); if (z) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g); el.classList.add('open'); }
+    requestAnimationFrame(() => requestAnimationFrame(() => list.classList.remove('still')));
+  } else if (first) first.classList.add('open');   // the newest session opens with the popup
 }
 let gxSs = [];   // the sessions as listed, for the timelines drawn when they open
+// under a session's details: its name (one of your own) and Delete
+const gxActs = (x, i) => '<div class="gx-acts">' + (x.custom ? '<label class="gx-nmf"><em>name</em><input class="gx-nm" data-g="' + i + '" value="' + esc(x.game) + '" maxlength="60" spellcheck="false" title="Its name: type a new one, Enter to keep it"></label>' : '') +
+  '<span class="sp"></span><button class="wclear gx-del" data-g="' + i + '" title="Delete this session (a copy is kept in games.log.bak)">Delete session</button></div>';
+const gxOpen = () => [...document.querySelectorAll('#glist .gx-sess.open')].map(s => gxSs[+s.dataset.g] && gxSs[+s.dataset.g].start);
+$('glist').addEventListener('change', e => {
+  if (!e.target.matches('.gx-nm')) return;
+  const x = gxSs[+e.target.dataset.g], v = e.target.value.trim().slice(0, 60);
+  if (x && v && v !== x.game) send({ t: 'gedit', act: 'name', start: x.start, end: x.end, game: x.game, name: v }); else if (x) e.target.value = x.game;
+});
+$('glist').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.gx-nm')) e.target.blur(); });
 $('glist').addEventListener('click', e => {
+  const d = e.target.closest('.gx-del');
+  if (d) { const x = gxSs[+d.dataset.g]; if (x) askConfirm('Delete this session?', x.game + ', ' + localDay(new Date(x.start * 1000)) + ' ' + hhmm(x.start) + ' to ' + hhmm(x.end) + '. A copy is kept in games.log.bak, so it can be brought back.', 'Delete', () => send({ t: 'gedit', act: 'del', start: x.start, end: x.end, game: x.game })); return; }
   const r = e.target.closest('.gx-row'); if (!r) return;
   const z = r.parentNode.querySelector('.gx-tlz'), x = z && gxSs[+z.dataset.g];
   if (x) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g);
   r.parentNode.classList.toggle('open');
 });
 function showGame() {
-  $('gameDot').classList.toggle('on', !!feed.game);
-  $('gamesBtn').title = feed.game ? 'Game sessions: ' + feed.game + ' running, ' + durTxt(Math.max(60, nowTs - feed.gameSince)) + (feed.front ? '' : ' (in the background)') : 'Game sessions';
+  const rs = feed.rec || [];
+  $('gameDot').classList.toggle('on', !!feed.game || rs.length > 0);
+  $('gamesBtn').title = 'Sessions' + (feed.game ? ': ' + feed.game + ' running, ' + durTxt(Math.max(60, nowTs - feed.gameSince)) + (feed.front ? '' : ' (in the background)') : '') + (rs.length ? (feed.game ? ', ' : ': ') + 'recording ' + rs.map(x => x[1]).join(', ') : '');
+  if (gmodal.classList.contains('open')) renderRec();
 }
 
 // ---------- settings ----------
@@ -3989,6 +4277,8 @@ function renderSettings() {
     '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>The free version turns its shared memory off after 12 hours; a restart turns it back on (Windows asks for permission).</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
     (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub once a day if there is a new version. Nothing else is sent.') + '</small></div>' +
       '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">Get it</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>') +
+    '<div class="setrow"><div>Keep sessions<small>Game sessions and your own older than this are deleted (a copy goes to games.log.bak).</small></div><span class="setdays"><input class="setin" id="sGameDays" inputmode="numeric" maxlength="4" spellcheck="false" value="' + (feed.gameDays || 30) + '"><i>days</i></span></div>' +
+    '<div class="setrow"><div>Keep warnings<small>The warning history keeps this many days.</small></div><span class="setdays"><input class="setin" id="sWarnDays" inputmode="numeric" maxlength="4" spellcheck="false" value="' + (feed.warnDays || 30) + '"><i>days</i></span></div>' +
     '<div class="setrow"><div>Your files<small class="k">' + esc(feed.dataDir) + '</small><small>Layouts, slots, the logs and 7 days of history.</small></div><button class="btn" id="sData">Open</button></div>' +
     '<div class="setrow" style="display:block"><div style="margin-bottom:8px">Keys</div><div class="keys2">' +
       [['E', 'edit layout on or off'], ['1 2 3', 'Tiles, Overview, Grid'], ['Enter', 'open (or select) the cell in focus'], ['Ctrl+S', 'save to the loaded slot'], ['Ctrl+Z, Ctrl+Shift+Z', 'undo, redo'],
@@ -4008,6 +4298,15 @@ $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sGet')) send({ t: 'openRelease' });
   if (e.target.closest('#sClock')) { S.clock = !S.clock; renderTitle(); saveState(); renderSettings(); }
 });
+$('setbody').addEventListener('change', e => {
+  const id = e.target.id; if (id !== 'sGameDays' && id !== 'sWarnDays') return;
+  const k = id === 'sGameDays' ? 'gameDays' : 'warnDays', old = feed[k] || 30, v = Math.max(1, Math.min(3650, Math.round(Number(e.target.value)) || old));
+  e.target.value = old; if (v === old) return;
+  const go = () => { feed[k] = v; const i = $(id); if (i) i.value = v; send({ t: 'keep', games: feed.gameDays || 30, warns: feed.warnDays || 30 }); };
+  if (v > old) go();
+  else askConfirm('Keep ' + (k === 'gameDays' ? 'sessions' : 'warnings') + ' ' + v + (v === 1 ? ' day?' : ' days?'), (k === 'gameDays' ? 'Sessions' : 'Warnings') + ' older than that are deleted now. A copy is kept in ' + (k === 'gameDays' ? 'games.log.bak' : 'alerts.log.bak') + ', so they can be brought back.', 'Delete older', go);
+});
+$('setbody').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'sGameDays' || e.target.id === 'sWarnDays')) { e.preventDefault(); const t = e.target; setTimeout(() => t.blur(), 0); } });   // (later: the same Enter pressed Cancel on the question it opened)
 $('setbody').addEventListener('input', e => {
   if (e.target.id !== 'sTitle') return;
   S.title = e.target.value.trim() ? e.target.value.slice(0, 60) : undefined; renderTitle(); saveState();
@@ -4166,7 +4465,10 @@ function onHost(m) {
     feed.fake = !!m.fake; feed.dataDir = m.dataDir || ''; feed.version = m.version || ''; feed.nonClient = m.nonClient !== false; feed.pc = typeof m.pc === 'string' ? m.pc : '';
     feed.brand = typeof m.brand === 'string' && m.brand ? m.brand : 'HW Deck'; feed.updatable = m.updatable !== false; document.title = feed.brand;
     // a build with extras: its cell kinds come with extras.js, the view is drawn again once they are in
-    if (m.ext && !EXT.loaded) { EXT.loaded = true; const sc = document.createElement('script'); sc.src = 'extras.js'; sc.onload = () => { renderView(false); renderStorage(); renderInsp(); }; document.head.appendChild(sc); }
+    // (a build's extras.js comes after the first drawing: its cells' bodies, a bar or a switch, change their tiles'
+    // heights, so those are measured again and a size that fit without them is not the one to start from)
+    feed.ext = !!m.ext;
+    if (m.ext && !EXT.loaded) { EXT.loaded = true; const sc = document.createElement('script'); sc.src = 'extras.js'; sc.onload = () => { EXT.ready = true; packMemo.clear(); renderView(false); renderStorage(); renderInsp(); bootCheck(); }; document.head.appendChild(sc); }
     S.slots = (m.slots || []).slice(0, 5).map(cleanSlot);
     while (S.slots.length < 5) S.slots.push(null);
     const st = m.state;
@@ -4183,6 +4485,8 @@ function onHost(m) {
     lastSub = ''; subscribe(); enterNext = true; renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves();
   } else if (m.t === 'settings') {
     feed.autostart = !!m.autostart; feed.hwinfo = m.hwinfo || null; feed.updates = m.updates !== false; feed.latest = m.latest || null; syncUpd();
+    feed.gameDays = m.gameDays || 30; feed.warnDays = m.warnDays || 30;
+    if ($('wmodal').classList.contains('open')) send({ t: 'alerts' });
     if (setmodal.classList.contains('open')) renderSettings();
   } else if (m.t === 'catalog') {
     const sameKeys = READ.length === m.readings.length && m.readings.every((x, i) => READ[i].key === x[2]);
@@ -4194,7 +4498,9 @@ function onHost(m) {
     const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp input, #insp select, #insp textarea, .cn-in');
     if (sameKeys && typing) { for (const [cid, r] of E) { const c = S.L.cells[cid], n = r.root.querySelector('.tn > span, .nm > span, .gname > span'); if (c && n) setText(n, nameIn(cid)); } renderStorage(); }
     else { renderView(false); renderStorage(); renderInsp(); }
+    if (GZ.on) renderGz();
     showFeed();
+    boot.cat = true; bootCheck();
   } else if (m.t === 'spark') {
     for (const k in m.keys) ringFill(k, m.ts, m.keys[k]);
     if (m.ts > nowTs) nowTs = m.ts;
@@ -4209,6 +4515,8 @@ function onHost(m) {
     feed.status = m.status; feed.age = m.age; feed.got = true; feed.game = m.game; feed.front = m.front; feed.gameSince = m.gameSince; feed.pm = !!m.pm;
     feed.c12 = Array.isArray(m.c12) ? m.c12 : null;
     feed.gs = m.gs && typeof m.gs === 'object' ? m.gs : null;   // this game session's min, average, max of the game's own readings
+    feed.bnl = m.bnl;   // the bottleneck's call this second, game or not
+    feed.rec = Array.isArray(m.rec) ? m.rec.filter(x => Array.isArray(x) && x.length >= 2) : [];   // your own sessions running: [start, name]
     if (lastTick && m.ts - lastTick > 2) for (const k in holdSince) delete holdSince[k];   // seconds we didn't see (hidden): holds start again
     nowTs = lastTick = m.ts;
     if (S.clock) setText($('clock'), hhmmss(m.ts));
@@ -4218,16 +4526,27 @@ function onHost(m) {
     showFeed(); showGame();
     if ((first || was !== m.status) && (!READ.length || !S.L.cats.length)) renderView(false);
     if (!drag || !drag.started) { updateView(false); tickInsp(); if (!dragPt) drawRows(); }
+    if (GZ.on && gmodal.classList.contains('open')) gzDraw();
+    if (!boot.tick) { boot.tick = true; if (m.status !== 'ok') boot.cat = boot.x = true; bootCheck(m.status !== 'ok' && !READ.length); }   // (no HWiNFO: nothing more to wait for)
     if (modalCid) { refreshModal(); if (bigRange !== '15m' && Date.now() - histAsked > 60000) askHist(); }
     if (HP.shown) { if (anyModalOpen() || !S.L.cells[HP.cid]) hidePrev(); else { fillPrev(); if (!HP.rev0) drawPrev(); } }
   } else if (m.t === 'hist') {
     bigHist = m;
     if (modalCid && histReady()) { bigRev0 = motionOn() ? performance.now() : 0; refreshModal(); bigLoop(); }
   } else if (m.t === 'alerts') renderWarnings(m.log);
-  else if (m.t === 'games') renderGames(m.log);
+  else if (m.t === 'games') renderGames(m.log, $('glist').querySelector('.gx-sess') ? gxOpen() : undefined);   // (an edit: what was open stays open)
   else if (m.t === 'toast') toast(m.text, false, m.ms);
+  // the window just came up (from the tray, a cold start, or minimized): what was measured while it was hidden came
+  // out short (a Smart Life tile without its bar), so every tile is measured again on screen
+  else if (m.t === 'shown') requestAnimationFrame(() => remeasureSoon(0));
   else if (m.t === 'restarted') restartDone();
-  else if (typeof m.t === 'string' && m.t.startsWith('x.')) { if (EXT.msg) EXT.msg(m); }
+  else if (typeof m.t === 'string' && m.t.startsWith('x.')) {
+    if (EXT.msg) EXT.msg(m);
+    // the first of each of a build's own messages fills its cells' bodies (a bar, a switch): their tiles are measured
+    // again, or a cold start keeps the heights they had empty
+    if (!xSeen.has(m.t)) { xSeen.add(m.t); remeasureSoon(); }
+    if (!boot.x) { boot.x = true; bootCheck(); }
+  }
   else if (m.t === 'imported') {
     const d = cleanSlot(m.data), i = m.slot;
     if (!d || !(i >= 0 && i < 5)) { toast('That file is not an HW Deck layout'); return; }
@@ -4236,6 +4555,6 @@ function onHost(m) {
     toast('Imported into slot ' + (m.slot + 1) + ': load it to use it');
   }
 }
-if (host) { host.addEventListener('message', e => onHost(e.data)); send({ t: 'ready' }); }
+if (host) { app.classList.add('boot'); bootArm(); host.addEventListener('message', e => onHost(e.data)); send({ t: 'ready' }); }
 else { feed.got = true; renderView(true); renderInsp(); syncUndo(); showFeed(); }   // opened outside the app: the empty first-run view
 document.fonts && document.fonts.ready.then(() => placeTabInd(true));

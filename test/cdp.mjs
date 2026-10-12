@@ -2,9 +2,9 @@
 // WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>). Node 22+ (global WebSocket).
 import { writeFileSync } from 'node:fs';
 
-export async function connect(port = 9230) {
+export async function connect(port = 9230, at = 'hwdeck.example') {   // at: what the page's address holds (the demo: its server), or a tab's id
   const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-  const page = list.find(t => t.type === 'page' && t.url.includes('hwdeck.example'));
+  const page = list.find(t => t.type === 'page' && (t.id === at || t.url.includes(at)));   // (or a tab's id)
   if (!page) throw new Error('no HW Deck page on port ' + port);
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((ok, bad) => { ws.onopen = ok; ws.onerror = bad; });

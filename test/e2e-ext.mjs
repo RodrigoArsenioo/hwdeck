@@ -39,6 +39,7 @@ const c0 = Number(await ev(`BYKEY.get("x.test/count").v`));
 await p.sleep(2200);
 const c1 = Number(await ev(`BYKEY.get("x.test/count").v`));
 ok('the counter counts, once a second, with a graph like any reading', c1 >= c0 + 1 && await ev(`!!${cntEl}.querySelector("canvas")`), c0 + ' then ' + c1);
+ok('once extras.js is in, its tiles are measured with their bodies (drawn afresh: the same heights)', await ev(`EXT.ready === true && (() => { const h = () => [...document.querySelectorAll('#view .tile')].map(t => Math.round(t.getBoundingClientRect().height)).join(); const a = h(); packMemo.clear(); renderView(false); return a === h(); })()`));
 
 // ---- its control: a real click, in view mode it acts and the popup stays shut ----
 let c = await p.centerOf(`${swEl}.querySelector(".xflip")`); await p.click(c.x, c.y);

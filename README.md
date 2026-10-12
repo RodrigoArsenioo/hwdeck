@@ -2,6 +2,8 @@
 
 A small dashboard for HWiNFO. Pick the sensors you care about, give them warning lines, and it keeps an eye on them, even from the tray.
 
+**[Try it in your browser](https://rodrigoarsenioo.github.io/hwdeck/)** with made-up readings, nothing to install.
+
 ![HW Deck](docs/screenshots/overview.png)
 
 ## Setup

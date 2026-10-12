@@ -125,6 +125,19 @@ const pt0 = await E(`JSON.stringify(S.L.cells["${fanCid}"].curve.pts[1])`);
 a = await p.center('#cSvg .pt[data-i="1"]');
 await p.drag(a, { x: a.x + 20, y: a.y - 25 }, 8); await p.sleep(200);
 ok('dragging a curve point moves it', await E(`JSON.stringify(S.L.cells["${fanCid}"].curve.pts[1])`) !== pt0);
+// the points go in order (by temperature, a tie by rpm) once you leave the table, not while you type; the line follows them
+const n0 = await E(`S.L.cells["${fanCid}"].curve.pts.length`);
+await E(`(() => { const ins = document.querySelectorAll('#cTab input[data-j="0"]'), last = ins[ins.length - 1]; last.focus(); last.value = '10'; last.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`);
+ok('while you type in the points the rows stay where they are', await E(`S.L.cells["${fanCid}"].curve.pts[${n0 - 1}][0] === 10`));
+await E('document.activeElement.blur()'); await p.sleep(250);
+ok('leaving the table puts the points in order, the lowest temperature first', await E(`(() => { const q = S.L.cells["${fanCid}"].curve.pts; return q[0][0] === 10 && q.every((x, i) => !i || x[0] >= q[i - 1][0]) && +document.querySelector('#cTab input[data-i="0"][data-j="0"]').value === 10; })()`),
+  await E(`JSON.stringify(S.L.cells["${fanCid}"].curve.pts)`));
+await E(`(() => { const c = S.L.cells["${fanCid}"]; c.curve.pts = [[50, 1200], [30, 600], [50, 400]]; saveState(); renderInsp(); const i = document.querySelector('#cTab input'); i.focus(); i.blur(); return 1; })()`); await p.sleep(250);
+ok('a tie in temperature goes by rpm, the lower first', await E(`JSON.stringify(S.L.cells["${fanCid}"].curve.pts) === '[[30,600],[50,400],[50,1200]]'`), await E(`JSON.stringify(S.L.cells["${fanCid}"].curve.pts)`));
+ok('the line runs through the points in that order (a step up at 50)', await E(`(() => { const pl = document.querySelector('#cSvg polyline').getAttribute('points').trim().split(/\\s+/).map(s => s.split(',').map(Number)); return pl.length === 3 && pl[1][0] === pl[2][0] && pl[1][1] > pl[2][1]; })()`),
+  await E(`document.querySelector('#cSvg polyline').getAttribute('points')`));
+ok('and what the fan should do follows the step (400 at 50, 1200 past it)', await E('interp([[30, 600], [50, 400], [50, 1200]], 50) === 400 && interp([[30, 600], [50, 400], [50, 1200]], 51) === 1200 && interp([[50, 1200], [30, 600], [50, 400]], 50) === 400'));
+ok('a layout read back has its points in that order', await E(`(() => { const L = JSON.parse(JSON.stringify(S.L)); L.cells["${fanCid}"].curve.pts = [[50, 1200], [30, 600], [50, 400]]; const c = cleanLayout(L).cells["${fanCid}"]; return !!c && JSON.stringify(c.curve.pts) === "[[30,600],[50,400],[50,1200]]"; })()`));
 await click('.chip[data-t="all"]');
 await click('#addPred'); await p.sleep(200);
 ok('a predicted fan gets its rpm from the curve', await until('(() => { const c = S.L.cells[sel]; return c && c.pred && cellValue(c) > 0; })()', 3000));
@@ -145,6 +158,24 @@ await p.sleep(700);   // (the view settles first: a cell redrawn under a still p
 c = await p.center('#view .dc'); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y }); await p.sleep(800);
 ok('resting on a cell shows the hover preview', await E('HP.shown && $("hprev").classList.contains("on")'));
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 300 }); await p.sleep(250);
+// clicks on cells and out of the popup, fast ones too (mouse events with click counts, as a real mouse sends them)
+const press = (type, x, y, n = 1) => p.cmd('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: n });
+const open = () => E('$("modal").classList.contains("open")');
+const outside = await E('(() => { const r = document.querySelector("#modal .mcard").getBoundingClientRect(); return { x: Math.max(4, r.left / 2), y: Math.max(4, innerHeight - 8) }; })()');
+c = await p.center('#view .dc');
+await press('mousePressed', c.x, c.y); await press('mouseReleased', c.x, c.y); await p.sleep(120);
+ok('a click on a cell opens its popup', await open());
+await press('mousePressed', outside.x, outside.y); await press('mouseReleased', outside.x, outside.y); await p.sleep(250);
+ok('a click outside it right away (0.1 s) closes it', !(await open()));
+c = await p.center('#view .dc'); await p.sleep(300);
+await press('mousePressed', c.x, c.y); await press('mouseReleased', c.x, c.y); await p.sleep(80);
+ok('(it opened)', await open());
+await press('mousePressed', c.x, c.y, 2); await press('mouseReleased', c.x, c.y, 2); await p.sleep(300);
+ok('a second press right away on the same spot (as his video: open, then click again where the cell was) closes it', !(await open()));
+c = await p.center('#view .dc'); await p.sleep(300);
+await press('mousePressed', c.x, c.y); await E('renderView(false)'); await p.sleep(50); await press('mouseReleased', c.x, c.y); await p.sleep(200);
+ok('a cell redrawn between the press and the release still opens (a fresh window redraws while it settles)', await open() && await E('modalCid !== null'));
+await p.key('Escape', 'Escape', 27); await p.sleep(400);
 await p.shot(join(out, 'live.png'));
 await click('#editBtn');
 

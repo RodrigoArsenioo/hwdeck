@@ -1,0 +1,40 @@
+# Builds the browser demo (the page in web\ with demo\demo.js standing in for the app) and publishes it on GitHub
+# Pages, at https://rodrigoarsenioo.github.io/hwdeck/. Runs when the page or the demo changes, or by hand.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', 'demo/**', 'scripts/build-demo.ps1', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-demo.ps1 _site
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v5

@@ -162,4 +162,8 @@ $p = Start-Deck 'data-soak' 9234 300
 Run 'soak' test/soak.mjs 9234 150
 Quit-Deck $p 9234
 
+# the browser demo (built into dist\demo, served on port 8767 and opened in a headless Edge)
+powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\build-demo.ps1" | Out-Null
+Run 'browser demo' test/e2e-demo.mjs 0 ''
+
 if ($failed) { "`n$failed run(s) with failures"; exit 1 } else { "`nevery run passed" }

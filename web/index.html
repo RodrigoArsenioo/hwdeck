@@ -24,7 +24,7 @@
     </span>
     <button class="ib" id="savesBtn" title="Saves"><svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg><i class="bdot" id="savesDot"></i></button>
     <button class="ib" id="logBtn" title="Warning history"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></svg></button>
-    <button class="ib" id="gamesBtn" title="Game sessions"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="4"/><path d="M8 11v3M6.5 12.5h3"/><path d="M15.5 12h.01M17.5 14h.01"/></svg><i class="bdot live" id="gameDot"></i></button>
+    <button class="ib" id="gamesBtn" title="Sessions"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="4"/><path d="M8 11v3M6.5 12.5h3"/><path d="M15.5 12h.01M17.5 14h.01"/></svg><i class="bdot live" id="gameDot"></i></button>
     <button class="ib" id="setBtn" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><i class="bdot upd" id="setDot"></i></button>
     <button class="ib" id="editBtn" title="Edit layout (E)"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg></button>
     <div class="winbtns">
@@ -71,17 +71,17 @@
   <div class="mcard">
     <div class="mhead"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></svg><span class="mtitle">Warning history</span>
       <button class="wclear" id="wclear">Clear</button><button class="mclose" data-close="wmodal" title="Close"><svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
-    <div class="mdesc">Every time a cell crossed its yellow or red line, or a fan left its curve, in the last 7 days. Repeats of the same cell close together are merged into one row; click a row to see each one.</div>
+    <div class="mdesc">Every time a cell crossed its yellow or red line, or a fan left its curve, in the last <span id="wdays">30</span> days. Repeats of the same cell close together are merged into one row; click a row to see each one.</div>
     <div class="wsum" id="wsum"></div><div id="wlist"></div>
   </div>
 </div>
 
 <div class="modal" id="gmodal">
   <div class="mcard">
-    <div class="mhead"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="4"/><path d="M8 11v3M6.5 12.5h3"/></svg><span class="mtitle">Game sessions</span>
-      <button class="wclear" id="gclear">Clear</button><button class="mclose" data-close="gmodal" title="Close"><svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
-    <div class="mdesc">Every game you played for more than a minute (Steam, Epic, Riot, Battle.net, EA, GOG, Ubisoft, Rockstar, Xbox and your own Steam shortcuts), with how it ran and how hot things got. Click a session for the details.</div>
-    <div id="gsum"></div><div id="glist"></div>
+    <div class="mhead"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="4"/><path d="M8 11v3M6.5 12.5h3"/></svg><span class="mtitle">Sessions</span>
+      <button class="wclear gzbtn" id="grec" title="Record a session of your own (a benchmark, a render, anything): Stop ends it">Start session</button><button class="wclear gzbtn" id="gcustom" title="Choose what a session's details show">Customize</button><button class="wclear" id="gclear">Clear</button><button class="mclose" data-close="gmodal" title="Close"><svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+    <div class="mdesc">Every game you played for more than a minute (Steam, Epic, Riot, Battle.net, EA, GOG, Ubisoft, Rockstar, Xbox and your own Steam shortcuts) and the sessions you start yourself, with how it ran and how hot things got. Click a session for the details.</div>
+    <div id="grun" hidden></div><div id="gcz" hidden></div><div id="gsum"></div><div id="glist"></div>
   </div>
 </div>
 

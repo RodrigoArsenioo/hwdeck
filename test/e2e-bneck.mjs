@@ -42,7 +42,10 @@ const shown = () => ev(`(() => { const el = ${cell}; return el ? (el.querySelect
 const cap = () => ev(`(() => { const el = ${cell}; return el ? el.querySelector('.tc, .hc, .lbl i, .ginfo').textContent : null; })()`);
 const untilShown = async (want, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await shown() === want) return true; await p.sleep(200); } return false; };
 
-ok('no game: "--", no game running', await untilShown('--', 9000) && await cap() === 'no game running', await shown() + ' / ' + await cap());
+const CALLS = ['GPU bound', 'CPU bound', 'FPS capped'];
+const untilCall = async ms => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (CALLS.includes(await shown())) return true; await p.sleep(200); } return false; };
+ok('no game: the call of right now all the same, and it says no game runs', await untilCall(9000) && await cap() === 'no game running', await shown() + ' / ' + await cap());
+ok('but nothing of it goes into the history (the reading has no value with no game)', await ev('BYKEY.get(BNECK).v == null && [1, 2, 3].includes(feed.bnl)'), await ev('[BYKEY.get(BNECK).v, feed.bnl]'));
 
 // ---- the calls ----
 await pin(gpuKey, 99); await pin(cpuKey, 50);
@@ -127,7 +130,7 @@ await until('feed.front', 5000);
 // a session needs a minute to be logged
 await until('nowTs - feed.gameSince >= 66', 70000);
 await game(null);
-ok('the game ends: "--", no game running', await untilShown('--', 5000) && await cap() === 'no game running', await shown() + ' / ' + await cap());
+ok('the game ends: the call goes on (FPS capped), no game running, nothing more in the history', await until('BYKEY.get(BNECK).v == null', 5000) && await untilShown('FPS capped', 5000) && await cap() === 'no game running', await shown() + ' / ' + await cap());
 ok('on a PC whose HWiNFO shares neither reading it says so', await ev(`(() => { const k = feed.bnIn; feed.bnIn = [null, null, 0]; const s = evalCell(${JSON.stringify(cid)}, S.L.cells[${JSON.stringify(cid)}], true, true).sub, d = bnFrom(); feed.bnIn = k; return s === 'needs GPU usage and CPU thread usage' && /shares no GPU core load/.test(d); })()`));
 
 const gl = () => text(join(data, 'games.log')).trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).find(x => x.game === 'Bench Game');
@@ -148,7 +151,7 @@ const old = JSON.stringify({ game: 'Old Game', start: 1700000000, end: 170000360
 await ev(`renderGames(${JSON.stringify(old + '\r\n' + text(join(data, 'games.log')))})`);
 const lim = await ev('[...document.querySelectorAll("#glist .gx-sess")].map(s => [s.querySelector(".gx-gn").textContent, s.querySelectorAll(".gx-row .gx-nbar span").length, s.querySelector(".gx-row .gx-nbar + .gx-sub, .gx-row .gx-c:nth-child(6) .gx-sub").textContent, !!s.querySelector(".gx-bnc rect"), s.querySelector(".gx-det").textContent])');
 ok('a session shows what limited it (row and timeline); one from before (no g, c, f) still shows, without it', lim.length === 2 && lim[0][0] === 'Bench Game' && lim[0][1] >= 2 && /^(gpu-bound|cpu-bound|capped) \d+%$/.test(lim[0][2]) && lim[0][3] && /gpu-bound \d+%cpu-bound \d+%capped \d+%/.test(lim[0][4]) &&
-  lim[1][0] === 'Old Game' && lim[1][1] === 0 && lim[1][2] === '--' && !lim[1][3] && /core temp60\.070\.0/.test(lim[1][4]), JSON.stringify(lim.map(x => x.slice(0, 4))));
+  lim[1][0] === 'Old Game' && lim[1][1] === 0 && lim[1][2] === '--' && !lim[1][3] && /GPU60\.070\.0/.test(lim[1][4]), JSON.stringify(lim.map(x => x.slice(0, 4))));
 ok('no warning lines for it', !/Bottleneck/.test(text(join(data, 'alerts.log'))));
 
 // ---- history: the host keeps its seconds, a reloaded page gets them back ----
