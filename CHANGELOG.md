@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.2 (2026-10-13)
+
+- Full animations use about a third less CPU: a graph only slides when the move is big enough to see.
+- Reduced is gone. It moved everything 10 times a second and looked choppy. Full costs less now, and Minimal keeps everything still. If you had Reduced, you get Full.
+
 ## 1.4.1 (2026-10-13)
 
 - Memory shows in GB, with how much of it is in use ("34% of 64 GB"). Its lines are typed in GB too.

@@ -481,15 +481,14 @@ function renderTitle() {
   setText($('title'), (S.title && S.title.trim()) || feed.pc || feed.brand || 'HW Deck');
   $('clock').hidden = !S.clock;
 }
-// animations, in Settings: Full (all of it), Reduced (lighter: quick number rolls, fans turned by a 10 Hz timer, graphs
-// glide at 10 fps, no wave when a view opens), Minimal (nothing keeps moving: numbers just change, fans stand still,
+// animations, in Settings: Full (all of it), Minimal (nothing keeps moving: numbers just change, fans stand still,
 // graphs step; popups and views still slide), Off (nothing moves). Not chosen yet: Full, or Off when Windows asks apps
-// for less motion
+// for less motion. (Reduced, before 1.4.2, moved everything at 10 steps a second and looked choppy: a view saved with it
+// opens in Full, which costs less than it did)
 const reducedMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
-const MOTIONS = ['full', 'reduced', 'minimal', 'off'];
+const MOTIONS = ['full', 'minimal', 'off'];
 const motionMode = () => MOTIONS.includes(S.motion) ? S.motion : reducedMotion.matches ? 'off' : 'full';
-const motionOn = () => motionMode() === 'full';   // the smooth moving parts: spins, draw-ins
-const motionSome = () => { const m = motionMode(); return m === 'full' || m === 'reduced'; };   // rolls and glides, quicker or slower in Reduced
+const motionOn = () => motionMode() === 'full';   // the moving parts: spins, rolls, glides, draw-ins
 function applyMotion() { document.documentElement.dataset.motion = motionMode(); }
 if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', () => { applyMotion(); if (feed.got) renderView(false); });
 let saveT = 0;
@@ -716,7 +715,7 @@ function odo(el, s, due) {
   }
   odoWait.delete(el); el._pend = null; el._at = now;
   const old = built ? el._ot : null, num = x => { const n = parseFloat(String(x).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; };
-  const a = num(old), b = num(s), up = a === null || b === null || Math.abs(b) >= Math.abs(a), roll = motionSome();   // the digits show the size: -5 to -7 rolls up
+  const a = num(old), b = num(s), up = a === null || b === null || Math.abs(b) >= Math.abs(a), roll = motionOn();   // the digits show the size: -5 to -7 rolls up
   const shape = x => x.replace(/[0-9]/g, '0');
   el._t = el._ot = s;
   if (!built || shape(old) !== shape(s)) {
@@ -738,8 +737,10 @@ function odo(el, s, due) {
   }
 }
 // a digit rolls to its place on the motion clock (no CSS transition: that one ran at the screen's refresh rate)
+// (the browser animating these itself was measured on 10-13: on a 240 Hz screen it redraws 240 times a second and cost
+// more, 48% of a core against 27%)
 const rolling = new Set();
-const ROLL_MS = () => motionMode() === 'reduced' ? 250 : 600;
+const ROLL_MS = 600;
 const rollEase = p => 1 - Math.pow(1 - p, 3);
 function rollTo(c, d, up) {
   const rl = c.rl;
@@ -751,7 +752,7 @@ function rollTo(c, d, up) {
   if (t === null) t = d + 10;
   if (t === p) { reelAt(rl, p); return; }
   rl.parentNode.classList.add('roll');
-  rl._from = p; rl._to = t; rl._r0 = performance.now(); rl._dur = ROLL_MS();
+  rl._from = p; rl._to = t; rl._r0 = performance.now(); rl._dur = ROLL_MS;
   reelAt(rl, p); rolling.add(rl); motionRun();
 }
 function rollStep(now) {
@@ -777,13 +778,13 @@ function spinWrap(svg) {
 // a fan out of sight (scrolled away, in a folded category) doesn't keep the clock going
 const spinSeen = new IntersectionObserver(es => { for (const e of es) { const svg = e.target.firstChild; if (!svg) continue; svg._seen = e.isIntersecting; if (e.isIntersecting && svg._srate) motionRun(); } });
 const unstep = svg => { stepped.delete(svg); if (svg.parentNode) { svg.parentNode.style.transform = ''; spinSeen.unobserve(svg.parentNode); } };
-// the motion clock: one timer for all that moves, 30 steps a second in Full, 10 in Reduced; it stops when nothing moves
-const motionHz = () => motionMode() === 'reduced' ? 10 : 30;
+// the motion clock: one timer for all that moves, 30 steps a second in Full; it stops when nothing moves
+const MOTION_HZ = 30;
 const stepped = new Set();
 let motionT = 0, motionAt = 0, graphMore = false;
-function motionRun() { const hz = motionHz(); if (motionT && motionAt === hz) return; clearInterval(motionT); motionAt = hz; motionT = setInterval(motionTick, 1000 / hz); }
+function motionRun() { if (motionT) return; motionAt = MOTION_HZ; motionT = setInterval(motionTick, 1000 / MOTION_HZ); }
 function motionTick() {
-  const now = performance.now(), spin = motionMode() === 'full' || motionMode() === 'reduced';
+  const now = performance.now(), spin = motionOn();
   for (const svg of stepped) if (!svg.isConnected || !spin) unstep(svg);
   const turning = s => s._srate && s._seen !== false;
   const fans = [...stepped].some(turning);
@@ -795,8 +796,7 @@ function motionTick() {
 }
 function spinIcon(svg, rpm) {
   if (!svg) return;
-  const mode = motionMode();
-  const rate = (mode === 'full' || mode === 'reduced') && rpm > 0 && feed.status === 'ok' ? Math.max(0.05, Math.round(rpm / 1500 * 20) / 20) : 0;
+  const rate = motionOn() && rpm > 0 && feed.status === 'ok' ? Math.max(0.05, Math.round(rpm / 1500 * 20) / 20) : 0;
   if (!rate && !stepped.has(svg)) return;
   const w = spinWrap(svg);
   if (!stepped.has(svg)) spinSeen.observe(w);   // (again after a stop that kept its wrapper: Minimal, then Full)
@@ -846,8 +846,19 @@ function graphFeed(cv, c, col) {
   G.col = col;
   const st = graphState(c);
   if (!st) { G.cur = G.from = G.to = null; G.dirty = true; kickGraphs(); return; }
-  if (!G.to || !motionSome()) { G.cur = G.from = G.to = st; G.t0 = 0; } else { G.from = G.cur || G.to; G.to = st; G.t0 = now; }
+  // (a slide too small to see isn't played, just drawn once: most seconds a steady reading moves under a pixel, and those
+  // slides were most of Full's cost, 27% of a core with 40 cells against 19% without them, 10-13)
+  if (!G.to || !motionOn() || !seenMove(G.cur || G.to, st, G)) { G.cur = G.from = G.to = st; G.t0 = 0; } else { G.from = G.cur || G.to; G.to = st; G.t0 = now; }
   G.dirty = true; kickGraphs();
+}
+// would a slide from a to b show? The line's scroll, its span and each point's height, in pixels on this canvas
+function seenMove(a, b, G) {
+  if (!a || !b) return true;
+  const w = G.cw || 300, h = G.ch || 60, px = 0.75;
+  if (Math.abs(b.end - a.end) / b.span * w >= px || Math.abs(b.span - a.span) / b.span * w >= px) return true;
+  const ya = v => (v - a.lo) / (a.hi - a.lo) * h, yb = v => (v - b.lo) / (b.hi - b.lo) * h;
+  for (const q of b.pts) { const o = a.map.get(q.s); if (!o || Math.abs(yb(q.v) - ya(o.v)) >= px) return true; }
+  return false;
 }
 function kickGraphs() { if (!graphRaf) graphRaf = requestAnimationFrame(graphLoop); }
 function graphLoop(now) {
@@ -871,7 +882,7 @@ function graphLoop(now) {
     G.dirty = false;
     if (moving) more = true;
   }
-  if (more) { graphMore = true; motionRun(); }   // (the next step on the motion clock: 30 a second in Full, 10 in Reduced)
+  if (more) { graphMore = true; motionRun(); }   // (the next step on the motion clock, 30 a second)
 }
 function drawGraph(cv, G, rev) {
   if (G.cw == null) { G.cw = cv.clientWidth; G.ch = cv.clientHeight; }
@@ -1168,7 +1179,7 @@ function buildView() {
   CARDS = [...document.querySelectorAll('#view .card')].map(el => ({ el, cat: el.dataset.cat, tag: el.querySelector('.tag') }));
   const view = $('view');
   const mm = motionMode();
-  if (mm === 'off' || ((mm === 'reduced' || mm === 'minimal') && !(enterNext && slideDir))) entrance = null;   // Reduced and Minimal keep the view slide, not the wave
+  if (mm === 'off' || (mm === 'minimal' && !(enterNext && slideDir))) entrance = null;   // Minimal keeps the view slide, not the wave
   else if (enterNext && slideDir) entrance = slideDir;
   else if (enterNext) {
     const vr = view.getBoundingClientRect();
@@ -1205,7 +1216,7 @@ function renderView(enter) {
 let flipNext = false;
 function catRects() { const m = new Map(); if (S.screen !== 'grid') for (const el of document.querySelectorAll('#view .dcat')) m.set(el.dataset.cat, el.getBoundingClientRect()); return m; }
 function playFlip(was) {
-  const mm = motionMode(), dur = mm === 'full' ? 280 : mm === 'reduced' ? 160 : 0;
+  const dur = motionOn() ? 280 : 0;
   if (!dur || S.screen === 'grid') return;
   for (const el of document.querySelectorAll('#view .dcat')) {
     const a = was.get(el.dataset.cat); if (!a) continue;
@@ -4407,9 +4418,9 @@ function renderSettings() {
     '<div class="setrow"><div>Title<small>Shown in the title bar. Empty: the name of this PC' + (feed.pc ? ' (' + esc(feed.pc) + ')' : '') + '.</small></div><input class="setin" id="sTitle" maxlength="60" spellcheck="false" placeholder="' + esc(feed.pc || 'HW Deck') + '" value="' + esc(S.title || '') + '"></div>' +
     '<div class="setrow"><div>Clock<small>The time of the last reading, next to the title.</small></div><button class="tog2' + (S.clock ? ' on' : '') + '" id="sClock" aria-pressed="' + S.clock + '" title="Show the clock"></button></div>' +
     '<div class="setrow"><div>Start with Windows<small>Opens in the tray when you sign in.</small></div><button class="tog2' + (feed.autostart ? ' on' : '') + '" id="sAuto" aria-pressed="' + feed.autostart + '" title="Start with Windows"></button></div>' +
-    '<div class="setrow"><div>Animations<small>' + ({ full: 'Rolling numbers, smoothly spinning fans, gliding graphs.', reduced: 'Lighter: quicker number rolls, fans turn in small steps, graphs move a few times a second.', minimal: 'Nothing keeps moving: numbers just change, fans stand still, graphs step. Popups and views still slide.', off: 'Nothing moves at all.' })[motionMode()] +
+    '<div class="setrow"><div>Animations<small>' + ({ full: 'Rolling numbers, smoothly spinning fans, gliding graphs.', minimal: 'Nothing keeps moving: numbers just change, fans stand still, graphs step. Popups and views still slide.', off: 'Nothing moves at all.' })[motionMode()] +
       (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' (Windows asks apps for less motion.)' : '') + '</small></div><span class="seg seg3" id="sMotion">' +
-      [['full', 'Full'], ['reduced', 'Reduced'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionMode() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
+      [['full', 'Full'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionMode() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
     '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>The free version turns its shared memory off after 12 hours; a restart turns it back on (Windows asks for permission).</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
     (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub once a day if there is a new version. Nothing else is sent.') + '</small></div>' +
       '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">Get it</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>') +
@@ -4609,7 +4620,7 @@ function onHost(m) {
     S.slots = (m.slots || []).slice(0, 5).map(cleanSlot);
     while (S.slots.length < 5) S.slots.push(null);
     const st = m.state;
-    if (st && st.L && Array.isArray(st.L.cats)) { S.L = cleanLayout(st.L); S.active = Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && S.slots[st.active] ? st.active : null; S.edit = st.edit !== false; S.screen = ['tiles', 'overview', 'grid'].includes(st.screen) ? st.screen : 'tiles'; S.motion = st.motion === false ? 'off' : MOTIONS.includes(st.motion) ? st.motion : undefined; }
+    if (st && st.L && Array.isArray(st.L.cats)) { S.L = cleanLayout(st.L); S.active = Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && S.slots[st.active] ? st.active : null; S.edit = st.edit !== false; S.screen = ['tiles', 'overview', 'grid'].includes(st.screen) ? st.screen : 'tiles'; S.motion = st.motion === false ? 'off' : st.motion === 'reduced' ? 'full' : MOTIONS.includes(st.motion) ? st.motion : undefined; }
     else { S.L = emptyLayout(); S.active = null; S.edit = true; S.screen = 'tiles'; }   // first run: nothing, edit mode on
     applyMotion();
     if (st && Array.isArray(st.pins)) { DR.L.pinned = st.pins[0] === true; DR.R.pinned = st.pins[1] === true; }

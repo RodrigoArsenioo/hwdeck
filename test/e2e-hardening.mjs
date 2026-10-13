@@ -119,7 +119,8 @@ await E(`(() => { const c = S.L.cats[0]; c.collapsed = !c.collapsed; saveState()
 await E(`saveTo(0); S.L.cats[0].collapsed = !S.L.cats[0].collapsed`);
 ok('folding a category is not an unsaved change', await E('!isDirty()'));
 
-// ---- animations: Full / Reduced / Off from Settings ----
+// ---- animations: Full / Minimal / Off from Settings (Reduced is gone: run-all saved this view with it) ----
+ok('a view saved with Reduced opens in Full', await E('S.motion === "full" && motionMode() === "full"'), await E('S.motion'));
 await E('setEdit(false); showScreen("tiles")'); await p.sleep(600);
 const spins = () => E('document.getAnimations().filter(a => a.effect && a.effect.target && a.effect.target.classList.contains("spw") && a.playState === "running").length');
 const pick = async m => { await E(`$("setBtn").click()`); await p.sleep(250); await E(`document.querySelector('#sMotion button[data-m="${m}"]').click()`); await p.sleep(900); await E(`$("setmodal").classList.remove("open")`); };
@@ -127,10 +128,11 @@ await pick('full');
 ok('Full: the fans turn on the 30 a second motion clock (no endless animation drawing at the screen rate)', (await spins()) === 0 && (await E('document.documentElement.dataset.motion')) === 'full' && (await E('stepped.size > 0 && !!motionT && motionAt === 30')), String(await E('[stepped.size, motionAt]')));
 ok('Full: a digit rolls on the clock, no CSS transition', await E('(() => { const o = document.createElement("span"); o.className = "od"; o.appendChild(document.createElement("span")).className = "odr"; $("view").appendChild(o); const d = getComputedStyle(o.firstChild).transitionDuration; o.remove(); return d === "0s"; })()'));
 ok('Full: a roll goes 600 ms in steps and ends on its digit', await E(`new Promise(res => { const el = document.createElement('span'); $('view').appendChild(el); odo(el, '12', true); odo(el, '19', true); const c = el._ocells[1]; setTimeout(() => { const mid = rolling.has(c.rl) && c.rl._p > 12 && c.rl._p < 19; setTimeout(() => { const done = !rolling.has(c.rl) && c.rl._p === 19 && !c.rl.parentNode.classList.contains('roll'); el.remove(); res(mid && done); }, 600); }, 250); })`));
-await pick('reduced');
-ok('Reduced: lighter (the motion clock at 10 a second; quick digit rolls)', (await spins()) === 0 && (await E('document.documentElement.dataset.motion')) === 'reduced' && (await E('stepped.size > 0 && !!motionT && motionAt === 10 && ROLL_MS() === 250')), String(await E('[stepped.size, motionAt]')));
+ok('the modes are Full, Minimal and Off', await E(`(() => { $("setBtn").click(); const ms = [...document.querySelectorAll('#sMotion button')].map(b => b.dataset.m).join(); $("setmodal").classList.remove("open"); return ms === 'full,minimal,off'; })()`), await E(`[...document.querySelectorAll('#sMotion button')].map(b => b.dataset.m).join()`));
+ok('a graph slide too small to see is just drawn, a visible one plays', await E(`(() => { const G = { cw: 300, ch: 60 }, pt = v => [{ s: 1, v }], st = (end, v) => ({ end, span: 900, lo: 0, hi: 100, pts: pt(v), map: new Map([[1, { s: 1, v }]]) });
+  return !seenMove(st(100, 50), st(100.2, 50.3), G) && seenMove(st(100, 50), st(100.2, 55), G); })()`));
 await pick('minimal');
-ok('Minimal: nothing keeps moving (no spins, digits just change), popups still slide', (await spins()) === 0 && (await E('document.documentElement.dataset.motion')) === 'minimal' && (await E('stepped.size === 0 && !motionT && !motionSome()')) && (await E('getComputedStyle(document.querySelector(".modal")).transitionDuration')) !== '0s');
+ok('Minimal: nothing keeps moving (no spins, digits just change), popups still slide', (await spins()) === 0 && (await E('document.documentElement.dataset.motion')) === 'minimal' && (await E('stepped.size === 0 && !motionT && !motionOn()')) && (await E('getComputedStyle(document.querySelector(".modal")).transitionDuration')) !== '0s');
 await pick('off');
 ok('Off: no transitions at all, and the fans stand still', (await E('document.documentElement.dataset.motion')) === 'off' && (await E('getComputedStyle(document.querySelector(".modal")).transitionDuration')) === '0s' && (await spins()) === 0 && (await E('stepped.size === 0 && !motionT')));
 await pick('full');

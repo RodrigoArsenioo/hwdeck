@@ -61,7 +61,7 @@ New-Item -ItemType Directory "$d\test\data-h" | Out-Null
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $last = $now - 3000
 Set-Content -Encoding UTF8 "$d\test\data-h\prep.json" ('{"last":' + $last + '}')
-Set-Content -Encoding UTF8 "$d\test\data-h\state.json" '{"v":1,"L":{"v":1,"cats":[{"id":"ch","name":"Checks","collapsed":false,"cells":["fan1","t1"]}],"cells":{"fan1":{"key":"f0000501.0/03000002","name":"Rear fan","graph":true,"curve":{"src":"f0000501.0/01000000","pts":[[0,9000],[100,9000]],"tol":15,"hold":1}},"t1":{"key":"f0000501.0/01000000","graph":true,"gates":{"mode":"yr","dir":"above","y":null,"r":null,"hold":0}}}},"active":null,"edit":true,"screen":"tiles"}'
+Set-Content -Encoding UTF8 "$d\test\data-h\state.json" '{"v":1,"L":{"v":1,"cats":[{"id":"ch","name":"Checks","collapsed":false,"cells":["fan1","t1"]}],"cells":{"fan1":{"key":"f0000501.0/03000002","name":"Rear fan","graph":true,"curve":{"src":"f0000501.0/01000000","pts":[[0,9000],[100,9000]],"tol":15,"hold":1}},"t1":{"key":"f0000501.0/01000000","graph":true,"gates":{"mode":"yr","dir":"above","y":null,"r":null,"hold":0}}}},"active":null,"edit":true,"screen":"tiles","motion":"reduced"}'
 Set-Content -Encoding UTF8 "$d\test\data-h\games.current.json" ('{"Start":' + ($now - 3600) + ',"From":' + ($now - 3600) + ',"Last":' + $last + ',"Game":"Test Game","Secs":600,"Front":500,"FpsN":0,"LowN":0,"Warns":0,"FpsSum":0,"LowSum":0,"Items":{},"Names":{}}')
 Set-Content -Encoding ASCII "$d\test\data-h\hist.bin" 'not a history file'   # damaged: moved aside, not saved over
 $p = Start-Deck 'data-h' 9232 300
