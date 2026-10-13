@@ -9,8 +9,13 @@ A small dashboard for HWiNFO. Pick the sensors you care about, give them warning
 ## Setup
 
 1. Install [HWiNFO](https://www.hwinfo.com) and turn on Shared Memory Support in its settings.
-2. Download `HWDeck-x.y.z.msi` from [Releases](https://github.com/RodrigoArsenioo/hwdeck/releases/latest) and run it. Or take the zip, unzip it anywhere and run `HWDeck.exe`.
-3. The first time, Windows warns you because it isn't signed: click More info, then Run anyway.
+2. Paste this into PowerShell. It downloads the newest installer from [Releases](https://github.com/RodrigoArsenioo/hwdeck/releases/latest), checks it against its published checksum and runs it ([the script](install.ps1)):
+
+   ```
+   irm https://raw.githubusercontent.com/RodrigoArsenioo/hwdeck/main/install.ps1 | iex
+   ```
+
+   Or download `HWDeck-x.y.z.msi` from Releases and run it, or take the zip, unzip it anywhere and run `HWDeck.exe`. Downloaded with a browser, Windows warns the first time because it isn't signed: click More info, then Run anyway.
 
 Works on 64-bit Windows 10 and 11.
 
