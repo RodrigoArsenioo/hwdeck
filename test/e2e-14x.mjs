@@ -171,6 +171,63 @@ const okAt = (hv.find(l => /\sOK\s/.test(l)) || '').slice(0, 25), okT = okAt ? n
 ok('a value hovering on its line is one episode (one YELLOW, one OK after the last time over it)', hv.filter(l => /YELLOW/.test(l)).length === 1 && hv.filter(l => /\sOK\s/.test(l)).length === 1 && okT >= lastHot, hv.map(l => l.slice(11, 70)).join(' | '));
 await host({ t: 'fakePin', key: tKey, v: null });
 
+// ---- graph scales: a far spike cut at the top, never below zero, a sensible span for the unit ----
+ok('a far spike is cut at the top, a short temperature peak and a percentage burst are not', await E(`(() => { const fps = Array.from({ length: 120 }, (_, i) => 220 + (i % 7) * 10); fps[50] = 1702;
+  const t = Array.from({ length: 900 }, (_, i) => 50 + (i % 5)); t[400] = 70; const ld = Array.from({ length: 900 }, (_, i) => i % 300 < 10 ? 99 : 15);
+  const f = scaleTop(fps, 'FPS'); return f.cut && f.top < 400 && f.max === 1702 && !scaleTop(t, ${JSON.stringify('°C')}).cut && !scaleTop(ld, '%').cut; })()`));
+const bigTry = (d, pk, unit, dec) => E(`(() => { const cv = document.createElement('canvas'); cv.style.cssText = 'width:600px;height:240px;position:fixed;left:-9999px;top:0'; document.body.appendChild(cv);
+  const was = bigMap; drawBigGraph(cv, ${JSON.stringify(d)}, {}, ${dec}, ${JSON.stringify(unit)}, false, ${JSON.stringify(pk)}, 3600000, null); const m = bigMap; bigMap = was; cv.remove();
+  return { bottom: m.h - m.padB, top: m.padT, plot: m.h - m.padT - m.padB, at: ${JSON.stringify([0, 52, 53, 250, 1702])}.map(v => m.Y(v)) }; })()`);
+{
+  const d = Array.from({ length: 60 }, (_, i) => 220 + (i % 7) * 10), pk = d.map(x => x + 30); pk[40] = 1702;
+  const g = await bigTry(d, pk, 'FPS', 0);
+  ok('FPS in the popup: nothing below 0, the line has room (the scale follows it, not the spike), the spike sits at the top edge', g.at[0] >= g.bottom - 0.5 && g.at[3] < g.bottom - g.plot * 0.2 && Math.abs(g.at[4] - g.top) < 0.5, JSON.stringify(g));
+  const s = await bigTry(Array.from({ length: 60 }, (_, i) => i < 50 ? 53 : 52), null, '°C', 1);
+  ok('a steady temperature keeps at least a 10 degree scale (a 1 degree step stays small)', s.at[1] - s.at[2] < s.plot * 0.12, JSON.stringify(s));
+}
+// ---- the fade toward a line, per cell ----
+ok('a cell keeps its fade (0 or more), anything else is dropped', await E(`(() => { const L = cleanLayout({ v: 1, cats: [{ id: 'a', name: 'A', cells: ['x', 'y', 'z'] }], cells: { x: { key: READ[0].key, gates: { mode: 'y', dir: 'above', y: 90, hold: 0, fade: 5 } }, y: { key: READ[1].key, gates: { mode: 'y', dir: 'above', y: 90, hold: 0, fade: -1 } }, z: { key: READ[2].key, gates: { mode: 'y', dir: 'above', y: 90, hold: 0, fade: 0 } } } });
+  return L.cells.x.gates.fade === 5 && !('fade' in L.cells.y.gates) && L.cells.z.gates.fade === 0; })()`));
+await E(`(() => { addKeys([${JSON.stringify(tKey)}], null, null, 'Fade'); const id = Object.keys(S.L.cells).filter(i => S.L.cells[i].key === ${JSON.stringify(tKey)}).pop(); window.__fid = id; mutate(() => { S.L.cells[id].name = 'Fade test'; S.L.cells[id].gates = { mode: 'yr', dir: 'above', y: 60, r: 70, hold: 0 }; }); setEdit(false); return 1; })()`);
+const fe = () => E('(() => { const e = evalCell(__fid, S.L.cells[__fid], true, true); return { lvl: e.lvl, warm: e.warm, warmR: e.warmR }; })()');
+const setFade = f => E(`(() => { mutate(() => { if (${f === undefined}) delete S.L.cells[__fid].gates.fade; else S.L.cells[__fid].gates.fade = ${f === undefined ? 0 : f}; }); return 1; })()`);
+await host({ t: 'fakePin', key: tKey, v: 57 }); await p.sleep(1800);
+let fx = await fe();
+ok('3 under yellow: it fades in by default (the last 12%, 7.2 here)', fx.lvl === 0 && fx.warm >= 0.5 && fx.warm <= 0.65, JSON.stringify(fx));
+await setFade(2); await p.sleep(300); fx = await fe();
+ok('its own fade of 2: not yet', fx.warm === 0, JSON.stringify(fx));
+await setFade(5); await p.sleep(300); fx = await fe();
+ok('a fade of 5: 40% of the way', Math.abs(fx.warm - 0.4) < 0.06, JSON.stringify(fx));
+await setFade(0); await p.sleep(300); fx = await fe();
+ok('a fade of 0: no fade at all', fx.warm === 0, JSON.stringify(fx));
+await setFade(undefined); await host({ t: 'fakePin', key: tKey, v: 66 }); await p.sleep(1800); fx = await fe();
+ok('past yellow, 4 under red: yellow, fading toward red', fx.lvl === 1 && fx.warmR >= 0.4 && fx.warmR <= 0.6, JSON.stringify(fx));
+await setFade(0); await p.sleep(300); fx = await fe();
+ok('and no fade toward red with 0', fx.lvl === 1 && fx.warmR === 0, JSON.stringify(fx));
+await E('(() => { setEdit(true); selectCell(__fid); return 1; })()'); await p.sleep(300);
+ok('the setting is in the cell\'s Lines, typed in its unit', await E('!!$("iFade") && $("iFade").placeholder === "auto" && $("iFade").value === "0"'));
+await E('(() => { setEdit(false); return 1; })()');
+await host({ t: 'fakePin', key: tKey, v: null });
+
+// ---- calmer during games: Full is Minimal while a game is in front, back after; a setting (on by default) turns it off ----
+const mode = () => E('document.documentElement.dataset.motion');
+await E(`(() => { S.motion = 'full'; S.gameCalm = true; applyMotion(); saveState(); return 1; })()`);
+await host({ t: 'fakeGame', game: 'Calm Game', front: true });
+ok('a game in front: Full turns Minimal, the pick stays Full', await until('document.documentElement.dataset.motion === "minimal" && motionPicked() === "full" && !motionOn()', 5000), await mode());
+await E('$("setBtn").click()'); await p.sleep(250);
+ok('Settings shows Full picked and says why it is Minimal now', await E('document.querySelector("#sMotion button.on").dataset.m === "full" && /a game is in front/.test($("setbody").textContent) && $("sCalm").classList.contains("on")'));
+await E('$("sCalm").click()'); await p.sleep(700);
+ok('"Calmer during games" off: Full again at once, and saved', (await mode()) === 'full' && JSON.parse(text(join(data, 'state.json')).replace(/^﻿/, '')).gameCalm === false, await mode());
+await E('$("sCalm").click()'); await p.sleep(700); await E('$("setmodal").classList.remove("open")');
+ok('back on: Minimal again while the game is in front, and saved', (await mode()) === 'minimal' && JSON.parse(text(join(data, 'state.json')).replace(/^﻿/, '')).gameCalm === true, await mode());
+await host({ t: 'fakeGame', game: 'Calm Game', front: false });
+ok('the game in the background: Full again', await until('document.documentElement.dataset.motion === "full"', 5000), await mode());
+await host({ t: 'fakeGame', game: null });
+await E(`(() => { S.motion = 'minimal'; applyMotion(); return 1; })()`); await host({ t: 'fakeGame', game: 'Calm Game', front: true });
+ok('Minimal or Off picked by hand stay as they are during a game', await until('feed.front === true', 5000) && (await mode()) === 'minimal');
+await host({ t: 'fakeGame', game: null });
+await E(`(() => { S.motion = 'full'; applyMotion(); saveState(); return 1; })()`);
+
 ok('no page errors', errs.length === 0, errs.join(' | '));
 p.close();
 console.log(done() ? 'ALL PASS' : 'SOME FAILED');

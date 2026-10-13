@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.3 (2026-10-13)
+
+- Graphs scale better. A far spike (a second at 1,700 fps) no longer squashes the line: it's cut at the top with its value next to it. Readings that can't go below zero start at 0. And a small change stays small: a temperature graph spans at least 10 degrees.
+- Each cell can set how early it fades toward its lines ("Fade in" in its Lines, in its own unit, 0 for none). Past yellow it now fades toward red too.
+- Full animations switch to Minimal while a game is in front, and back after, to leave the CPU to the game. "Calmer during games" in Settings turns it off.
+
 ## 1.4.2 (2026-10-13)
 
 - Full animations use about a third less CPU: a graph only slides when the move is big enough to see.

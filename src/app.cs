@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.4.2.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.4.2.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.3.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.3.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.4.2";
+    public const string Version = "1.4.3";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -1721,6 +1721,7 @@ partial class DeckForm : Form
     [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr hWnd);
     [DllImport("user32.dll")] static extern int GetSystemMetricsForDpi(int nIndex, uint dpi);
     [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll")] static extern uint GetDpiForSystem();
     const int WM_NCLBUTTONDOWN = 0xA1;
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -2448,7 +2449,7 @@ partial class DeckForm : Form
             if (!fake && now - lastHwPath >= 60) { lastHwPath = now; RememberHwinfo(); }
         }
         if (now - lastSave >= 900) { lastSave = now; hist.Save(false); }
-        bool showing = pageReady && Visible && WindowState != FormWindowState.Minimized;
+        bool showing = pageReady && Visible && !IsIconic(Handle);   // (Windows' own word: a restore that skips the focus doesn't always update WindowState)
         if (showing && !wasShowing)
         {
             force = true; SendSparks(subCells);   // back from the tray or the taskbar: the page missed those seconds

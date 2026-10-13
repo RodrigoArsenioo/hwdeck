@@ -306,6 +306,7 @@ function cleanLayout(L) {
     if (g && typeof g === 'object') {
       cell.gates = { mode: ['y', 'yr'].includes(g.mode) ? g.mode : 'none', dir: g.dir === 'below' ? 'below' : 'above', y: fin(g.y), r: fin(g.r), hold: Math.min(1e9, Math.max(0, fin(g.hold) || 0)) };
       if (g.other && typeof g.other === 'object') { const o = {}; if (isFinite(fin(g.other.y))) o.y = fin(g.other.y); if (isFinite(fin(g.other.r))) o.r = fin(g.other.r); cell.gates.other = o; }
+      if (isFinite(fin(g.fade)) && g.fade >= 0) cell.gates.fade = Math.min(1e9, g.fade);   // (none: the automatic fade)
     }
     const curveOf = cv => {
       const pts = cv && typeof cv === 'object' && Array.isArray(cv.pts) ? cv.pts.filter(p => Array.isArray(p) && p.length >= 2 && isFinite(fin(p[0])) && isFinite(fin(p[1]))).map(p => [p[0], p[1]]).sort(ptOrd) : [];
@@ -487,12 +488,15 @@ function renderTitle() {
 // opens in Full, which costs less than it did)
 const reducedMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
 const MOTIONS = ['full', 'minimal', 'off'];
-const motionMode = () => MOTIONS.includes(S.motion) ? S.motion : reducedMotion.matches ? 'off' : 'full';
+const motionPicked = () => MOTIONS.includes(S.motion) ? S.motion : reducedMotion.matches ? 'off' : 'full';
+// Full calms down to Minimal while a game is in front (Settings, on unless turned off), and comes back after
+const gameCalmNow = () => S.gameCalm !== false && !!feed.game && !!feed.front;
+const motionMode = () => { const m = motionPicked(); return m === 'full' && gameCalmNow() ? 'minimal' : m; };
 const motionOn = () => motionMode() === 'full';   // the moving parts: spins, rolls, glides, draw-ins
 function applyMotion() { document.documentElement.dataset.motion = motionMode(); }
 if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', () => { applyMotion(); if (feed.got) renderView(false); });
 let saveT = 0;
-function saveState() { clearTimeout(saveT); saveT = setTimeout(() => send({ t: 'save', file: 'state', data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, pins: [DR.L.pinned, DR.R.pinned], title: S.title, clock: S.clock, hide: S.hide } }), 300); }
+function saveState() { clearTimeout(saveT); saveT = setTimeout(() => send({ t: 'save', file: 'state', data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, pins: [DR.L.pinned, DR.R.pinned], title: S.title, clock: S.clock, hide: S.hide } }), 300); }
 function saveSlot(i) { send({ t: 'save', file: 'slots/slot' + (i + 1), data: S.slots[i] }); }
 // undo steps hold the layout and which slot it came from, so Clear then Undo is exactly where you were
 let undoStack = [], redoStack = [];
@@ -608,7 +612,7 @@ function evalCell(cid, c, peek, quick) {
 function evalCell0(cid, c, peek, quick) {
   const r = c.key ? BYKEY.get(c.key) : null, live = feed.status === 'ok';
   const v = cellValue(c);
-  const out = { v, lvl: 0, warm: 0, sub: '', curve: null, col: 'white' };
+  const out = { v, lvl: 0, warm: 0, warmR: 0, sub: '', curve: null, col: 'white' };
   const xk = xkOf(r);
   if (xk && xk.eval && xk.eval(out, r, c)) return out;
   if (isBneck(c)) {   // a call in words, no lines; its caption is the split of the last 15 min
@@ -629,12 +633,16 @@ function evalCell0(cid, c, peek, quick) {
   if (gatesOn(g) && !pmOff) {
     const above = g.dir !== 'below';
     ({ raw, side } = gateLevel(g, v));
-    // closing in on yellow: border and graph warm toward it over the last 12% (at least 3 steps of the cell's
-    // precision: 3 degrees, 0.003 V), in steps; a yes/no reading is yes or no, nothing in between
-    if (!raw && !isYN(r)) {
-      const warm = (x, up) => { const span = Math.max(Math.abs(x) * 0.12, dec0 > 1 ? 3 * Math.pow(10, -dec0) : 3), d = up ? x - v : v - x; return d < span ? Math.round((1 - d / span) * 20) / 20 : 0; };
-      out.warm = Math.max(warm(g.y, above), o ? warm(o.y !== undefined ? o.y : o.r, !o.below) : 0);
-    }
+    // closing in on a line: border and graph fade toward its colour, in steps, over the cell's fade (gates.fade, in the
+    // reading's own units; 0 none) or by default the last 12% (at least 3 steps of the cell's precision: 3 degrees,
+    // 0.003 V); toward yellow before it, toward red past yellow. A yes/no reading is yes or no, nothing in between
+    const fadeTo = (x, up) => {
+      if (x === undefined || !Number.isFinite(x)) return 0;
+      const span = Number.isFinite(g.fade) ? g.fade : Math.max(Math.abs(x) * 0.12, dec0 > 1 ? 3 * Math.pow(10, -dec0) : 3), d = up ? x - v : v - x;
+      return span > 0 && d >= 0 && d < span ? Math.round((1 - d / span) * 20) / 20 : 0;
+    };
+    if (!raw && !isYN(r)) out.warm = Math.max(fadeTo(g.y, above), o ? fadeTo(o.y !== undefined ? o.y : o.r, !o.below) : 0);
+    else if (raw === 1 && !isYN(r)) out.warmR = side ? (o && o.y !== undefined ? fadeTo(o.r, !o.below) : 0) : g.mode === 'yr' ? fadeTo(g.r, above) : 0;
     hold = g.hold || 0;
   }
   if (c.curve && !c.pred) {
@@ -659,6 +667,7 @@ function evalCell0(cid, c, peek, quick) {
   if (!peek && out.lvl > ep.lvl) ep.lvl = out.lvl;
   out.col = !live ? 'grey' : out.lvl === 2 ? 'red' : out.lvl === 1 ? 'yellow' : 'white';
   if (out.lvl) out.warm = 0;
+  if (out.lvl !== 1) out.warmR = 0;   // (toward red only once it shows yellow)
   const dec = dec0, k = gbK(r), fl = x => fmt(x * k, dec);
   if (pmOff && gatesOn(g) && !out.curve) out.sub = 'lines count while a game is in front';
   else if (out.lvl && side) out.sub = (o.below ? 'under ' : 'over ') + (out.lvl === 2 ? 'red ' + fl(o.r) : 'yellow ' + fl(o.y));
@@ -680,7 +689,7 @@ function evalCell0(cid, c, peek, quick) {
   return out;
 }
 const sparkColor = (e, hero) => e.col === 'yellow' ? COLORS.yellow : e.col === 'red' ? COLORS.red : e.col === 'grey' ? '#3a3a3a' : hero ? '#8f8f8f' : '#7c7c7c';
-const graphCol = (e, hero) => { const base = sparkColor(e, hero); return e.warm ? mixHex(base, COLORS.yellow, e.warm * 0.75) : base; };
+const graphCol = (e, hero) => { const base = sparkColor(e, hero); return e.warm ? mixHex(base, COLORS.yellow, e.warm * 0.75) : e.warmR ? mixHex(base, COLORS.red, e.warmR * 0.75) : base; };
 
 // ---------- odometer numbers: the digits roll to their new places, forward when it goes up, back when it goes down ----------
 const REEL = '0123456789'.repeat(3).split('').join('\n');   // three turns of digits: rest in the middle one, roll into a neighbour
@@ -823,11 +832,13 @@ function graphState(c) {
   const bs = buckets(c), pts = [];
   for (let i = 0; i < bs.length; i++) { if (bs[i].v === null) continue; pts.push({ s: bs[i].b, v: bs[i].v, x: i === bs.length - 1 ? (nowTs + 1) / BUCKET : bs[i].b + 0.5 }); }
   if (pts.length < 2) return null;
-  let lo = Infinity, hi = -Infinity;
-  for (const q of pts) { if (q.v < lo) lo = q.v; if (q.v > hi) hi = q.v; }
-  const dec = c.pred ? 0 : decOfCell(c, BYKEY.get(c.key));
-  const minSpan = Math.max(dec > 1 ? Math.pow(10, 1 - dec) : 1, Math.abs(hi) * 0.04);
-  if (hi - lo < minSpan) { const mid = (hi + lo) / 2; lo = mid - minSpan / 2; hi = mid + minSpan / 2; }
+  let lo = Infinity;
+  for (const q of pts) if (q.v < lo) lo = q.v;
+  const r = BYKEY.get(c.key), sc = scaleTop(pts.map(q => q.v), c.pred ? 'RPM' : r && r.unit), floor0 = lo >= 0;   // (see scaleTop: the span for its unit, a spike cut at the top)
+  let hi = sc.top;
+  const dec = c.pred ? 0 : decOfCell(c, r);
+  const minSpan = Math.max(minSpanOf(c.pred ? 'RPM' : r && r.unit), dec > 1 ? Math.pow(10, 1 - dec) : 1, Math.abs(hi) * 0.04);
+  if (hi - lo < minSpan) { const mid = (hi + lo) / 2; lo = mid - minSpan / 2; hi = mid + minSpan / 2; if (floor0 && lo < 0) { hi -= lo; lo = 0; } }
   const end = (nowTs + 1) / BUCKET;
   // a young history spans what there is (at least a minute) and widens as it builds up
   const span = Math.min(NB, Math.max(10, end - pts[0].s));
@@ -894,7 +905,7 @@ function drawGraph(cv, G, rev) {
   ctx.clearRect(0, 0, w, h);
   const st = G.cur;
   if (!st || st.pts.length < 2) return;
-  const pad = 5 * dpr, x0 = st.end - st.span, X = x => 1 + (x - x0) / st.span * (w - 1 - pad), Y = v => h - 3 * dpr - (v - st.lo) / (st.hi - st.lo) * (h - 3 * dpr - pad);
+  const pad = 5 * dpr, x0 = st.end - st.span, X = x => 1 + (x - x0) / st.span * (w - 1 - pad), Y = v => h - 3 * dpr - (Math.min(st.hi, Math.max(st.lo, v)) - st.lo) / (st.hi - st.lo) * (h - 3 * dpr - pad);   // (a cut spike at the top edge)
   ctx.save();
   if (rev < 1) { ctx.beginPath(); ctx.rect(0, 0, w * rev, h); ctx.clip(); }
   // a stretch with no readings (HWiNFO away) is a gap, not a straight line across it
@@ -1244,8 +1255,9 @@ function updateView(all) {
     if (r.vbox) { for (const k of ['yellow', 'red', 'grey']) r.vbox.classList.toggle(k, colCls === k); }
     if (r.cap) { setText(r.cap, e.sub); r.cap.classList.toggle('y', e.lvl === 1); r.cap.classList.toggle('r', e.lvl === 2); }
     if (r.kind === 'tile') {
-      r.root.classList.toggle('yellow', e.lvl === 1); r.root.classList.toggle('red', e.lvl === 2); r.root.classList.toggle('warm', e.warm > 0);
-      if (r._w !== e.warm) { r._w = e.warm; r.root.style.setProperty('--wb', e.warm ? mixHex('#242424', '#5c4f1d', e.warm * 0.85) : ''); }
+      r.root.classList.toggle('yellow', e.lvl === 1); r.root.classList.toggle('red', e.lvl === 2); r.root.classList.toggle('warm', e.warm > 0 || e.warmR > 0);
+      const wk = e.warm ? 'y' + e.warm : e.warmR ? 'r' + e.warmR : '';   // (the border fades toward yellow before it, toward red past it)
+      if (r._w !== wk) { r._w = wk; r.root.style.setProperty('--wb', e.warm ? mixHex('#242424', '#5c4f1d', e.warm * 0.85) : e.warmR ? mixHex('#5c4f1d', '#6b2020', e.warmR * 0.85) : ''); }
     }
     if (r.kind === 'grow' && e.strip) { if (r.cap.title !== e.sub) r.cap.title = e.sub; if (r.td[1].title !== e.txt + ' ' + e.utxt) r.td[1].title = (e.txt + ' ' + e.utxt).trim(); }
     else if (r.kind === 'grow') {
@@ -2864,6 +2876,8 @@ function renderInsp() {
       if (o) h += '<div class="two"><label class="fld gate-y"><span>' + side(osd, 'Yellow') + ' ' + esc(unit) + '</span><input id="iOY" type="number" step="any" placeholder="none" value="' + numL(o.y) + '"></label>' +
         '<label class="fld gate-r"><span>' + side(osd, 'Red') + ' ' + esc(unit) + '</span><input id="iOR" type="number" step="any" placeholder="none" value="' + numL(o.r) + '"></label></div>';
       h += '<label class="fld"><span>Hold before it turns (s)</span><input id="iHold" type="number" min="0" step="1" value="' + num(g.hold) + '"></label>';
+      h += '<label class="fld"><span>Fade in before a line ' + esc(unit) + '</span><input id="iFade" type="number" min="0" step="any" placeholder="auto" value="' + (Number.isFinite(g.fade) ? numL(g.fade) : '') + '"></label>' +
+           '<span class="hint">How far before its yellow (and its red) line the cell starts to take on that colour. Empty: the last 12%. 0: no fade.</span>';
       h += '<div class="err" id="gErr"></div><div class="scale" id="gScale"></div>';
     } else if (r) {
       const pre = presetFor(r);
@@ -3011,6 +3025,7 @@ insp.addEventListener('input', e => {
   }
   const lk = c.pred ? 1 : gbK(BYKEY.get(c.key));   // (memory lines are typed in GB, kept in MB)
   if (t.id === 'iOY' || t.id === 'iOR') { setCell(c => { const o = c.gates.other || (c.gates.other = {}), k = t.id === 'iOY' ? 'y' : 'r'; if (t.value === '' || !isFinite(Number(t.value))) delete o[k]; else o[k] = Number(t.value) / lk; }); tickInsp(); updateView(false); }
+  if (t.id === 'iFade') { setCell(c => { if (t.value === '' || !isFinite(Number(t.value))) delete c.gates.fade; else c.gates.fade = Math.max(0, Number(t.value) / lk); }); tickInsp(); updateView(false); }
   if (t.id === 'iY' || t.id === 'iR' || t.id === 'iHold') { setCell(c => { const k = t.id === 'iY' ? 'y' : t.id === 'iR' ? 'r' : 'hold'; c.gates[k] = t.value === '' ? NaN : k === 'hold' ? Math.min(1e9, Math.max(0, Number(t.value) || 0)) : Number(t.value) / lk; }); tickInsp(); updateView(false); }
   if (t.id === 'cTol' || t.id === 'cHold') { if (t.value === '') return; setCell(c => { c.curve[t.id === 'cTol' ? 'tol' : 'hold'] = Math.max(t.id === 'cTol' ? 1 : 0, Number(t.value) || 0); }); tickInsp(); updateView(false); }
   if (t.dataset && t.dataset.i != null && t.closest('#cTab') && t.value !== '') { setCell(c => { c.curve.pts[Number(t.dataset.i)][Number(t.dataset.j)] = Number(t.value); }); tickInsp(); updateView(false); }
@@ -3523,6 +3538,19 @@ function graphCtx(cv) {
 }
 function yCaption(ctx, dpr, text) { if (!text) return; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = '#555'; ctx.font = (10 * dpr) + 'px Segoe UI'; ctx.fillText(text, 4 * dpr, 1 * dpr); }
 // the popup's big graph: the line and its area, the peaks as a faint line on the long ranges, the gate lines, time along the bottom
+// a graph's scale (the popup's and the tiles'): at least a sensible span for its unit, so a steady reading's one-step
+// change stays a small step (52 to 53 C filled the whole graph); its top at its highest value, unless a few spikes stand
+// far above the rest (a second at 1,702 fps over a line at 230): then it follows the rest and the spikes are cut at the
+// top; and never below zero for a reading that never is
+const MIN_SPAN = { '°C': 10, '°F': 18, '%': 10, 'RPM': 200, 'W': 20, 'V': 0.1, 'A': 2, 'MHz': 200, 'FPS': 20, 'GB': 1, 'MB': 1024, 'ms': 5 };
+const minSpanOf = u => MIN_SPAN[u] || 0;
+function scaleTop(vals, unit) {
+  let max = -Infinity; for (const v of vals) if (v > max) max = v;
+  if (vals.length < 20 || unit === '%' || unit === 'Yes/No') return { top: max, cut: false, max };   // (0 to 100 is a scale already)
+  // cut only far spikes, more than half again over the usual top: a temperature's short peak or a burst stays whole
+  const s = vals.slice().sort((a, b) => a - b), p = s[Math.floor(s.length * 0.95)], lo = s[0];
+  return max - p > Math.max(p - lo, Math.abs(p) * 0.5) ? { top: p, cut: true, max } : { top: max, cut: false, max };
+}
 function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, preview) {
   const { ctx, w, h, dpr } = graphCtx(cv);
   const vals = (data || []).filter(x => x !== null && x !== undefined), pvals = (maxData || []).filter(x => x !== null && x !== undefined);
@@ -3533,17 +3561,21 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
     return;
   }
   const padL = 58 * dpr, padR = 8 * dpr, padT = 10 * dpr, padB = 36 * dpr, yn = unit === 'Yes/No';
-  let dLo = Math.min(...vals), dHi = Math.max(...vals, ...(pvals.length ? pvals : vals));
+  let dLo = Math.min(...vals);
+  const sc = scaleTop(pvals.length ? vals.concat(pvals) : vals, unit), floor0 = dLo >= 0;
+  let dHi = sc.top;
   if (yn) { dLo = 0; dHi = 1; }
   if (gateInView) { if (det.y !== undefined) dHi = Math.max(dHi, det.y); if (det.r !== undefined) dHi = Math.max(dHi, det.r); }
-  const mag = Math.max(Math.abs(dLo), Math.abs(dHi), 1e-6), minSpan = Math.max(mag * 0.06, dec ? Math.pow(10, -dec) * 4 : 2);   // a flat 0 gets -1..1, not 8 decimals
-  if (dHi - dLo < minSpan) { const mid = (dLo + dHi) / 2; dLo = mid - minSpan / 2; dHi = mid + minSpan / 2; }
+  const mag = Math.max(Math.abs(dLo), Math.abs(dHi), 1e-6), minSpan = Math.max(minSpanOf(unit), mag * 0.06, dec ? Math.pow(10, -dec) * 4 : 2);   // a flat 0 gets -1..1, not 8 decimals
+  if (dHi - dLo < minSpan) { const mid = (dLo + dHi) / 2; dLo = mid - minSpan / 2; dHi = mid + minSpan / 2; if (floor0 && dLo < 0) { dHi -= dLo; dLo = 0; } }
   const pad = (dHi - dLo) * 0.12; dLo -= pad; dHi += pad;
+  if (floor0 && dLo < 0) dLo = 0;
   const rawStep = yn ? 1 : (dHi - dLo) / 3, pw = Math.pow(10, Math.floor(Math.log10(rawStep)));
   const step = yn ? 1 : [1, 2, 5, 10].map(m => m * pw).find(s => s >= rawStep) || 10 * pw;
   const stepDec = step >= 1 ? 0 : Math.ceil(-Math.log10(step) - 1e-9);
-  const lo = yn ? -0.25 : Math.floor(dLo / step) * step, hi = yn ? 1.25 : Math.ceil(dHi / step) * step;
-  const X = i => padL + i / (data.length - 1) * (w - padL - padR), Y = v => h - padB - (v - lo) / (hi - lo) * (h - padT - padB);
+  const lo = yn ? -0.25 : Math.max(floor0 ? 0 : -Infinity, Math.floor(dLo / step) * step), hi = yn ? 1.25 : Math.ceil(dHi / step) * step;
+  // (a value past the scale, a cut spike, is drawn at its edge)
+  const X = i => padL + i / (data.length - 1) * (w - padL - padR), Y = v => h - padB - (Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo) * (h - padT - padB);
   ctx.font = (11 * dpr) + 'px Segoe UI'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   const nTicks = yn ? 1 : Math.round((hi - lo) / step);
   for (let i = 0; i <= nTicks; i++) {
@@ -3590,6 +3622,16 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
     ctx.fillStyle = grad; ctx.fill();
   }
   ctx.restore();
+  if (sc.cut && sc.max > hi && !yn && rv >= 1) {   // a spike cut at the top says how high it went, beside it
+    const src = maxData || data; let at = -1, mv = -Infinity;
+    src.forEach((v, i) => { if (v !== null && v !== undefined && v > mv) { mv = v; at = i; } });
+    if (at >= 0) {
+      const txt = 'peak ' + (dec ? (+mv).toFixed(dec) : Math.round(mv).toLocaleString('en-US'));
+      ctx.font = (11 * dpr) + 'px Segoe UI'; ctx.textBaseline = 'top'; ctx.fillStyle = '#8a8a8a';
+      const x = X(at), right = x + 6 * dpr + ctx.measureText(txt).width <= w - padR;
+      ctx.textAlign = right ? 'left' : 'right'; ctx.fillText(txt, right ? x + 6 * dpr : x - 6 * dpr, padT + 1 * dpr);
+    }
+  }
   if (preview) return;
   bigMap = { padL, padR, padT, padB, w, h, Y, n: data.length, data, maxData, span, dec, unit };
   if (HV.on) kickHover();
@@ -4418,9 +4460,10 @@ function renderSettings() {
     '<div class="setrow"><div>Title<small>Shown in the title bar. Empty: the name of this PC' + (feed.pc ? ' (' + esc(feed.pc) + ')' : '') + '.</small></div><input class="setin" id="sTitle" maxlength="60" spellcheck="false" placeholder="' + esc(feed.pc || 'HW Deck') + '" value="' + esc(S.title || '') + '"></div>' +
     '<div class="setrow"><div>Clock<small>The time of the last reading, next to the title.</small></div><button class="tog2' + (S.clock ? ' on' : '') + '" id="sClock" aria-pressed="' + S.clock + '" title="Show the clock"></button></div>' +
     '<div class="setrow"><div>Start with Windows<small>Opens in the tray when you sign in.</small></div><button class="tog2' + (feed.autostart ? ' on' : '') + '" id="sAuto" aria-pressed="' + feed.autostart + '" title="Start with Windows"></button></div>' +
-    '<div class="setrow"><div>Animations<small>' + ({ full: 'Rolling numbers, smoothly spinning fans, gliding graphs.', minimal: 'Nothing keeps moving: numbers just change, fans stand still, graphs step. Popups and views still slide.', off: 'Nothing moves at all.' })[motionMode()] +
-      (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' (Windows asks apps for less motion.)' : '') + '</small></div><span class="seg seg3" id="sMotion">' +
-      [['full', 'Full'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionMode() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
+    '<div class="setrow"><div>Animations<small>' + ({ full: 'Rolling numbers, smoothly spinning fans, gliding graphs.', minimal: 'Nothing keeps moving: numbers just change, fans stand still, graphs step. Popups and views still slide.', off: 'Nothing moves at all.' })[motionPicked()] +
+      (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' (Windows asks apps for less motion.)' : '') + (motionMode() !== motionPicked() ? ' Minimal for now: a game is in front.' : '') + '</small></div><span class="seg seg3" id="sMotion">' +
+      [['full', 'Full'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionPicked() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
+    '<div class="setrow"><div>Calmer during games<small>Full animations switch to Minimal while a game is in front, and back after. Saves CPU for the game.</small></div><button class="tog2' + (S.gameCalm !== false ? ' on' : '') + '" id="sCalm" aria-pressed="' + (S.gameCalm !== false) + '" title="Minimal animations while a game is in front"></button></div>' +
     '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>The free version turns its shared memory off after 12 hours; a restart turns it back on (Windows asks for permission).</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
     (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub once a day if there is a new version. Nothing else is sent.') + '</small></div>' +
       '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">Get it</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>') +
@@ -4444,6 +4487,7 @@ $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sUpd')) { feed.updates = !feed.updates; if (!feed.updates) feed.latest = null; send({ t: 'updates', on: feed.updates }); syncUpd(); renderSettings(); }
   if (e.target.closest('#sGet')) send({ t: 'openRelease' });
   if (e.target.closest('#sClock')) { S.clock = !S.clock; renderTitle(); saveState(); renderSettings(); }
+  if (e.target.closest('#sCalm')) { S.gameCalm = S.gameCalm === false; applyMotion(); saveState(); renderSettings(); renderView(false); }
 });
 $('setbody').addEventListener('change', e => {
   const id = e.target.id; if (id !== 'sGameDays' && id !== 'sWarnDays') return;
@@ -4622,6 +4666,7 @@ function onHost(m) {
     const st = m.state;
     if (st && st.L && Array.isArray(st.L.cats)) { S.L = cleanLayout(st.L); S.active = Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && S.slots[st.active] ? st.active : null; S.edit = st.edit !== false; S.screen = ['tiles', 'overview', 'grid'].includes(st.screen) ? st.screen : 'tiles'; S.motion = st.motion === false ? 'off' : st.motion === 'reduced' ? 'full' : MOTIONS.includes(st.motion) ? st.motion : undefined; }
     else { S.L = emptyLayout(); S.active = null; S.edit = true; S.screen = 'tiles'; }   // first run: nothing, edit mode on
+    S.gameCalm = !st || st.gameCalm !== false;
     applyMotion();
     if (st && Array.isArray(st.pins)) { DR.L.pinned = st.pins[0] === true; DR.R.pinned = st.pins[1] === true; }
     S.title = st && typeof st.title === 'string' && st.title.trim() ? st.title.slice(0, 60) : undefined; S.clock = !st || st.clock !== false;
@@ -4662,7 +4707,9 @@ function onHost(m) {
     updateView(true);
   } else if (m.t === 'tick') {
     const was = feed.status, first = !feed.got;
+    const calmWas = motionMode();
     feed.status = m.status; feed.age = m.age; feed.got = true; feed.game = m.game; feed.front = m.front; feed.gameSince = m.gameSince; feed.pm = !!m.pm;
+    if (motionMode() !== calmWas) { applyMotion(); if (setmodal.classList.contains('open')) renderSettings(); if (!first) renderView(false); }   // a game came to the front or left it
     feed.c12 = Array.isArray(m.c12) ? m.c12 : null;
     feed.gs = m.gs && typeof m.gs === 'object' ? m.gs : null;   // this game session's min, average, max of the game's own readings
     feed.bnl = m.bnl;   // the bottleneck's call this second, game or not
