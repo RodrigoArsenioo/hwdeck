@@ -8,7 +8,12 @@ A small dashboard for HWiNFO. Pick the sensors you care about, give them warning
 
 ## Setup
 
-1. Install [HWiNFO](https://www.hwinfo.com) and turn on Shared Memory Support in its settings.
+1. Install [HWiNFO](https://www.hwinfo.com) and switch on its shared memory, once:
+   - Start HWiNFO with **Sensors-only** ticked.
+   - In the sensors window, click **Config**, then **Main Settings**.
+   - On the **General / User Interface** tab, tick **Shared Memory Support**, then OK.
+
+   The free HWiNFO stops sharing after 12 hours. HW Deck's restart button (the arrow next to the views) turns it back on.
 2. Paste this into PowerShell. It downloads the newest installer from [Releases](https://github.com/RodrigoArsenioo/hwdeck/releases/latest), checks it against its published checksum and runs it ([the script](install.ps1)):
 
    ```
@@ -30,8 +35,6 @@ Works on 64-bit Windows 10 and 11.
 - Closing the window keeps it in the tray, still watching. Right-click the tray icon to quit.
 - The clock icon lists past warnings, the gamepad icon your sessions: games, and ones you record yourself.
 - Bottleneck (under HW Deck in the list) says what limits your fps: the GPU, the CPU, or an fps cap. It works without a game too.
-
-The free HWiNFO stops sharing after 12 hours. The arrow next to the views restarts it.
 
 ## Good to know
 

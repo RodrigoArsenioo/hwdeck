@@ -1147,10 +1147,11 @@ function buildGrid() {
   return '<div class="gsplit" id="view">' + (t1.length ? table(t1) : '') + (t2.length ? table(t2) : '') + '</div>';
 }
 function setupHtml() {
-  return '<div class="setup" id="view"><h2>HWiNFO isn\'t sharing its sensors</h2><span>HW Deck shows what HWiNFO measures, so it needs HWiNFO running with its shared memory on:</span><ol>' +
-    '<li>Install HWiNFO (hwinfo.com) and start it in <b>Sensors-only</b> mode.</li><li>In its Settings, turn on <b>Shared Memory Support</b>.</li>' +
-    '<li>Keep HWiNFO running. The free version turns shared memory off after 12 hours; HW Deck then offers to restart it.</li></ol>' +
-    '<span>This screen goes away by itself once the readings arrive. HWiNFO already running with shared memory on, and still nothing?</span>' +
+  return '<div class="setup" id="view"><h2>HWiNFO isn\'t sharing its sensors yet</h2><span>HW Deck shows what HWiNFO measures. Set HWiNFO up once:</span><ol>' +
+    '<li>Install HWiNFO (hwinfo.com) and start it with <b>Sensors-only</b> ticked.</li><li>In its sensors window, click <b>Config</b>, then <b>Main Settings</b>.</li>' +
+    '<li>On the <b>General / User Interface</b> tab, tick <b>Shared Memory Support</b>, then OK.</li>' +
+    '<li>Keep HWiNFO running. The free version stops sharing after 12 hours; Restart HWiNFO turns it back on.</li></ol>' +
+    '<span>This screen goes away by itself once the readings arrive. Already set up, and still nothing?</span>' +
     '<span><button class="btn" id="setupRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></span></div>';
 }
 function emptyHtml() {
@@ -4646,9 +4647,9 @@ function showFeed() {
     dot.className = 'dot bad';
     dot.title = feed.status === 'stale' ? 'HWiNFO stopped updating' : 'HWiNFO not found';
     ban.hidden = !feed.got || (!READ.length && !S.L.cats.length);   // the setup screen says it all when there is nothing yet
-    setText($('bannerTxt'), feed.status === 'stale' ? 'HWiNFO stopped updating its shared memory ' + agoTxt(feed.age) + '.' + (feed.age >= 60 ? ' The free version does this after 12 hours.' : '')
-      : READ.length ? 'HWiNFO\'s shared memory is gone. Start HWiNFO with Shared Memory Support on; the values come back by themselves.'
-      : 'HWiNFO isn\'t running, or its Shared Memory Support is off. Start it (or restart it); the values come back by themselves.');
+    setText($('bannerTxt'), feed.status === 'stale' ? 'HWiNFO stopped updating its shared memory ' + agoTxt(feed.age) + '.' + (feed.age >= 60 ? ' The free version does this after 12 hours: Restart HWiNFO turns it back on.' : '')
+      : READ.length ? 'HWiNFO stopped sharing. Restart HWiNFO turns sharing back on; the values come back by themselves.'
+      : 'HWiNFO isn\'t sharing its readings. Restart HWiNFO turns sharing back on. Never set it up? In HWiNFO: Config, Main Settings, tick Shared Memory Support.');
   }
   if (ban.hidden !== was) { clearTimeout(fitTimer); fitTimer = setTimeout(() => { autofit(); updateView(true); }, 30); }   // the banner takes room: fit again
 }

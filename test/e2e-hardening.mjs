@@ -209,7 +209,7 @@ await E('$("gmodal").classList.remove("open")'); await p.sleep(300);
 // ---- HWiNFO gone ----
 // (each in one go: the next real tick would put the feed back before a second call could look)
 const ban = await E(`(() => { feed.fake = false; onHost({ t: 'tick', ver: 1, status: 'missing', age: 0, ts: nowTs + 1, i: [], v: [], mn: [], mx: [], av: [], game: null, front: false, gameSince: 0 }); return !$("banner").hidden && $("bannerTxt").textContent; })()`);
-ok('with a layout and no HWiNFO, the banner says so', !!ban && /gone|isn.t running/.test(ban), ban);
+ok('with a layout and no HWiNFO, the banner says so', !!ban && /stopped sharing|isn.t sharing/.test(ban), ban);
 const setup = await E(`(() => { feed.fake = false; onHost({ t: 'catalog', ver: 99, sensors: [], readings: [] }); feed.status = 'missing'; S.L = emptyLayout(); renderView(false); return !!document.querySelector("#view.setup #setupRestart"); })()`);
 ok('with nothing at all, the setup screen (with Restart HWiNFO) shows', setup);
 await E(`send({ t: 'ready' })`);

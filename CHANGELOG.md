@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.4 (not released yet)
+
+- The first-run screen, the red banner and the README say exactly where HWiNFO's sharing is switched on: Config, Main Settings, General / User Interface, Shared Memory Support.
+
 ## 1.4.3 (2026-10-13)
 
 - Graphs scale better. A far spike (a second at 1,700 fps) no longer squashes the line: it's cut at the top with its value next to it. Readings that can't go below zero start at 0. And a small change stays small: a temperature graph spans at least 10 degrees.
