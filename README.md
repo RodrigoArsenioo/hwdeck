@@ -13,7 +13,7 @@ A small dashboard for HWiNFO. Pick the sensors you care about, give them warning
    - In the sensors window, click **Config**, then **Main Settings**.
    - On the **General / User Interface** tab, tick **Shared Memory Support**, then OK.
 
-   The free HWiNFO stops sharing after 12 hours. HW Deck's restart button (the arrow next to the views) turns it back on.
+   The free HWiNFO stops sharing after 12 hours. HW Deck's restart button (the arrow next to the views) turns it back on. Or turn on Keep HWiNFO sharing in Settings, and HW Deck restarts it for you before then.
 2. Paste this into PowerShell. It downloads the newest installer from [Releases](https://github.com/RodrigoArsenioo/hwdeck/releases/latest), checks it against its published checksum and runs it ([the script](install.ps1)):
 
    ```

@@ -16,7 +16,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 
 No Visual Studio needed, the build uses the C# compiler that comes with Windows. `scripts\pack.ps1` makes the release zip and the installer in `dist\` (the installer needs the .NET SDK: WiX 5 comes from `.config\dotnet-tools.json`, the setup itself is `installer\HWDeck.wxs`).
 
-Flags: `-min` starts in the tray, `--data <dir>` uses another data folder, `--fake` makes up sensors for testing (that copy never takes the focus; `HWDECK_NOFOCUS=1` does the same for a copy on real data).
+Flags: `-min` starts in the tray, `--data <dir>` uses another data folder, `--fake` makes up sensors for testing (that copy never takes the focus; `HWDECK_NOFOCUS=1` does the same for a copy on real data). With `HWDECK_KEEP_MIN=<minutes>` set, a copy with its own `--data` makes a Keep HWiNFO sharing task that restarts HWiNFO after that many minutes instead of 650 (tests).
 
 ## Tests
 

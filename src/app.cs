@@ -2064,6 +2064,8 @@ partial class DeckForm : Form
                     break;
                 case "autostart": SetAutostart(true.Equals(m["on"])); SendSettings(); break;
                 case "restartHwinfo": RestartHwinfo(); break;
+                case "keepSharing": SetKeepSharing(true.Equals(m["on"])); break;
+                case "getSettings": SendSettings(); break;
                 case "openData": Process.Start("explorer.exe", "\"" + dataDir + "\""); break;
                 case "updates": settings["updates"] = true.Equals(m["on"]); updNext = 0; Try(() => SaveFile("settings", settings)); SendSettings(); break;
                 case "openRelease": OpenRelease(); break;
@@ -2118,10 +2120,11 @@ partial class DeckForm : Form
         Post(r);
         SendSettings();
     }
-    void SendSettings()
+    void SendSettings(bool keepDone = false)   // (keepDone: the answer to the page's keepSharing)
     {
         var r = Msg("settings");
         r["autostart"] = Autostart(); r["hwinfo"] = settings.ContainsKey("hwinfo") ? settings["hwinfo"] : null;
+        r["keep"] = KeepSharing(); r["keepBusy"] = keepBusy; r["keepDone"] = keepDone;   // (until done, the page shows what was asked)
         r["updates"] = UpdatesOn();
         r["gameDays"] = DaysSet("gameDays") ? KeepDays("gameDays") : (object)null; r["warnDays"] = DaysSet("warnDays") ? KeepDays("warnDays") : (object)null;   // (null: not set, nothing cut)
         string latest = settings.ContainsKey("updLatest") ? settings["updLatest"] as string : null;
@@ -2540,6 +2543,7 @@ try {
 try { $sig = Get-AuthenticodeSignature -LiteralPath $Exe } catch { $sig = $null }
 if (-not $sig -or $sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -cnotmatch '^CN=""?REALiX, s\.r\.o\.""?,') { exit 4 }   # (again: the file could have changed meanwhile)
 [void][Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo $Exe))
+if ($AfterStart) { & $AfterStart }
 exit $code
 ";
     void RestartHwinfo()
@@ -2578,6 +2582,155 @@ exit $code
     }
     // the page's restart button spins until this comes (code 0: restarted with shared memory on)
     void Restarted(int code) { var m = Msg("restarted"); m["code"] = code; Post(m); }
+
+    // ---- Keep HWiNFO sharing: a Windows task that looks every hour and restarts HWiNFO (RestartScript) once it has run
+    // 10 h 50 min, so about every 11 h and always before the free version's 12 h. It runs as admin like HWiNFO, so all
+    // it runs is stored inside it, never a file anyone could swap (the zip's folder is the user's to write), and it only
+    // restarts an HWiNFO installed under Program Files (started as admin with no prompt, a copy in a folder anyone can
+    // write to could bring someone else's files along). A closed HWiNFO stays closed. Once this copy of HW Deck is gone
+    // (a deleted zip folder) the task deletes itself; the msi's uninstall deletes it too (installer\HWDeck.wxs, under the
+    // same name). Anything full screen in front (a game, a video) gets to finish first, until HWiNFO has run 11 h 40 min,
+    // and HWiNFO's window, which takes the focus as it starts, is minimized, so the window in front gets it back. The
+    // Win32 calls for that are made in memory: Add-Type would compile a file into the user's temp folder and load it
+    // as admin. On and off are one Windows prompt each ----
+    const int KeepVersion = 1;   // in its description: a later HW Deck can tell a task made before a change to its script
+    string KeepTask { get { return runName + " - Keep HWiNFO sharing"; } }
+    string KeepMark { get { return Brand.Name + ": " + Application.ExecutablePath; } }   // the end of its description: whose it is
+    static bool InProgramFiles(string exe)
+    {
+        try
+        {
+            string full = Path.GetFullPath(exe);
+            return new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }.Select(Environment.GetFolderPath)
+                .Any(d => d != "" && full.StartsWith(d.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase));
+        }
+        catch { return false; }
+    }
+    bool keepBusy;   // the Windows prompt for the switch, or the change after it, under way
+    // exit codes past RestartScript's: 5 HW Deck is gone (the task deleted), 6 that HWiNFO isn't under Program Files,
+    // 7 not admin (left alone). A drive that isn't there (unplugged, not mapped for admins) deletes nothing. Notification
+    // states 2, 3, 4: a full-screen app, a Direct3D game, presentation mode
+    const string KeepScript = @"
+$ErrorActionPreference = 'Stop'
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 7 }
+if (-not (Test-Path -LiteralPath $App)) {
+  if (-not (Test-Path -LiteralPath ([IO.Path]::GetPathRoot($App)))) { exit 0 }
+  Start-Sleep -Seconds 120
+  if (-not (Test-Path -LiteralPath $App)) {
+    try { $f = New-Object -ComObject Schedule.Service; $f.Connect(); $f = $f.GetFolder('\'); if ($f.GetTask($Name).Definition.RegistrationInfo.Description.EndsWith(': ' + $App, [StringComparison]::OrdinalIgnoreCase)) { $f.DeleteTask($Name, 0) } } catch { }
+    exit 5
+  }
+}
+$p = @(Get-Process HWiNFO64, HWiNFO32 -ErrorAction SilentlyContinue | Sort-Object StartTime)
+if ($p.Count -eq 0) { exit 0 }
+if (((Get-Date) - $p[0].StartTime).TotalMinutes -lt $Min) { exit 0 }
+$Exe = $p[0].Path; $ok = $false
+if ($Exe) { $full = [IO.Path]::GetFullPath($Exe); foreach ($d in $env:ProgramFiles, ${env:ProgramFiles(x86)}) { if ($d -and $full.StartsWith($d.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { $ok = $true } } }
+if (-not $ok) { exit 6 }
+$tb = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object Reflection.AssemblyName 'KeepHw'), 'Run').DefineDynamicModule('KeepHw').DefineType('KeepHw', 'Public, Class')
+foreach ($f in ('user32.dll', 'GetForegroundWindow', [IntPtr], @()), ('user32.dll', 'GetWindowThreadProcessId', [UInt32], @([IntPtr], [UInt32].MakeByRefType())), ('user32.dll', 'PostMessageW', [Boolean], @([IntPtr], [UInt32], [IntPtr], [IntPtr])), ('shell32.dll', 'SHQueryUserNotificationState', [Int32], @([Int32].MakeByRefType()))) {
+  $m = $tb.DefinePInvokeMethod($f[1], $f[0], 'Public, Static, PinvokeImpl', 'Standard', $f[2], [Type[]]$f[3], 'Winapi', 'Unicode'); $m.SetImplementationFlags('PreserveSig')
+}
+$W = $tb.CreateType()
+$until = $p[0].StartTime.AddMinutes(700)
+while ((Get-Date) -lt $until) { $q = 0; [void]$W::SHQueryUserNotificationState([ref]$q); if (2, 3, 4 -notcontains $q) { break }; Start-Sleep -Seconds 30 }
+$p[0].Refresh(); if ($p[0].HasExited) { exit 0 }
+$AfterStart = { for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $h = $W::GetForegroundWindow(); $q = [UInt32]0; [void]$W::GetWindowThreadProcessId($h, [ref]$q); if ((Get-Process -Id $q -ErrorAction SilentlyContinue).ProcessName -like 'HWiNFO*') { [void]$W::PostMessageW($h, 0x112, [IntPtr]0xF020, [IntPtr]::Zero) } } }";
+    static string PsText(string s) { return "[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + Convert.ToBase64String(Encoding.Unicode.GetBytes(s ?? "")) + "'))"; }
+    static object Com(object o, string name, System.Reflection.BindingFlags how, params object[] a) { return o.GetType().InvokeMember(name, how, null, o, a); }
+    // on only when the task is there, enabled, this copy's (after a move or a fresh unzip it is the old folder's, which
+    // deletes itself: turning it on here makes it this one's) and this user's (one task per PC: another account's shows off)
+    bool KeepSharing()
+    {
+        if (fake) return false;
+        object svc = null;
+        var call = System.Reflection.BindingFlags.InvokeMethod; var get = System.Reflection.BindingFlags.GetProperty;
+        try
+        {
+            svc = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));
+            Com(svc, "Connect", call);
+            object task = Com(Com(svc, "GetFolder", call, "\\"), "GetTask", call, KeepTask);   // (none: throws)
+            object def = Com(task, "Definition", get);
+            string desc = Com(Com(def, "RegistrationInfo", get), "Description", get) as string, uid = Com(Com(def, "Principal", get), "UserId", get) as string;
+            var me = System.Security.Principal.WindowsIdentity.GetCurrent();
+            bool mine = string.IsNullOrEmpty(uid) || uid.Equals(me.User.Value, StringComparison.OrdinalIgnoreCase) || uid.Equals(me.Name, StringComparison.OrdinalIgnoreCase)
+                     || uid.Equals(Environment.UserName, StringComparison.OrdinalIgnoreCase);
+            return mine && true.Equals(Com(task, "Enabled", get)) && desc != null && desc.EndsWith(KeepMark, StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+        finally { if (svc != null) Try(() => Marshal.ReleaseComObject(svc)); }
+    }
+    // the elevated script that makes the task: it encodes the hourly script and registers the task around it
+    string KeepOnScript()
+    {
+        int min = 650, m;
+        if (customData && int.TryParse(Environment.GetEnvironmentVariable("HWDECK_KEEP_MIN"), out m) && m >= 0) min = m;   // (tests, with their own --data: another age)
+        string sid = System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
+        string sys = Environment.GetFolderPath(Environment.SpecialFolder.System), x = System.Security.SecurityElement.Escape(Brand.Name);
+        string xml = "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">" +
+            "<RegistrationInfo><Author>" + x + "</Author><Description>" + System.Security.SecurityElement.Escape("Restarts HWiNFO once it has run about 11 hours, with its shared memory on, so the free version never stops sharing. " +
+                "Turn it off in " + Brand.Name + "'s Settings (Keep HWiNFO sharing). Task version " + KeepVersion + ". " + KeepMark) + "</Description></RegistrationInfo>" +
+            "<Triggers><TimeTrigger><StartBoundary>" + DateTime.Now.AddMinutes(1).ToString("yyyy-MM-dd'T'HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + "</StartBoundary><Repetition><Interval>PT1H</Interval></Repetition></TimeTrigger></Triggers>" +
+            "<Principals><Principal id=\"Author\"><UserId>" + sid + "</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>" +
+            "<Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>" +
+            "<StartWhenAvailable>true</StartWhenAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><ExecutionTimeLimit>PT1H</ExecutionTimeLimit>" +
+            "<Priority>4</Priority></Settings>" +   // (the default, 7, would start HWiNFO below normal priority)
+            // (conhost --headless: no window, where -WindowStyle Hidden still flashes one or opens Windows Terminal)
+            "<Actions Context=\"Author\"><Exec><Command>" + Path.Combine(sys, "conhost.exe") + "</Command><Arguments>--headless " + Path.Combine(sys, @"WindowsPowerShell\v1.0\powershell.exe") +
+            " -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand CMD</Arguments></Exec></Actions></Task>";
+        return "$Name = " + PsText(KeepTask) + "\n$hourly = @'\n$App = " + PsText(Application.ExecutablePath) + "; $Name = " + PsText(KeepTask) + "; $Min = " + min +
+            KeepScript + RestartScript + "\n'@\n$xml = @'\n" + xml + "\n'@\n$Me = '" + sid + "'" + @"
+$ErrorActionPreference = 'Stop'
+if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne $Me) { exit 8 }
+$xml = $xml.Replace('-EncodedCommand CMD', '-EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hourly)))
+$s = New-Object -ComObject Schedule.Service; $s.Connect()
+[void]$s.GetFolder('\').RegisterTask($Name, $xml, 6, $null, $null, 3)
+exit 0";
+    }
+    const string KeepOffScript = @"
+$ErrorActionPreference = 'Stop'
+$s = New-Object -ComObject Schedule.Service; $s.Connect(); $f = $s.GetFolder('\')
+try { $f.DeleteTask($Name, 0) } catch { }
+try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
+    void SetKeepSharing(bool on)
+    {
+        var r = Msg("toast");
+        if (fake) { r["text"] = "Demo data: there is no HWiNFO to keep sharing"; Post(r); SendSettings(true); return; }
+        if (keepBusy) { SendSettings(true); return; }
+        string hw = settings.ContainsKey("hwinfo") ? settings["hwinfo"] as string : null;
+        if (on && hw != null && !InProgramFiles(hw)) { r["text"] = "Keep HWiNFO sharing only restarts an HWiNFO installed in Program Files, and yours runs from " + Path.GetDirectoryName(hw); Post(r); SendSettings(true); return; }
+        try
+        {
+            string script = on ? KeepOnScript() : "$Name = " + PsText(KeepTask) + KeepOffScript;
+            var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+            psi.Verb = "runas"; psi.WindowStyle = ProcessWindowStyle.Hidden; psi.UseShellExecute = true;   // a task that runs as admin takes an admin to make (or delete)
+            var proc = Process.Start(psi);
+            keepBusy = true;
+            Log("keep sharing " + (on ? "on" : "off") + " asked");
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                int code = -1;
+                try { if (proc != null && proc.WaitForExit(60000)) code = proc.ExitCode; } catch { }
+                Log("keep sharing " + (on ? "on: " : "off: ") + code);
+                Try(() => BeginInvoke((Action)(() =>
+                {
+                    keepBusy = false;
+                    var t = Msg("toast");
+                    t["text"] = code == 8 ? "Keep HWiNFO sharing needs your own account to be an admin (Windows asked for another one)"
+                              : code != 0 ? "Couldn't turn Keep HWiNFO sharing " + (on ? "on" : "off") + " (code " + code + ")"
+                              : on ? "Keep HWiNFO sharing is on: HWiNFO restarts after about 11 hours" : "Keep HWiNFO sharing is off, and its task is deleted";
+                    Post(t); SendSettings(true);
+                })));
+            });
+        }
+        catch (Exception ex)
+        {
+            var w = ex as System.ComponentModel.Win32Exception;
+            if (w != null && w.NativeErrorCode == 1223) r["text"] = "Cancelled: Keep HWiNFO sharing stays " + (on ? "off" : "on");   // No in the Windows prompt
+            else { Log("keep sharing failed: " + ex.Message); r["text"] = "Couldn't change Keep HWiNFO sharing: " + ex.Message; }
+            Post(r); SendSettings(true);
+        }
+    }
 
     // ---- start with Windows: a Run entry for this exe, in the tray ----
     // on only when the entry starts this copy (after a move or a fresh unzip the old entry points elsewhere)

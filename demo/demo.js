@@ -364,7 +364,7 @@
         inp.click();
         break;
       }
-      case 'autostart': toast(IN_APP); post(settingsMsg()); break;
+      case 'autostart': case 'keepSharing': toast(IN_APP); post(settingsMsg()); break;
       case 'updates': case 'openData': case 'restartHwinfo': toast(IN_APP); break;
       default: break;   // win, drag: there is no window to move here
     }

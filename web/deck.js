@@ -85,7 +85,7 @@ const COLORS = { white: '#e8e8e8', yellow: '#e6c84a', red: '#e5484d', grey: '#55
 const TYPES = ['none', 'temp', 'volt', 'fan', 'current', 'power', 'clock', 'usage', 'other'];
 const TYPE_NAME = { temp: 'Temp', volt: 'Volt', fan: 'Fan', power: 'Power', current: 'Current', clock: 'Clock', usage: 'Usage', other: 'Other' };
 let SENS = [], READ = [], BYKEY = new Map(), BYMATCH = new Map();
-const feed = { bnIn: [null, null, 0], status: 'missing', age: 0, fake: false, dataDir: '', version: '', pc: '', got: false, game: null, front: false, gameSince: 0, hwinfo: null, autostart: false, updates: true, latest: null, pm: false, nonClient: true };
+const feed = { bnIn: [null, null, 0], status: 'missing', age: 0, fake: false, dataDir: '', version: '', pc: '', got: false, game: null, front: false, gameSince: 0, hwinfo: null, autostart: false, keep: false, keepBusy: false, keepWait: false, updates: true, latest: null, pm: false, nonClient: true };
 
 function shortName(n) {
   // "S.M.A.R.T.: SAMSUNG SSD 990 PRO 2TB (0123456789ABCDEF) [C:]" is "SAMSUNG SSD 990 PRO 2TB", "CPU [#0]: AMD Ryzen 7 9800X3D: Enhanced" is "CPU"
@@ -1150,7 +1150,7 @@ function setupHtml() {
   return '<div class="setup" id="view"><h2>HWiNFO isn\'t sharing its sensors yet</h2><span>HW Deck shows what HWiNFO measures. Set HWiNFO up once:</span><ol>' +
     '<li>Install HWiNFO (hwinfo.com) and start it with <b>Sensors-only</b> ticked.</li><li>In its sensors window, click <b>Config</b>, then <b>Main Settings</b>.</li>' +
     '<li>On the <b>General / User Interface</b> tab, tick <b>Shared Memory Support</b>, then OK.</li>' +
-    '<li>Keep HWiNFO running. The free version stops sharing after 12 hours; Restart HWiNFO turns it back on.</li></ol>' +
+    '<li>Keep HWiNFO running. The free version stops sharing after 12 hours. Optional: turn on <b>Keep HWiNFO sharing</b> in Settings and HW Deck restarts it for you, so it never runs out.</li></ol>' +
     '<span>This screen goes away by itself once the readings arrive. Already set up, and still nothing?</span>' +
     '<span><button class="btn" id="setupRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></span></div>';
 }
@@ -4466,6 +4466,8 @@ function renderSettings() {
       [['full', 'Full'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionPicked() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
     '<div class="setrow"><div>Calmer during games<small>Full animations switch to Minimal while a game is in front, and back after. Saves CPU for the game.</small></div><button class="tog2' + (S.gameCalm !== false ? ' on' : '') + '" id="sCalm" aria-pressed="' + (S.gameCalm !== false) + '" title="Minimal animations while a game is in front"></button></div>' +
     '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>The free version turns its shared memory off after 12 hours; a restart turns it back on (Windows asks for permission).</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
+    '<div class="setrow"><div>Keep HWiNFO sharing<small>The free HWiNFO stops sharing after 12 hours. With this on, a Windows task restarts it once it has run about 11 hours, with sharing on (a few seconds without readings). Windows asks for permission once.</small></div>' +
+      '<button class="tog2' + (feed.keep ? ' on' : '') + '" id="sKeep" aria-pressed="' + feed.keep + '" title="Keep HWiNFO sharing"' + (feed.fake || feed.keepBusy || feed.keepWait ? ' disabled' : '') + '></button></div>' +
     (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub once a day if there is a new version. Nothing else is sent.') + '</small></div>' +
       '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">Get it</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>') +
     '<div class="setrow"><div>Keep sessions<small>Game sessions and your own older than this are deleted (a copy goes to games.log.bak).</small></div><span class="setdays"><input class="setin" id="sGameDays" inputmode="numeric" maxlength="4" spellcheck="false" placeholder="30" value="' + (feed.gameDays || '') + '"><i>days</i></span></div>' +
@@ -4477,13 +4479,15 @@ function renderSettings() {
        ['R  B  S  U', 'the selected category: own row, beside the row above, stack under the left one, unstack'], ['Del', 'remove the selected cell or category'], ['Esc', 'close a popup, then select nothing']].map(k => '<span class="kbd">' + k[0] + '</span><span>' + k[1] + '</span>').join('') + '</div></div>' +
     '<div class="setrow"><div>' + (feed.brand && feed.brand !== 'HW Deck' ? esc(feed.brand) + ', built on HW Deck ' : 'HW Deck ') + esc(feed.version) + '<small>Reads HWiNFO\'s shared memory on this PC.</small></div></div>';
 }
-$('setBtn').onclick = () => { renderSettings(); setmodal.classList.add('open'); };
+$('setBtn').onclick = () => { renderSettings(); setmodal.classList.add('open'); send({ t: 'getSettings' }); };   // (the host's answer: Start with Windows and the task as they are now)
 function syncUpd() { const d = $('setDot'); d.classList.toggle('on', !!feed.latest); $('setBtn').title = feed.latest ? 'Settings (HW Deck ' + feed.latest + ' is out)' : 'Settings'; }
 $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sAuto')) { feed.autostart = !feed.autostart; send({ t: 'autostart', on: feed.autostart }); renderSettings(); }
   const mb = e.target.closest('#sMotion button');
   if (mb && mb.dataset.m !== S.motion) { S.motion = mb.dataset.m; applyMotion(); saveState(); renderSettings(); renderView(false); }   // the one already on too: picked by hand, it stops following Windows
   if (e.target.closest('#sRestart')) restartHwinfo();
+  // (it shows what was asked while Windows asks for permission; the host's answer to it (keepDone) says how it really is)
+  if (e.target.closest('#sKeep') && !feed.fake && !feed.keepBusy && !feed.keepWait) { feed.keep = !feed.keep; feed.keepWait = true; send({ t: 'keepSharing', on: feed.keep }); renderSettings(); }
   if (e.target.closest('#sData')) send({ t: 'openData' });
   if (e.target.closest('#sUpd')) { feed.updates = !feed.updates; if (!feed.updates) feed.latest = null; send({ t: 'updates', on: feed.updates }); syncUpd(); renderSettings(); }
   if (e.target.closest('#sGet')) send({ t: 'openRelease' });
@@ -4638,6 +4642,7 @@ const agoTxt = s => {
   const m = Math.round(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
   return s < 60 ? 'less than a minute ago' : m < 60 ? m + ' min ago' : d ? plural(d, 'day') + (h % 24 ? ' ' + (h % 24) + ' h' : '') + ' ago' : h + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') + ' ago';
 };
+const keepTip = () => feed.keep ? '' : ' Keep HWiNFO sharing in Settings restarts it before that happens.';
 function showFeed() {
   const dot = $('dot'), ban = $('banner'), was = ban.hidden;
   app.classList.toggle('noreadings', !READ.length && !feed.fake);
@@ -4647,8 +4652,8 @@ function showFeed() {
     dot.className = 'dot bad';
     dot.title = feed.status === 'stale' ? 'HWiNFO stopped updating' : 'HWiNFO not found';
     ban.hidden = !feed.got || (!READ.length && !S.L.cats.length);   // the setup screen says it all when there is nothing yet
-    setText($('bannerTxt'), feed.status === 'stale' ? 'HWiNFO stopped updating its shared memory ' + agoTxt(feed.age) + '.' + (feed.age >= 60 ? ' The free version does this after 12 hours: Restart HWiNFO turns it back on.' : '')
-      : READ.length ? 'HWiNFO stopped sharing. Restart HWiNFO turns sharing back on; the values come back by themselves.'
+    setText($('bannerTxt'), feed.status === 'stale' ? 'HWiNFO stopped updating its shared memory ' + agoTxt(feed.age) + '.' + (feed.age >= 60 ? ' The free version does this after 12 hours: Restart HWiNFO turns it back on.' + keepTip() : '')
+      : READ.length ? 'HWiNFO stopped sharing. Restart HWiNFO turns sharing back on; the values come back by themselves.' + keepTip()
       : 'HWiNFO isn\'t sharing its readings. Restart HWiNFO turns sharing back on. Never set it up? In HWiNFO: Config, Main Settings, tick Shared Memory Support.');
   }
   if (ban.hidden !== was) { clearTimeout(fitTimer); fitTimer = setTimeout(() => { autofit(); updateView(true); }, 30); }   // the banner takes room: fit again
@@ -4679,7 +4684,7 @@ function onHost(m) {
     placeTabInd(true);
     lastSub = ''; subscribe(); enterNext = true; renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves();
   } else if (m.t === 'settings') {
-    feed.autostart = !!m.autostart; feed.hwinfo = m.hwinfo || null; feed.updates = m.updates !== false; feed.latest = m.latest || null; syncUpd();
+    feed.autostart = !!m.autostart; feed.hwinfo = m.hwinfo || null; feed.keepBusy = !!m.keepBusy; if (m.keepDone) feed.keepWait = false; if (!feed.keepBusy && !feed.keepWait) feed.keep = !!m.keep; feed.updates = m.updates !== false; feed.latest = m.latest || null; syncUpd();
     feed.gameDays = m.gameDays || 0; feed.warnDays = m.warnDays || 0;   // (0: not set since a damaged settings file, nothing cut)
     if ($('wmodal').classList.contains('open')) send({ t: 'alerts' });
     if (setmodal.classList.contains('open')) renderSettings();

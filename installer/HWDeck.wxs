@@ -68,6 +68,13 @@
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <CustomAction Id="LaunchHWDeck" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixShellExec" Impersonate="yes" />
 
+    <!-- Keep HWiNFO sharing's task (Settings makes it, under this name) goes with the app; an update keeps it -->
+    <SetProperty Id="DeleteKeepTask" Value="&quot;[System64Folder]schtasks.exe&quot; /Delete /TN &quot;HW Deck - Keep HWiNFO sharing&quot; /F" Before="DeleteKeepTask" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    <CustomAction Id="DeleteKeepTask" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="DeleteKeepTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
     <UI>
       <Dialog Id="OptionsDlg" Width="370" Height="270" Title="[ProductName] Setup">
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />

@@ -148,7 +148,8 @@ await p.cmd('Emulation.setEmulatedMedia', { features: [] });
 await pick('full');
 
 // ---- new version notice (the host asks GitHub once a day; here the page is told directly) ----
-await E(`(() => { window.__sent = []; const w = window.chrome.webview, f = w.postMessage.bind(w); w.postMessage = m => { window.__sent.push(m && m.t); if (!m || m.t !== 'openRelease') f(m); }; return 1; })()`);
+// (getSettings is kept from the host too: it would answer with no new version)
+await E(`(() => { window.__sent = []; const w = window.chrome.webview, f = window.__pm = w.postMessage.bind(w); w.postMessage = m => { window.__sent.push(m && m.t); if (!m || m.t !== 'openRelease' && m.t !== 'getSettings') f(m); }; return 1; })()`);
 ok('no new version: no dot on the gear', await E('!$("setDot").classList.contains("on")'));
 await E(`onHost({ t: 'settings', autostart: false, hwinfo: null, updates: true, latest: '9.9.9' })`);
 ok('a new version puts a dot on the gear', await E('$("setDot").classList.contains("on") && $("setBtn").title.includes("9.9.9")'));
@@ -212,8 +213,34 @@ const ban = await E(`(() => { feed.fake = false; onHost({ t: 'tick', ver: 1, sta
 ok('with a layout and no HWiNFO, the banner says so', !!ban && /stopped sharing|isn.t sharing/.test(ban), ban);
 const setup = await E(`(() => { feed.fake = false; onHost({ t: 'catalog', ver: 99, sensors: [], readings: [] }); feed.status = 'missing'; S.L = emptyLayout(); renderView(false); return !!document.querySelector("#view.setup #setupRestart"); })()`);
 ok('with nothing at all, the setup screen (with Restart HWiNFO) shows', setup);
+ok('the setup screen says Keep HWiNFO sharing is there to turn on', await E('/Optional: turn on Keep HWiNFO sharing in Settings/.test($("view").textContent)'), await E('$("view").textContent'));
+const keepBan = keep => E(`(() => { feed.fake = false; feed.keep = ${keep}; onHost({ t: 'tick', ver: 1, status: 'stale', age: 43200, ts: nowTs + 1, i: [], v: [], mn: [], mx: [], av: [], game: null, front: false, gameSince: 0 }); return $("bannerTxt").textContent; })()`);
+const kb0 = await keepBan(false), kb1 = await keepBan(true);
+ok('the 12-hour banner points to Keep HWiNFO sharing while it is off, and not once it is on', /after 12 hours[^]*Keep HWiNFO sharing in Settings/.test(kb0) && !/Keep HWiNFO sharing/.test(kb1), kb0 + ' | ' + kb1);
 await E(`send({ t: 'ready' })`);
 ok('the real feed comes back', await until('READ.length === 301 && feed.fake', 6000));
+
+// ---- Keep HWiNFO sharing (Settings): off by default, a click asks the host, and the host's answer is what shows ----
+await E(`(() => { window.__sent = []; chrome.webview.postMessage = m => { __sent.push(JSON.parse(JSON.stringify(m))); __pm(m); }; $('setBtn').click(); return 1; })()`);
+await p.sleep(400);
+ok('opening Settings asks the host how things are now', await E('__sent.some(m => m.t === "getSettings")'));
+ok('the switch is off by default, under the HWiNFO row, and the demo data can\'t turn it on', await E(`(() => { const b = $("sKeep"), row = b && b.closest(".setrow"); return !!b && !b.classList.contains("on") && b.getAttribute("aria-pressed") === "false" && b.disabled && feed.keep === false
+  && /The free HWiNFO stops sharing after 12 hours/.test(row.textContent) && /HWiNFO/.test(row.previousElementSibling.textContent) && !!row.previousElementSibling.querySelector("#sRestart"); })()`));
+// (the page only thinks it is on real data: the host stays the demo one, which refuses, as a No in the Windows prompt leaves it)
+await E(`(() => { feed.fake = false; renderSettings(); __sent = []; $("sKeep").click(); return 1; })()`);
+ok('a click sends the ask to turn it on', await E('__sent.some(m => m.t === "keepSharing" && m.on === true)'), await E('JSON.stringify(__sent)'));
+ok('refused, it goes back off and can be clicked again', await until('feed.keep === false && !feed.keepBusy && !feed.keepWait && !$("sKeep").classList.contains("on") && !$("sKeep").disabled', 4000) && /Demo data/.test(await E('$("toastTxt").textContent')), await E('$("toastTxt").textContent'));
+// (a click waits for the host's answer to it: any other settings message meanwhile, like the reply to opening Settings, changes nothing)
+await E(`(() => { feed.keep = true; feed.keepWait = true; renderSettings(); onHost({ t: 'settings', keep: false, keepBusy: false }); return 1; })()`);
+ok('a settings message that isn\'t the answer keeps what was asked (on, not clickable)', await E('feed.keep === true && $("sKeep").classList.contains("on") && $("sKeep").disabled'));
+await E(`onHost({ t: 'settings', keep: false, keepBusy: true, keepDone: true })`);
+ok('while Windows asks (the host busy), it stays on and not clickable', await E('feed.keep === true && $("sKeep").classList.contains("on") && $("sKeep").disabled'));
+await E(`onHost({ t: 'settings', keep: false, keepBusy: false, keepDone: true })`);
+ok('a No in the Windows prompt (the host says off) leaves it off and clickable', await E('feed.keep === false && !feed.keepWait && !$("sKeep").classList.contains("on") && !$("sKeep").disabled'));
+await E(`onHost({ t: 'settings', keep: true, keepBusy: false })`);
+ok('the host saying on shows on', await E('feed.keep === true && $("sKeep").classList.contains("on") && $("sKeep").getAttribute("aria-pressed") === "true"'));
+await E(`(() => { feed.fake = true; send({ t: 'getSettings' }); setmodal.classList.remove('open'); return 1; })()`);
+ok('back on the demo host: off again', await until('feed.keep === false', 4000));
 
 // ---- the window: minimized from maximized it is saved as maximized; a second start shows it, unless it asked for the tray ----
 const wf = join(data, 'window.json');
