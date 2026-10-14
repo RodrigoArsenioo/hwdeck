@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.4 (not released yet)
+## 1.4.4 (2026-10-14)
 
 - The first-run screen, the red banner and the README say exactly where HWiNFO's sharing is switched on: Config, Main Settings, General / User Interface, Shared Memory Support.
 - New in Settings: Keep HWiNFO sharing, off by default. A Windows task restarts HWiNFO (installed in Program Files) after about 11 hours, with sharing on, so the free version never hits its 12-hour limit. Turning it off deletes the task, and so does uninstalling HW Deck or deleting its folder.
