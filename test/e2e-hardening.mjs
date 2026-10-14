@@ -147,7 +147,7 @@ ok('picking the mode Windows asked for (less motion) saves it too', winMode === 
 await p.cmd('Emulation.setEmulatedMedia', { features: [] });
 await pick('full');
 
-// ---- new version notice (the host asks GitHub once a day; here the page is told directly) ----
+// ---- new version notice (the host asks GitHub at start, then once a day; here the page is told directly) ----
 // (getSettings is kept from the host too: it would answer with no new version)
 await E(`(() => { window.__sent = []; const w = window.chrome.webview, f = window.__pm = w.postMessage.bind(w); w.postMessage = m => { window.__sent.push(m && m.t); if (!m || m.t !== 'openRelease' && m.t !== 'getSettings') f(m); }; return 1; })()`);
 ok('no new version: no dot on the gear', await E('!$("setDot").classList.contains("on")'));

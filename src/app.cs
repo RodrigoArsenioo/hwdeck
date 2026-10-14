@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.4.4.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.4.4.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.5.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.5.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.4.4";
+    public const string Version = "1.4.5";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -2132,10 +2132,12 @@ partial class DeckForm : Form
         Post(r);
     }
 
-    // ---- new version check: once a day, asks GitHub for the latest release; nothing else is sent ----
+    // ---- new version check: as soon as the app starts, then once a day while it runs, asks GitHub for the latest
+    // release; nothing else is sent. No answer (no network yet, as at sign-in): again in 2 minutes, 3 times, then hourly ----
     const string ReleasesApi = "https://api.github.com/repos/RodrigoArsenioo/hwdeck/releases/latest";
     const string ReleasesPage = "https://github.com/RodrigoArsenioo/hwdeck/releases/";
     long updNext;
+    int updMissed;
     volatile bool updBusy, updLogged;
     bool UpdatesOn() { return Brand.Updates && !settingsHeld && (!settings.ContainsKey("updates") || !false.Equals(settings["updates"])); }   // (held: maybe turned off, so off)
     static int[] Ver(string s)
@@ -2153,13 +2155,7 @@ partial class DeckForm : Form
     void MaybeCheckUpdate(long now)
     {
         if (fake || updBusy || !UpdatesOn()) return;
-        if (updNext == 0)
-        {
-            long last = 0;
-            try { if (settings.ContainsKey("updChecked")) last = Convert.ToInt64(settings["updChecked"]); } catch { }
-            if (last > now) last = 0;   // checked while the clock was ahead
-            updNext = Math.Max(now + 30, last + 86400);
-        }
+        if (updNext == 0) updNext = now;   // (a start, or checks just turned on: now)
         if (now < updNext) return;
         updBusy = true;
         System.Threading.ThreadPool.QueueUserWorkItem(delegate
@@ -2186,8 +2182,8 @@ partial class DeckForm : Form
             {
                 updBusy = false;
                 long t = Source.Unix();
-                if (!answered) { updNext = t + 3600; return; }   // offline: try again in an hour
-                updNext = t + 86400; updLogged = false;
+                if (!answered) { updNext = t + (++updMissed <= 3 ? 120 : 3600); return; }   // offline
+                updNext = t + 86400; updLogged = false; updMissed = 0;
                 settings["updChecked"] = t;
                 if (Ver(tag) != null)
                 {

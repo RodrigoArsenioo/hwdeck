@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.5 (2026-10-14)
+
+- Dragging a cell no longer opens its settings (or, outside edit mode, its popup). A click still does.
+- The new version check runs as soon as HW Deck starts, instead of 30 seconds later, or the next day when it had checked that day already.
+
 ## 1.4.4 (2026-10-14)
 
 - The first-run screen, the red banner and the README say exactly where HWiNFO's sharing is switched on: Config, Main Settings, General / User Interface, Shared Memory Support.

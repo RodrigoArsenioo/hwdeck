@@ -2012,6 +2012,8 @@ function endDrag(cancel) {
       if (!to) { to = { id: nid('c'), name: 'New category', collapsed: false, cells: [] }; S.L.cats.push(to); }
       const at = t.before ? to.cells.indexOf(t.before) : -1;
       to.cells.splice(at >= 0 ? at : to.cells.length, 0, d.data);
+      // the selection follows the cell, but a drag doesn't open its settings (a click does): another cell's go away
+      if (sel !== d.data) { DR.R.key = d.data; DR.R.byPick = false; }
       sel = d.data;
     });
   }
@@ -2668,7 +2670,7 @@ $('undo').onclick = undo; $('redo').onclick = redo;
 $('toastUndo').onclick = () => { if (toastDepth >= 0 && undoStack.length === toastDepth) undo(); $('toast').classList.remove('show'); retireToastUndo(); };
 // the clean view: a cell opens when a press that started on it is let go, by the cell it was, not by the element (a
 // redraw between press and release, as when a fresh window settles, made the browser drop the click)
-let press = null, openedByUp = 0;
+let press = null, openedByUp = 0, draggedUp = 0;
 sectionsEl.addEventListener('pointerdown', ev => {
   press = null;
   if (ev.button !== 0 || ev.target.closest('button,input') || (host && zoneAt(ev))) return;   // the window edge: a resize
@@ -2688,7 +2690,8 @@ sectionsEl.addEventListener('pointerdown', ev => {
 });
 sectionsEl.addEventListener('pointerup', ev => {
   const p = press; press = null;
-  if (!p || S.edit || ev.button !== 0 || Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 8 || !S.L.cells[p.cid]) return;
+  if (p && Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 8) { draggedUp = performance.now(); return; }   // a drag, not a click: nothing opens
+  if (!p || S.edit || ev.button !== 0 || !S.L.cells[p.cid]) return;
   const at = document.elementFromPoint(ev.clientX, ev.clientY), cell = at && at.closest('#view .dc');
   if (cell && cell.dataset.cid !== p.cid) return;   // (let go over another cell)
   openedByUp = performance.now(); openDetail(p.cid);
@@ -2707,7 +2710,7 @@ sectionsEl.addEventListener('click', ev => {
   if (ev.target.closest('.rl')) { startRelink(ev.target.closest('.dc').dataset.cid); return; }
   if (ev.target.closest('.ldiv, .lrs, .corner')) return;
   const cell = ev.target.closest('#view .dc');
-  if (!S.edit) { if (cell && !ev.target.closest('[data-x]') && performance.now() - openedByUp > 500) openDetail(cell.dataset.cid); return; }   // (already open from the release)
+  if (!S.edit) { if (cell && !ev.target.closest('[data-x]') && performance.now() - openedByUp > 500 && performance.now() - draggedUp > 500) openDetail(cell.dataset.cid); return; }   // (already open from the release, or a drag)
   if (cell) { selectCell(cell.dataset.cid); return; }
   // a category's header (its name, its empty space) selects the category; anywhere else: the view
   if (catEl && ev.target.closest('.dch, .ghdr, .bh') && !ev.target.closest('input')) { selectCat(catEl.dataset.cat); return; }
@@ -4468,7 +4471,7 @@ function renderSettings() {
     '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>The free version turns its shared memory off after 12 hours; a restart turns it back on (Windows asks for permission).</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
     '<div class="setrow"><div>Keep HWiNFO sharing<small>The free HWiNFO stops sharing after 12 hours. With this on, a Windows task restarts it once it has run about 11 hours, with sharing on (a few seconds without readings). Windows asks for permission once.</small></div>' +
       '<button class="tog2' + (feed.keep ? ' on' : '') + '" id="sKeep" aria-pressed="' + feed.keep + '" title="Keep HWiNFO sharing"' + (feed.fake || feed.keepBusy || feed.keepWait ? ' disabled' : '') + '></button></div>' +
-    (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub once a day if there is a new version. Nothing else is sent.') + '</small></div>' +
+    (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub if there is a new version when HW Deck starts, then once a day. Nothing else is sent.') + '</small></div>' +
       '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">Get it</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>') +
     '<div class="setrow"><div>Keep sessions<small>Game sessions and your own older than this are deleted (a copy goes to games.log.bak).</small></div><span class="setdays"><input class="setin" id="sGameDays" inputmode="numeric" maxlength="4" spellcheck="false" placeholder="30" value="' + (feed.gameDays || '') + '"><i>days</i></span></div>' +
     '<div class="setrow"><div>Keep warnings<small>The warning history keeps this many days.</small></div><span class="setdays"><input class="setin" id="sWarnDays" inputmode="numeric" maxlength="4" spellcheck="false" placeholder="30" value="' + (feed.warnDays || '') + '"><i>days</i></span></div>' +

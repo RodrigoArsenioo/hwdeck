@@ -50,6 +50,19 @@ const at = sel => E(`(() => { const r = document.querySelector(${JSON.stringify(
 let a = await at(`#view .dc[data-cid="${moving}"]`), b = await at(`#view .dcat[data-cat="${cat0}"] .dc`);
 await p.drag(a, { x: b.x - b.w / 2 + 6, y: b.y }); await p.sleep(300);
 ok('Tiles: a cell dragged into another category, before its first cell', await E(`S.L.cats[0].cells[0] === "${moving}"`), await E('S.L.cats.map(c => c.cells.length)'));
+ok('the dragged cell stays selected, but its settings don\'t open (a drag isn\'t a click)', await E(`sel === "${moving}" && !document.querySelector(".insp").classList.contains("open") && !$("modal").classList.contains("open")`),
+  await E('JSON.stringify([sel, DR.R.byPick, document.querySelector(".insp").className])'));
+a = await at(`#view .dc[data-cid="${moving}"]`);
+await p.click(a.x, a.y); await p.sleep(400);
+ok('a click on it then opens its settings', await E(`sel === "${moving}" && document.querySelector(".insp").classList.contains("open")`));
+// out of edit mode: a press dragged across a cell and let go on it opens nothing; a plain click opens its popup
+await E('(() => { clearSel(); setEdit(false); return 1; })()'); await p.sleep(400);
+a = await at(`#view .dc[data-cid="${moving}"]`);
+await p.drag({ x: a.x - a.w / 4, y: a.y }, { x: a.x + a.w / 4, y: a.y }); await p.sleep(700);
+ok('not editing: a drag across a cell opens no popup', await E('!$("modal").classList.contains("open")'));
+await p.click(a.x, a.y); await p.sleep(500);
+ok('not editing: a click on it still opens its popup', await E('$("modal").classList.contains("open")'));
+await E('(() => { closeDetail(); setEdit(true); return 1; })()'); await p.sleep(400);
 await storage(true);
 a = await p.centerOf('[...document.querySelectorAll("#vspace .vrow.r")][5]');
 const rowKey = await E('[...document.querySelectorAll("#vspace .vrow.r")][5].dataset.key');
