@@ -20,7 +20,7 @@ A small dashboard for HWiNFO. Pick the sensors you care about, give them warning
    irm https://raw.githubusercontent.com/RodrigoArsenioo/hwdeck/main/install.ps1 | iex
    ```
 
-   Or download `HWDeck-x.y.z.msi` from Releases and run it, or take the zip, unzip it anywhere and run `HWDeck.exe`. Downloaded with a browser, Windows warns the first time because it isn't signed: click More info, then Run anyway.
+   Or download `HWDeck-x.y.z.msi` from Releases and run it. Downloaded with a browser, Windows warns the first time because it isn't signed: click More info, then Run anyway.
 
 Works on 64-bit Windows 10 and 11.
 
@@ -40,8 +40,8 @@ Works on 64-bit Windows 10 and 11.
 ## Good to know
 
 - No account, no tracking. The only thing it does online is ask GitHub if there's a new version (when it starts, then once a day) (you can turn that off in Settings).
-- To update, run the new installer. For the zip, quit HW Deck from the tray first, then unzip the new one over the old folder. Your layouts and history stay.
-- To remove it: Windows Settings, Apps, HW Deck, Uninstall (for the zip, turn off Accurate game fps first if you turned it on, then delete the folder). Your layouts and history stay.
+- To update, paste the same PowerShell line again (or run the new installer). Your layouts and history stay.
+- To remove it: Windows Settings, Apps, HW Deck, Uninstall. Your layouts and history stay.
 - Your layouts and history are in `%APPDATA%\HW Deck`.
 - Not made by or affiliated with HWiNFO.
 

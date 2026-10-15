@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.4.6.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.4.6.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.7.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.7.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.4.6";
+    public const string Version = "1.4.7";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -354,8 +354,10 @@ class DeckSource : Source
     public readonly Bottleneck Bneck = new Bottleneck();
     public readonly Connector Conn = new Connector();
     public Frames Frames;                                       // the game's own frames (null: not counted, see Frames)
+    public const string GameTimeKey = "hwdeck.0/gtime";
+    public Func<double> GameMin;                                // how long the game session has run, in minutes (NaN: no game)
     public readonly List<Extra> Extras = new List<Extra>();     // a build's own readings (see Extra), after HW Deck's
-    int innerVersion = -1, extraVersion = -1, connAt = -1, framesAt = -1; bool framesOn;
+    int innerVersion = -1, extraVersion = -1, connAt = -1, framesAt = -1, gtAt = -1; bool framesOn;
     int[] extraAt = new int[0];                                 // where each extra's readings start
     public DeckSource(Source inner) { Inner = inner; }
     public override void Poll()
@@ -369,7 +371,7 @@ class DeckSource : Source
         {
             innerVersion = Inner.Version; extraVersion = ev; framesOn = fo;
             Sensors = new List<Sensor>(Inner.Sensors); Readings = new List<Reading>(Inner.Readings);
-            extraAt = new int[Extras.Count]; connAt = -1; framesAt = -1;
+            extraAt = new int[Extras.Count]; connAt = -1; framesAt = -1; gtAt = -1;
             Conn.Find(Inner);
             // nothing from HWiNFO yet, nothing of its own either: the page's setup steps go by an empty catalog
             if (Readings.Count > 0)
@@ -377,6 +379,8 @@ class DeckSource : Source
                 Sensors.Add(new Sensor { Key = "hwdeck.0", Name = "HW Deck" });
                 Readings.Add(new Reading { Key = Bottleneck.Key, Label = "Bottleneck", Unit = "", Sensor = Sensors.Count - 1, Type = 8 });
                 if (Conn.Has) { connAt = Readings.Count; Readings.Add(new Reading { Key = Connector.Key, Label = "12V-2x6 connector", Unit = "A", Kind = "12v", Sensor = Sensors.Count - 1, Type = 4 }); }
+                gtAt = Readings.Count;
+                Readings.Add(new Reading { Key = GameTimeKey, Label = "Game time", Unit = "min", Sensor = Sensors.Count - 1, Type = 8 });
                 if (fo)
                 {
                     framesAt = Readings.Count;
@@ -407,6 +411,7 @@ class DeckSource : Source
     }
     void CopyFrames()
     {
+        if (gtAt >= 0 && gtAt < Values.Length) Values[gtAt] = GameMin != null ? GameMin() : double.NaN;
         if (framesAt < 0 || framesAt + 2 >= Values.Length) return;
         Values[framesAt] = Frames.Fps; Values[framesAt + 1] = Frames.Low; Values[framesAt + 2] = Frames.Ft;
     }
@@ -1973,6 +1978,7 @@ partial class DeckForm : Form
         settings = ReadSettings();
         // the game's own frames (Settings: Accurate game fps): on when it was turned on and Windows lets this account trace
         if (!fake) { src.Frames = new Frames(runName + " frames"); if (FpsWanted) src.Frames.Start(); }
+        src.GameMin = () => { string g = games.Game; long since = games.Since; return g != null && since > 0 ? Math.Max(0, Source.Unix() - since) / 60.0 : double.NaN; };
         var st = ReadFile("state", true) as Dictionary<string, object>;
         if (st != null && st.ContainsKey("L")) layout = st["L"];
         TrimAlerts(); TrimGames();

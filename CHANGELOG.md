@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.7 (2026-10-15)
+
+- Releases come as the installer only: the zip is gone. Install or update with the PowerShell line in the README, or run the installer.
+- Game time, under HW Deck in Storage: how long the game you are playing has run (1h 05m), with its name under it. With no game it shows --.
+
 ## 1.4.6 (2026-10-15)
 
 - Accurate game fps, in Settings (off by default). HWiNFO's fps can be another app's, a browser, Discord or a game's own launcher: HWiNFO reports whichever app makes the most frames. With this on, HW Deck counts the game's own frames, so sessions and the new Game framerate readings are right. Windows asks for permission once (it adds your account to Performance Log Users), then you sign out and back in. DirectX games; others keep HWiNFO's fps. Turning it off, or uninstalling, takes the permission back.

@@ -1,4 +1,4 @@
-# Push a tag like v1.1.1: this builds the zip and the installer and publishes them as a release.
+# Push a tag like v1.1.1: this builds the installer and publishes it as a release (install.ps1 downloads it from there).
 name: release
 
 on:
@@ -27,7 +27,6 @@ jobs:
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
-            dist/HWDeck-*.zip
             dist/HWDeck-*.msi
 
       - name: Publish
@@ -37,7 +36,7 @@ jobs:
         run: |
           $v = $env:GITHUB_REF_NAME.TrimStart('v')
           $notes = ((Get-Content CHANGELOG.md -Raw) -split '(?m)^## ')[1] -replace '^.*\n', ''
-          $notes = $notes.Trim() + "`n`nTo install or update without Windows' download warning, paste this into PowerShell:`n`n```````n" + 'irm https://raw.githubusercontent.com/RodrigoArsenioo/hwdeck/main/install.ps1 | iex' + "`n```````n`nOr run HWDeck-$v.msi, or unzip the zip anywhere and run HWDeck.exe. Downloaded with a browser, Windows warns the first time because they aren't signed: More info, then Run anyway.`n"
+          $notes = $notes.Trim() + "`n`nTo install or update without Windows' download warning, paste this into PowerShell:`n`n```````n" + 'irm https://raw.githubusercontent.com/RodrigoArsenioo/hwdeck/main/install.ps1 | iex' + "`n```````n`nOr download HWDeck-$v.msi and run it. Downloaded with a browser, Windows warns the first time because it isn't signed: More info, then Run anyway.`n"
           [IO.File]::WriteAllText("$PWD\dist\notes.md", $notes)
-          gh release create $env:GITHUB_REF_NAME "dist\HWDeck-$v.msi" "dist\HWDeck-$v.zip" dist\SHA256SUMS.txt --title "HW Deck $v" --notes-file dist\notes.md
+          gh release create $env:GITHUB_REF_NAME "dist\HWDeck-$v.msi" dist\SHA256SUMS.txt --title "HW Deck $v" --notes-file dist\notes.md
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

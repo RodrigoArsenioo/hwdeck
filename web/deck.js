@@ -151,7 +151,7 @@ const isOwn = r => !!r && /^hwdeck\./.test(r.key);
 let nOwn = 0;
 const hwCount = () => READ.length - nOwn;
 // the bottleneck, one of them: what limits the fps while a game runs, as 1 gpu, 2 cpu, 3 capped (none: no game)
-const BNECK = 'hwdeck.0/bneck';
+const BNECK = 'hwdeck.0/bneck', GTIME = 'hwdeck.0/gtime';
 const isBneck = c => !!c && !c.pred && c.key === BNECK;
 const BN = { 1: ['GPU', 'bound', 'b-gpu', 'gpu'], 2: ['CPU', 'bound', 'b-cpu', 'cpu'], 3: ['FPS', 'capped', 'b-cap', 'capped'] };
 // the last 15 min of calls: runs of one call as strip segments [from, to, shade] on 0..900, and each call's share
@@ -621,6 +621,12 @@ function evalCell0(cid, c, peek, quick) {
     out.txt = w ? w[0] : lw ? lw[0] : '--'; out.utxt = w ? w[1] : lw ? lw[1] : ''; out.strip = b;
     out.col = (w || lw) && live ? 'white' : 'grey';
     out.sub = w ? bnSplit(b) : !bnInputs() ? 'needs GPU usage and CPU thread usage' : feed.game && !live ? 'waiting for HWiNFO' : 'no game running';
+    return out;
+  }
+  if (c.key === GTIME) {   // the game session so far, as a length; with no game: --
+    out.txt = v == null ? '--' : durTxt(v * 60); out.utxt = '';
+    out.sub = feed.game ? feed.game + (feed.front ? '' : ' (in the background)') : 'no game running';
+    out.col = v == null ? 'grey' : 'white';
     return out;
   }
   if (v == null) {
