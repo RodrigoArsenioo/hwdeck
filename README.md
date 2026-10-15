@@ -40,7 +40,7 @@ Works on 64-bit Windows 10 and 11.
 ## Good to know
 
 - No account, no tracking. The only thing it does online is ask GitHub if there's a new version (when it starts, then once a day) (you can turn that off in Settings).
-- To update, paste the same PowerShell line again (or run the new installer). Your layouts and history stay.
+- To update, click Update now in Settings when it says a new version is out (or paste the PowerShell line again). Your layouts and history stay.
 - To remove it: Windows Settings, Apps, HW Deck, Uninstall. Your layouts and history stay.
 - Your layouts and history are in `%APPDATA%\HW Deck`.
 - Not made by or affiliated with HWiNFO.

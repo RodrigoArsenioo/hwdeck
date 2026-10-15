@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.8 (2026-10-15)
+
+- Update now: when a new version is out, the button in Settings downloads it, checks it, installs it and opens HW Deck again (Windows asks for permission once). It used to open the releases page. Works from this version on, for HW Deck installed with the installer.
+
 ## 1.4.7 (2026-10-15)
 
 - Releases come as the installer only: the zip is gone. Install or update with the PowerShell line in the README, or run the installer.

@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.4.7.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.4.7.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.8.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.8.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.4.7";
+    public const string Version = "1.4.8";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -2248,6 +2248,7 @@ partial class DeckForm : Form
                 case "openData": Process.Start("explorer.exe", "\"" + dataDir + "\""); break;
                 case "updates": settings["updates"] = true.Equals(m["on"]); updNext = 0; Try(() => SaveFile("settings", settings)); SendSettings(); break;
                 case "openRelease": OpenRelease(); break;
+                case "updateNow": UpdateNow(); break;
                 case "drag": Win("drag"); break;
                 case "export": Export(m["data"], m["name"] as string); break;
                 case "import": Import(Convert.ToInt32(m["slot"])); break;
@@ -2309,6 +2310,7 @@ partial class DeckForm : Form
         r["gameDays"] = DaysSet("gameDays") ? KeepDays("gameDays") : (object)null; r["warnDays"] = DaysSet("warnDays") ? KeepDays("warnDays") : (object)null;   // (null: not set, nothing cut)
         string latest = settings.ContainsKey("updLatest") ? settings["updLatest"] as string : null;
         r["latest"] = UpdatesOn() && Newer(latest, AppInfo.Version) ? latest : null;
+        r["canUpdate"] = Installed() != null;   // (installed with the msi: its Update button installs the new one)
         Post(r);
     }
 
@@ -2372,6 +2374,75 @@ partial class DeckForm : Form
                 }
                 Try(() => SaveFile("settings", settings));
                 SendSettings();
+            })));
+        });
+    }
+    // ---- one-click update (an msi install only): the newest release's installer, checked against its SHA256SUMS.txt,
+    // installed by a small script once HW Deck has quit (msiexec asks for permission, as for Program Files), then HW Deck
+    // starts again. A zip copy, or anything else, gets the releases page instead ----
+    bool updating;
+    // the msi's install folder when this exe is the one installed there (HKLM\Software\<name>\InstallFolder), else null
+    string Installed()
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64).OpenSubKey(@"Software\" + Brand.Name))
+            {
+                string f = k != null ? k.GetValue("InstallFolder") as string : null;
+                return !string.IsNullOrEmpty(f) && string.Equals(Path.GetFullPath(Path.Combine(f, Path.GetFileName(Application.ExecutablePath))), Path.GetFullPath(Application.ExecutablePath), StringComparison.OrdinalIgnoreCase) ? f : null;
+            }
+        }
+        catch { return null; }
+    }
+    void UpdateNow()
+    {
+        if (fake || Installed() == null) { OpenRelease(); return; }
+        if (updating) return;
+        updating = true;
+        var r = Msg("toast"); r["text"] = "Downloading the new HW Deck..."; Post(r);
+        System.Threading.ThreadPool.QueueUserWorkItem(delegate
+        {
+            string msi = null, err = null;
+            try
+            {
+                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;   // TLS 1.2
+                string dir = Path.Combine(Path.GetTempPath(), "hwdeck-update-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(dir);
+                using (var wc = new WebClient())
+                {
+                    wc.Headers[HttpRequestHeader.UserAgent] = "HWDeck/" + AppInfo.Version;
+                    string sums = wc.DownloadString(ReleasesPage + "latest/download/SHA256SUMS.txt");
+                    var m = Regex.Match(sums, @"(?m)^([0-9a-fA-F]{64})\s+(HWDeck-[\d.]+\.msi)\s*$");
+                    if (!m.Success) throw new Exception("the latest release has no installer");
+                    msi = Path.Combine(dir, m.Groups[2].Value);
+                    wc.DownloadFile(ReleasesPage + "latest/download/" + m.Groups[2].Value, msi);
+                    string hash;
+                    using (var sha = System.Security.Cryptography.SHA256.Create()) using (var fs = File.OpenRead(msi)) hash = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "");
+                    if (!hash.Equals(m.Groups[1].Value, StringComparison.OrdinalIgnoreCase)) throw new Exception("the download doesn't match its published checksum");
+                }
+            }
+            catch (Exception ex) { err = ex.Message; }
+            Try(() => BeginInvoke((Action)(() =>
+            {
+                updating = false;
+                if (err != null) { Log("update failed: " + err); var t = Msg("toast"); t["text"] = "Couldn't update: " + err; Post(t); return; }
+                // after this app quits: the installer (its own window, one Windows prompt), then HW Deck again
+                string script = "$Msi = " + PsText(msi) + "; $Exe = " + PsText(Application.ExecutablePath) + "; $Pid0 = " + Process.GetCurrentProcess().Id + @"
+try { Wait-Process -Id $Pid0 -Timeout 30 -ErrorAction SilentlyContinue } catch { }
+$p = Start-Process msiexec.exe -ArgumentList '/i', ('""' + $Msi + '""'), '/passive', '/norestart' -PassThru
+$p.WaitForExit()
+Remove-Item -LiteralPath (Split-Path $Msi) -Recurse -Force -ErrorAction SilentlyContinue
+Start-Process -FilePath $Exe";
+                try
+                {
+                    var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+                    psi.UseShellExecute = false; psi.CreateNoWindow = true;
+                    Process.Start(psi);
+                    Log("update: installing " + Path.GetFileName(msi));
+                    var t = Msg("toast"); t["text"] = "Installing the update: HW Deck closes and opens again"; Post(t);
+                    exiting = true; tray.Visible = false; Application.Exit();
+                }
+                catch (Exception ex) { Log("update failed: " + ex.Message); var t = Msg("toast"); t["text"] = "Couldn't update: " + ex.Message; Post(t); }
             })));
         });
     }
