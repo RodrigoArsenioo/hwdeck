@@ -239,8 +239,25 @@ await E(`onHost({ t: 'settings', keep: false, keepBusy: false, keepDone: true })
 ok('a No in the Windows prompt (the host says off) leaves it off and clickable', await E('feed.keep === false && !feed.keepWait && !$("sKeep").classList.contains("on") && !$("sKeep").disabled'));
 await E(`onHost({ t: 'settings', keep: true, keepBusy: false })`);
 ok('the host saying on shows on', await E('feed.keep === true && $("sKeep").classList.contains("on") && $("sKeep").getAttribute("aria-pressed") === "true"'));
+
+// ---- Accurate game fps (Settings): off by default, under Keep HWiNFO sharing; a click asks the host, its answer shows ----
+await E(`(() => { feed.fake = true; send({ t: 'getSettings' }); return 1; })()`); await until('feed.keep === false', 4000);
+await E(`(() => { renderSettings(); return 1; })()`);
+ok('Accurate game fps: off by default, right under Keep HWiNFO sharing, not for the demo data', await E(`(() => { const b = $("sFps"), row = b && b.closest(".setrow"); return !!b && !b.classList.contains("on") && b.disabled && feed.fps === false && feed.fpsState === "off"
+  && /HWiNFO's fps can be another app's/.test(row.textContent) && /Keep HWiNFO sharing/.test(row.previousElementSibling.textContent) && !/On:|Almost/.test(row.textContent); })()`));
+await E(`(() => { feed.fake = false; renderSettings(); __sent = []; $("sFps").click(); return 1; })()`);
+ok('a click sends the ask to turn it on', await E('__sent.some(m => m.t === "gameFps" && m.on === true)'), await E('JSON.stringify(__sent)'));
+ok('refused (no game to count in demo data), it goes back off and can be clicked again', await until('feed.fps === false && !feed.fpsWait && !$("sFps").classList.contains("on") && !$("sFps").disabled', 4000) && /no game to count/.test(await E('$("toastTxt").textContent')), await E('$("toastTxt").textContent'));
+await E(`onHost({ t: 'settings', fps: true, fpsState: 'signin', fpsDone: true })`);
+ok('allowed but not signed in again: on, and it says to sign out and back in (yellow)', await E('$("sFps").classList.contains("on") && /Almost: sign out of Windows and back in/.test($("sFps").closest(".setrow").textContent) && !!$("sFps").closest(".setrow").querySelector("small.y")'));
+await E(`onHost({ t: 'settings', fps: true, fpsState: 'on' })`);
+ok('counting: it says so, in grey', await E('/On: HW Deck counts the game\'s own frames/.test($("sFps").closest(".setrow").textContent) && !$("sFps").closest(".setrow").querySelector("small.y")'));
+await E(`(() => { feed.fps = false; feed.fpsWait = true; renderSettings(); onHost({ t: 'settings', fps: true, fpsState: 'on' }); return 1; })()`);
+ok('turning it off waits for the host\'s answer (a settings message meanwhile changes nothing)', await E('feed.fps === false && $("sFps").disabled'));
+await E(`onHost({ t: 'settings', fps: false, fpsState: 'off', fpsDone: true })`);
+ok('the answer: off, no status line', await E('feed.fps === false && !$("sFps").classList.contains("on") && !/On:|Almost/.test($("sFps").closest(".setrow").textContent)'));
 await E(`(() => { feed.fake = true; send({ t: 'getSettings' }); setmodal.classList.remove('open'); return 1; })()`);
-ok('back on the demo host: off again', await until('feed.keep === false', 4000));
+ok('back on the demo host: off again', await until('feed.keep === false && feed.fps === false', 4000));
 
 // ---- the window: minimized from maximized it is saved as maximized; a second start shows it, unless it asked for the tray ----
 const wf = join(data, 'window.json');

@@ -35,12 +35,13 @@ Works on 64-bit Windows 10 and 11.
 - Closing the window keeps it in the tray, still watching. Right-click the tray icon to quit.
 - The clock icon lists past warnings, the gamepad icon your sessions: games, and ones you record yourself.
 - Bottleneck (under HW Deck in the list) says what limits your fps: the GPU, the CPU, or an fps cap. It works without a game too.
+- Game fps come from HWiNFO, which can show another app's. Accurate game fps in Settings makes HW Deck count the game's own frames (Windows asks once, then you sign out and back in).
 
 ## Good to know
 
 - No account, no tracking. The only thing it does online is ask GitHub if there's a new version (when it starts, then once a day) (you can turn that off in Settings).
 - To update, run the new installer. For the zip, quit HW Deck from the tray first, then unzip the new one over the old folder. Your layouts and history stay.
-- To remove it: Windows Settings, Apps, HW Deck, Uninstall (for the zip, delete the folder). Your layouts and history stay.
+- To remove it: Windows Settings, Apps, HW Deck, Uninstall (for the zip, turn off Accurate game fps first if you turned it on, then delete the folder). Your layouts and history stay.
 - Your layouts and history are in `%APPDATA%\HW Deck`.
 - Not made by or affiliated with HWiNFO.
 

@@ -748,6 +748,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .setrow > div { min-width: 0; }
 .setrow small { display: block; color: #7b7b7b; font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
 .setrow small.k { font-family: var(--f-mono); font-size: 11.5px; }
+.setrow small.y { color: var(--yellow); }
 .setin { background: var(--panel); border: 1px solid var(--line2); color: var(--fg); font: inherit; font-size: 13px; border-radius: 7px; padding: 5px 9px; width: 210px; flex: none; }
 .setin:focus { border-color: var(--edit); outline: none; }
 .seg.seg3 { width: auto; flex: none; } .seg.seg3 button { padding: 4px 11px; }

@@ -6,7 +6,7 @@
 (() => {
   'use strict';
   const RELEASES = 'https://github.com/RodrigoArsenioo/hwdeck/releases/latest';
-  const VERSION = '1.4.5';
+  const VERSION = '1.4.6';
   const T0 = Math.floor(Date.now() / 1000);
   const nowS = () => Math.floor(Date.now() / 1000);
   const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
@@ -364,7 +364,7 @@
         inp.click();
         break;
       }
-      case 'autostart': case 'keepSharing': toast(IN_APP); post(settingsMsg()); break;
+      case 'autostart': case 'keepSharing': case 'gameFps': toast(IN_APP); post(settingsMsg()); break;
       case 'updates': case 'openData': case 'restartHwinfo': toast(IN_APP); break;
       default: break;   // win, drag: there is no window to move here
     }

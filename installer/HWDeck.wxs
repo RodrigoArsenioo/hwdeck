@@ -71,8 +71,13 @@
     <!-- Keep HWiNFO sharing's task (Settings makes it, under this name) goes with the app; an update keeps it -->
     <SetProperty Id="DeleteKeepTask" Value="&quot;[System64Folder]schtasks.exe&quot; /Delete /TN &quot;HW Deck - Keep HWiNFO sharing&quot; /F" Before="DeleteKeepTask" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     <CustomAction Id="DeleteKeepTask" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+    <!-- Accurate game fps put accounts in Performance Log Users (S-1-5-32-559) and noted them in PerfLogUsers: they come out
+         with the app, and only those (an account that was in the group before is left alone); an update keeps them -->
+    <SetProperty Id="RemovePerfLogUsers" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$k='HKLM:\SOFTWARE\HW Deck'; foreach ($s in ((Get-ItemProperty $k -ErrorAction SilentlyContinue).PerfLogUsers -split ';')) { if ($s) { try { Remove-LocalGroupMember -SID 'S-1-5-32-559' -Member $s -ErrorAction Stop } catch { } } }; Remove-ItemProperty $k -Name PerfLogUsers -ErrorAction SilentlyContinue&quot;" Before="RemovePerfLogUsers" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    <CustomAction Id="RemovePerfLogUsers" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
     <InstallExecuteSequence>
       <Custom Action="DeleteKeepTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RemovePerfLogUsers" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
     <UI>

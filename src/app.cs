@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.4.5.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.4.5.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.6.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.6.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.4.5";
+    public const string Version = "1.4.6";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -353,8 +353,9 @@ class DeckSource : Source
     public readonly Source Inner;
     public readonly Bottleneck Bneck = new Bottleneck();
     public readonly Connector Conn = new Connector();
+    public Frames Frames;                                       // the game's own frames (null: not counted, see Frames)
     public readonly List<Extra> Extras = new List<Extra>();     // a build's own readings (see Extra), after HW Deck's
-    int innerVersion = -1, extraVersion = -1, connAt = -1;
+    int innerVersion = -1, extraVersion = -1, connAt = -1, framesAt = -1; bool framesOn;
     int[] extraAt = new int[0];                                 // where each extra's readings start
     public DeckSource(Source inner) { Inner = inner; }
     public override void Poll()
@@ -363,11 +364,12 @@ class DeckSource : Source
         foreach (var x in Extras) x.Poll();
         Status = Inner.Status; Age = Inner.Age; PmProc = Inner.PmProc;
         int ev = Extras.Count; foreach (var x in Extras) ev = ev * 31 + x.Version;
-        if (Inner.Version != innerVersion || ev != extraVersion)
+        bool fo = Frames != null && Frames.On;
+        if (Inner.Version != innerVersion || ev != extraVersion || fo != framesOn)
         {
-            innerVersion = Inner.Version; extraVersion = ev;
+            innerVersion = Inner.Version; extraVersion = ev; framesOn = fo;
             Sensors = new List<Sensor>(Inner.Sensors); Readings = new List<Reading>(Inner.Readings);
-            extraAt = new int[Extras.Count]; connAt = -1;
+            extraAt = new int[Extras.Count]; connAt = -1; framesAt = -1;
             Conn.Find(Inner);
             // nothing from HWiNFO yet, nothing of its own either: the page's setup steps go by an empty catalog
             if (Readings.Count > 0)
@@ -375,6 +377,13 @@ class DeckSource : Source
                 Sensors.Add(new Sensor { Key = "hwdeck.0", Name = "HW Deck" });
                 Readings.Add(new Reading { Key = Bottleneck.Key, Label = "Bottleneck", Unit = "", Sensor = Sensors.Count - 1, Type = 8 });
                 if (Conn.Has) { connAt = Readings.Count; Readings.Add(new Reading { Key = Connector.Key, Label = "12V-2x6 connector", Unit = "A", Kind = "12v", Sensor = Sensors.Count - 1, Type = 4 }); }
+                if (fo)
+                {
+                    framesAt = Readings.Count;
+                    Readings.Add(new Reading { Key = Frames.FpsKey, Label = "Game framerate", Unit = "FPS", Sensor = Sensors.Count - 1, Type = 8 });
+                    Readings.Add(new Reading { Key = Frames.LowKey, Label = "Game framerate (1% low)", Unit = "FPS", Sensor = Sensors.Count - 1, Type = 8 });
+                    Readings.Add(new Reading { Key = Frames.FtKey, Label = "Game frame time", Unit = "ms", Sensor = Sensors.Count - 1, Type = 8 });
+                }
                 for (int j = 0; j < Extras.Count; j++)
                 {
                     var x = Extras[j];
@@ -393,7 +402,13 @@ class DeckSource : Source
         if (Values.Length > n) Values[n] = Bneck.Value;
         Conn.Poll(Inner);
         if (connAt >= 0 && connAt < Values.Length) Values[connAt] = Conn.Worst;
+        CopyFrames();
         CopyExtras();
+    }
+    void CopyFrames()
+    {
+        if (framesAt < 0 || framesAt + 2 >= Values.Length) return;
+        Values[framesAt] = Frames.Fps; Values[framesAt + 1] = Frames.Low; Values[framesAt + 2] = Frames.Ft;
     }
     void CopyExtras()
     {
@@ -410,6 +425,8 @@ class DeckSource : Source
         foreach (var x in Extras) x.Second();   // first: the bottleneck may go by a build's own measurements
         Bneck.Second(Inner, game);
         if (Values.Length > Inner.Readings.Count) Values[Inner.Readings.Count] = Bneck.Value;
+        if (Frames != null) Frames.Second();
+        CopyFrames();
         CopyExtras();
     }
 }
@@ -509,6 +526,148 @@ class Connector
         Worst = n > 0 ? max : double.NaN;
         Share = n > 0 && tot > 0 ? max / (tot / n) : 0;
         Lopsided = n >= 2 && tot >= 15 && Share >= 1.5;
+    }
+}
+
+// the game's own frames, counted by HW Deck: a real-time Windows trace (ETW) of DXGI's Present calls, the events
+// PresentMon goes by (Microsoft-Windows-DXGI, event 42 = Present start), kept only for the game's process. HWiNFO's
+// PresentMon sensor reports whichever app presents the most frames (a browser, Discord, a game's own launcher), so its
+// fps can be another app's under the game's name. Windows lets admins and the Performance Log Users group start such
+// a trace. DirectX 10 to 12 games; Vulkan and OpenGL ones present elsewhere (their fps stay HWiNFO's)
+class Frames
+{
+    public const string FpsKey = "hwdeck.0/fps", LowKey = "hwdeck.0/fps1", FtKey = "hwdeck.0/ft";
+    static readonly Guid Dxgi = new Guid("CA11C036-0102-4A2D-A6AD-F03CFED5D3C9");
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)] static extern int StartTraceW(out ulong handle, string name, IntPtr props);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)] static extern int ControlTraceW(ulong handle, string name, IntPtr props, uint code);
+    [DllImport("advapi32.dll")] static extern int EnableTraceEx2(ulong handle, ref Guid provider, uint code, byte level, ulong any, ulong all, uint timeout, IntPtr parms);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)] static extern ulong OpenTraceW(IntPtr logfile);
+    [DllImport("advapi32.dll")] static extern int ProcessTrace(ulong[] handles, uint count, IntPtr start, IntPtr end);
+    [DllImport("advapi32.dll")] static extern int CloseTrace(ulong handle);
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)] delegate void RecordCallback(IntPtr rec);
+    const int PropsSize = 120, NameMax = 512;   // EVENT_TRACE_PROPERTIES on x64, then the session's name
+
+    readonly string name;                   // one session per HW Deck data folder (a test copy beside the real one)
+    ulong session, trace;
+    RecordCallback cb;                      // (kept alive: the trace calls it from its own thread)
+    System.Threading.Thread thread;
+    public volatile int Pid;                // the game's process (0: none): only its frames are kept
+    readonly long[] ring = new long[16384]; int head, count, ringPid;   // present times (QPC), the newest at head - 1
+    readonly object lk = new object();
+    public string State = "off";            // off | on | denied (no rights: not admin, not in Performance Log Users) | failed
+    public bool On { get { return State == "on"; } }
+    public double Fps = double.NaN, Low = double.NaN, Ft = double.NaN;   // this second's, for the game (NaN: no game)
+    public Frames(string name) { this.name = name; cb = OnRecord; }
+
+    IntPtr Props()
+    {
+        IntPtr p = Marshal.AllocHGlobal(PropsSize + NameMax * 2);
+        for (int i = 0; i < PropsSize + NameMax * 2; i += 4) Marshal.WriteInt32(p, i, 0);
+        Marshal.WriteInt32(p, 0, PropsSize + NameMax * 2);   // Wnode.BufferSize
+        Marshal.WriteInt32(p, 40, 1);                        // Wnode.ClientContext: QPC time stamps
+        Marshal.WriteInt32(p, 44, 0x20000);                  // Wnode.Flags: WNODE_FLAG_TRACED_GUID
+        Marshal.WriteInt32(p, 48, 64);                       // BufferSize (KB)
+        Marshal.WriteInt32(p, 64, 0x100);                    // LogFileMode: EVENT_TRACE_REAL_TIME_MODE
+        Marshal.WriteInt32(p, 68, 1);                        // FlushTimer (s): frames reach the counter within a second
+        Marshal.WriteInt32(p, 116, PropsSize);               // LoggerNameOffset
+        return p;
+    }
+    // stops a session of this name left by a run that ended without stopping it (a crash keeps it until a restart)
+    void StopNamed()
+    {
+        IntPtr p = Props();
+        try { ControlTraceW(0, name, p, 1 /*EVENT_TRACE_CONTROL_STOP*/); } finally { Marshal.FreeHGlobal(p); }
+    }
+    public void Start()
+    {
+        if (On) return;
+        try
+        {
+            StopNamed();
+            IntPtr p = Props(); int err;
+            try { err = StartTraceW(out session, name, p); } finally { Marshal.FreeHGlobal(p); }
+            if (err != 0) { State = err == 5 ? "denied" : "failed"; return; }   // 5: access denied
+            var g = Dxgi;
+            err = EnableTraceEx2(session, ref g, 1 /*EVENT_CONTROL_CODE_ENABLE_PROVIDER*/, 5, 0, 0, 0, IntPtr.Zero);
+            if (err != 0) { StopNamed(); State = err == 5 ? "denied" : "failed"; return; }
+            IntPtr lf = Marshal.AllocHGlobal(448), ln = Marshal.StringToHGlobalUni(name);   // EVENT_TRACE_LOGFILEW on x64
+            try
+            {
+                for (int i = 0; i < 448; i += 4) Marshal.WriteInt32(lf, i, 0);
+                Marshal.WriteIntPtr(lf, 8, ln);                                   // LoggerName
+                // real time, EVENT_RECORD, raw time stamps (the session's QPC clock, as Stopwatch; without it, system time)
+                Marshal.WriteInt32(lf, 28, 0x100 | 0x1000 | 0x10000000);
+                Marshal.WriteIntPtr(lf, 424, Marshal.GetFunctionPointerForDelegate(cb));   // EventRecordCallback
+                trace = OpenTraceW(lf);
+            }
+            finally { Marshal.FreeHGlobal(ln); Marshal.FreeHGlobal(lf); }
+            if (trace == ulong.MaxValue) { StopNamed(); State = "failed"; return; }
+            ulong t = trace;
+            thread = new System.Threading.Thread(() =>
+            {
+                try { ProcessTrace(new[] { t }, 1, IntPtr.Zero, IntPtr.Zero); } catch { }
+                if (State == "on" && trace == t) State = "failed";   // ended without a Stop: another program stopped it
+            }) { IsBackground = true, Name = "frames" };
+            thread.Start();
+            State = "on";
+        }
+        catch { State = "failed"; }
+    }
+    public void Stop()
+    {
+        if (State != "on" && State != "failed") return;
+        State = "off";
+        try { StopNamed(); } catch { }
+        try { CloseTrace(trace); } catch { }
+        trace = 0;
+        lock (lk) { count = 0; }
+        Fps = Low = Ft = double.NaN;
+    }
+    // the trace's thread, for every DXGI event of every process: EVENT_HEADER.Flags at 4, ProcessId at 12, TimeStamp at
+    // 16, EventDescriptor.Id at 40; EVENT_RECORD.UserDataLength at 86, UserData at 96: Present_Start's swap chain (a
+    // pointer, 4 bytes from a 32-bit process) then its Flags
+    void OnRecord(IntPtr rec)
+    {
+        if (Marshal.ReadInt16(rec, 40) != 42) return;
+        int pid = Marshal.ReadInt32(rec, 12);
+        if (pid == 0 || pid != Pid) return;
+        int at = (Marshal.ReadInt16(rec, 4) & 0x20) != 0 ? 4 : 8;   // EVENT_HEADER_FLAG_32_BIT_HEADER
+        IntPtr data = Marshal.ReadIntPtr(rec, 96);
+        if (data != IntPtr.Zero && Marshal.ReadInt16(rec, 86) >= at + 4 && (Marshal.ReadInt32(data, at) & 1) != 0) return;   // DXGI_PRESENT_TEST
+        long ts = Marshal.ReadInt64(rec, 16);
+        lock (lk)
+        {
+            if (ringPid != pid) { ringPid = pid; count = 0; }
+            ring[head] = ts; head = (head + 1) % ring.Length; if (count < ring.Length) count++;
+        }
+    }
+    // once a second: the fps of the last second of frames that came in, the 1% low over the last 10 s (the 99th
+    // percentile frame time), the frame time; no frames for 3 s (a paused or hidden game): 0 fps
+    long stallAt;   // the last time the trace was asked again for frames that stopped coming
+    public void Second()
+    {
+        if (!On || Pid == 0) { Fps = Low = Ft = double.NaN; return; }
+        // no frames for 3 s: a paused game, or another program that stopped its own trace of the same events turned
+        // them off for everyone: asked again, at most every 5 s (cheap; a paused game simply stays at 0)
+        if (double.IsNaN(Fps) || Fps == 0) { long n = Environment.TickCount; if (n - stallAt > 5000) { stallAt = n; var g = Dxgi; try { EnableTraceEx2(session, ref g, 1, 5, 0, 0, 0, IntPtr.Zero); } catch { } } }
+        long f = System.Diagnostics.Stopwatch.Frequency, now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var ts = new List<long>();
+        lock (lk)
+        {
+            if (ringPid != Pid) count = 0;
+            for (int i = count; i >= 1; i--) { long t = ring[(head - i + ring.Length) % ring.Length]; if (t >= now - 11 * f) ts.Add(t); }
+        }
+        ts.Sort();   // (events come one buffer per CPU, not quite in order)
+        if (ts.Count == 0 || ts[ts.Count - 1] < now - 3 * f) { Fps = 0; Low = Ft = double.NaN; return; }
+        long last = ts[ts.Count - 1];
+        int n1 = ts.Count(t => t > last - f);
+        Fps = n1;
+        Ft = n1 > 0 ? 1000.0 / n1 : double.NaN;
+        var gaps = new List<double>();
+        // (a gap of a second or more is a pause, an alt-tab or a loading screen, not a frame of the game)
+        for (int i = 1; i < ts.Count; i++) if (ts[i] > last - 10 * f) { double g = (ts[i] - ts[i - 1]) * 1000.0 / f; if (g < 1000) gaps.Add(g); }
+        if (gaps.Count >= 30) { gaps.Sort(); double p99 = gaps[Math.Min(gaps.Count - 1, (int)Math.Ceiling(gaps.Count * 0.99) - 1)]; Low = p99 > 0 ? 1000.0 / p99 : double.NaN; }
+        else Low = double.NaN;
     }
 }
 
@@ -1291,6 +1450,7 @@ class Games
     System.Threading.Timer timer; int busy, pollNo;
     public string Game; public bool InFront; public long Since, Seen;   // the session (30 s grace after the game closes)
     public string GameExe;                  // the exe of the game's process (the one in front if several)
+    public volatile int GamePid;            // that process (0: none), whose frames HW Deck counts (Frames)
     long otherSince;                        // since when another game is the one in front
     Report rep;
     readonly string logPath, curPath, custPath;
@@ -1321,7 +1481,8 @@ class Games
     void Poll()
     {
         var names = new Dictionary<string, string>();   // game -> one of its exes
-        string fgName = null, fgExe = null;
+        var pids = new Dictionary<string, int>();        // and that exe's process
+        string fgName = null, fgExe = null; int fgPid = 0;
         bool pr; string pg; bool pf;
         lock (lk) { pr = pretend; pg = pGame; pf = pFront; }
         if (pr) { if (pg != null) { names[pg] = "game.exe"; if (pf) { fgName = pg; fgExe = "game.exe"; } } }
@@ -1346,8 +1507,8 @@ class Games
                 string lp = path.ToLowerInvariant(), name = null;
                 foreach (var r in roots) if (lp.StartsWith(r.Key)) { name = r.Value; break; }
                 if (name == null) continue;
-                if (pid == fg) { fgName = name; fgExe = Path.GetFileName(path); }
-                if (!names.ContainsKey(name)) names[name] = Path.GetFileName(path);
+                if (pid == fg) { fgName = name; fgExe = Path.GetFileName(path); fgPid = pid; }
+                if (!names.ContainsKey(name)) { names[name] = Path.GetFileName(path); pids[name] = pid; }
             }
             foreach (var pid in paths.Keys.Where(k => !alive.Contains(k)).ToList()) paths.Remove(pid);
         }
@@ -1366,6 +1527,7 @@ class Games
             else { found = fgName ?? names.Keys.FirstOrDefault(); otherSince = 0; }
             InFront = found != null && found == fgName;
             GameExe = found == null ? null : found == fgName ? fgExe : names[found];
+            int gp; GamePid = found == null ? 0 : found == fgName ? fgPid : pids.TryGetValue(found, out gp) ? gp : 0;
             if (found != null)
             {
                 if (Game != null && (found != Game || now - Seen > 3600)) Close();
@@ -1394,7 +1556,7 @@ class Games
     static readonly string[] TypeNames = { "none", "temp", "volt", "fan", "current", "power", "clock", "usage", "other" };
     static readonly Regex FpsRe = new Regex(@"^Framerate( Presented)?( \(avg\))?$"), LowRe = new Regex(@"^Framerate( Presented)? \(1% low\)$");
     static readonly Regex AvailRe = new Regex(@"^(Physical|GPU) Memory Available$");
-    int fpsI = -1, lowI = -1;
+    int fpsI = -1, lowI = -1, ownFpsI = -1, ownLowI = -1;   // HWiNFO's PresentMon, and HW Deck's own count (Frames) when on
     // a build's own readings for main ones this PC's HWiNFO doesn't share ("GPU usage" -> its key), and the scale of
     // one of them (RAM: what there is), see Extra
     public Dictionary<string, string> OwnHeads = new Dictionary<string, string>();
@@ -1424,6 +1586,7 @@ class Games
             if (fpsI < 0 && FpsRe.IsMatch(src.Readings[i].Label)) fpsI = i;
             if (lowI < 0 && LowRe.IsMatch(src.Readings[i].Label)) lowI = i;
         }
+        ownFpsI = src.Readings.FindIndex(x => x.Key == Frames.FpsKey); ownLowI = src.Readings.FindIndex(x => x.Key == Frames.LowKey);
     }
 
     // the minute in progress goes into the timeline (minutes the app missed are '-'); next -1: the session ended
@@ -1530,9 +1693,15 @@ class Games
                 if (!rep.Pm.TryGetValue(key, out a)) rep.Pm[key] = a = new[] { pv, 0, 0, pv };
                 a[0] = Math.Min(a[0], pv); a[1] += pv; a[2]++; a[3] = Math.Max(a[3], pv);
             }
-            if (fpsI >= 0 && fpsI < src.Values.Length && src.Values[fpsI] > 0) { rep.FpsSum += src.Values[fpsI]; rep.FpsN++; rep.MFs += src.Values[fpsI]; rep.MFn++; }
-            if (lowI >= 0 && lowI < src.Values.Length && src.Values[lowI] > 0) { rep.LowSum += src.Values[lowI]; rep.LowN++; rep.MLs += src.Values[lowI]; rep.MLn++; }
         }
+        // the game's fps while it is in front: HW Deck's own count of its frames when it has some (DirectX games), else
+        // HWiNFO's while PresentMon follows it (Vulkan, OpenGL, or the count off)
+        Func<int, double> at = i => i >= 0 && i < src.Values.Length && src.Values[i] > 0 ? src.Values[i] : double.NaN;
+        double fps = double.NaN, low = double.NaN;
+        if (front && !double.IsNaN(at(ownFpsI))) { fps = at(ownFpsI); low = at(ownLowI); }
+        else if (pmOk) { fps = at(fpsI); low = at(lowI); }
+        if (!double.IsNaN(fps)) { rep.FpsSum += fps; rep.FpsN++; rep.MFs += fps; rep.MFn++; }
+        if (!double.IsNaN(low)) { rep.LowSum += low; rep.LowN++; rep.MLs += low; rep.MLn++; }
         foreach (var key in head.Concat(gated.Keys).Concat(Tracked).Distinct())
         {
             if (!pmOk && pmKeys.Contains(key)) continue;
@@ -1802,6 +1971,8 @@ partial class DeckForm : Form
         games = new Games(dataDir, Log);
         runName = custom ? Brand.Name + " (" + Path.GetFileName(data) + " " + ((uint)data.ToLowerInvariant().Aggregate(2166136261u, (h, ch) => (h ^ ch) * 16777619u)).ToString("x8") + ")" : Brand.Name;
         settings = ReadSettings();
+        // the game's own frames (Settings: Accurate game fps): on when it was turned on and Windows lets this account trace
+        if (!fake) { src.Frames = new Frames(runName + " frames"); if (FpsWanted) src.Frames.Start(); }
         var st = ReadFile("state", true) as Dictionary<string, object>;
         if (st != null && st.ContainsKey("L")) layout = st["L"];
         TrimAlerts(); TrimGames();
@@ -1891,7 +2062,8 @@ partial class DeckForm : Form
 
     long savedAt;
     bool ended;
-    void SaveAll() { try { ExtStop(); } catch { } SaveData(); EndMark(); }
+    void SaveAll() { try { ExtStop(); } catch { } Try(() => { if (src.Frames != null) src.Frames.Stop(); }); SaveData(); EndMark(); }   // (a trace left running stays until Windows restarts)
+    bool FpsWanted { get { return settings.ContainsKey("gameFps") && true.Equals(settings["gameFps"]); } }
 
     // ---- extras: a build may add readings (Extra), cell kinds (web\extras.js) and messages of its own ("x.*" both
     // ways); HW Deck itself has none, so these calls compile away ----
@@ -2066,6 +2238,7 @@ partial class DeckForm : Form
                 case "restartHwinfo": RestartHwinfo(); break;
                 case "keepSharing": SetKeepSharing(true.Equals(m["on"])); break;
                 case "getSettings": SendSettings(); break;
+                case "gameFps": SetGameFps(true.Equals(m["on"])); break;
                 case "openData": Process.Start("explorer.exe", "\"" + dataDir + "\""); break;
                 case "updates": settings["updates"] = true.Equals(m["on"]); updNext = 0; Try(() => SaveFile("settings", settings)); SendSettings(); break;
                 case "openRelease": OpenRelease(); break;
@@ -2120,11 +2293,12 @@ partial class DeckForm : Form
         Post(r);
         SendSettings();
     }
-    void SendSettings(bool keepDone = false)   // (keepDone: the answer to the page's keepSharing)
+    void SendSettings(bool keepDone = false, bool fpsDone = false)   // (keepDone, fpsDone: the answer to the page's keepSharing, gameFps)
     {
         var r = Msg("settings");
         r["autostart"] = Autostart(); r["hwinfo"] = settings.ContainsKey("hwinfo") ? settings["hwinfo"] : null;
         r["keep"] = KeepSharing(); r["keepBusy"] = keepBusy; r["keepDone"] = keepDone;   // (until done, the page shows what was asked)
+        r["fps"] = FpsWanted; r["fpsState"] = FpsState(); r["fpsBusy"] = fpsBusy; r["fpsDone"] = fpsDone;
         r["updates"] = UpdatesOn();
         r["gameDays"] = DaysSet("gameDays") ? KeepDays("gameDays") : (object)null; r["warnDays"] = DaysSet("warnDays") ? KeepDays("warnDays") : (object)null;   // (null: not set, nothing cut)
         string latest = settings.ContainsKey("updLatest") ? settings["updLatest"] as string : null;
@@ -2406,6 +2580,7 @@ partial class DeckForm : Form
         {
             lastSecond = now;
             // a game seen running by the last poll, not one in its 30 s grace after closing (plain reads of fields the game poll sets)
+            if (src.Frames != null) src.Frames.Pid = games.InFront ? games.GamePid : 0;   // (out of front: no numbers, no 0 fps warnings)
             src.Second(games.Game != null && now - games.Seen <= 6);
             hist.Sample(src, Bottleneck.ShareKeys, src.Bneck.Shares);
             ExtSecond(now);
@@ -2726,6 +2901,119 @@ try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
             else { Log("keep sharing failed: " + ex.Message); r["text"] = "Couldn't change Keep HWiNFO sharing: " + ex.Message; }
             Post(r); SendSettings(true);
         }
+    }
+
+    // ---- Accurate game fps (Frames): Windows lets admins and the Performance Log Users group trace frames. Turned
+    // on, HW Deck adds this account to that group (one Windows prompt) and notes it in HKLM\Software\<name>\PerfLogUsers,
+    // so turning it off (or the msi's uninstall) takes away only what HW Deck gave. A new group counts from the next
+    // sign-in. An account already in the group (or HW Deck run as admin) needs no prompt ----
+    const string PerfLogUsers = "S-1-5-32-559";
+    bool fpsBusy;
+    [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern int NetLocalGroupGetMembers(string server, string group, int level, out IntPtr buf, int max, out int read, out int total, IntPtr resume);
+    [DllImport("netapi32.dll")] static extern int NetApiBufferFree(IntPtr buf);
+    // the account in the group as Windows has it now (the sign-in's token may be older)
+    static bool InPerfLogUsers()
+    {
+        try
+        {
+            var me = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+            string g = new System.Security.Principal.SecurityIdentifier(PerfLogUsers).Translate(typeof(System.Security.Principal.NTAccount)).Value;
+            g = g.Substring(g.IndexOf('\\') + 1);
+            IntPtr buf; int read, total;
+            if (NetLocalGroupGetMembers(null, g, 0, out buf, -1, out read, out total, IntPtr.Zero) != 0) return false;
+            try
+            {
+                for (int i = 0; i < read; i++)
+                    if (new System.Security.Principal.SecurityIdentifier(Marshal.ReadIntPtr(buf, i * IntPtr.Size)).Equals(me)) return true;
+            }
+            finally { NetApiBufferFree(buf); }
+        }
+        catch { }
+        return false;
+    }
+    bool PerfLogUsersByUs()
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64).OpenSubKey(@"Software\" + Brand.Name))
+                return k != null && ((k.GetValue("PerfLogUsers") as string) ?? "").Split(';').Contains(System.Security.Principal.WindowsIdentity.GetCurrent().User.Value);
+        }
+        catch { return false; }
+    }
+    // for the page: on (counting) | signin (allowed from the next sign-in) | denied | failed | off (not wanted)
+    string FpsState()
+    {
+        if (src.Frames == null || !FpsWanted) return "off";
+        if (src.Frames.On) return "on";
+        return src.Frames.State == "denied" ? (InPerfLogUsers() ? "signin" : "denied") : "failed";
+    }
+    // adds the account to the group (on) or takes it out if HW Deck put it there (off); exit 0 done, 3 nothing to do
+    const string FpsAddScript = @"
+$ErrorActionPreference = 'Stop'
+try { Add-LocalGroupMember -SID 'S-1-5-32-559' -Member $Sid } catch { if ($_.FullyQualifiedErrorId -like 'MemberExists*') { exit 3 } else { throw } }
+$k = 'HKLM:\SOFTWARE\' + $Name
+if (-not (Test-Path $k)) { New-Item $k | Out-Null }
+$v = @(((Get-ItemProperty $k -ErrorAction SilentlyContinue).PerfLogUsers -split ';') | Where-Object { $_ -and $_ -ne $Sid }) + $Sid
+Set-ItemProperty $k -Name PerfLogUsers -Value ($v -join ';')
+exit 0";
+    const string FpsRemoveScript = @"
+$ErrorActionPreference = 'Stop'
+$k = 'HKLM:\SOFTWARE\' + $Name
+$v = @(((Get-ItemProperty $k -ErrorAction SilentlyContinue).PerfLogUsers -split ';') | Where-Object { $_ })
+if ($v -notcontains $Sid) { exit 3 }
+try { Remove-LocalGroupMember -SID 'S-1-5-32-559' -Member $Sid } catch { if ($_.FullyQualifiedErrorId -notlike 'MemberNotFound*') { throw } }
+$v = @($v | Where-Object { $_ -ne $Sid })
+if ($v.Count) { Set-ItemProperty $k -Name PerfLogUsers -Value ($v -join ';') } else { Remove-ItemProperty $k -Name PerfLogUsers }
+exit 0";
+    void SetGameFps(bool on)
+    {
+        var r = Msg("toast");
+        if (src.Frames == null) { r["text"] = "Demo data: there is no game to count"; Post(r); SendSettings(fpsDone: true); return; }
+        if (fpsBusy) { SendSettings(fpsDone: true); return; }
+        settings["gameFps"] = on; Try(() => SaveFile("settings", settings));
+        if (on) { src.Frames.Start(); if (src.Frames.On || src.Frames.State != "denied" || InPerfLogUsers()) { r["text"] = FpsText(); Post(r); SendSettings(fpsDone: true); return; } }
+        else { src.Frames.Stop(); if (!PerfLogUsersByUs()) { r["text"] = "Accurate game fps is off"; Post(r); SendSettings(fpsDone: true); return; } }
+        // the group: one Windows prompt
+        string sid = System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
+        string script = "$Sid = '" + sid + "'; $Name = " + PsText(Brand.Name) + (on ? FpsAddScript : FpsRemoveScript);
+        try
+        {
+            var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+            psi.Verb = "runas"; psi.WindowStyle = ProcessWindowStyle.Hidden; psi.UseShellExecute = true;
+            var proc = Process.Start(psi);
+            fpsBusy = true;
+            Log("game fps " + (on ? "on" : "off") + ": group change asked");
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                int code = -1;
+                try { if (proc != null && proc.WaitForExit(60000)) code = proc.ExitCode; } catch { }
+                Log("game fps " + (on ? "on: " : "off: ") + code);
+                Try(() => BeginInvoke((Action)(() =>
+                {
+                    fpsBusy = false;
+                    var t = Msg("toast");
+                    if (on && code != 0 && code != 3) { settings["gameFps"] = false; Try(() => SaveFile("settings", settings)); }
+                    t["text"] = code != 0 && code != 3 ? "Couldn't " + (on ? "allow" : "take back") + " fps counting (code " + code + ")"
+                              : on ? FpsText() : "Accurate game fps is off, and the permission it needed is taken back";
+                    Post(t); SendSettings(fpsDone: true);
+                })));
+            });
+        }
+        catch (Exception ex)
+        {
+            var w = ex as System.ComponentModel.Win32Exception;
+            bool no = w != null && w.NativeErrorCode == 1223;   // No in the Windows prompt
+            if (on) { settings["gameFps"] = false; Try(() => SaveFile("settings", settings)); }
+            if (!no) Log("game fps failed: " + ex.Message);
+            r["text"] = no ? (on ? "Cancelled: Accurate game fps stays off" : "Accurate game fps is off; the permission stays (Windows prompt cancelled)") : "Couldn't change Accurate game fps: " + ex.Message;
+            Post(r); SendSettings(fpsDone: true);
+        }
+    }
+    string FpsText()
+    {
+        string st = FpsState();
+        return st == "on" ? "Accurate game fps is on: HW Deck counts the game's own frames" : st == "signin" ? "Almost: sign out of Windows and back in, and HW Deck counts the game's own frames"
+             : st == "denied" ? "Windows doesn't let this account count frames" : "Couldn't start counting frames";
     }
 
     // ---- start with Windows: a Run entry for this exe, in the tray ----
