@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.5.2 (not released yet)
+## 1.5.2 (2026-10-16)
 
 - A layout or setting that couldn't be saved because another program had the file open is saved again every few seconds until it goes in (it used to wait for your next change, and a quit lost it).
 - The quick graph you see when you hover a Yes/No cell shows a short Yes as Yes, as its full graph does.
