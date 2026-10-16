@@ -16,7 +16,7 @@ const untilFile = async (f, re, ms = 20000) => { const t0 = Date.now(); while (D
 const text = f => existsSync(f) ? readFileSync(f, 'utf8') : '';
 const prep = JSON.parse(readFileSync(join(data, 'prep.json'), 'utf8').replace(/^﻿/, ''));
 
-ok('catalog arrives', await until('READ.length === 301 && feed.got'));
+ok('catalog arrives', await until('READ.length === 302 && feed.got'));
 
 // ---- the host ----
 ok('a fan curve is checked from the start, before the page ever saves', await untilFile(join(data, 'alerts.log'), /YELLOW\s+Rear fan fan curve: /), text(join(data, 'alerts.log')).split('\n').slice(-3).join(' | '));
@@ -149,7 +149,7 @@ await pick('full');
 
 // ---- new version notice (the host asks GitHub at start, then once a day; here the page is told directly) ----
 // (getSettings is kept from the host too: it would answer with no new version)
-await E(`(() => { window.__sent = []; const w = window.chrome.webview, f = window.__pm = w.postMessage.bind(w); w.postMessage = m => { window.__sent.push(m && m.t); if (!m || m.t !== 'openRelease' && m.t !== 'getSettings') f(m); }; return 1; })()`);
+await E(`(() => { window.__sent = []; const w = window.chrome.webview, f = window.__pm = w.postMessage.bind(w); w.postMessage = m => { window.__sent.push(m && m.t); if (!m || m.t !== 'openRelease' && m.t !== 'updateNow' && m.t !== 'getSettings') f(m); }; return 1; })()`);
 ok('no new version: no dot on the gear', await E('!$("setDot").classList.contains("on")'));
 await E(`onHost({ t: 'settings', autostart: false, hwinfo: null, updates: true, latest: '9.9.9' })`);
 ok('a new version puts a dot on the gear', await E('$("setDot").classList.contains("on") && $("setBtn").title.includes("9.9.9")'));
@@ -157,6 +157,10 @@ await E(`$('setBtn').click()`); await p.sleep(250);
 ok('Settings says it is out, with a Get it button', await E('$("setbody").textContent.includes("HW Deck 9.9.9 is out") && !!$("sGet")'));
 await E(`$('sGet').click()`);
 ok('Get it asks the host to open the releases page', await E('window.__sent.includes("openRelease")'));
+await E(`(() => { onHost({ t: 'settings', autostart: false, hwinfo: null, updates: true, latest: '9.9.9', canUpdate: true }); renderSettings(); return 1; })()`);
+ok('installed with the installer, the button says Update now', await E('!!$("sGet") && $("sGet").textContent === "Update now"'), await E('$("sGet") && $("sGet").textContent'));
+ok('Update now asks the host to install it (not the releases page)', await E(`(() => { window.__sent = []; $('sGet').click(); return window.__sent.includes('updateNow') && !window.__sent.includes('openRelease'); })()`), await E('JSON.stringify(window.__sent)'));
+await E(`(() => { onHost({ t: 'settings', autostart: false, hwinfo: null, updates: true, latest: '9.9.9' }); renderSettings(); return 1; })()`);
 await E(`$('sUpd').click()`); await p.sleep(250);
 ok('switching checks off hides the notice and tells the host', await E('!$("setDot").classList.contains("on") && !$("sGet") && !$("sUpd").classList.contains("on") && window.__sent.includes("updates")'));
 await p.sleep(600);
@@ -218,7 +222,7 @@ const keepBan = keep => E(`(() => { feed.fake = false; feed.keep = ${keep}; onHo
 const kb0 = await keepBan(false), kb1 = await keepBan(true);
 ok('the 12-hour banner points to Keep HWiNFO sharing while it is off, and not once it is on', /after 12 hours[^]*Keep HWiNFO sharing in Settings/.test(kb0) && !/Keep HWiNFO sharing/.test(kb1), kb0 + ' | ' + kb1);
 await E(`send({ t: 'ready' })`);
-ok('the real feed comes back', await until('READ.length === 301 && feed.fake', 6000));
+ok('the real feed comes back', await until('READ.length === 302 && feed.fake', 6000));
 
 // ---- Keep HWiNFO sharing (Settings): off by default, a click asks the host, and the host's answer is what shows ----
 await E(`(() => { window.__sent = []; chrome.webview.postMessage = m => { __sent.push(JSON.parse(JSON.stringify(m))); __pm(m); }; $('setBtn').click(); return 1; })()`);
@@ -239,6 +243,10 @@ await E(`onHost({ t: 'settings', keep: false, keepBusy: false, keepDone: true })
 ok('a No in the Windows prompt (the host says off) leaves it off and clickable', await E('feed.keep === false && !feed.keepWait && !$("sKeep").classList.contains("on") && !$("sKeep").disabled'));
 await E(`onHost({ t: 'settings', keep: true, keepBusy: false })`);
 ok('the host saying on shows on', await E('feed.keep === true && $("sKeep").classList.contains("on") && $("sKeep").getAttribute("aria-pressed") === "true"'));
+await E(`onHost({ t: 'settings', keep: true, keepBusy: false, keepNote: "Last time it couldn't keep HWiNFO sharing: test." })`);
+ok('on, with the task\'s last trouble under it, in yellow', await E(`(() => { const s = $("sKeep").closest(".setrow").querySelector("small.y"); return !!s && s.textContent === "Last time it couldn't keep HWiNFO sharing: test."; })()`), await E('$("sKeep").closest(".setrow").textContent'));
+await E(`onHost({ t: 'settings', keep: true, keepBusy: false })`);
+ok('and without one, no note', await E('!$("sKeep").closest(".setrow").querySelector("small.y")'));
 
 // ---- Accurate game fps (Settings): off by default, under Keep HWiNFO sharing; a click asks the host, its answer shows ----
 await E(`(() => { feed.fake = true; send({ t: 'getSettings' }); return 1; })()`); await until('feed.keep === false', 4000);

@@ -19,8 +19,8 @@ const { ok, done } = checks();
 const ev = x => p.evaluate(x);
 const until = async (expr, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await ev(expr)) return true; await p.sleep(150); } return false; };
 
-ok('catalog arrives: HWiNFO\'s 300, the bottleneck, then its own 2', await until('READ.length === 303 && feed.got'), await ev('READ.length'));
-ok('its readings come last, under their own group', await ev('(() => { const a = BYKEY.get("x.test/count"), b = BYKEY.get("x.test/switch"); return !!a && !!b && SENS[a.s].name === "Test extras" && a.idx === 301 && b.idx === 302 && SENS[BYKEY.get(BNECK).s].name === "HW Deck"; })()'));
+ok('catalog arrives: HWiNFO\'s 300, the bottleneck, the game time, then its own 2', await until('READ.length === 304 && feed.got'), await ev('READ.length'));
+ok('its readings come last, under their own group', await ev('(() => { const a = BYKEY.get("x.test/count"), b = BYKEY.get("x.test/switch"); return !!a && !!b && SENS[a.s].name === "Test extras" && a.idx === 302 && b.idx === 303 && SENS[BYKEY.get(BNECK).s].name === "HW Deck"; })()'));
 ok('the switch has its kind, the counter none', await ev('BYKEY.get("x.test/switch").kind === "xtest" && BYKEY.get("x.test/count").kind === null'));
 ok('extras.js is in, its name is the title', await until('window.xLoaded === true && EXT.loaded && !!EXT.kinds.xtest && document.title === "HW Deck Ext Test"', 4000), await ev('document.title'));
 await ev('(() => { $("setBtn").click(); return 1; })()'); await p.sleep(400);

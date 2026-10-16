@@ -4,7 +4,7 @@
 
 - `src/app.cs` is the whole Windows app (C#, .NET Framework 4, WinForms). It reads HWiNFO's shared memory, keeps the history, writes the logs and hosts the page.
 - `web/` is the UI: plain HTML, CSS and JS in a WebView2 window. No framework, no build step.
-- The two talk through WebView2 messages. The page can't reach the network; the app's only network use is the daily version check (GitHub's latest release).
+- The two talk through WebView2 messages. The page can't reach the network; the app's only network use is GitHub's latest release: the version check (at start, then daily) and Update now's download.
 
 ## Build and run
 

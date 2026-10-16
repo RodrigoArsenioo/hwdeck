@@ -1,4 +1,4 @@
-// The browser demo (scripts\build-demo.ps1 builds it into dist\demo): served here on http://127.0.0.1:8767 and opened in a
+// The browser demo (scripts\build-demo.ps1 builds it into dist\demo): served here on http://127.0.0.1:8767 (HWDECK_DEMO_PORT: another) and opened in a
 // headless Edge (debug port 9260). The page runs on demo.js instead of the app: made-up readings, the demo layout,
 // history and game reports, saving only in its tab, the PC-only things saying "in the app", nothing fetched from
 // anywhere but its own server.
@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import { join, extname } from 'node:path';
 import { tmpdir } from 'node:os';
 
-const root = join(process.cwd(), 'dist', 'demo'), PORT = 8767, DBG = 9260, URL0 = `http://127.0.0.1:${PORT}/`;
+const root = join(process.cwd(), 'dist', 'demo'), PORT = Number(process.env.HWDECK_DEMO_PORT) || 8767, DBG = 9260, URL0 = `http://127.0.0.1:${PORT}/`;
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 const server = createServer(async (req, res) => {
   const f = join(root, req.url === '/' ? 'index.html' : req.url.replace(/^\/+/, '').split('?')[0]);

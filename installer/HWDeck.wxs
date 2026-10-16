@@ -1,5 +1,5 @@
-<!-- HW Deck's installer (WiX 5). Built by scripts\pack.ps1 from the same files as the zip:
-     dotnet wix build installer\HWDeck.wxs -d Version=x.y.z -d Stage=<folder with the zip's files> -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -arch x64 -->
+<!-- HW Deck's installer (WiX 5). Built by scripts\pack.ps1 from the files it stages in dist\stage:
+     dotnet wix build installer\HWDeck.wxs -d Version=x.y.z -d Stage=<that folder> -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -arch x64 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="HW Deck" Manufacturer="Rodrigo Arsenio" Version="$(Version)" UpgradeCode="95A708FA-F654-440F-ABB7-4D6BDE2E37C0" Scope="perMachine" Language="1033">
     <SummaryInformation Description="HW Deck, a small dashboard for HWiNFO" />
@@ -13,12 +13,17 @@
     <Property Id="ARPHELPLINK" Value="https://github.com/RodrigoArsenioo/hwdeck" />
 
     <!-- the choices: Start with Windows on, a desktop shortcut off; an update keeps what the last install had -->
-    <Property Id="AUTOSTART" Value="1" />
+    <Property Id="AUTOSTART" Value="1" Secure="yes" />
+    <Property Id="DESKTOPSHORTCUT" Secure="yes" />
     <Property Id="RUNPREV"><RegistrySearch Id="RunPrev" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="HW Deck" Type="raw" /></Property>
     <Property Id="DESKTOPPREV"><RegistrySearch Id="DesktopPrev" Root="HKLM" Key="Software\HW Deck" Name="DesktopShortcut" Type="raw" Bitness="always64" /></Property>
     <Property Id="INSTALLFOLDER"><RegistrySearch Id="FolderPrev" Root="HKLM" Key="Software\HW Deck" Name="InstallFolder" Type="raw" Bitness="always64" /></Property>
-    <SetProperty Id="AUTOSTART" Value="{}" After="AppSearch" Sequence="both" Condition="WIX_UPGRADE_DETECTED AND NOT RUNPREV" />
-    <SetProperty Id="DESKTOPSHORTCUT" Value="1" After="AppSearch" Sequence="both" Condition="WIX_UPGRADE_DETECTED AND DESKTOPPREV" />
+    <SetProperty Id="AUTOSTART" Value="{}" After="AppSearch" Sequence="first" Condition="WIX_UPGRADE_DETECTED AND NOT RUNPREV" />
+    <SetProperty Id="DESKTOPSHORTCUT" Value="1" After="AppSearch" Sequence="first" Condition="WIX_UPGRADE_DETECTED AND DESKTOPPREV" />
+    <!-- the installer's screens: the Start with Windows box has a property of its own, and Next sets AUTOSTART to 1 or 0
+         (an unticked box is an empty property, which never reaches the part that installs: it would take AUTOSTART's
+         default instead). Sequence first: once the screens ran, the upgrade's own pick above doesn't run again -->
+    <SetProperty Id="AUTOSTARTBOX" Value="1" After="SetAUTOSTART" Sequence="ui" Condition="AUTOSTART = 1" />
     <SetProperty Id="CACHEFOLDER" Value="[LocalAppDataFolder]HW Deck" Before="CostInitialize" Sequence="execute" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
@@ -33,6 +38,7 @@
       <ComponentRef Id="StartMenu" />
       <ComponentRef Id="Desktop" />
       <ComponentRef Id="Autostart" />
+      <ComponentRef Id="AutostartApproved" />
       <ComponentRef Id="Cache" />
     </Feature>
 
@@ -54,6 +60,12 @@
     <Component Id="Autostart" Directory="INSTALLFOLDER" Condition="AUTOSTART = 1">
       <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="HW Deck" Type="string" Value="&quot;[INSTALLFOLDER]HWDeck.exe&quot; -min" KeyPath="yes" />
     </Component>
+    <!-- a fresh install that starts with Windows: an old "disabled" in Task Manager's startup list would keep it from
+         starting (an update or a Repair leaves Task Manager's choice alone) -->
+    <Component Id="AutostartApproved" Directory="INSTALLFOLDER" Condition="AUTOSTART = 1 AND NOT WIX_UPGRADE_DETECTED AND NOT Installed" Transitive="yes">
+      <RemoveRegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" Name="HW Deck" />
+      <RegistryValue Root="HKLM" Key="Software\HW Deck" Name="AutostartApproved" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
     <!-- the browser cache in %LOCALAPPDATA%\HW Deck goes with the app; the layouts and history in %APPDATA% stay -->
     <Component Id="Cache" Directory="INSTALLFOLDER">
       <RegistryValue Root="HKLM" Key="Software\HW Deck" Name="Cache" Type="integer" Value="1" KeyPath="yes" />
@@ -68,16 +80,28 @@
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <CustomAction Id="LaunchHWDeck" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixShellExec" Impersonate="yes" />
 
-    <!-- Keep HWiNFO sharing's task (Settings makes it, under this name) goes with the app; an update keeps it -->
+    <!-- Keep HWiNFO sharing's task (Settings makes it, under this name) goes with the app, and so does its script (in
+         HKLM\SOFTWARE\HW Deck\Keep, removed below); an update keeps both -->
     <SetProperty Id="DeleteKeepTask" Value="&quot;[System64Folder]schtasks.exe&quot; /Delete /TN &quot;HW Deck - Keep HWiNFO sharing&quot; /F" Before="DeleteKeepTask" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     <CustomAction Id="DeleteKeepTask" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
     <!-- Accurate game fps put accounts in Performance Log Users (S-1-5-32-559) and noted them in PerfLogUsers: they come out
          with the app, and only those (an account that was in the group before is left alone); an update keeps them -->
-    <SetProperty Id="RemovePerfLogUsers" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$k='HKLM:\SOFTWARE\HW Deck'; foreach ($s in ((Get-ItemProperty $k -ErrorAction SilentlyContinue).PerfLogUsers -split ';')) { if ($s) { try { Remove-LocalGroupMember -SID 'S-1-5-32-559' -Member $s -ErrorAction Stop } catch { } } }; Remove-ItemProperty $k -Name PerfLogUsers -ErrorAction SilentlyContinue&quot;" Before="RemovePerfLogUsers" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    <SetProperty Id="RemovePerfLogUsers" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$k='HKLM:\SOFTWARE\HW Deck'; foreach ($s in ((Get-ItemProperty $k -ErrorAction SilentlyContinue).PerfLogUsers -split ';')) { if ($s) { try { Remove-LocalGroupMember -SID 'S-1-5-32-559' -Member $s -ErrorAction Stop } catch { } } }; Remove-ItemProperty $k -Name PerfLogUsers -ErrorAction SilentlyContinue; $n = 'HW Deck - Keep HWiNFO sharing'; Remove-ItemProperty ($k + '\Keep') -Name $n, ($n + ' result') -ErrorAction SilentlyContinue; foreach ($x in ($k + '\Keep'), $k) { $i = Get-Item $x -ErrorAction SilentlyContinue; if ($i -and -not $i.ValueCount -and -not $i.SubKeyCount) { Remove-Item $x } }; exit 0&quot;" Before="RemovePerfLogUsers" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     <CustomAction Id="RemovePerfLogUsers" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+    <!-- a Start with Windows turned on later in Settings is HW Deck's own Run value, not the installer's: removed too, as
+         the user who uninstalls (impersonated: that user's HKCU), when it starts this install (a zip copy uses the same name) -->
+    <SetProperty Id="RemoveRunValue" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$r = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $v = (Get-ItemProperty $r -ErrorAction SilentlyContinue).'HW Deck'; $f = (Get-ItemProperty 'HKLM:\SOFTWARE\HW Deck' -ErrorAction SilentlyContinue).InstallFolder; if ($v -and $f -and $v.ToLower().Contains($f.ToLower())) { Remove-ItemProperty $r -Name 'HW Deck'; Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name 'HW Deck' -ErrorAction SilentlyContinue }; exit 0&quot;" Before="RemoveRunValue" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    <CustomAction Id="RemoveRunValue" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <!-- the box unticked (or AUTOSTART=0) on an install or an upgrade: a Run value made in Settings (no product owns it),
+         or left by an older uninstall, goes too, the same way -->
+    <SetProperty Id="DropRunValue" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$r = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $v = (Get-ItemProperty $r -ErrorAction SilentlyContinue).'HW Deck'; $f = (Get-ItemProperty 'HKLM:\SOFTWARE\HW Deck' -ErrorAction SilentlyContinue).InstallFolder; if ($v -and $f -and $v.ToLower().Contains($f.ToLower())) { Remove-ItemProperty $r -Name 'HW Deck'; Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name 'HW Deck' -ErrorAction SilentlyContinue }; exit 0&quot;" Before="DropRunValue" Sequence="execute" Condition="NOT (AUTOSTART = 1) AND NOT REMOVE" />
+    <CustomAction Id="DropRunValue" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="yes" Return="ignore" />
     <InstallExecuteSequence>
       <Custom Action="DeleteKeepTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="RemovePerfLogUsers" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <!-- (the folder is read from HKLM\Software\HW Deck in the script: a path with an apostrophe can't go in its text) -->
+      <Custom Action="RemoveRunValue" Before="RemoveRegistryValues" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="DropRunValue" After="WriteRegistryValues" Condition="NOT (AUTOSTART = 1) AND NOT REMOVE" />
     </InstallExecuteSequence>
 
     <UI>
@@ -88,7 +112,7 @@
         <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Where you want to find HW Deck." />
         <Control Id="StartMenuNote" Type="Text" X="20" Y="60" Width="330" Height="15" NoPrefix="yes" Text="A Start menu shortcut is always added." />
         <Control Id="DesktopBox" Type="CheckBox" X="20" Y="82" Width="330" Height="17" Property="DESKTOPSHORTCUT" CheckBoxValue="1" Text="Desktop shortcut" />
-        <Control Id="AutostartBox" Type="CheckBox" X="20" Y="104" Width="330" Height="17" Property="AUTOSTART" CheckBoxValue="1" Text="Start HW Deck with Windows (in the tray)" />
+        <Control Id="AutostartBox" Type="CheckBox" X="20" Y="104" Width="330" Height="17" Property="AUTOSTARTBOX" CheckBoxValue="1" Text="Start HW Deck with Windows (in the tray)" />
         <Control Id="Note" Type="Text" X="20" Y="132" Width="330" Height="30" NoPrefix="yes" Text="You can change Start with Windows later in HW Deck's Settings. Your layouts and history stay in %APPDATA%\HW Deck." />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
@@ -103,7 +127,9 @@
       <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="OptionsDlg" Order="5" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
       <Publish Dialog="OptionsDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" Condition="NOT WIX_UPGRADE_DETECTED" />
       <Publish Dialog="OptionsDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Condition="WIX_UPGRADE_DETECTED" />
-      <Publish Dialog="OptionsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="OptionsDlg" Control="Next" Property="AUTOSTART" Value="1" Order="1" Condition="AUTOSTARTBOX" />
+      <Publish Dialog="OptionsDlg" Control="Next" Property="AUTOSTART" Value="0" Order="1" Condition="NOT AUTOSTARTBOX" />
+      <Publish Dialog="OptionsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="2" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="OptionsDlg" Order="3" Condition="NOT Installed" />
       <Publish Dialog="ExitDialog" Control="Finish" Property="WixShellExecTarget" Value="[INSTALLFOLDER]HWDeck.exe" Order="997" />
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchHWDeck" Order="998" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />

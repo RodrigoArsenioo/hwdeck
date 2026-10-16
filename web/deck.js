@@ -26,7 +26,11 @@ const xBody = (cid, r, where) => { const xk = xkOf(r); return xk && xk.body ? '<
 // cell (9.2 / 9.5 A to start with), the pins as bars, the pin table in its popup, and yellow when a pin carries 1.5x its
 // share for 3 s (the host keeps that in the warning log too)
 const CONN = 'hwdeck.0/12v';
+// the pin rule's hold and episode, in the host's seconds like the lines': lopsided for 3 s turns it, and an episode goes
+// on through a calm second or two (it ends on the 3rd), as the warning log has it
 let c12Since = 0;
+let notOkAt = 0, notOkMarked = false;   // (the feed not ok since: host seconds, 0 = ok; the 10 s Mark done)
+const c12Ep = { on: false, calm: 0, words: '' };
 const pinVals = i => (feed.c12keys && feed.c12keys[i] || []).map(k => { const r = BYKEY.get(k); return r && r.v != null ? r.v : null; });
 const CONN_LINES = { mode: 'yr', dir: 'above', y: 9.2, r: 9.5, hold: 0 };
 EXT.kinds['12v'] = {
@@ -36,10 +40,12 @@ EXT.kinds['12v'] = {
     root.querySelectorAll('.xb .xpins b').forEach((b, i) => { const v = a[i]; b.style.height = (v == null ? 0 : Math.min(100, v / 9.5 * 100)) + '%'; b.className = v >= 9.5 ? 'r' : v >= 9.2 ? 'y' : ''; });
   },
   after(out) {
-    const c = feed.c12, now = Date.now() / 1000, a = pinVals(0), hot = c ? c[1] : -1;
-    if (c && c[0]) { if (!c12Since) c12Since = now; } else c12Since = 0;
+    if (feed.status !== 'ok') return;   // (a stalled feed judges nothing: the cell stays grey)
+    const c = feed.c12, now = nowTs, a = pinVals(0), hot = c ? c[1] : -1, lop = !!(c && c[0]);
+    if (lop) { if (!c12Since) c12Since = now; c12Ep.calm = 0; if (now - c12Since >= 3 || c12Ep.on) { c12Ep.on = true; c12Ep.words = 'pin ' + (hot + 1) + ' carrying ' + c[2] + 'x its share'; } }
+    else { c12Since = 0; if (c12Ep.on && !c12Ep.calm) c12Ep.calm = now; if (c12Ep.on && now - c12Ep.calm >= 2) { c12Ep.on = false; c12Ep.calm = 0; } }
     if (out.lvl && hot >= 0 && a[hot] != null) out.sub = 'pin ' + (hot + 1) + ' at ' + fmt(a[hot], 1) + ' A';
-    else if (c12Since && now - c12Since >= 3) { out.lvl = Math.max(out.lvl, 1); out.col = out.lvl === 2 ? 'red' : 'yellow'; out.warm = 0; out.sub = 'pin ' + (hot + 1) + ' carrying ' + c[2] + 'x its share'; }
+    else if (c12Ep.on) { out.lvl = Math.max(out.lvl, 1); out.col = out.lvl === 2 ? 'red' : 'yellow'; out.warm = 0; out.sub = c12Ep.words; }
   },
   desc: () => 'The GPU\'s 12V-2x6 power connector, by its pins: the value is the most loaded one. A pin is rated 9.5 A (a healthy connector at a 600 W limit peaks near 9.1 A). A pin carrying 1.5x its share of the load, from 15 A up, is the early sign of a bad contact: the cell turns yellow and the warning history keeps it.',
   detail(box, cid, r, e, full) {
@@ -120,7 +126,7 @@ function setCatalog(m) {
     if (!SENS[s]) { if (unknown < 0) { unknown = SENS.length; SENS.push({ key: 'unknown.0', name: 'Unknown sensor', short: 'Unknown' }); } s = unknown; }
     const r = { idx, key, s, t: TYPES[t] || 'other', label, unit, kind: kind || null, v: null, mn: null, mx: null, av: null };
     const o = old.get(key); if (o) { r.v = o.v; r.mn = o.mn; r.mx = o.mx; r.av = o.av; }
-    r.hay = ((SENS[s] ? SENS[s].name : '') + ' ' + label + ' ' + unit + ' ' + r.t).toLowerCase();
+    r.hay = ((SENS[s] ? SENS[s].name : '') + ' ' + label + ' ' + (inGB(r) ? 'GB' : unit) + ' ' + r.t).toLowerCase();   // (the unit it shows)
     return r;
   });
   BYKEY = new Map(READ.map(r => [r.key, r]));
@@ -380,14 +386,17 @@ const SZ = { wide: [2, 1], tall: [1, 2], big: [2, 2] };
 // (a size a hair off a quarter step, a third of a pixel or less, from a snap or a px step, is that step: 0.9999 is 1, so four
 // tiles of 0.75 and one of 1 still fill a row of 4)
 const SNAPQ = 0.002;
-const szNum = x => { if (typeof x !== 'number' || !isFinite(x)) return 1; const v = Math.round(x * 1e4) / 1e4, q = Math.round(v * 4) / 4; return Math.min(2, Math.max(0.25, Math.abs(v - q) < SNAPQ ? q : v)); };
+// (where a tile's pitch is known, a third of a pixel at that pitch: a 1 px step on a big tile is kept; a size read from a
+// file only loses float noise, it was snapped when it was made)
+const szNum = (x, tol = SNAPQ) => { if (typeof x !== 'number' || !isFinite(x)) return 1; const v = Math.round(x * 1e4) / 1e4, q = Math.round(v * 4) / 4; return Math.min(2, Math.max(0.25, Math.abs(v - q) < tol ? q : v)); };
+const snapAt = G => G && G.p > 0 ? Math.min(SNAPQ, 0.33 / G.p) : SNAPQ;
 const isSz = k => typeof k === 'string' && Object.prototype.hasOwnProperty.call(SZ, k);
-function sizeLook(w, h) {
-  w = szNum(w); h = szNum(h);
+function sizeLook(w, h, tol, tolH) {
+  w = szNum(w, tol); h = szNum(h, tolH === undefined ? tol : tolH);
   for (const k of Object.keys(SZ)) if (SZ[k][0] === w && SZ[k][1] === h) return { size: k };
   return w === 1 && h === 1 ? {} : { w, h };
 }
-const cleanSize = x => typeof x.w === 'number' || typeof x.h === 'number' ? sizeLook(x.w, x.h) : isSz(x.size) ? { size: x.size } : {};
+const cleanSize = x => typeof x.w === 'number' || typeof x.h === 'number' ? sizeLook(x.w, x.h, 1.5e-4) : isSz(x.size) ? { size: x.size } : {};
 // ids and catIds map what the file calls a cell or a category to what it is called here; anything that points at
 // nothing, or is out of range, goes; a category no row places gets a row of its own at the bottom (Grid: the last table)
 function cleanViews(V, L, ids, catIds) {
@@ -507,7 +516,8 @@ function restore(json) {
   S.L = o.L; S.active = Number.isInteger(o.active) && S.slots[o.active] ? o.active : null;
   for (const c of S.L.cats) if (was.has(c.id)) c.collapsed = was.get(c.id);
 }
-function pushUndo(before) { undoStack.push(before); if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
+let undoSeq = 0;   // (counts every step: the stack's length stops changing at its cap)
+function pushUndo(before) { undoStack.push(before); undoSeq++; if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
 function snap() { pushUndo(snapOf()); }
 // a change that changes nothing (Alt+arrow at the end of a list) leaves no undo step
 function mutate(fn, msg) { if (nudge) flushNudge(); const before = snapOf(); fn(); tidyViews(S.L); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); afterChange(); if (msg) toast(msg, true); }
@@ -528,8 +538,8 @@ function bootArm() { if (app.classList.contains('boot') && !document.hidden && !
 document.addEventListener('visibilitychange', bootArm);
 let onLayout = null;   // (the sessions popup: Customize and the open sessions drawn again)
 function afterChange() { tidyViews(S.L); fixSel(); if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); if (onLayout) onLayout(); }
-function undo() { if (nudge) flushNudge(); if (!undoStack.length) return; retireToastUndo(); redoStack.push(snapOf()); restore(undoStack.pop()); fixSel(); afterChange(); }
-function redo() { if (nudge) flushNudge(); if (!redoStack.length) return; retireToastUndo(); undoStack.push(snapOf()); restore(redoStack.pop()); fixSel(); afterChange(); }
+function undo() { if (nudge) flushNudge(); keyStep.t = 0; if (!undoStack.length) return; retireToastUndo(); redoStack.push(snapOf()); restore(undoStack.pop()); fixSel(); afterChange(); }
+function redo() { if (nudge) flushNudge(); keyStep.t = 0; if (!redoStack.length) return; retireToastUndo(); undoStack.push(snapOf()); restore(redoStack.pop()); fixSel(); afterChange(); }
 function syncUndo() { $('undo').disabled = !undoStack.length; $('redo').disabled = !redoStack.length; }
 function fixSel() { if (sel && !S.L.cells[sel]) sel = null; if (selCat && !S.L.cats.some(c => c.id === selCat)) selCat = null; }
 const layoutSig = L => JSON.stringify(L, (k, v) => k === 'collapsed' ? undefined : v);
@@ -569,6 +579,9 @@ function subscribe() {
 // ---------- a cell's value and state: gates (with their hold), fan curve, warming toward yellow ----------
 let sel = null, selCat = null, relinkFor = null;   // the selected cell, or the selected category (never both)
 const holdSince = {}, cellEp = {};
+// a second with no value (or a reading gone): a calm one for the cell's episode, as the log counts it, and the end of a
+// hold (never a second the page didn't look, like a drag's)
+function calmGone(cid) { if (feed.status !== 'ok') return; const ep = cellEp[cid]; if (ep && ep.lvl) { if (!ep.calmTs) ep.calmTs = nowTs; else if (nowTs - ep.calmTs >= 2) { ep.lvl = ep.peak = 0; ep.calmTs = 0; } } delete holdSince[cid]; }   // (the 3rd ends it)
 function cellValue(c) {
   if (c.pred) { const src = BYKEY.get(c.curve && c.curve.src); return src ? interp(c.curve.pts, src.v) : null; }
   const r = BYKEY.get(c.key); return r ? r.v : null;
@@ -607,6 +620,7 @@ function evalCell(cid, c, peek, quick) {
   const out = evalCell0(cid, c, peek, quick), r = c.key ? BYKEY.get(c.key) : null, xk = xkOf(r);
   if (xk && xk.after) xk.after(out, r, c, cid);
   if (EXT.after) EXT.after(out, r, c, cid);
+  if (!peek && out.lvl && !out.calm && cellEp[cid]) cellEp[cid].sub = out.sub;   // (a warning second's words as shown, a build's own included: its calm seconds say them)
   return out;
 }
 function evalCell0(cid, c, peek, quick) {
@@ -623,13 +637,11 @@ function evalCell0(cid, c, peek, quick) {
     out.sub = w ? bnSplit(b) : !bnInputs() ? 'needs GPU usage and CPU thread usage' : feed.game && !live ? 'waiting for HWiNFO' : 'no game running';
     return out;
   }
-  if (c.key === GTIME) {   // the game session so far, as a length; with no game: --
-    out.txt = v == null ? '--' : durTxt(v * 60); out.utxt = '';
-    out.sub = feed.game ? feed.game + (feed.front ? '' : ' (in the background)') : 'no game running';
-    out.col = v == null ? 'grey' : 'white';
-    return out;
-  }
+  // the game session so far, as a length (its lines in minutes, like the host's); with no game: --
+  const gt = c.key === GTIME, gtSub = () => feed.game ? feed.game + (feed.front ? '' : ' (in the background)') : 'no game running';
+  if (gt && v == null) { if (!peek) calmGone(cid); out.txt = '--'; out.utxt = ''; out.sub = gtSub(); out.col = 'grey'; return out; }
   if (v == null) {
+    if (!peek) calmGone(cid);
     out.col = 'grey';
     if (c.pred && !BYKEY.get(c.curve && c.curve.src)) out.sub = 'its temperature is missing';
     return out;
@@ -662,21 +674,29 @@ function evalCell0(cid, c, peek, quick) {
   }
   // a gate only turns after the value stayed past it for the hold time; while the feed isn't live (HWiNFO stalled or
   // gone) the clock stops at its last live moment, so a frozen value turns nothing
-  const now = live ? (feed.liveAt = Date.now() / 1000) : feed.liveAt || 0;
-  if (!peek) { if (raw) { if (!holdSince[cid] && live) holdSince[cid] = now; } else delete holdSince[cid]; }
+  const now = live ? (feed.liveAt = nowTs) : feed.liveAt || 0;   // (the host's seconds, as the log counts the hold)
   // like the warning log: an episode going on keeps its colour through a calm second or two (it ends on the 3rd calm
   // second, counted in the host's seconds as the log counts them), so a value hovering on its line doesn't turn the cell
-  // white for the whole hold after each dip
-  const ep = cellEp[cid] || (cellEp[cid] = { lvl: 0, calmTs: 0 });
-  if (!peek) { if (raw) ep.calmTs = 0; else if (ep.lvl && !ep.calmTs) ep.calmTs = nowTs; if (ep.lvl && ep.calmTs && nowTs - ep.calmTs >= 2) { ep.lvl = 0; ep.calmTs = 0; } }
-  out.lvl = raw && holdSince[cid] && now - holdSince[cid] >= hold ? raw : raw && ep.lvl ? Math.min(raw, ep.lvl) : 0;
-  if (!peek && out.lvl > ep.lvl) ep.lvl = out.lvl;
+  // white for the whole hold after each dip. A calm second shows the last warning second as it was (its level and its
+  // words, ep.lvl and ep.sub); back past its line within the episode, it is capped by the episode's worst (ep.peak).
+  // Seconds with no value (no game for Game time, a reading gone) are calm ones too (calmGone)
+  const ep = cellEp[cid] || (cellEp[cid] = { lvl: 0, peak: 0, calmTs: 0, off: false, sub: '' });
+  // (while the feed isn't live the log judges nothing: no hold starts or ends, no calm second counts, see 'tick')
+  if (!peek && live) { if (raw) { if (!holdSince[cid]) holdSince[cid] = now; } else delete holdSince[cid]; }
+  if (!peek && live) { if (raw) ep.calmTs = 0; else if (ep.lvl && !ep.calmTs) ep.calmTs = nowTs; if (ep.lvl && ep.calmTs && nowTs - ep.calmTs >= 2) { ep.lvl = ep.peak = 0; ep.calmTs = 0; } }
+  // (only while what warned is still there: the lines, or the curve)
+  const keep = ep.lvl && (ep.off ? !!out.curve : gatesOn(g) && !pmOff);
+  out.lvl = raw && holdSince[cid] && now - holdSince[cid] >= hold ? raw : keep ? (raw ? Math.min(raw, ep.peak) : ep.lvl) : 0;
+  const calm = out.calm = !!out.lvl && !raw;   // (out.calm: for a build's own words too)
+  if (calm && ep.off) out.offCurve = true;
   out.col = !live ? 'grey' : out.lvl === 2 ? 'red' : out.lvl === 1 ? 'yellow' : 'white';
   if (out.lvl) out.warm = 0;
   if (out.lvl !== 1) out.warmR = 0;   // (toward red only once it shows yellow)
+  if (raw && !out.lvl && !out.offCurve && !isYN(r)) out.warm = 1;   // (past the line, waiting out the hold: as close as it gets)
   const dec = dec0, k = gbK(r), fl = x => fmt(x * k, dec);
-  if (pmOff && gatesOn(g) && !out.curve) out.sub = 'lines count while a game is in front';
-  else if (out.lvl && side) out.sub = (o.below ? 'under ' : 'over ') + (out.lvl === 2 ? 'red ' + fl(o.r) : 'yellow ' + fl(o.y));
+  if (calm) out.sub = ep.sub;
+  else if (pmOff && gatesOn(g) && !out.curve) out.sub = 'lines count while a game is in front';
+  else if (out.lvl && side) out.sub = (o.below ? 'under ' : 'over ') + (out.lvl === 2 || o.y === undefined ? 'red ' + fl(o.r) : 'yellow ' + fl(o.y));   // (a side with a red line only: its words)
   else if (out.lvl === 2) out.sub = (g.dir === 'below' ? 'under red ' : 'over red ') + fl(g.r);
   else if (out.lvl === 1 && !out.offCurve) out.sub = (g.dir === 'below' ? 'under yellow ' : 'over yellow ') + fl(g.y);
   else if (out.curve) {
@@ -692,6 +712,13 @@ function evalCell0(cid, c, peek, quick) {
     let mx = -Infinity; for (const x of series(r.key, HLEN)) if (x > mx) mx = x;
     out.sub = isFinite(mx) ? '15 min max ' + fl(mx) + (unitOf(r) ? ' ' + unitOf(r) : '') : '';
   }
+  if (gt) {
+    out.txt = durTxt(v * 60); out.utxt = '';
+    if (calm) out.sub = ep.sub;
+    else if (!out.lvl) out.sub = gtSub();
+    else { const ln = side ? o : g, below = side ? o.below : g.dir === 'below'; out.sub = (below ? 'under ' : 'over ') + (out.lvl === 2 || ln.y === undefined ? 'red ' + durTxt(ln.r * 60) : 'yellow ' + durTxt(ln.y * 60)); }
+  }
+  if (!peek && out.lvl && raw) { ep.lvl = out.lvl; ep.peak = Math.max(ep.peak, out.lvl); ep.off = !!out.offCurve; ep.sub = out.sub; }   // (a warning second: what its calm seconds show)
   return out;
 }
 const sparkColor = (e, hero) => e.col === 'yellow' ? COLORS.yellow : e.col === 'red' ? COLORS.red : e.col === 'grey' ? '#3a3a3a' : hero ? '#8f8f8f' : '#7c7c7c';
@@ -1118,6 +1145,11 @@ function buildOverview() {
   lastAuto.overview = autoRows('overview');
   return arrHtml('ov', { gap: v && v.gap, rows: lastAuto.overview }, cardHtml, true);
 }
+// Automatic Grid: one table, or two side by side when one table would have to go under the size two can have (set by the
+// width: #sections' padding and the gap, 1 px to spare). autofit works it out and keeps it per window and content
+// (gridN), so it never hangs on the size the view before it left
+const gridN = {}; let gridForce = 0;
+const gridLim = () => (sectionsEl.clientWidth - 37) / (2 * 44 + 0.92);
 function buildGrid() {
   const table = list => '<div class="gtable' + anim() + '"><table class="gt"><colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"><col class="c5"><col class="c6"><col class="c7"></colgroup>' +
     '<thead><tr><th class="l">sensor</th><th>current</th><th title="HWiNFO\'s own, since it started or was reset">min</th><th title="HWiNFO\'s own, since it started or was reset">max</th><th title="HWiNFO\'s own, since it started or was reset">average</th><th>lines</th><th class="l">info</th></tr></thead>' +
@@ -1139,7 +1171,7 @@ function buildGrid() {
   // table ("continued"), so the two come out about as long
   const items = S.L.cats.map(cat => ({ cat, ids: cat.collapsed ? null : idsIn(cat) })), len = it => (it.ids ? it.ids.length : 0) + 1;
   const half = Math.ceil(items.reduce((a, it) => a + len(it), 0) / 2), t1 = [], t2 = [];
-  const fs = parseFloat(document.documentElement.style.fontSize) || 13, two = sectionsEl.clientWidth - 40 >= (2 * 44 + 0.92) * fs;   // else one under the other: one table
+  const two = gridForce ? gridForce === 2 : gridN[fitKey(cssScale())] === 2;   // else one under the other: one table
   let acc = two ? 0 : Infinity;
   if (!two) t1.push(...items);
   else for (const it of items) {
@@ -1153,10 +1185,10 @@ function buildGrid() {
   return '<div class="gsplit" id="view">' + (t1.length ? table(t1) : '') + (t2.length ? table(t2) : '') + '</div>';
 }
 function setupHtml() {
-  return '<div class="setup" id="view"><h2>HWiNFO isn\'t sharing its sensors yet</h2><span>HW Deck shows what HWiNFO measures. Set HWiNFO up once:</span><ol>' +
+  return '<div class="setup" id="view"><h2>HWiNFO isn\'t sharing its sensors yet</h2><span>' + esc(feed.brand || 'HW Deck') + ' shows what HWiNFO measures. Set HWiNFO up once:</span><ol>' +
     '<li>Install HWiNFO (hwinfo.com) and start it with <b>Sensors-only</b> ticked.</li><li>In its sensors window, click <b>Config</b>, then <b>Main Settings</b>.</li>' +
     '<li>On the <b>General / User Interface</b> tab, tick <b>Shared Memory Support</b>, then OK.</li>' +
-    '<li>Keep HWiNFO running. The free version stops sharing after 12 hours. Optional: turn on <b>Keep HWiNFO sharing</b> in Settings and HW Deck restarts it for you, so it never runs out.</li></ol>' +
+    '<li>Keep HWiNFO running. The free version stops sharing after 12 hours. Optional: turn on <b>Keep HWiNFO sharing</b> in Settings and ' + esc(feed.brand || 'HW Deck') + ' restarts it for you, so it never runs out.</li></ol>' +
     '<span>This screen goes away by itself once the readings arrive. Already set up, and still nothing?</span>' +
     '<span><button class="btn" id="setupRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></span></div>';
 }
@@ -1252,7 +1284,7 @@ function updateView(all) {
   for (const [cid, r] of E) {
     const c = S.L.cells[cid]; if (!c) continue;
     const rd = c.key ? BYKEY.get(c.key) : null, vis = seen.get(cid);
-    if (isMissing(c)) { odo(r.v, '--'); setText(r.cap, missingTxt(c)); continue; }
+    if (isMissing(c)) { calmGone(cid); odo(r.v, '--'); setText(r.cap, missingTxt(c)); continue; }
     const e = evalCell(cid, c, false, !vis);
     const cat = catOf(cid); if (cat) cardLvl[cat.id] = Math.max(cardLvl[cat.id] || 0, e.lvl);
     const dec = decOfCell(c, rd);
@@ -1669,7 +1701,9 @@ function autofit() {
   if (document.hidden) drawnHidden = true;   // (measured in the tray: again when the window shows)
   const root = document.documentElement, v = $('view');
   if (!S.L.cats.length || v.classList.contains('empty') || v.classList.contains('setup')) { root.style.fontSize = '13px'; fitRatio = 1; layoutPass(); return; }
-  const target = cssScale(), key = fitKey(target), memo = fitMemo[key], floor = Math.max(9, target * 0.6);
+  const target = cssScale(), key = fitKey(target), floor = Math.max(9, target * 0.6);
+  // (Automatic Grid: a size per table count)
+  const ag = S.screen === 'grid' && !isCustom('grid'), nOn = ag && v.querySelectorAll('.gtable').length > 1 ? 2 : 1, mkey = ag ? key + '/' + nOn : key, memo = fitMemo[mkey];
   app.classList.toggle('fitting', S.edit);   // edit mode fits like the normal view: empty categories (hidden there) don't count
   const at = f => { root.style.fontSize = f + 'px'; return fits(); };
   // the largest size that fits between lo (fits) and hi (doesn't), to 0.2 px
@@ -1710,23 +1744,38 @@ function autofit() {
   exactUnits = stale; const still = stale ? fits() : true; exactUnits = false;
   if (ok && !still) for (let i = 0; i < 8; i++) { lo = Math.max(floor, lo - 0.25); if (at(lo) || lo === floor) break; }
   lastFit[S.screen] = lo / target;
-  rememberFit(key, lo);
+  rememberFit(mkey, lo);
   app.classList.remove('fitting'); layoutPass(); growPass(); markSlots(); rememberPacks();
   document.querySelector('.panes').style.setProperty('--sbw', (sectionsEl.offsetWidth - sectionsEl.clientWidth) + 'px');   // the right tab sits left of the scrollbar
   fitRatio = lo / target;
+  // Automatic Grid, decided from one table: one that had to go under the size two can have (or that doesn't fit at all)
+  // gives two, fitted again. Two on screen with nothing decided for this window: left undecided, the next draw starts
+  // from one (refit after a resize or the banner)
+  if (ag && !gridForce && !gridN[key] && nOn === 1) {
+    const ks = Object.keys(gridN); if (ks.length > 200) delete gridN[ks[0]];
+    gridN[key] = (!ok && gridLim() >= floor) || lo < gridLim() - 0.05 ? 2 : 1;   // (one that fits nowhere: two only if they sit side by side at the smallest size)
+    if (gridN[key] === 2) { const en = entrance; enterNext = en !== null; slideDir = en || 0; gridForce = 2; try { buildView(); updateView(true); autofit(); } finally { gridForce = 0; } }   // (an entrance still to play plays on the two)
+  }
+}
+// a window that changed size (or the banner coming or going): an automatic view with room for more or fewer columns, or
+// Automatic Grid with a table count for the new size other than the one on screen, is drawn again; else fitted again
+let refitLater = false;   // (a refit asked for during a drag: done at the drop)
+function refit() {
+  if ((drag && drag.started) || rs) { refitLater = true; return; }   // (a rebuild would move the view under the drag)
+  if (S.screen !== 'grid' && !isCustom(S.screen) && lastAuto[S.screen] && JSON.stringify(autoRows(S.screen)) !== JSON.stringify(lastAuto[S.screen])) { renderView(false); return; }
+  if (S.screen === 'grid' && !isCustom('grid') && $('view') && gridN[fitKey(cssScale())] !== ($('view').querySelectorAll('.gtable').length > 1 ? 2 : 1)) { renderView(false); return; }
+  autofit(); updateView(true);
 }
 window.addEventListener('resize', () => {
   layGen++;
   if (S.L.cats.length) document.documentElement.style.fontSize = (cssScale() * fitRatio) + 'px';
-  clearTimeout(fitTimer); fitTimer = setTimeout(() => {
-    // Automatic Tiles or Overview with room for more (or fewer) columns now: drawn again
-    if (S.screen !== 'grid' && !isCustom(S.screen) && lastAuto[S.screen] && JSON.stringify(autoRows(S.screen)) !== JSON.stringify(lastAuto[S.screen])) { renderView(false); return; }
-    autofit(); updateView(true);
-  }, 250);
+  clearTimeout(fitTimer); fitTimer = setTimeout(refit, 250);
   placeTabInd(true); drawRows();
 });
 
 // ---------- views: Tiles, Overview, Grid ----------
+let slotWanted = null;
+let heldSlots = new Set();   // (the slots another program held when the page asked: shown empty, not free)   // the slot state.json links the view to, held when the page started (null: none)
 let wantScreen = null, screenRaf = 0;   // a view asked for by a click, drawn on the next frame (requestScreen)
 function placeTabInd(still, to) {
   const b = document.querySelector('#screens button[data-s="' + (to || wantScreen || S.screen) + '"]'), ind = $('tabind');
@@ -1995,6 +2044,7 @@ function hitTest(x, y) {
 function endDrag(cancel) {
   if (!drag) return;
   const d = drag; drag = null;
+  if (refitLater) { refitLater = false; setTimeout(refit, 0); }
   dropmark.style.display = 'none'; app.classList.remove('dragging');
   if (d.ghost) d.ghost.remove();
   syncDrawers();
@@ -2041,9 +2091,10 @@ function setLook(kind, id, key, val, vn) {
   if (!Object.keys(m).length) delete v[kind];
 }
 // a tile's size (in tiles, see SZ); 1 x 1 takes it away
-function setSize(id, w, h) {
+function setSize(id, w, h, tol) {
+  const z = cellSize(id), keep = x => Math.abs(x) < 1e-9 ? 1.5e-4 : tol;   // (a side not changed keeps its size as stored)
   const v = vset('tiles'), m = v.cell || (v.cell = {}), e = m[id] || (m[id] = {});
-  delete e.size; delete e.w; delete e.h; Object.assign(e, sizeLook(w, h));
+  delete e.size; delete e.w; delete e.h; Object.assign(e, sizeLook(w, h, keep(w - z.w), keep(h - z.h)));
   if (!Object.keys(e).length) delete m[id];
   if (!Object.keys(m).length) delete v.cell;
 }
@@ -2324,6 +2375,7 @@ function moveCorner0(ev, R, maxW, thr, lines) {
     const c = best([[Math.abs(R.r.left + pxW(R, wq) - at), wq], wx !== null && wx >= 0.25 - PE && wx <= maxW + PE ? [Math.abs(nx - at), wx, { x: nx }] : null]);
     w = c[1]; if (c[2]) lines.push(c[2]);
   }
+  if (w >= maxW - PE && R.s.w > maxW) w = R.s.w;   // (a wide tile held to the row's width keeps its own)
   const th = hh => R.at(w, hh).th, col = hh => R.ends.own + R.at(w, hh).TH - R.TH0;
   let h = my ? solveSize(th, R.th0 + dy, R.h0) : R.h0;
   if (!ev.altKey && my) {
@@ -2361,17 +2413,19 @@ function moveCorner0(ev, R, maxW, thr, lines) {
 }
 // the numbers in a tile's settings: in tiles, or in px at this window size
 function sizeInput(cid, which, v) {
+  if (nudge) flushNudge();   // (a Ctrl+arrow just before: its side counts)
   const z = cellSize(cid);
   if (!isFinite(v) || v <= 0) { renderInsp(); return; }
-  let w = z.w, h = z.h;
+  let w = z.w, h = z.h, tol = SNAPQ;
   if (which === 'w') w = v; else if (which === 'h') h = v;
   else {
     const G = tileGeo(tileEl(cid)); if (!G) return;
+    tol = snapAt(G);
     if (which === 'pw') w = (v + G.g) / G.p; else h = solveSize(hh => G.at(Math.min(w, G.k), hh).th, v);
   }
   const off = x => x < 0.25 - 1e-3 || x > 2 + 1e-3;
   if (off(w) || off(h)) toast('A tile is 0.25 to 2 tiles each way: this one is as close as it gets');
-  mutate(() => setSize(cid, w, h));
+  mutate(() => setSize(cid, w, h, tol));
   if (which === 'pw' || which === 'ph') exactPx(cid, which, v);
 }
 // a size typed in px: the view may find a new text size for it (a taller tile can make everything a little smaller),
@@ -2381,9 +2435,9 @@ function exactPx(cid, which, v) {
     const G = tileGeo(tileEl(cid)), z = cellSize(cid); if (!G) return;
     const now = which === 'pw' ? pxW(G, z.w) : G.at(Math.min(z.w, G.k), z.h).th;
     if (Math.abs(now - v) <= 0.5) return;
-    const w = which === 'pw' ? (v + G.g) / G.p : z.w, h = which === 'ph' ? solveSize(hh => G.at(Math.min(w, G.k), hh).th, v) : z.h, was = JSON.stringify(sizeLook(z.w, z.h));
-    if (JSON.stringify(sizeLook(w, h)) === was) return;
-    setSize(cid, w, h); afterChange();
+    const w = which === 'pw' ? (v + G.g) / G.p : z.w, h = which === 'ph' ? solveSize(hh => G.at(Math.min(w, G.k), hh).th, v) : z.h, tol = snapAt(G), was = JSON.stringify(sizeLook(z.w, z.h, tol));
+    if (JSON.stringify(sizeLook(w, h, tol)) === was) return;
+    setSize(cid, w, h, tol); afterChange();
   }
 }
 // Ctrl+arrows: a pixel wider, narrower, taller or shorter; with Shift to the next quarter step. Shown at once on its
@@ -2393,7 +2447,7 @@ function flushNudge() {
   clearTimeout(nudgeT);
   const n = nudge; nudge = null; lpill.classList.remove('on');
   if (!n || !S.L.cells[n.cid]) return;
-  keyLayout(() => mutate(() => setSize(n.cid, n.w, n.h)));
+  keyLayout(() => mutate(() => setSize(n.cid, n.w, n.h, n.tol)));
   const e = tileEl(n.cid); if (e && n.cid === sel) e.focus({ preventScroll: true });
 }
 function nudgeSize(cid, dx, dy, quarter) {
@@ -2402,14 +2456,14 @@ function nudgeSize(cid, dx, dy, quarter) {
   const z = nudge && nudge.cid === cid ? { w: nudge.w, h: nudge.h } : cellSize(cid);
   const q = (v, d) => (d > 0 ? Math.floor(v * 4 + PE) + 1 : Math.ceil(v * 4 - PE) - 1) / 4, w0 = Math.min(z.w, G.k), lim = (v, mx) => r4(Math.min(mx, Math.max(0.25, v)));
   // (only the side the arrow moves changes: a wide tile in a one-per-row category stays wide)
-  const w = !dx ? z.w : lim(quarter ? q(w0, dx) : (pxW(G, w0) + dx + G.g) / G.p, Math.min(2, G.k));
+  const w = !dx || (dx > 0 && z.w >= G.k - PE) ? z.w : lim(quarter ? q(w0, dx) : (pxW(G, w0) + dx + G.g) / G.p, Math.min(2, G.k));   // (a wide tile held to the row stays wide)
   const h = !dy ? z.h : lim(quarter ? q(z.h, dy) : solveSize(hh => G.at(w0, hh).th, G.at(w0, z.h).th + dy, z.h), 2);
-  nudge = { cid, w, h };
+  nudge = { cid, w, h, tol: quarter ? SNAPQ : snapAt(G) };
   setTileSz(t, w, h); packTg(G.tg, G.k); tileFit(G.tg, G.tw, G.k, G.g, G.fs);
   const r = t.getBoundingClientRect();
   pill(fmtSz(w) + ' x ' + fmtSz(h) + ' tiles, ' + Math.round(r.width) + ' x ' + Math.round(r.height) + ' px', r.right + 6, r.bottom + 6);
   clearTimeout(nudgeT);
-  nudgeT = setTimeout(flushNudge, 350);
+  nudgeT = setTimeout(function later() { if (rs || (drag && drag.started)) { nudgeT = setTimeout(later, 350); return; } flushNudge(); }, 350);   // (not under a drag: the redraw would leave it on the old tiles)
 }
 // a category: every tile one width or height; Line up the bottom: its tiles taller or shorter, all by the same factor, just
 // enough that its column ends level with the tallest one beside it
@@ -2471,6 +2525,7 @@ function moveHandle(ev) {
 function endHandle(cancel) {
   if (!rs) return;
   const h = rs; rs = null;
+  if (refitLater) { refitLater = false; setTimeout(refit, 0); }
   lpill.classList.remove('on'); h.el.classList.remove('on'); guides();
   justDragged = true; setTimeout(() => { justDragged = false; }, 0);
   if (!h.moved) return;
@@ -2478,7 +2533,7 @@ function endHandle(cancel) {
   const before = snapOf();
   if (h.kind === 'split') mutate(() => { const row = stored(S.screen).rows[h.ri]; row.cols.forEach((c, i) => { c.w = h.w[i]; }); });
   else if (h.kind === 'rowh') mutate(() => { const row = stored(S.screen).rows[h.ri]; if (h.h) row.h = 1; else delete row.h; });
-  else mutate(() => setSize(h.cid, h.w, h.h));
+  else mutate(() => setSize(h.cid, h.w, h.h, snapAt(h)));
   if (snapOf() === before) renderView(false);   // back where it started: draw it as it was
 }
 document.addEventListener('pointermove', moveHandle);
@@ -2595,12 +2650,14 @@ function templateView(kind) {
 function gridTables(n) {
   const order = rowsNow('grid').flatMap(r => r.cols.flatMap(c => c.stack.map(sid))), len = id => cellsOf(catById(id)).length + 1;
   const total = order.reduce((a, id) => a + len(id), 0), cols = [];
+  // each category by its middle; no table left empty, and a category kept for each table still to come
   let acc = 0;
-  for (const id of order) {
-    const k = Math.min(n - 1, Math.floor(acc / total * n + 1e-9));
+  order.forEach((id, i) => {
+    let k = Math.min(n - 1, Math.floor((acc + len(id) / 2) / total * n + 1e-9));
+    k = Math.min(Math.max(k, n - (order.length - i), cols.length ? cols.length - 1 : 0), cols.length);
     while (cols.length <= k) cols.push({ stack: [] });
     cols[k].stack.push(id); acc += len(id);
-  }
+  });
   return [{ cols: cols.filter(c => c.stack.length) }];
 }
 const live = $('live');
@@ -2673,7 +2730,7 @@ for (const k of ['L', 'R']) {
   d.el.addEventListener('focusout', () => setTimeout(syncDrawers, 0));
 }
 $('undo').onclick = undo; $('redo').onclick = redo;
-$('toastUndo').onclick = () => { if (toastDepth >= 0 && undoStack.length === toastDepth) undo(); $('toast').classList.remove('show'); retireToastUndo(); };
+$('toastUndo').onclick = () => { if (nudge) flushNudge(); if (toastDepth >= 0 && undoSeq === toastDepth) undo(); $('toast').classList.remove('show'); retireToastUndo(); };   // (a nudge still to land is newer: the Undo is stale then)
 // the clean view: a cell opens when a press that started on it is let go, by the cell it was, not by the element (a
 // redraw between press and release, as when a fresh window settles, made the browser drop the click)
 let press = null, openedByUp = 0, draggedUp = 0;
@@ -2872,7 +2929,7 @@ function renderInsp() {
   const bn = isBneck(c), gsel = '<select id="iGraph"><option value="1"' + (c.graph !== false ? ' selected' : '') + '>Show</option><option value="0"' + (c.graph === false ? ' selected' : '') + '>Hide</option></select>';
   // the bottleneck is a call, not a number: no decimals, no lines
   if (bn) h += '<div class="two"><label class="fld"><span>15 min bar</span>' + gsel + '</label><span></span></div>' +
-    '<div class="fgrp"><span class="hint">Worked out by HW Deck once a second while a game runs, from GPU usage and the busiest CPU thread. GPU bound: the GPU at 95% or more. CPU bound: the GPU under 85% with a thread at 80% or more. FPS capped: neither, so an fps limit or vsync sets the pace.</span></div>';
+    '<div class="fgrp"><span class="hint">Worked out by ' + esc(feed.brand || 'HW Deck') + ' once a second while a game runs, from GPU usage and the busiest CPU thread. GPU bound: the GPU at 95% or more. CPU bound: the GPU under 85% with a thread at 80% or more. FPS capped: neither, so an fps limit or vsync sets the pace.</span></div>';
   else h += '<div class="two"><label class="fld"><span>Decimals</span><select id="iDec">' + [0, 1, 2, 3].map(d => '<option' + (decOfCell(c, r) === d ? ' selected' : '') + '>' + d + '</option>').join('') + '</select></label>' +
        '<label class="fld"><span>Graph</span>' + gsel + '</label></div>';
   if (!c.pred && !bn) {
@@ -3027,7 +3084,8 @@ let editSnap = false;   // typing in a field takes one undo step, not one per ke
 insp.addEventListener('focusin', e => { if (e.target.matches('input')) editSnap = false; });
 insp.addEventListener('input', e => {
   const c = S.L.cells[sel]; if (!c) return; const t = e.target;
-  if (!editSnap && t.id !== 'cPasteIn') { snap(); syncUndo(); editSnap = true; }
+  // (only for what is typed: a box, a list or a size takes its own step when it changes)
+  if (!editSnap && t.id !== 'cPasteIn' && t.type !== 'checkbox' && t.tagName !== 'SELECT' && !(t.dataset && (t.dataset.sz || t.dataset.lay))) { snap(); syncUndo(); editSnap = true; }
   if (t.id === 'iName') {
     setCell(c => { c.name = t.value.trim() || undefined; });
     const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
@@ -3169,7 +3227,7 @@ function viewPanel() {
   if (S.L.cats.length) {
     h += segL('Arrangement', 'arr', [['auto', 'Automatic'], ['own', 'Your own']], own ? 'own' : 'auto') + '<span class="hint">' + (own
       ? 'Your rows and columns. Drag a category by its handle onto the edge of another one; drag the line between two columns to change their widths.'
-      : 'HW Deck places the categories for you. Drop a category on the edge of another one, or pick a start below, to arrange them yourself.') + '</span>';
+      : esc(feed.brand || 'HW Deck') + ' places the categories for you. Drop a category on the edge of another one, or pick a start below, to arrange them yourself.') + '</span>';
     if (vn !== 'grid') {
       const ov = otherView(vn), canCopy = !!(stored(ov) && stored(ov).rows);
       h += '<div class="fgrp"><span class="lab">Start from</span><div class="tpls">' + TPLS.map(([k, t, gc, gr, areas]) => '<button class="tpl" data-tpl="' + k + '"' + (k === 'copy' && !canCopy ? ' disabled title="' + VNAME[ov] + ' is placed automatically: there is nothing to copy"' : '') + '>' +
@@ -3288,7 +3346,7 @@ function layoutAct(key, v) {
   else if (key === 'size' || key === 'title' || key === 'style') mutate(() => setLook('cat', id, key, v));
   else if (key === 'reset') mutate(() => { const w = vset(vn); if (w.cat) delete w.cat[id]; });
   else if (key === 'remove') removeCat(id);
-  else if (key === 'cw' || key === 'ch') { const z = cellSize(sel); mutate(() => setSize(sel, key === 'cw' ? +v : z.w, key === 'ch' ? +v : z.h)); }
+  else if (key === 'cw' || key === 'ch') { if (nudge) flushNudge(); const z = cellSize(sel); mutate(() => setSize(sel, key === 'cw' ? +v : z.w, key === 'ch' ? +v : z.h)); }
   else if (key === 'fitrow') fitRow(id);
   else if (key === 'vname-on') { mutate(() => setLook('cell', sel, 'name', cellName(S.L.cells[sel]))); const f = $('lvName'); if (f) { f.focus(); f.select(); } }
   else if (key === 'vname-x') mutate(() => setLook('cell', sel, 'name', ''));
@@ -3355,10 +3413,13 @@ function clearSel() {
 // repeated layout keys close together are one undo step
 let keyStep = { t: 0, n: -1 };
 function keyLayout(fn) {
-  const merge = Date.now() - keyStep.t < 800 && undoStack.length === keyStep.n && keyStep.n > 0, n0 = undoStack.length;
+  // (counted in steps taken: the stack's length stops changing at its cap)
+  const merge = Date.now() - keyStep.t < 800 && undoSeq === keyStep.n && keyStep.n > 0, n0 = undoSeq;
   fn();
-  if (merge && undoStack.length === n0 + 1) undoStack.splice(n0, 1);
-  keyStep = { t: Date.now(), n: undoStack.length }; syncUndo();
+  if (merge && undoSeq === n0 + 1) undoStack.pop();   // (the press's own step: the burst stays one)
+  if (undoSeq === n0 && !merge) keyStep.t = 0;   // (a key that changed nothing starts no burst: the next one isn't merged into an earlier change)
+  else keyStep = { t: Date.now(), n: undoSeq };
+  syncUndo();
 }
 function focusCat(id) { const h = document.querySelector('#view .dcat[data-cat="' + id + '"] .dch'); if (h) h.focus({ preventScroll: false }); }
 function swapCats(a, b) { dropCat({ target: { zone: 'swap', cat: b }, data: a, auto: !isCustom(S.screen), rows: rowsNow() }); }
@@ -3557,9 +3618,13 @@ const minSpanOf = u => MIN_SPAN[u] || 0;
 function scaleTop(vals, unit) {
   let max = -Infinity; for (const v of vals) if (v > max) max = v;
   if (vals.length < 20 || unit === '%' || unit === 'Yes/No') return { top: max, cut: false, max };   // (0 to 100 is a scale already)
-  // cut only far spikes, more than half again over the usual top: a temperature's short peak or a burst stays whole
+  // cut only far spikes, more than half again over the usual top: a temperature's short peak or a burst stays whole,
+  // and so does every burst of a reading that sits at 0, give or take a little noise (a drive's rate, a fan stopped
+  // at idle): its usual top is next to nothing of the range. A steady line (a capped fps) still has its far spike cut
   const s = vals.slice().sort((a, b) => a - b), p = s[Math.floor(s.length * 0.95)], lo = s[0];
-  return max - p > Math.max(p - lo, Math.abs(p) * 0.5) ? { top: p, cut: true, max } : { top: max, cut: false, max };
+  // (at 0 within its own noise: never cut; and a spike is one or two points far up, a glitch, where bursts are more)
+  const floor = Math.abs(lo) <= p - lo && Math.abs(p) <= (max - lo) * 0.01, far = vals.filter(v => v > p + (max - p) / 2).length;
+  return !floor && far <= 2 && max - p > Math.max(p - lo, Math.abs(p) * 0.5) ? { top: p, cut: true, max } : { top: max, cut: false, max };
 }
 function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, preview) {
   const { ctx, w, h, dpr } = graphCtx(cv);
@@ -3836,8 +3901,14 @@ $('slist').addEventListener('click', e => {
       const b = ev.target.closest('[data-m]'); if (!b) return; closeSmenu();
       if (b.dataset.m === 'rename') renameSlot(i);
       if (b.dataset.m === 'export') send({ t: 'export', name: slotName(i), data: S.slots[i] });
-      if (b.dataset.m === 'import') send({ t: 'import', slot: i });
-      if (b.dataset.m === 'empty') askConfirm('Empty ' + slotName(i) + '?', 'The slot forgets its layout. The view you have now stays.', 'Empty slot', () => { S.slots[i] = null; if (S.active === i) S.active = null; saveSlot(i); saveState(); syncSaves(); renderSaves(); });
+      if (b.dataset.m === 'import' && heldSlots.has(i)) toast(slotName(i) + ' is open in another program (a sync or a backup tool): try again in a moment');
+      else if (b.dataset.m === 'import') { if (s) askConfirm('Import into ' + slotName(i) + '?', 'The layout from the file replaces what the slot holds.', 'Import', () => send({ t: 'import', slot: i })); else send({ t: 'import', slot: i }); }
+      if (b.dataset.m === 'empty') askConfirm('Empty ' + slotName(i) + '?', 'The slot forgets its layout. The view you have now stays.', 'Empty slot', () => {
+        S.slots[i] = null; if (S.active === i) S.active = null;
+        const unslot = js => { const o = JSON.parse(js); if (o.active !== i) return js; o.active = null; return JSON.stringify(o); };   // (an undo can't link the view to it again)
+        undoStack = undoStack.map(unslot); redoStack = redoStack.map(unslot);
+        saveSlot(i); saveState(); syncSaves(); renderSaves();
+      });
     };
   }
 });
@@ -3845,10 +3916,10 @@ $('slist').addEventListener('dblclick', e => { const row = e.target.closest('.sr
 smodal.addEventListener('mousedown', e => { if (smenu && !smenu.contains(e.target) && !e.target.closest('[data-a="more"]')) closeSmenu(); });
 function renameSlot(i) {
   const st = $('slist').querySelector('.srow2[data-slot="' + i + '"] .st'); if (!st) return;
-  const inp = document.createElement('input'); inp.value = slotName(i); inp.setAttribute('aria-label', 'Slot name');
+  const inp = document.createElement('input'); inp.value = slotName(i); inp.maxLength = 80; inp.setAttribute('aria-label', 'Slot name');
   st.innerHTML = ''; st.appendChild(inp); inp.focus(); inp.select();
   let done = false;
-  const fin = keep => { if (done) return; done = true; if (keep && inp.value.trim()) { S.slots[i].name = inp.value.trim(); saveSlot(i); } syncSaves(); renderSaves(); };
+  const fin = keep => { if (done) return; done = true; if (keep && inp.value.trim()) { S.slots[i].name = inp.value.trim().slice(0, 80); saveSlot(i); } syncSaves(); renderSaves(); };   // (80: what a slot file keeps)
   inp.onkeydown = ev => {
     ev.stopPropagation();
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') { ev.preventDefault(); fin(true); onSave(); return; }
@@ -3857,7 +3928,7 @@ function renameSlot(i) {
   inp.onblur = () => fin(true);
 }
 function loadSlot(i) {
-  snap();
+  snap(); slotWanted = null;   // (a load, a save, a clear or an import: the view's link is the user's now, not the one held at the start)
   S.L = JSON.parse(JSON.stringify(S.slots[i] ? S.slots[i].layout : emptyLayout()));
   S.active = i; sel = null; endRelink(true);
   const n = relinkByName();
@@ -3866,17 +3937,24 @@ function loadSlot(i) {
   toast('Loaded ' + slotName(i) + (n ? ', ' + plural(n, 'cell') + ' re-linked by sensor name' : ''), true);
 }
 function saveTo(i) {
+  if (heldSlots.has(i)) { toast(slotName(i) + ' is open in another program (a sync or a backup tool): save again in a moment'); return; }   // (its file is there, the page just hasn't got it)
+  slotWanted = null;
   const name = S.slots[i] ? S.slots[i].name : 'Slot ' + (i + 1);
   S.slots[i] = { v: 1, name, layout: JSON.parse(JSON.stringify(S.L)) };
+  // (the undo steps of the slot it was go with it: an undo can't link the view back to the slot left alone on purpose)
+  // (only the newest run of steps linked to it, back to the Load or Clear that started it)
+  const was = S.active, move = st => { for (let k = st.length - 1; k >= 0; k--) { const o = JSON.parse(st[k]); if (o.active !== was) break; o.active = i; st[k] = JSON.stringify(o); } };
+  if (was !== i && was != null) { move(undoStack); move(redoStack); }   // (a view linked to no slot: its history isn't that slot's)
   S.active = i; saveSlot(i); saveState(); syncSaves(); toast('Saved to ' + slotName(i));
 }
 function onSave() {
   if (S.active != null) { saveTo(S.active); return; }
-  const free = S.slots.findIndex(s => !s);
+  if (slotWanted != null) { toast(slotName(slotWanted) + ' is open in another program (a sync or a backup tool): save again in a moment'); return; }   // (the view's own slot, held at the start)
+  const free = S.slots.findIndex((s, k) => !s && !heldSlots.has(k));
   if (free >= 0) saveTo(free); else { renderSaves(); smodal.classList.add('open'); }
 }
 $('clearBtn').onclick = () => askConfirm('Clear the view?', 'Back to the first run: no cells. Your slots stay as they are, and Undo brings the view back.', 'Clear view', () => {
-  snap(); S.L = emptyLayout(); S.active = null; sel = null; endRelink(true);
+  snap(); S.L = emptyLayout(); S.active = null; slotWanted = null; sel = null; endRelink(true);
   smodal.classList.remove('open'); afterChange(); toast('View cleared', true);
 });
 
@@ -3887,7 +3965,7 @@ $('logBtn').onclick = () => { wmodal.classList.add('open'); $('wlist').innerHTML
 $('wclear').onclick = () => askConfirm('Clear warning history?', 'This wipes the warning log (' + lastLogCount + ' crossings' + (feed.warnDays ? ' in the last ' + feed.warnDays + ' days' : '') + '). A copy goes to alerts.log.bak first.', 'Clear history', () => send({ t: 'alerts:clear' }));
 function fmtDur(ms) { const s = Math.max(0, Math.round(ms / 1000)); if (s < 60) return s + 's'; const m = Math.round(s / 60); return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; }
 function renderWarnings(log) {
-  const open = {}, eps = [];
+  const open = Object.create(null), eps = [];   // (by name: a cell may be called "constructor")
   for (const line of (log || '').split(/\r?\n/)) {
     // times carry their UTC offset (so a summer-time change doesn't make durations negative); older lines don't
     const m0 = line.match(/^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)([+-]\d\d:\d\d)?\s+(YELLOW|RED|OK|MARK|PEAK)\s+(.+)$/);
@@ -3910,13 +3988,13 @@ function renderWarnings(log) {
   }
   const N = feed.warnDays, recent = N ? eps.filter(ep => ep.when.getTime() >= Date.now() - N * 86400000) : eps;   // (no days set: all of it)
   setText($('wdays'), N ? String(N) : 'all');
-  const groups = [], lastOf = {};
+  const groups = [], lastOf = Object.create(null);
   for (const ep of recent) {
     const g = lastOf[ep.name], prevEnd = g ? (g.end || g.last.when) : null;
     if (g && g.day === ep.day && ep.when - prevEnd <= 600000) { g.eps.push(ep); g.last = ep; if (ep.level === 'RED') g.level = 'RED'; g.end = ep.end; g.ongoing = !ep.end && !ep.interrupted; g.cut = ep.interrupted && !ep.end; }
     else { const ng = { name: ep.name, day: ep.day, first: ep, last: ep, eps: [ep], level: ep.level, end: ep.end, ongoing: !ep.end && !ep.interrupted, cut: ep.interrupted && !ep.end }; groups.push(ng); lastOf[ep.name] = ng; }
   }
-  const num = x => { const m = /^([\d.]+)\s*(.*)$/.exec(x || ''); return m ? { v: parseFloat(m[1]), u: m[2].replace(/\s*\(.*$/, '') } : null; };
+  const num = x => { const m = /^(-?[\d.]+)\s*(.*)$/.exec(x || ''); return m ? { v: parseFloat(m[1]), u: m[2].replace(/\s*\(.*$/, '') } : null; };   // (a -12V rail is negative)
   // a row's peak: the worst of its episodes, the lowest for a line that warns below (the host marks those "(under its
   // line)"; an older log is read off an episode whose peak went lower than its crossing)
   for (const g of groups) {
@@ -3960,7 +4038,15 @@ function wSubRows(g) {
   return hh;
 }
 $('wlist').addEventListener('click', e => {
-  if (e.target.closest('#wMore')) { const st = $('wlist').closest('.mcard').scrollTop; wShow += 300; drawWarnList(); $('wlist').closest('.mcard').scrollTop = st; return; }
+  if (e.target.closest('#wMore')) {
+    const st = $('wlist').closest('.mcard').scrollTop, open = [...document.querySelectorAll('#wlist .wgrp.open')].map(x => x.dataset.g);
+    wShow += 300; drawWarnList();
+    for (const gi of open) {   // (the groups open before stay open)
+      const row = document.querySelector('#wlist .wgrp[data-g="' + gi + '"]'), sub = document.querySelector('#wlist .wsub[data-sub="' + gi + '"]');
+      if (row && sub && wGroups[+gi]) { row.classList.add('open'); sub.innerHTML = wSubRows(wGroups[+gi]); sub.classList.add('open'); }
+    }
+    $('wlist').closest('.mcard').scrollTop = st; return;
+  }
   const r = e.target.closest('.wgrp'); if (!r) return;
   r.classList.toggle('open');
   const sub = document.querySelector('.wsub[data-sub="' + r.dataset.g + '"]');
@@ -4007,7 +4093,12 @@ function recName() {
 }
 $('grec').onclick = () => { send({ t: 'rec', act: 'start', name: recName() }); recHold = Date.now() + 2000; $('grec').disabled = true; setTimeout(renderRec, 2050); };   // (back on when the hold ends, not at the next tick)
 $('grun').addEventListener('click', e => { const b = e.target.closest('[data-rec="stop"]'); if (!b) return; b.disabled = true; send({ t: 'rec', act: 'stop', start: +b.closest('.gx-rec').dataset.start }); });
-$('grun').addEventListener('change', e => { if (!e.target.matches('.gx-rn')) return; const v = e.target.value.trim(); if (v) send({ t: 'rec', act: 'name', start: +e.target.closest('.gx-rec').dataset.start, name: v.slice(0, 60) }); });
+$('grun').addEventListener('change', e => {
+  if (!e.target.matches('.gx-rn')) return;
+  const v = e.target.value.trim(), start = +e.target.closest('.gx-rec').dataset.start;
+  if (v) send({ t: 'rec', act: 'name', start, name: v.slice(0, 60) });
+  else { const r = (feed.rec || []).find(x => x[0] === start); if (r) e.target.value = r[1]; }   // (left empty: its name back)
+});
 $('grun').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.gx-rn')) e.target.blur(); });
 $('gclear').onclick = () => askConfirm('Clear all sessions?', 'This wipes the session log (' + lastGameCount + (lastGameCount === 1 ? ' session' : ' sessions') + '). A copy goes to games.log.bak first.', 'Clear sessions', () => send({ t: 'games:clear' }));
 // layout A, the tailored dashboard's popup: a week strip, columns that line up down the list, a session opens into
@@ -4096,7 +4187,7 @@ function gxTimeline(x, sp, gi) {
   if (!gxHasTl(D)) return '';
   const T = gxTl[gi] = Object.assign({ start: x.start, custom: !!x.custom }, D);
   const cut = x.end - x.start > N * 60 + 90;   // (the host keeps 24 hours of minutes)
-  let h = '<div class="gx-tl" data-g="' + gi + '"><div class="gx-ch">over time<span>' + (cut ? 'the first 24 hours, ' : '') + (x.custom ? 'per minute' : 'per minute, gaps are time the game was not in front') + '</span></div><div class="gx-hz">';
+  let h = '<div class="gx-tl" data-g="' + gi + '"><div class="gx-ch">over time<span>' + (cut ? 'the first 24 hours, ' : '') + (x.custom ? 'per minute' : 'per minute, gaps are time the game was not in front or HW Deck was closed') + '</span></div><div class="gx-hz">';
   const have = D.fv.filter(v => v !== null);
   if (have.length) {
     // round steps, about 4 of them, from a little under the lowest 1% low to a little over the highest fps
@@ -4168,7 +4259,7 @@ function gxHover(hz, e) {
   if (fpsAt) h += '<span>fps <em>' + gxF(T.fv[m]) + '</em></span><span>1% low <em>' + gxF(T.lv[m]) + '</em></span>';
   if (s && T.one[m]) { const k = s.indexOf(1); h += '<span><i class="b-' + GX_BN[k][0] + '"></i>mostly ' + GX_BN[k][1] + '</span>'; }
   else if (s) h += GX_BN.map(([k, t], j) => s[j] > 0.005 ? '<span><i class="b-' + k + '"></i>' + t + ' <em>' + Math.round(s[j] * 100) + '%</em></span>' : '').join('');
-  if (!s && !fpsAt) h += '<span>' + (T.custom ? 'nothing recorded' : 'not in front') + '</span>';
+  if (!s && !fpsAt) h += '<span>' + (T.custom ? 'nothing recorded' : 'not in front, or HW Deck was closed') + '</span>';
   const tip = hz.querySelector('.gx-tip');
   if (tip._h !== h) { tip.innerHTML = h; tip._h = h; }
   const hr = hz.getBoundingClientRect(), gx = pr.left - hr.left + (m + 0.5) / T.N * pr.width, tw = tip.offsetWidth;
@@ -4249,7 +4340,7 @@ function gzApply(fn) {
   pushUndo(before); saveState(); syncUndo(); syncSaves();
   if (GZ.on) renderGz(); rerenderGames();
 }
-function gzEdit(fn) { gzApply(() => { const G = S.L.games = JSON.parse(JSON.stringify(gxLayout())); fn(G); }); }
+function gzEdit(fn) { gzApply(() => { const was = JSON.stringify(gxLayout()), G = JSON.parse(was); fn(G); if (JSON.stringify(G) !== was) S.L.games = G; }); }   // (nothing changed: the defaults stay the defaults)
 onLayout = () => { if (GZ.on) renderGz(); rerenderGames(); };
 // the readings to add: Storage's list (search by sensor, label or unit, the type chips, grouped by sensor), only
 // the rows in sight drawn; + puts one in the selected category, its tick takes it out again
@@ -4340,6 +4431,7 @@ $('gcz').addEventListener('click', e => {
   else if (k === 'reset') { GZ.sel = null; gzApply(() => { delete S.L.games; }); }
   else if (k === 'hide') gzEdit(G => { G.secs[i].hide = !G.secs[i].hide; if (!G.secs[i].hide) delete G.secs[i].hide; });
   else if (k === 'del') gzEdit(G => { G.secs.splice(i, 1); });
+  else if (k === 'addsec' && gxLayout().secs.length >= 16) toast('A report has at most 16 categories');   // (what a file keeps)
   else if (k === 'addsec') { const id = nid('g'); GZ.sel = id; gzEdit(G => { G.secs.push({ id, kind: 'list', name: 'New category', cells: [] }); }); const n = document.querySelector('#gcz .gz-s.on .gz-name'); if (n) { n.focus(); n.select(); } }
   else if (k === 'add' && rk) gzEdit(G => { const s = G.secs.find(x => x.id === GZ.sel); if (s && s.cells.length < GX_MAX && !s.cells.some(c => c.key === rk)) s.cells.push({ key: rk }); });
   else if (k === 'out' && rk) gzEdit(G => { const s = G.secs.find(x => x.id === GZ.sel), j = s ? s.cells.findIndex(c => c.key === rk) : -1; if (j >= 0) s.cells.splice(j, 1); });
@@ -4348,15 +4440,21 @@ $('gcz').addEventListener('click', e => {
 $('gcz').addEventListener('change', e => {
   const t = e.target, k = t.dataset && t.dataset.gz; if (!k) return;
   const v = t.value.trim().slice(0, 40);
-  if (k === 'name') { const i = +t.closest('.gz-s').dataset.i; gzEdit(G => { if (v) G.secs[i].name = v; }); }
-  if (k === 'cname') { const j = +t.closest('.gz-c').dataset.i; gzEdit(G => { const c = G.secs.find(x => x.id === GZ.sel).cells[j]; delete c.name; if (v && v !== gxCellName(c)) c.name = v; }); }
+  if (k === 'name') { const i = +t.closest('.gz-s').dataset.i; gzEdit(G => { if (v) G.secs[i].name = v; }); const s = gxLayout().secs[i]; if (s && t.isConnected && t.value !== gxSecName(s)) t.value = gxSecName(s); }   // (left empty: its name back)
+  if (k === 'cname') { const j = +t.closest('.gz-c').dataset.i; gzEdit(G => { const c = G.secs.find(x => x.id === GZ.sel).cells[j]; delete c.name; if (v && v !== gxCellName(c)) c.name = v; }); const s = gxLayout().secs.find(x => x.id === GZ.sel), c = s && s.cells[j]; if (c && t.isConnected && t.value !== gxCellName(c)) t.value = gxCellName(c); }
 });
 $('gcz').addEventListener('input', e => { if (e.target.id === 'gzQ') { GZ.q = e.target.value; gzCompute(); gzChips(); document.querySelector('#gcz .gz-list').scrollTop = 0; gzDraw(); } });
 // (Enter in the search adds the first reading it shows that isn't in the category yet)
 $('gcz').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.gz-name')) e.target.blur(); if (e.key === 'Enter' && e.target.id === 'gzQ') { const r = document.querySelector('#gcz .vrow.r .add:not([disabled])'); if (r) r.click(); } });
 // a category or a reading dragged by its grip to another place in its list
 $('gcz').addEventListener('pointerdown', e => {
-  const g = e.target.closest('.grip'); if (!g || e.button !== 0) return;
+  let g = e.target.closest('.grip'); if (!g || e.button !== 0) return;
+  const a = document.activeElement;
+  if (a && a.matches('#gcz .gz-name')) {   // (a name still being typed: applied first, its change re-renders the rows)
+    const ln = g.parentNode.parentNode.dataset.list, ri = g.parentNode.dataset.i;
+    a.blur();
+    if (!g.isConnected) { const l2 = document.querySelector('#gcz [data-list="' + ln + '"]'), r2 = l2 && [...l2.children].find(x => x.dataset.i === ri); g = r2 && [...r2.children].find(x => x.classList.contains('grip')); if (!g) return; }
+  }
   const row = g.parentNode, list = row.parentNode, rows = [...list.children].filter(x => x.dataset.i != null), from = +row.dataset.i;
   e.preventDefault(); row.classList.add('drag');
   let to = from;
@@ -4466,6 +4564,13 @@ function showGame() {
 // ---------- settings ----------
 const setmodal = $('setmodal');
 function renderSettings() {
+  // (a field being typed in keeps what was typed, and its focus)
+  const fa = document.activeElement, typing = fa && fa.tagName === 'INPUT' && fa.id && $('setbody').contains(fa) ? { id: fa.id, v: fa.value, a: fa.selectionStart, b: fa.selectionEnd } : null;
+  renderSettings0();
+  const fi = typing && $(typing.id);
+  if (fi) { if (fi.value !== typing.v) fi.dataset.dirty = '1'; fi.value = typing.v; fi.focus(); try { fi.setSelectionRange(typing.a, typing.b); } catch (e) { } }
+}
+function renderSettings0() {
   $('setbody').innerHTML =
     '<div class="setrow"><div>Title<small>Shown in the title bar. Empty: the name of this PC' + (feed.pc ? ' (' + esc(feed.pc) + ')' : '') + '.</small></div><input class="setin" id="sTitle" maxlength="60" spellcheck="false" placeholder="' + esc(feed.pc || 'HW Deck') + '" value="' + esc(S.title || '') + '"></div>' +
     '<div class="setrow"><div>Clock<small>The time of the last reading, next to the title.</small></div><button class="tog2' + (S.clock ? ' on' : '') + '" id="sClock" aria-pressed="' + S.clock + '" title="Show the clock"></button></div>' +
@@ -4475,9 +4580,10 @@ function renderSettings() {
       [['full', 'Full'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionPicked() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
     '<div class="setrow"><div>Calmer during games<small>Full animations switch to Minimal while a game is in front, and back after. Saves CPU for the game.</small></div><button class="tog2' + (S.gameCalm !== false ? ' on' : '') + '" id="sCalm" aria-pressed="' + (S.gameCalm !== false) + '" title="Minimal animations while a game is in front"></button></div>' +
     '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>The free version turns its shared memory off after 12 hours; a restart turns it back on (Windows asks for permission).</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
-    '<div class="setrow"><div>Keep HWiNFO sharing<small>The free HWiNFO stops sharing after 12 hours. With this on, a Windows task restarts it once it has run about 11 hours, with sharing on (a few seconds without readings). Windows asks for permission once.</small></div>' +
+    '<div class="setrow"><div>Keep HWiNFO sharing<small>The free HWiNFO stops sharing after 12 hours. With this on, a Windows task restarts it once it has run about 11 hours, with sharing on (a few seconds without readings). So it starts by itself, HWiNFO\'s welcome screen goes off and it opens in Sensors-only mode. Windows asks for permission once.</small>' +
+      (feed.keep && feed.keepNote && !feed.keepWait ? '<small class="y">' + esc(feed.keepNote) + '</small>' : '') + '</div>' +
       '<button class="tog2' + (feed.keep ? ' on' : '') + '" id="sKeep" aria-pressed="' + feed.keep + '" title="Keep HWiNFO sharing"' + (feed.fake || feed.keepBusy || feed.keepWait ? ' disabled' : '') + '></button></div>' +
-    '<div class="setrow"><div>Accurate game fps<small>HWiNFO\'s fps can be another app\'s (a browser, Discord, a game\'s launcher). With this on, HW Deck counts the game\'s own frames (DirectX games). Windows asks for permission once, then you sign out and back in.</small>' + fpsNote() + '</div>' +
+    '<div class="setrow"><div>Accurate game fps<small>HWiNFO\'s fps can be another app\'s (a browser, Discord, a game\'s launcher). With this on, ' + esc(feed.brand || 'HW Deck') + ' counts the game\'s own frames (DirectX games). Windows asks for permission once, then you sign out and back in.</small>' + fpsNote() + '</div>' +
       '<button class="tog2' + (feed.fps ? ' on' : '') + '" id="sFps" aria-pressed="' + feed.fps + '" title="Accurate game fps"' + (feed.fake || feed.fpsBusy || feed.fpsWait ? ' disabled' : '') + '></button></div>' +
     (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub if there is a new version when HW Deck starts, then once a day. Nothing else is sent.') + '</small></div>' +
       '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">' + (feed.canUpdate ? 'Update now' : 'Get it') + '</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>') +
@@ -4508,6 +4614,7 @@ $('setbody').addEventListener('click', e => {
 });
 $('setbody').addEventListener('change', e => {
   const id = e.target.id; if (id !== 'sGameDays' && id !== 'sWarnDays') return;
+  delete e.target.dataset.dirty;
   // (old 0: not set since a damaged settings file, so any number cuts something and asks first)
   const k = id === 'sGameDays' ? 'gameDays' : 'warnDays', old = feed[k] || 0, v = Math.max(1, Math.min(3650, Math.round(Number(e.target.value)) || old || 30));
   e.target.value = old || ''; if (v === old) return;
@@ -4515,6 +4622,8 @@ $('setbody').addEventListener('change', e => {
   if (old && v > old) go();
   else askConfirm('Keep ' + (k === 'gameDays' ? 'sessions' : 'warnings') + ' ' + v + (v === 1 ? ' day?' : ' days?'), (k === 'gameDays' ? 'Sessions' : 'Warnings') + ' older than that are deleted now. A copy goes to ' + (k === 'gameDays' ? 'games.log.bak' : 'alerts.log.bak') + '.', 'Delete older', go);
 });
+// (a days value put back after Settings redrew under it: left without another key, it still counts)
+$('setbody').addEventListener('focusout', e => { const t = e.target; if (t.dataset && t.dataset.dirty) setTimeout(() => { if (t.dataset.dirty) { delete t.dataset.dirty; t.dispatchEvent(new Event('change', { bubbles: true })); } }, 0); });
 $('setbody').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'sGameDays' || e.target.id === 'sWarnDays')) { e.preventDefault(); const t = e.target; setTimeout(() => t.blur(), 0); } });   // (later: the same Enter pressed Cancel on the question it opened)
 $('setbody').addEventListener('input', e => {
   if (e.target.id !== 'sTitle') return;
@@ -4541,12 +4650,12 @@ $('rstBtn').onclick = restartHwinfo;
 let toastT = 0, toastDepth = -1;
 function toast(msg, withUndo, ms) {
   setText($('toastTxt'), msg); $('toastUndo').hidden = !withUndo;
-  toastDepth = withUndo ? undoStack.length : -1;
+  toastDepth = withUndo ? undoSeq : -1;
   const t = $('toast'); t.classList.add('show'); clearTimeout(toastT);
   toastT = setTimeout(() => { t.classList.remove('show'); $('toastUndo').hidden = true; toastDepth = -1; }, ms || (withUndo ? 8000 : msg.length > 60 ? 5000 : 2600));
 }
 // another change after the toast: its Undo would undo that one instead, so it goes
-function toastStale() { if (toastDepth >= 0 && undoStack.length !== toastDepth) retireToastUndo(); }
+function toastStale() { if (toastDepth >= 0 && undoSeq !== toastDepth) retireToastUndo(); }
 function retireToastUndo() { $('toastUndo').hidden = true; toastDepth = -1; }
 
 // ---------- keys ----------
@@ -4560,7 +4669,8 @@ document.addEventListener('keydown', ev => {
   // fields that take typing (a checkbox doesn't; a select takes letters and digits for its options)
   const typing = ev.target.closest && ev.target.closest('textarea, select, input:not([type=checkbox]):not([type=radio])');
   const ctrl = ev.ctrlKey || ev.metaKey, k = (ev.key || '').toLowerCase();
-  if (ctrl && k === 's') { ev.preventDefault(); if (!cmodal.classList.contains('open')) onSave(); return; }
+  // (a name or a size still being typed goes in first: those apply when the field is left)
+  if (ctrl && k === 's') { ev.preventDefault(); if (cmodal.classList.contains('open')) return; if (nudge) flushNudge(); const a = document.activeElement; if (a && a.matches && a.matches('#lName, #insp input[data-sz], #insp input[data-csz], #gcz .gz-name, #cTab input')) { a.blur(); if (a.isConnected && !a.closest('#cTab')) a.focus(); } setTimeout(() => { if (!cmodal.classList.contains('open')) onSave(); }, 0); return; }   // (a layout field still being typed: left and taken back, which applies it if it changed)
   if (ev.key === 'Escape') {
     if (drag) { endDrag(true); return; }
     if (cmodal.classList.contains('open')) { closeConfirm(); return; }
@@ -4655,7 +4765,7 @@ const agoTxt = s => {
   return s < 60 ? 'less than a minute ago' : m < 60 ? m + ' min ago' : d ? plural(d, 'day') + (h % 24 ? ' ' + (h % 24) + ' h' : '') + ' ago' : h + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') + ' ago';
 };
 // Accurate game fps: how it stands, under its text (nothing while it is off)
-const fpsNote = () => !feed.fps || feed.fpsWait ? '' : '<small class="' + (feed.fpsState === 'on' ? '' : 'y') + '">' + ({ on: 'On: HW Deck counts the game\'s own frames.', signin: 'Almost: sign out of Windows and back in to finish.',
+const fpsNote = () => !feed.fps || feed.fpsWait ? '' : '<small class="' + (feed.fpsState === 'on' ? '' : 'y') + '">' + ({ on: 'On: ' + esc(feed.brand || 'HW Deck') + ' counts the game\'s own frames.', signin: 'Almost: sign out of Windows and back in to finish.',
   denied: 'Windows doesn\'t let this account count frames.', failed: 'Couldn\'t start counting frames.' }[feed.fpsState] || '') + '</small>';
 const keepTip = () => feed.keep ? '' : ' Keep HWiNFO sharing in Settings restarts it before that happens.';
 function showFeed() {
@@ -4671,7 +4781,7 @@ function showFeed() {
       : READ.length ? 'HWiNFO stopped sharing. Restart HWiNFO turns sharing back on; the values come back by themselves.' + keepTip()
       : 'HWiNFO isn\'t sharing its readings. Restart HWiNFO turns sharing back on. Never set it up? In HWiNFO: Config, Main Settings, tick Shared Memory Support.');
   }
-  if (ban.hidden !== was) { clearTimeout(fitTimer); fitTimer = setTimeout(() => { autofit(); updateView(true); }, 30); }   // the banner takes room: fit again
+  if (ban.hidden !== was) { clearTimeout(fitTimer); fitTimer = setTimeout(refit, 30); }   // the banner takes room: fit again
 }
 function onHost(m) {
   if (m.t === 'state') {
@@ -4683,8 +4793,12 @@ function onHost(m) {
     feed.ext = !!m.ext;
     if (m.ext && !EXT.loaded) { EXT.loaded = true; const sc = document.createElement('script'); sc.src = 'extras.js'; sc.onload = () => { EXT.ready = true; packMemo.clear(); renderView(false); renderStorage(); renderInsp(); bootCheck(); }; document.head.appendChild(sc); }
     S.slots = (m.slots || []).slice(0, 5).map(cleanSlot);
+    heldSlots = new Set(Array.isArray(m.held) ? m.held : []);
     while (S.slots.length < 5) S.slots.push(null);
     const st = m.state;
+    // (a slot another program held at the start comes in later: the view is linked to it again then, see 'slots'; a
+    // missing or damaged one never comes, so only a held one waits)
+    slotWanted = st && Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && !S.slots[st.active] && Array.isArray(m.held) && m.held.includes(st.active) ? st.active : null;
     if (st && st.L && Array.isArray(st.L.cats)) { S.L = cleanLayout(st.L); S.active = Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && S.slots[st.active] ? st.active : null; S.edit = st.edit !== false; S.screen = ['tiles', 'overview', 'grid'].includes(st.screen) ? st.screen : 'tiles'; S.motion = st.motion === false ? 'off' : st.motion === 'reduced' ? 'full' : MOTIONS.includes(st.motion) ? st.motion : undefined; }
     else { S.L = emptyLayout(); S.active = null; S.edit = true; S.screen = 'tiles'; }   // first run: nothing, edit mode on
     S.gameCalm = !st || st.gameCalm !== false;
@@ -4693,13 +4807,13 @@ function onHost(m) {
     S.title = st && typeof st.title === 'string' && st.title.trim() ? st.title.slice(0, 60) : undefined; S.clock = !st || st.clock !== false;
     S.hide = cleanHide(st && st.hide); hideSets();
     renderTitle(); $('rstBtn').disabled = feed.fake; if (feed.fake) $('rstBtn').title = 'Demo data: there is no HWiNFO to restart';
-    undoStack = []; redoStack = []; sel = null; selCat = null; preview = null;
+    undoStack = []; redoStack = []; keyStep.t = 0; sel = null; selCat = null; preview = null;
     app.classList.toggle('editing', S.edit); $('editBtn').classList.toggle('on', S.edit);
     for (const b of document.querySelectorAll('#screens button[data-s]')) b.classList.toggle('active', b.dataset.s === S.screen);
     placeTabInd(true);
     lastSub = ''; subscribe(); enterNext = true; renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves();
   } else if (m.t === 'settings') {
-    feed.autostart = !!m.autostart; feed.hwinfo = m.hwinfo || null; feed.keepBusy = !!m.keepBusy; if (m.keepDone) feed.keepWait = false; if (!feed.keepBusy && !feed.keepWait) feed.keep = !!m.keep;
+    feed.autostart = !!m.autostart; feed.hwinfo = m.hwinfo || null; feed.keepBusy = !!m.keepBusy; if (m.keepDone) feed.keepWait = false; if (!feed.keepBusy && !feed.keepWait) feed.keep = !!m.keep; feed.keepNote = typeof m.keepNote === 'string' ? m.keepNote : '';
     feed.fpsBusy = !!m.fpsBusy; if (m.fpsDone) feed.fpsWait = false; if (!feed.fpsBusy && !feed.fpsWait) feed.fps = !!m.fps; feed.fpsState = typeof m.fpsState === 'string' ? m.fpsState : 'off'; feed.updates = m.updates !== false; feed.latest = m.latest || null; feed.canUpdate = !!m.canUpdate; syncUpd();
     feed.gameDays = m.gameDays || 0; feed.warnDays = m.warnDays || 0;   // (0: not set since a damaged settings file, nothing cut)
     if ($('wmodal').classList.contains('open')) send({ t: 'alerts' });
@@ -4736,7 +4850,11 @@ function onHost(m) {
     feed.gs = m.gs && typeof m.gs === 'object' ? m.gs : null;   // this game session's min, average, max of the game's own readings
     feed.bnl = m.bnl;   // the bottleneck's call this second, game or not
     feed.rec = Array.isArray(m.rec) ? m.rec.filter(x => Array.isArray(x) && x.length >= 2) : [];   // your own sessions running: [start, name]
-    if (lastTick && m.ts - lastTick > 2) { for (const k in holdSince) delete holdSince[k]; for (const k in cellEp) delete cellEp[k]; }   // seconds we didn't see (hidden): holds and episodes start again
+    if (lastTick && m.ts - lastTick > 2) { for (const k in holdSince) delete holdSince[k]; for (const k in cellEp) delete cellEp[k]; c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; }   // seconds we didn't see (hidden): holds and episodes start again
+    // as the log: HWiNFO not sharing for 10 s ends every hold and episode (its Mark); a shorter stall's seconds don't
+    // count as calm ones (the log counts calm seconds, the page their times: moved on by the stall)
+    if (m.status !== 'ok') { if (!notOkAt) notOkAt = m.ts; if (!notOkMarked && m.ts - notOkAt >= 10) { notOkMarked = true; for (const k in holdSince) delete holdSince[k]; for (const k in cellEp) delete cellEp[k]; c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; } }
+    else if (notOkAt) { const gap = m.ts - notOkAt; for (const k in cellEp) if (cellEp[k].calmTs) cellEp[k].calmTs += gap; if (c12Ep.calm) c12Ep.calm += gap; notOkAt = 0; notOkMarked = false; }
     nowTs = lastTick = m.ts;
     if (S.clock) setText($('clock'), hhmmss(m.ts));
     for (let j = 0; j < m.i.length; j++) { const r = READ[m.i[j]]; if (!r) continue; r.v = m.v[j]; if (m.mn[j] != null) { r.mn = m.mn[j]; r.mx = m.mx[j]; r.av = m.av[j]; } }
@@ -4768,11 +4886,40 @@ function onHost(m) {
     if (!xSeen.has(m.t)) { xSeen.add(m.t); remeasureSoon(); }
     if (!boot.x) { boot.x = true; bootCheck(); }
   }
+  else if (m.t === 'slots') {   // (slots that another program held at the start, free now: the view stays as it is)
+    const sent = Object.keys(m.slots || {}).map(Number).filter(i => Number.isInteger(i) && i >= 0 && i < 5);
+    const sl = S.slots.slice(); for (const i of sent) sl[i] = cleanSlot(m.slots[i]);   // (only the ones sent)
+    // (the loaded slot back other than the page had it, a save the host refused: the view is no longer that slot, so
+    // Ctrl+S can't go over a layout never seen)
+    // (and every undo step linked to a slot that came back different: an undo can't link the view back to it either)
+    const same = (a, b) => !!a && !!b && a.name === b.name && layoutSig(cleanLayout(a.layout)) === layoutSig(b.layout);   // (b was cleaned as it came in)
+    const changed = new Set(); for (const i of sent) if (S.slots[i] && !same(S.slots[i], sl[i])) changed.add(i);
+    if (changed.size) {
+      const unslot = js => { const o = JSON.parse(js); if (!changed.has(o.active)) return js; o.active = null; return JSON.stringify(o); };
+      undoStack = undoStack.map(unslot); redoStack = redoStack.map(unslot);
+      if (changed.has(S.active)) { S.active = null; saveState(); }
+    }
+    for (const k of sent) heldSlots.delete(k);
+    S.slots = sl;
+    if (slotWanted != null && sent.includes(slotWanted) && sl[slotWanted] && S.active == null) {   // (the slot the view was linked to, held at the start)
+      // (its undo steps since the start are that view's too: no Load, Clear, Save or Import came between, or slotWanted would be gone)
+      const w = slotWanted, relink = js => { const o = JSON.parse(js); if (o.active != null) return js; o.active = w; return JSON.stringify(o); };
+      undoStack = undoStack.map(relink); redoStack = redoStack.map(relink);
+      S.active = w; saveState();
+    }
+    if (slotWanted != null && sent.includes(slotWanted)) slotWanted = null;
+    syncSaves(); renderSaves();
+  }
   else if (m.t === 'imported') {
     const d = cleanSlot(m.data && typeof m.data === 'object' && m.data.hwdeck && m.data.slot ? m.data.slot : m.data), i = m.slot;   // (the app's file, or a bare slot)
     if (!d || !(i >= 0 && i < 5)) { toast('That file is not an HW Deck layout'); return; }
     if (!d.name) d.name = 'Imported';
-    S.slots[i] = d; saveSlot(i); syncSaves(); renderSaves();
+    S.slots[i] = d; saveSlot(i); if (slotWanted === i) slotWanted = null;
+    if (S.active === i) { S.active = null; saveState(); }   // (the view is no longer what that slot holds: Ctrl+S won't put it over the import)
+    // (nor can an undo step make the view that slot again)
+    const unslot = js => { const o = JSON.parse(js); if (o.active !== i) return js; o.active = null; return JSON.stringify(o); };
+    undoStack = undoStack.map(unslot); redoStack = redoStack.map(unslot);
+    syncSaves(); renderSaves();
     toast('Imported into slot ' + (m.slot + 1) + ': load it to use it');
   }
 }

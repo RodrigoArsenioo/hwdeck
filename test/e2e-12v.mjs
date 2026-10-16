@@ -18,7 +18,7 @@ const ev = x => p.evaluate(x);
 const until = async (expr, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await ev(expr)) return true; await p.sleep(150); } return false; };
 const log = () => existsSync(join(data, 'alerts.log')) ? readFileSync(join(data, 'alerts.log'), 'utf8') : '';
 
-ok('catalog arrives with the connector: 300 made up, the bottleneck, the connector', await until('READ.length === 302 && feed.got'), await ev('READ.length'));
+ok('catalog arrives with the connector: 300 made up, the bottleneck, the connector, the game time', await until('READ.length === 303 && feed.got'), await ev('READ.length'));
 ok('it is HW Deck\'s own, after the bottleneck, with six pins and their powers', await ev('(() => { const r = BYKEY.get(CONN); return !!r && SENS[r.s].name === "HW Deck" && r.label === "12V-2x6 connector" && r.unit === "A" && r.kind === "12v" && feed.c12keys && feed.c12keys[0].length === 6 && feed.c12keys[1].length === 6; })()'),
   await ev('JSON.stringify(feed.c12keys)'));
 const pins = await ev('feed.c12keys[0]');

@@ -29,7 +29,7 @@ ${msgs.map(([m, w]) => `[void][U.W]::SendMessage($h, ${m}, [IntPtr]${w}, [IntPtr
 const WM_QUERYENDSESSION = 0x11, WM_ENDSESSION = 0x16, WM_POWERBROADCAST = 0x218, PBT_APMSUSPEND = 4, PBT_APMRESUMEAUTOMATIC = 0x12;
 const since = n => lines().slice(n);
 
-ok('catalog arrives', await until('READ.length === 301 && feed.got'));
+ok('catalog arrives', await until('READ.length === 302 && feed.got'));
 ok('the cell past its line is logged', await untilLog(ls => ls.some(l => /YELLOW\s+Hot: /.test(l))), lines().slice(-2).join(' | '));
 ok('this copy has a window to send to', pid > 0 && alive(pid) && win([0, 0]) === 'sent', String(pid));
 

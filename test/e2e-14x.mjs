@@ -22,7 +22,7 @@ const until = async (expr, ms = 8000) => { const t0 = Date.now(); while (Date.no
 const text = f => existsSync(f) ? readFileSync(f, 'utf8') : '';
 const host = m => E(`send(${JSON.stringify(m)})`);
 
-ok('catalog arrives', await until('READ.length === 301 && feed.got'));
+ok('catalog arrives', await until('READ.length === 302 && feed.got'));
 await host({ t: 'fakeGame', game: null });
 const ramKey = await E('(READ.find(r => r.label === "Physical Memory Used") || {}).key');
 const availKey = await E('(READ.find(r => r.label === "Physical Memory Available") || {}).key');
@@ -123,6 +123,12 @@ await E(`(() => { $('wmodal').classList.add('open'); renderWarnings(${JSON.strin
 ok('the warnings popup shows the newest 300 rows and a button for the rest', await E('document.querySelectorAll("#wlist > .wrow").length === 300 && /Show older \\(400 more rows\\)/.test($("wMore").textContent)'), await E('[document.querySelectorAll("#wlist > .wrow").length, $("wMore") && $("wMore").textContent]'));
 await E('$("wMore").click()'); await p.sleep(200);
 ok('the button adds 300 more', await E('document.querySelectorAll("#wlist > .wrow").length === 600'));
+ok('a cell named "constructor" gets its warnings like any other', await E(`(() => { const p2 = n => ('0' + n).slice(-2), st = ms => { const t = new Date(ms); return t.getFullYear() + '-' + p2(t.getMonth() + 1) + '-' + p2(t.getDate()) + ' ' + p2(t.getHours()) + ':' + p2(t.getMinutes()) + ':' + p2(t.getSeconds()); };
+  renderWarnings(st(Date.now() - 120000) + '  YELLOW  constructor: 91 \\u00b0C (over its line)\\n' + st(Date.now() - 60000) + '  YELLOW  toString: 92 \\u00b0C (over its line)'); return [...document.querySelectorAll('#wlist .wrow, #wlist .wgrp')].map(r => r.textContent).join('|'); })()`).then(t => /constructor/.test(t) && /toString/.test(t)));
+ok('graphs: a reading that sits at 0 (a drive\'s rate, with or without noise) shows its bursts whole, a far spike over a busy or a steady line is still cut', await E(`(() => { const idle = Array(60).fill(0).concat([3, 1800, 40]), fps = Array.from({ length: 60 }, (x, i) => 140 + (i * 37) % 100).concat([1700]);
+  const noisy = Array.from({ length: 60 }, (x, i) => (i % 5) * 0.1).concat([3, 2400, 40]), capped = Array.from({ length: 60 }, (x, i) => 143 + i % 3).concat([403]);
+  const fan = Array.from({ length: 60 }, (x, i) => 595 + i % 11).concat([65535]), busy = Array.from({ length: 60 }, (x, i) => 2 + (i % 4) * 0.3).concat([3000, 2800, 3100]);
+  return !scaleTop(busy, 'MB/s').cut && !scaleTop(idle, 'MB/s').cut && scaleTop(idle, 'MB/s').top === 1800 && scaleTop(fps, 'FPS').cut && !scaleTop(noisy, 'MB/s').cut && scaleTop(capped, 'FPS').cut && scaleTop(capped, 'FPS').top === 145 && scaleTop(fan, 'RPM').cut; })()`));
 // a row of several episodes draws them when it opens; a line that warns below gives the row its lowest peak
 {
   const d0 = new Date(); d0.setHours(0, 1, 0, 0);
@@ -227,6 +233,14 @@ await E(`(() => { S.motion = 'minimal'; applyMotion(); return 1; })()`); await h
 ok('Minimal or Off picked by hand stay as they are during a game', await until('feed.front === true', 5000) && (await mode()) === 'minimal');
 await host({ t: 'fakeGame', game: null });
 await E(`(() => { S.motion = 'full'; applyMotion(); saveState(); return 1; })()`);
+
+// Automatic Grid: one table or two, decided by the fit (not by the size the view before it left): the same from another
+// view and after a redraw; one table only when it isn't smaller than two side by side could be
+const gridSt = () => E('[isCustom("grid"), document.querySelectorAll("#view .gtable").length, parseFloat(document.documentElement.style.fontSize), gridLim()]');
+await E('document.querySelector(\'#screens button[data-s="tiles"]\').click()'); await p.sleep(900);
+await E('document.querySelector(\'#screens button[data-s="grid"]\').click()'); await p.sleep(900);
+const gA = await gridSt(); await E('renderView(false)'); await p.sleep(400); const gB = await gridSt();
+ok('Automatic Grid: one table or two by the fit, the same after a redraw', !gA[0] && gA[1] === gB[1] && Math.abs(gA[2] - gB[2]) < 0.3 && (gA[1] === 1 ? gA[2] >= gA[3] - 0.06 : gA[2] <= gA[3] + 0.01), JSON.stringify([gA, gB]));
 
 ok('no page errors', errs.length === 0, errs.join(' | '));
 p.close();

@@ -22,8 +22,8 @@ const pin = (key, v) => host({ t: 'fakePin', key, v });
 const game = (name, front) => host({ t: 'fakeGame', game: name, front });
 const ts = () => ev('nowTs');
 
-ok('catalog arrives, HWiNFO\'s 300 and one of its own', await until('READ.length === 301 && feed.got'), await ev('READ.length'));
-ok('the bottleneck is a reading of the "HW Deck" sensor, after HWiNFO\'s', await ev('(() => { const r = BYKEY.get(BNECK); return !!r && SENS[r.s].name === "HW Deck" && r.label === "Bottleneck" && r.idx === READ.length - 1; })()'));
+ok('catalog arrives, HWiNFO\'s 300 and two of its own (the bottleneck, the game time)', await until('READ.length === 302 && feed.got'), await ev('READ.length'));
+ok('the bottleneck is a reading of the "HW Deck" sensor, right after HWiNFO\'s', await ev('(() => { const r = BYKEY.get(BNECK); return !!r && SENS[r.s].name === "HW Deck" && r.label === "Bottleneck" && r.idx === 300; })()'));
 ok('the status dot counts only HWiNFO\'s readings', /Demo data: 300 made-up/.test(await ev('$("dot").title')), await ev('$("dot").title'));
 const gpuKey = await ev('(READ.find(r => r.label === "GPU Core Load" && /^dGPU/.test(SENS[r.s].name)) || {}).key');
 const cpuKey = await ev('(READ.find(r => r.label === "Max CPU/Thread Usage" && /^CPU/.test(SENS[r.s].name)) || {}).key');

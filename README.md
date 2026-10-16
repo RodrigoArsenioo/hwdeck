@@ -13,7 +13,7 @@ A small dashboard for HWiNFO. Pick the sensors you care about, give them warning
    - In the sensors window, click **Config**, then **Main Settings**.
    - On the **General / User Interface** tab, tick **Shared Memory Support**, then OK.
 
-   The free HWiNFO stops sharing after 12 hours. HW Deck's restart button (the arrow next to the views) turns it back on. Or turn on Keep HWiNFO sharing in Settings, and HW Deck restarts it for you before then.
+   The free HWiNFO stops sharing after 12 hours. HW Deck's restart button (the arrow next to the views) turns it back on. Or turn on Keep HWiNFO sharing in Settings, and HW Deck restarts it for you before then (it turns HWiNFO's welcome screen off, so HWiNFO starts by itself).
 2. Paste this into PowerShell. It downloads the newest installer from [Releases](https://github.com/RodrigoArsenioo/hwdeck/releases/latest), checks it against its published checksum and runs it ([the script](install.ps1)):
 
    ```
@@ -39,8 +39,9 @@ Works on 64-bit Windows 10 and 11.
 
 ## Good to know
 
-- No account, no tracking. The only thing it does online is ask GitHub if there's a new version (when it starts, then once a day) (you can turn that off in Settings).
+- No account, no tracking. Online it only asks GitHub if there's a new version (when it starts, then once a day; you can turn that off in Settings), and downloads it when you click Update now.
 - To update, click Update now in Settings when it says a new version is out (or paste the PowerShell line again). Your layouts and history stay.
+- Coming from the old zip? Quit it from the tray first, then install. Delete its folder after.
 - To remove it: Windows Settings, Apps, HW Deck, Uninstall. Your layouts and history stay.
 - Your layouts and history are in `%APPDATA%\HW Deck`.
 - Not made by or affiliated with HWiNFO.

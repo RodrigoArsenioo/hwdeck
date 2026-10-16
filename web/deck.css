@@ -193,7 +193,8 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .dch .chev svg { transition: transform 140ms; }
 .dcat.collapsed .dch .chev svg { transform: rotate(-90deg); }
 .app:not(.editing) .dcat.isempty { display: none; }
-.app.fitting .notitle > .dch, .app.fitting .card.notitle > .ch, .app.fitting .card.band.notitle > .bh,
+.app.fitting .blk.notitle > .dch, .app.fitting .card.notitle > .ch { visibility: hidden !important; }   /* (a hidden title keeps its room, as outside edit mode) */
+.app.fitting .card.band.notitle > .bh,
 .app.fitting .dcat.isempty, .app.fitting .rl, .app.fitting .dch .grip, .app.fitting .dch .chev, .app.fitting .dch .acts, .app.fitting .dch .cnt { display: none !important; }   /* while edit mode works out the text size: as outside it */
 .dc.sel { outline: 2px solid var(--edit); outline-offset: -1px; }
 .dc.dragging { opacity: 0.35; }

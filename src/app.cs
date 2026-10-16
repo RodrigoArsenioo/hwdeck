@@ -74,6 +74,7 @@ static partial class Brand
     public static string Name = "HW Deck";      // the window, the tray, messages, the Start with Windows entry
     public static string DataDir = null;        // the data folder when no --data is given (null: %APPDATA%\<Name>)
     public static bool Updates = true;          // asks GitHub once a day for a new HW Deck
+    public static bool NoActions = false;       // a copy that shows everything but changes nothing on the PC (a build's test copy)
     static partial void Custom();
     static Brand() { Custom(); }
 }
@@ -418,6 +419,10 @@ class DeckSource : Source
     void CopyExtras()
     {
         if (Values.Length <= Inner.Readings.Count) return;      // no HWiNFO yet: no extras either
+        // an extra whose readings changed since the catalog was made (in its Second): nothing until the next Poll makes the
+        // catalog again, rather than its new values on the old readings
+        int ev = Extras.Count; foreach (var x in Extras) ev = ev * 31 + x.Version;
+        if (ev != extraVersion) { if (extraAt.Length > 0) for (int i = extraAt[0]; i < Values.Length; i++) Values[i] = double.NaN; return; }
         for (int j = 0; j < Extras.Count && j < extraAt.Length; j++)
         {
             var x = Extras[j]; var v = x.Values;
@@ -552,17 +557,19 @@ class Frames
     [UnmanagedFunctionPointer(CallingConvention.Winapi)] delegate void RecordCallback(IntPtr rec);
     const int PropsSize = 120, NameMax = 512;   // EVENT_TRACE_PROPERTIES on x64, then the session's name
 
-    readonly string name;                   // one session per HW Deck data folder (a test copy beside the real one)
+    readonly string name;                   // one session per HW Deck data folder and account (a test copy beside the real one)
     ulong session, trace;
     RecordCallback cb;                      // (kept alive: the trace calls it from its own thread)
     System.Threading.Thread thread;
     public volatile int Pid;                // the game's process (0: none): only its frames are kept
     readonly long[] ring = new long[16384]; int head, count, ringPid;   // present times (QPC), the newest at head - 1
+    volatile int seenPid;                   // the last process whose frames came in (it presents through DXGI)
+    int lastPid; long pidAt;                // the process the last second looked at, and since when (QPC)
     readonly object lk = new object();
     public string State = "off";            // off | on | denied (no rights: not admin, not in Performance Log Users) | failed
     public bool On { get { return State == "on"; } }
     public double Fps = double.NaN, Low = double.NaN, Ft = double.NaN;   // this second's, for the game (NaN: no game)
-    public Frames(string name) { this.name = name; cb = OnRecord; }
+    public Frames(string name) { this.name = name; cb = OnRecord; stallAt = unchecked(Environment.TickCount - 10000); }
 
     IntPtr Props()
     {
@@ -608,13 +615,13 @@ class Frames
             finally { Marshal.FreeHGlobal(ln); Marshal.FreeHGlobal(lf); }
             if (trace == ulong.MaxValue) { StopNamed(); State = "failed"; return; }
             ulong t = trace;
+            State = "on";   // (before the thread starts: a trace that ends at once turns it to failed, not the other way round)
             thread = new System.Threading.Thread(() =>
             {
                 try { ProcessTrace(new[] { t }, 1, IntPtr.Zero, IntPtr.Zero); } catch { }
                 if (State == "on" && trace == t) State = "failed";   // ended without a Stop: another program stopped it
             }) { IsBackground = true, Name = "frames" };
             thread.Start();
-            State = "on";
         }
         catch { State = "failed"; }
     }
@@ -645,26 +652,33 @@ class Frames
             if (ringPid != pid) { ringPid = pid; count = 0; }
             ring[head] = ts; head = (head + 1) % ring.Length; if (count < ring.Length) count++;
         }
+        seenPid = pid;
     }
     // once a second: the fps of the last second of frames that came in, the 1% low over the last 10 s (the 99th
-    // percentile frame time), the frame time; no frames for 3 s (a paused or hidden game): 0 fps
-    long stallAt;   // the last time the trace was asked again for frames that stopped coming
+    // percentile frame time), the frame time; no frames for 3 s (a paused or hidden game): 0 fps. A game that hasn't
+    // presented through DXGI since it came to the front (Vulkan, OpenGL, DirectX 9, or just back from an alt-tab) has
+    // no number yet: nothing, not 0 (its sessions take HWiNFO's fps instead, see Games.Feed)
+    int stallAt;   // the last time the trace was asked again for frames that stopped coming (TickCount, compared unchecked)
     public void Second()
     {
-        if (!On || Pid == 0) { Fps = Low = Ft = double.NaN; return; }
+        long f = System.Diagnostics.Stopwatch.Frequency, now = System.Diagnostics.Stopwatch.GetTimestamp();
+        int pid = Pid;
+        if (pid != lastPid) { lastPid = pid; pidAt = now; }
+        if (!On || pid == 0) { Fps = Low = Ft = double.NaN; return; }
         // no frames for 3 s: a paused game, or another program that stopped its own trace of the same events turned
         // them off for everyone: asked again, at most every 5 s (cheap; a paused game simply stays at 0)
-        if (double.IsNaN(Fps) || Fps == 0) { long n = Environment.TickCount; if (n - stallAt > 5000) { stallAt = n; var g = Dxgi; try { EnableTraceEx2(session, ref g, 1, 5, 0, 0, 0, IntPtr.Zero); } catch { } } }
-        long f = System.Diagnostics.Stopwatch.Frequency, now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (double.IsNaN(Fps) || Fps == 0) { int n = Environment.TickCount; if (unchecked(n - stallAt) > 5000) { stallAt = n; var g = Dxgi; try { EnableTraceEx2(session, ref g, 1, 5, 0, 0, 0, IntPtr.Zero); } catch { } } }
         var ts = new List<long>();
         lock (lk)
         {
-            if (ringPid != Pid) count = 0;
-            for (int i = count; i >= 1; i--) { long t = ring[(head - i + ring.Length) % ring.Length]; if (t >= now - 11 * f) ts.Add(t); }
+            if (ringPid != pid) count = 0;
+            for (int i = count; i >= 1; i--) { long t = ring[(head - i + ring.Length) % ring.Length]; if (t >= now - 11 * f && t >= pidAt) ts.Add(t); }
         }
         ts.Sort();   // (events come one buffer per CPU, not quite in order)
+        if (ts.Count == 0 && (seenPid != pid || now - pidAt < 3 * f)) { Fps = Low = Ft = double.NaN; return; }   // (not a DXGI game, or not yet)
         if (ts.Count == 0 || ts[ts.Count - 1] < now - 3 * f) { Fps = 0; Low = Ft = double.NaN; return; }
         long last = ts[ts.Count - 1];
+        if (last - f < pidAt) { Fps = Low = Ft = double.NaN; return; }   // (in front for less than the whole second: a part of a second's frames)
         int n1 = ts.Count(t => t > last - f);
         Fps = n1;
         Ft = n1 > 0 ? 1000.0 / n1 : double.NaN;
@@ -912,8 +926,9 @@ class History
         foreach (var kv in tracks) { var t = kv.Value; if (t.MCnt > 0 || t.TCnt > 0) openAcc[kv.Key] = new[] { t.MCnt, t.MSum, t.MPeak, t.TCnt, t.TSum, t.TPeak }; }
         foreach (var t in tracks.Values)   // their values so far; the sums go on, so a cancelled shutdown loses nothing
         {
-            if (t.MCnt > 0 && curMin >= 0) { int k = curMin % MinLen; t.MAvg[k] = (float)t.MVal(60); t.MMax[k] = (float)t.MPeak; }
-            if (t.TCnt > 0 && curTen >= 0) { int k = curTen % TenLen; t.TAvg[k] = (float)t.TVal(600); t.TMax[k] = (float)t.TPeak; }
+            // (one with nothing in it gets nothing, as at a minute's end: its slot still holds the same minute a day ago)
+            if (curMin >= 0) { int k = curMin % MinLen; t.MAvg[k] = t.MCnt > 0 ? (float)t.MVal(60) : float.NaN; t.MMax[k] = t.MCnt > 0 ? (float)t.MPeak : float.NaN; }
+            if (curTen >= 0) { int k = curTen % TenLen; t.TAvg[k] = t.TCnt > 0 ? (float)t.TVal(600) : float.NaN; t.TMax[k] = t.TCnt > 0 ? (float)t.TPeak : float.NaN; }
         }
         if (curMin >= 0) minAt[curMin % MinLen] = curMin;
         if (curTen >= 0) tenAt[curTen % TenLen] = curTen;
@@ -1002,7 +1017,7 @@ class Alerts
     class Rule { public string Id, Key, Name, Unit, Mode, Dir, Src; public double Y, R, Tol, Hold, CurveHold, OY = double.NaN, OR = double.NaN; public bool CurveWarn = true; public int Dec; public double[][] Pts; public Func<int> Level; public Func<string> Why; }
     class St
     {
-        public long Since; public int Logged, Calm, Dec; public double Peak, PeakDev; public string Name, Unit; public bool Below;
+        public long Since; public int Logged, Calm, Dec; public double Peak, PeakDev; public string Name, Unit; public bool Below, Off;
         public string PeakTxt { get { return Txt(Peak, Dec, Unit); } }
     }
     List<Rule> rules = new List<Rule>();
@@ -1200,9 +1215,11 @@ class Alerts
             if (lvl > 0)
             {
                 s.Calm = 0;
+                if (s.Logged == 0) s.Off = off;
                 // the worst moment: furthest past the line, or furthest off the curve
                 if (s.Logged == 0) s.Below = !off && (r.Dir == "below") != other;   // which way this episode is bad
-                bool worse = off ? dev > s.PeakDev : s.Below ? v < s.Peak : v > s.Peak;
+                // (a cell with lines and a curve stays one episode across the two; its peak is of the kind it started as)
+                bool worse = off == s.Off && (off ? dev > s.PeakDev : s.Below ? v < s.Peak : v > s.Peak);
                 if (s.Logged == 0 || worse) { s.Peak = v; s.PeakDev = dev; s.Unit = r.Unit; s.Dec = r.Dec; }
                 if (s.Logged == 0) s.Name = r.Name + (off ? " fan curve" : "");   // one name for the whole episode
                 bool fresh = s.Logged != lvl && (s.Logged == 0 || lvl > s.Logged);
@@ -1235,7 +1252,11 @@ class Alerts
 // Rockstar and Xbox
 static class GameRoots
 {
-    static readonly Regex NotAGame = new Regex(@"Wallpaper.?Engine|SteamVR|OVR.?Advanced|Steamworks|Redistributable|Proton|Steam Linux Runtime|Steam Controller|Soundpad|Lossless Scaling", RegexOptions.IgnoreCase);
+    // launchers, browsers and media apps added to Steam for its controller support, by their whole names (a game added
+    // through its own launcher.exe sits in the folder that holds the game, and Mirror's Edge is a game)
+    static readonly Regex NotAShortcutApp = new Regex(@"^(EA( app| Desktop)?|Origin|Steam|Battle\.net|Blizzard Battle\.net|GOG Galaxy( 2(\.0)?)?|Playnite|Heroic( Games Launcher)?|Ubisoft Connect|Uplay|Riot Client|Epic Games( Launcher| Store)?|Rockstar Games Launcher|Amazon Games|HoYoPlay|(Microsoft )?Edge|(Google )?Chrome|(Mozilla )?Firefox|Opera( GX)?|Brave|Vivaldi|Discord|Spotify|Netflix|YouTube|Twitch|Plex( HTPC| Media Player)?|Kodi|VLC( media player)?|Xbox( app)?|(Logitech )?G HUB|LGHUB)$", RegexOptions.IgnoreCase);
+    static readonly Regex NotAShortcutExe = new Regex(@"^(riotclient\w*|battle\.net( launcher)?|eadesktop|origin|galaxyclient|playnite\.\w+|heroic|upc|ubisoftconnect|epicgameslauncher|rockstar\w*launcher|amazon games( ui)?|hyp|lghub(_\w+)?|steam|msedge|chrome|firefox|opera|brave|vivaldi|discord|spotify|vlc|kodi|plex( ?media ?(player|server)| ?htpc)?|netflix|twitch|xboxpcapp)$", RegexOptions.IgnoreCase);
+    static readonly Regex NotAGame = new Regex(@"Wallpaper.?Engine|SteamVR|OVR.?Advanced|Steamworks|Redistributable|Proton|Steam Linux Runtime|Steam Controller|Soundpad|Lossless Scaling|Bongo.?Cat|VTube.?Studio|OBS.?Studio|Blender|DisplayFusion|Fences|Desktop.?Mate|Godot|Aseprite|Krita|Voicemod|FPS.?Monitor|Unreal.?Engine|Twinmotion|RealityCapture|RealityScan|MetaHuman", RegexOptions.IgnoreCase);
 
     static string Norm(string dir)
     {
@@ -1247,12 +1268,20 @@ static class GameRoots
         if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(name) || NotAGame.IsMatch(name)) return;
         string n = Norm(dir);
         if (n == null || n.Length <= 3 || !Directory.Exists(n)) return;   // never a whole drive
-        foreach (var sys in new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86, Environment.SpecialFolder.Windows })
-            if (n == Norm(Environment.GetFolderPath(sys))) return;   // nor a whole system folder
+        // nor anything in Windows (a Steam shortcut to cmd, PowerShell or the on-screen keyboard would make System32 a
+        // game: Task Manager in front would start a session), nor a whole Program Files, profile, Desktop, Documents or
+        // Downloads folder (a shortcut to a .lnk on the Desktop)
+        string win = Norm(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+        if (win != null && win.Length > 3 && n.StartsWith(win)) return;
+        foreach (var sys in new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86, Environment.SpecialFolder.UserProfile, Environment.SpecialFolder.DesktopDirectory,
+                                    Environment.SpecialFolder.CommonDesktopDirectory, Environment.SpecialFolder.MyDocuments })
+            if (n == Norm(Environment.GetFolderPath(sys))) return;
+        if (n == Norm(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"))) return;
         roots.Add(new KeyValuePair<string, string>(n, name.Replace("\u00AE", "").Replace("\u2122", "").Trim()));
     }
 
     // every subkey of an HKLM key
+    static string ReadShared(string f) { using (var rd = new StreamReader(new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))) return rd.ReadToEnd(); }   // (Steam may be writing it)
     static void Each(string key, Action<Microsoft.Win32.RegistryKey> f)
     {
         try
@@ -1274,7 +1303,7 @@ static class GameRoots
             var libs = new List<string> { steam };
             try
             {
-                foreach (Match m in Regex.Matches(File.ReadAllText(Path.Combine(steam, @"steamapps\libraryfolders.vdf")), "\"path\"\\s+\"(.+?)\""))
+                foreach (Match m in Regex.Matches(ReadShared(Path.Combine(steam, @"steamapps\libraryfolders.vdf")), "\"path\"\\s+\"(.+?)\""))
                     libs.Add(m.Groups[1].Value.Replace("\\\\", "\\"));
             }
             catch { }
@@ -1283,12 +1312,14 @@ static class GameRoots
                 try
                 {
                     foreach (var acf in Directory.GetFiles(Path.Combine(lib, "steamapps"), "appmanifest_*.acf"))
-                    {
-                        string t = File.ReadAllText(acf);
-                        var dir = Regex.Match(t, "\"installdir\"\\s+\"(.+?)\"");
-                        var name = Regex.Match(t, "\"name\"\\s+\"(.+?)\"");
-                        if (dir.Success && name.Success) Add(roots, Path.Combine(lib, @"steamapps\common", dir.Groups[1].Value), name.Groups[1].Value);
-                    }
+                        try   // (one manifest being written by Steam right now skips only itself)
+                        {
+                            string t; using (var rd = new StreamReader(new FileStream(acf, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))) t = rd.ReadToEnd();   // (Steam may be writing it)
+                            var dir = Regex.Match(t, "\"installdir\"\\s+\"(.+?)\"");
+                            var name = Regex.Match(t, "\"name\"\\s+\"(.+?)\"");
+                            if (dir.Success && name.Success) Add(roots, Path.Combine(lib, @"steamapps\common", dir.Groups[1].Value), name.Groups[1].Value);
+                        }
+                        catch { }
                     foreach (var d in Directory.GetDirectories(Path.Combine(lib, @"steamapps\common")))
                     {
                         string n = Norm(d);
@@ -1298,31 +1329,69 @@ static class GameRoots
                 catch { }
             }
             // non-Steam games added to the library (shortcuts.vdf is binary: \x01key\x00value\x00)
+            var cuts = new List<string[]>();   // start folder, name, exe
             try
             {
                 foreach (var f in Directory.GetFiles(Path.Combine(steam, "userdata"), "shortcuts.vdf", SearchOption.AllDirectories))
                 {
-                    string t = Encoding.UTF8.GetString(File.ReadAllBytes(f));
+                    string t; try { t = ReadShared(f); } catch { continue; }   // (one account's file being written skips only itself)
                     foreach (Match m in Regex.Matches(t, "\u0001appname\u0000([^\u0000]*)\u0000\u0001exe\u0000([^\u0000]*)\u0000\u0001startdir\u0000([^\u0000]*)\u0000", RegexOptions.IgnoreCase))
                     {
+                        // (Steam quotes the target: anything after it is arguments)
+                        string exe = m.Groups[2].Value.Trim(), exeName;
+                        if (exe.StartsWith("\"")) { int q = exe.IndexOf('"', 1); exe = q > 0 ? exe.Substring(1, q - 1) : exe.Trim('"'); }
+                        try { exeName = Path.GetFileNameWithoutExtension(exe); } catch { exeName = ""; }
+                        // (a launcher, a browser or a media app added to Steam for its controller support is no game)
+                        if (NotAShortcutApp.IsMatch(m.Groups[1].Value.Trim()) || NotAShortcutExe.IsMatch(exeName)) continue;
                         string start = m.Groups[3].Value.Trim().Trim('"');
-                        if (start.Length <= 3) { try { start = Path.GetDirectoryName(m.Groups[2].Value.Trim().Trim('"')); } catch { start = null; } }
-                        Add(roots, start, m.Groups[1].Value);
+                        if (start.Length <= 3) { try { start = Path.GetDirectoryName(exe); } catch { start = null; } }
+                        cuts.Add(new[] { start, m.Groups[1].Value, exe });
                     }
                 }
             }
             catch { }
+            // games added through one emulator share its folder, and which one runs can't be told from the process: such
+            // a folder goes by the program's name (Dolphin), not by the first game's
+            // (one game added twice, "Skyrim" and "Skyrim SKSE", keeps the name the others start with; a script launcher's
+            // folder goes by the folder's name)
+            foreach (var g in cuts.Where(x => !string.IsNullOrEmpty(x[0])).GroupBy(x => Norm(x[0]) ?? x[0]))
+            try
+            {
+                var names = g.Select(x => x[1].Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                string name = names.FirstOrDefault(a => names.All(b => b.StartsWith(a, StringComparison.OrdinalIgnoreCase)));
+                if (name == null)
+                {
+                    // (one program for several games, an emulator: the program's name; script launchers: the folder's, as it
+                    // is spelled; a game beside its own tools, a loader or a config exe: the game's)
+                    Func<string, string> prog = e => { try { return Path.GetFileNameWithoutExtension(e ?? ""); } catch { return ""; } };
+                    Func<string, bool> script = e => Regex.IsMatch(e ?? "", @"\.(bat|cmd|ps1|vbs|js|lnk|url)$", RegexOptions.IgnoreCase) || Regex.IsMatch(prog(e), @"^(cmd|powershell|pwsh|wscript|cscript|explorer)$", RegexOptions.IgnoreCase);
+                    var shared = g.Where(x => !script(x[2]) && prog(x[2]) != "").GroupBy(x => prog(x[2]), StringComparer.OrdinalIgnoreCase)
+                                  .Where(x => x.Select(y => y[1].Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1).OrderByDescending(x => x.Count()).FirstOrDefault();
+                    if (shared != null) name = shared.Key;
+                    else if (g.All(x => script(x[2]))) name = Path.GetFileName(Path.GetFullPath(g.First()[0].Trim()).TrimEnd('\\'));
+                    else name = (g.FirstOrDefault(x => !script(x[2]) && !Regex.IsMatch(prog(x[2]), @"loader|launcher|config|setup|settings|editor|tool", RegexOptions.IgnoreCase)) ?? g.First())[1];
+                }
+                Add(roots, g.First()[0], name);
+            }
+            catch { }   // (one odd entry never ends the list)
         }
         try
         {
             var ser = new JavaScriptSerializer();
             string epic = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), @"Epic\EpicGamesLauncher\Data\Manifests");
             foreach (var f in Directory.GetFiles(epic, "*.item"))
-            {
-                var j = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(f));
-                object loc, name;
-                if (j.TryGetValue("InstallLocation", out loc) && j.TryGetValue("DisplayName", out name)) Add(roots, loc as string, name as string);
-            }
+                try   // (one manifest that can't be read skips only itself)
+                {
+                    var j = ser.Deserialize<Dictionary<string, object>>(File.ReadAllText(f));
+                    object loc, name, cats, app, main;
+                    if (j == null) continue;
+                    // (an install that isn't a game, the Unreal editor and its tools, or a DLC, which names its game: none)
+                    if (j.TryGetValue("AppCategories", out cats) && cats is System.Collections.IEnumerable && !(cats is string)
+                        && !((System.Collections.IEnumerable)cats).Cast<object>().Any(x => "games".Equals(x as string, StringComparison.OrdinalIgnoreCase))) continue;
+                    if (j.TryGetValue("MainGameAppName", out main) && main is string && (string)main != "" && j.TryGetValue("AppName", out app) && !string.Equals((string)main, app as string, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (j.TryGetValue("InstallLocation", out loc) && j.TryGetValue("DisplayName", out name)) Add(roots, loc as string, name as string);
+                }
+                catch { }
         }
         catch { }
         var hives = new[] {
@@ -1372,7 +1441,7 @@ static class GameRoots
         // GOG Galaxy, Ubisoft Connect and Rockstar list their games in the registry; Xbox / Game Pass installs go to
         // an XboxGames folder on any drive
         foreach (var hk in new[] { @"SOFTWARE\WOW6432Node\GOG.com\Games", @"SOFTWARE\GOG.com\Games" })
-            Each(hk, e => Add(roots, e.GetValue("path") as string, e.GetValue("gameName") as string));
+            Each(hk, e => { if (string.IsNullOrEmpty(e.GetValue("dependsOn") as string)) Add(roots, e.GetValue("path") as string, e.GetValue("gameName") as string); });   // (a DLC names its game: dependsOn)
         Each(@"SOFTWARE\WOW6432Node\Ubisoft\Launcher\Installs", e => { string d = e.GetValue("InstallDir") as string; if (d != null) Add(roots, d, Path.GetFileName(d.Replace('/', '\\').TrimEnd('\\'))); });
         Each(@"SOFTWARE\WOW6432Node\Rockstar Games", e => { string n = Path.GetFileName(e.Name); if (!Regex.IsMatch(n, "Launcher|Social Club", RegexOptions.IgnoreCase)) Add(roots, e.GetValue("InstallFolder") as string, n); });
         try
@@ -1448,7 +1517,7 @@ class Games
     // a gated cell's lines (NaN: none) and name, for the report
     public class Lines { public double Y = double.NaN, R = double.NaN; public bool Below; public string Name; }
     public HashSet<string> Tracked = new HashSet<string>();   // what the layout's report setup asks for besides (L.games: any reading, by key)
-    static readonly Regex NotGameExe = new Regex(@"launcher|leagueclient|crash(report|handler|pad|sender)|report|redist|setup|^unins|helper|anticheat|battleye|beservice|prereq|bootstrap|boot(64)?$|updater|overlay|dxsetup|cefprocess|webhelper|qtwebengine|browser|diagnose|installer|config(64)?$|blizzarderror|capturepro|^upc$", RegexOptions.IgnoreCase);
+    static readonly Regex NotGameExe = new Regex(@"launcher|leagueclient|crash(report|handler|pad|sender)|report|redist|setup|^unins|helper|anticheat|battleye|beservice|prereq|bootstrap|boot(64)?$|updater|overlay|dxsetup|cefprocess|webhelper|qtwebengine|browser|diagnose|installer|config(64)?$|blizzarderror|capturepro|^upc$|^battle\.net|^eadesktop$|^eabackgroundservice$|^galaxyclient|^riotclient|^playnite|^heroic$|^(msedge|chrome|firefox|opera|brave|vivaldi|discord|steam|hyp|spotify|vlc|kodi|xboxpcapp)$|^plex( ?media ?(player|server)| ?htpc)?$|^lghub(_\w+)?$", RegexOptions.IgnoreCase);
     readonly object lk = new object();
     readonly Dictionary<int, string> paths = new Dictionary<int, string>();
     List<KeyValuePair<string, string>> roots; DateTime rootsAt = DateTime.MinValue;
@@ -1473,6 +1542,7 @@ class Games
         timer = new System.Threading.Timer(delegate { if (System.Threading.Interlocked.Exchange(ref busy, 1) == 1) return; try { Poll(); } catch (Exception ex) { log("games: " + ex.Message); } finally { busy = 0; } }, null, 2500, 3000);
     }
     public string LogPath { get { return logPath; } }
+    public long LastFed { get { var r = rep; return r != null ? r.Last : 0; } }   // the game session's last counted second (0: none)
 
     // tests (--fake only): a made-up game, in front or not, instead of the processes for the rest of the run; null
     // ends it at once (no 30 s grace)
@@ -1488,10 +1558,9 @@ class Games
         var names = new Dictionary<string, string>();   // game -> one of its exes
         var pids = new Dictionary<string, int>();        // and that exe's process
         string fgName = null, fgExe = null; int fgPid = 0;
-        bool pr; string pg; bool pf;
-        lock (lk) { pr = pretend; pg = pGame; pf = pFront; }
-        if (pr) { if (pg != null) { names[pg] = "game.exe"; if (pf) { fgName = pg; fgExe = "game.exe"; } } }
-        else
+        bool pr;
+        lock (lk) { pr = pretend; }
+        if (!pr)
         {
             if (roots == null || (DateTime.Now - rootsAt).TotalMinutes > 10)
             {
@@ -1520,16 +1589,20 @@ class Games
         long now = Source.Unix();
         lock (lk)
         {
+            // (tests: the made-up game as it is now, read under the lock a test's change takes too)
+            if (pretend) { names.Clear(); pids.Clear(); fgName = fgExe = null; fgPid = 0; if (pGame != null) { names[pGame] = "game.exe"; if (pFront) { fgName = pGame; fgExe = "game.exe"; } } }
             // the session's game stays the game while it runs (a tool beside it doesn't split the session on every
             // alt-tab) unless another game is the one in front for 30 s
             string found;
             if (Game != null && names.ContainsKey(Game))
             {
                 found = Game;
-                if (fgName != null && fgName != Game) { if (otherSince == 0) otherSince = now; if (now - otherSince >= 30) found = fgName; }
+                if (fgName != null && fgName != Game) { if (otherSince == 0) otherSince = now; if (now - otherSince >= 30) { found = fgName; otherSince = 0; } }
                 else otherSince = 0;
             }
-            else { found = fgName ?? names.Keys.FirstOrDefault(); otherSince = 0; }
+            // a session starts with the game in front (an app that only sits in the background, an overlay or a tool from
+            // Steam, never does), or goes on: the one the last run left open, its game still running
+            else { found = fgName ?? (resumeGame != null && names.ContainsKey(resumeGame) && now - resumeLast <= 600 ? resumeGame : null); otherSince = 0; }
             InFront = found != null && found == fgName;
             GameExe = found == null ? null : found == fgName ? fgExe : names[found];
             int gp; GamePid = found == null ? 0 : found == fgName ? fgPid : pids.TryGetValue(found, out gp) ? gp : 0;
@@ -1540,7 +1613,7 @@ class Games
                 Seen = now;
             }
             else if (Game != null && now - Seen > 30) Close();   // 30 s grace: restarts and loading screens
-            resumeGame = null;
+            if (Game != null || now - resumeLast > 600) resumeGame = null;
         }
         polled = true;
     }
@@ -1641,13 +1714,13 @@ class Games
         return rep.Pm.Where(kv => kv.Value != null && kv.Value.Length == 4 && kv.Value[2] > 0)
                      .ToDictionary(kv => kv.Key, kv => (object)new object[] { Math.Round(kv.Value[0], 2), Math.Round(kv.Value[1] / kv.Value[2], 2), Math.Round(kv.Value[3], 2) });
     }
-    public void Sample(Source src, Dictionary<string, int> index, Dictionary<string, Lines> gated, Alerts alerts, bool pmOk, HashSet<string> pmKeys, char call, char live)
+    public void Sample(Source src, Dictionary<string, int> index, Dictionary<string, Lines> gated, Alerts alerts, bool frontNow, bool pmOk, HashSet<string> pmKeys, char call, char live)
     {
         var hot = alerts.Hot.ToArray(); alerts.Hot.Clear();
         int fresh = alerts.NewAlerts; alerts.NewAlerts = 0;
         if (!polled) return;
-        string game; bool front; long since;
-        lock (lk) { game = Game; front = InFront; since = Since; }
+        string game; bool front; long since, seen;
+        lock (lk) { game = Game; front = InFront && frontNow; since = Since; seen = Seen; }
         // the PC slept (or the app stalled) for over 10 minutes: a session ends at its last second, not after the night;
         // a game still running starts a new one now
         long now0 = Source.Unix();
@@ -1660,8 +1733,10 @@ class Games
         {
             bool started = rep == null;   // (what warned before the session started isn't its warning)
             if (started) rep = new Report { Start = since, From = Source.Unix(), Game = game };
-            Feed(rep, src, index, gated, started ? 0 : fresh, started ? new Alerts.Warm[0] : hot, front, front, front && pmOk, pmKeys, call);
-            if (rep.Secs % 60 == 0) { try { Disk.Swap(curPath, json.Serialize(rep)); } catch { } }
+            int secs = rep.Secs;
+            // (the game gone a few seconds, in its 30 s grace: no play time and no readings, unless it comes back)
+            Feed(rep, src, index, gated, started ? 0 : fresh, started ? new Alerts.Warm[0] : hot, front, front, front && pmOk, pmKeys, call, now0 - seen > 6);
+            if (rep.Secs != secs && rep.Secs % 60 == 0) { try { Disk.Swap(curPath, json.Serialize(rep)); } catch { } }
         }
         // your own sessions, beside the game's, count every second like a game in front: the fps of whatever is in front
         // (PresentMon follows it) and the bottleneck's call of the moment; Front is the time a game was in front
@@ -1670,11 +1745,12 @@ class Games
     }
     // a second of a session: its clock, warnings, what limited the fps (calls), the fps (pm), the readings it follows;
     // front: a game in front
-    void Feed(Report rep, Source src, Dictionary<string, int> index, Dictionary<string, Lines> gated, int fresh, Alerts.Warm[] hot, bool front, bool calls, bool pmOk, HashSet<string> pmKeys, char call)
+    void Feed(Report rep, Source src, Dictionary<string, int> index, Dictionary<string, Lines> gated, int fresh, Alerts.Warm[] hot, bool front, bool calls, bool pmOk, HashSet<string> pmKeys, char call, bool grace = false)
     {
         Fill(rep);
         rep.Warns += fresh;
         foreach (var w in hot) Warn(rep, w);
+        if (grace) return;   // (its warnings count; the PC idling after the game doesn't)
         rep.Last = Source.Unix();
         int minute = (int)Math.Max(0, (rep.Last - rep.Start) / 60);
         if (minute != rep.MinAt) Minute(rep, minute);
@@ -1749,11 +1825,13 @@ class Games
     void Finish()
     {
         var r = rep; rep = null;
+        lock (lk) { if (r != null && r.Game == resumeGame && r.Start == resumeStart) resumeGame = null; }   // (logged: the game starting again later is a new session)
         try { File.Delete(curPath); } catch { }
-        if (r == null || r.Secs < 60) return;   // under a minute of play isn't a session worth a line
+        if (r == null) return;
         // it ended when the game was last seen, or (a run that quit mid-game, a PC that slept) at its last sample
         long end = r.Last > r.Start ? r.Last : Source.Unix();
         lock (lk) if (Seen > r.Start && Seen < end) end = Seen;
+        if (end - r.Start < 60) return;   // under a minute of play isn't a session worth a line
         Write(r, end);
     }
     // a session's line in games.log
@@ -1977,8 +2055,11 @@ partial class DeckForm : Form
         runName = custom ? Brand.Name + " (" + Path.GetFileName(data) + " " + ((uint)data.ToLowerInvariant().Aggregate(2166136261u, (h, ch) => (h ^ ch) * 16777619u)).ToString("x8") + ")" : Brand.Name;
         settings = ReadSettings();
         // the game's own frames (Settings: Accurate game fps): on when it was turned on and Windows lets this account trace
-        if (!fake) { src.Frames = new Frames(runName + " frames"); if (FpsWanted) src.Frames.Start(); }
-        src.GameMin = () => { string g = games.Game; long since = games.Since; return g != null && since > 0 ? Math.Max(0, Source.Unix() - since) / 60.0 : double.NaN; };
+        // (trace names are for the whole PC: the account's own id in it, so two accounts signed in at once don't stop each other's)
+        if (!fake) { src.Frames = new Frames(runName + " frames " + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value); if (FpsWanted && !Brand.NoActions) src.Frames.Start(); }   // (a test copy never takes over the trace)
+        // (a session over 10 minutes quiet, the PC asleep, is about to end: not its length with the sleep in it)
+        // (the game gone, in its grace: held at its last counted second, as the session is)
+        src.GameMin = () => { string g = games.Game; long since = games.Since, last = games.LastFed, seen = games.Seen, now = Source.Unix(); bool grace = last > 0 && now - seen > 6; return g != null && since > 0 && !(last > 0 && now - last > 600) ? Math.Max(0, (grace ? last : now) - since) / 60.0 : double.NaN; };
         var st = ReadFile("state", true) as Dictionary<string, object>;
         if (st != null && st.ContainsKey("L")) layout = st["L"];
         TrimAlerts(); TrimGames();
@@ -1987,12 +2068,15 @@ partial class DeckForm : Form
         // sizes in logical pixels, scaled to the screen (225% on a 4K screen would otherwise make a postage stamp)
         float k = 1f;
         try { k = GetDpiForSystem() / 96f; } catch { }   // DeviceDpi still says 96 before the window exists
-        var wa = Screen.FromPoint(Cursor.Position).WorkingArea;   // it opens on the screen under the mouse
+        // it opens on the screen under the mouse; a copy that never takes the focus (a test's) on another screen than the
+        // main one when there is one, away from a game or work there
+        var wa = (NoFocus ? Screen.AllScreens.FirstOrDefault(sc => !sc.Primary) ?? Screen.PrimaryScreen : Screen.FromPoint(Cursor.Position)).WorkingArea;
         Width = Math.Min((int)(1320 * k), (int)(wa.Width * 0.9)); Height = Math.Min((int)(840 * k), (int)(wa.Height * 0.9));
-        StartPosition = FormStartPosition.CenterScreen;
+        if (NoFocus) { StartPosition = FormStartPosition.Manual; Location = new Point(wa.X + 40, wa.Y + 40); }
+        else StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(13, 13, 13);
         FormBorderStyle = FormBorderStyle.Sizable;   // native snap and maximize; the caption is drawn by the page
-        MinimumSize = new Size(Math.Min((int)(720 * k), wa.Width / 2), Math.Min((int)(480 * k), wa.Height / 2));
+        minTrack = new Size(Math.Min((int)(720 * k), wa.Width / 2), Math.Min((int)(480 * k), wa.Height / 2));
         string icoPath = Path.Combine(appDir, "app.ico");
         try { Icon = File.Exists(icoPath) ? new Icon(icoPath) : Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         RestoreWin();
@@ -2012,12 +2096,14 @@ partial class DeckForm : Form
         wv.CoreWebView2InitializationCompleted += OnWvReady;
         HandleCreated += delegate
         {
+            // (a copy that never takes the focus never covers anything either: under every window before its first show)
+            if (NoFocus) SetWindowPos(Handle, (IntPtr)1 /*HWND_BOTTOM*/, 0, 0, 0, 0, 0x0001 /*NOSIZE*/ | 0x0002 /*NOMOVE*/ | 0x0010 /*NOACTIVATE*/);
             // the size limits for the monitor the window opened on (window.json may put it on another one)
             try
             {
                 uint dpi = GetDpiForWindow(Handle);
                 var wa2 = Screen.FromHandle(Handle).WorkingArea;
-                if (dpi > 0) MinimumSize = new Size(Math.Min((int)(720 * dpi / 96), wa2.Width / 2), Math.Min((int)(480 * dpi / 96), wa2.Height / 2));
+                if (dpi > 0) minTrack = new Size(Math.Min((int)(720 * dpi / 96), wa2.Width / 2), Math.Min((int)(480 * dpi / 96), wa2.Height / 2));
             }
             catch { }
             BeginInvoke((Action)FitToScreen);
@@ -2034,9 +2120,9 @@ partial class DeckForm : Form
         try { if (File.Exists(icoPath)) trayIcon = new Icon(icoPath, SystemInformation.SmallIconSize); } catch { }
         tray = new NotifyIcon { Icon = trayIcon ?? Icon ?? SystemIcons.Application, Text = Brand.Name, Visible = true };
         var menu = new ContextMenu();
-        menu.MenuItems.Add("Open HW Deck", delegate { ShowWin(); });
+        menu.MenuItems.Add("Open " + Brand.Name, delegate { ShowWin(); });
         menu.MenuItems.Add(new MenuItem("Restart HWiNFO", delegate { RestartHwinfo(); }) { Enabled = !fake });
-        autoItem = new MenuItem("Start with Windows", delegate { SetAutostart(!Autostart()); });
+        autoItem = new MenuItem("Start with Windows", delegate { SetAutostart(!Autostart()); if (pageReady) SendSettings(); });   // (an open Settings shows it too)
         menu.MenuItems.Add(autoItem);
         menu.Popup += delegate { autoItem.Checked = Autostart(); };
         menu.MenuItems.Add("-");
@@ -2099,7 +2185,7 @@ partial class DeckForm : Form
         if (!true.Equals(settings.ContainsKey("trayHint") ? settings["trayHint"] : null))
         {
             settings["trayHint"] = true; Try(() => SaveFile("settings", settings));
-            Try(() => tray.ShowBalloonTip(6000, "HW Deck is still running", "It keeps checking your lines from here. Click the icon to open it, right-click it to exit.", ToolTipIcon.None));
+            Try(() => tray.ShowBalloonTip(6000, Brand.Name + " is still running", "It keeps checking your lines from here. Click the icon to open it, right-click it to exit.", ToolTipIcon.None));
         }
     }
 
@@ -2156,7 +2242,13 @@ partial class DeckForm : Form
             if (ev.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited || ev.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
                 Try(() => { pageReady = false; wv.CoreWebView2.Reload(); });
             else if (ev.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited && !exiting && !ending)   // at a sign-out Windows may end the browser first
-                Try(() => { Process.Start(Application.ExecutablePath, RestartArgs() + " --after " + Process.GetCurrentProcess().Id + (Visible ? "" : " -min")); exiting = true; tray.Visible = false; Application.Exit(); });
+                Try(() =>
+                {
+                    // (a browser that keeps dying: after the third time within minutes, no more starts, it says so)
+                    int next = (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMinutes < 10 ? Relaunches + 1 : 1;
+                    if (next > 2) { Log("the page's browser keeps closing: not started again"); exiting = true; tray.Visible = false; MessageBox.Show(Brand.Name + "'s page keeps closing (its WebView2 browser stopped " + next + " times in a few minutes), so " + Brand.Name + " stopped. Start it again later, or repair the Microsoft Edge WebView2 Runtime in Settings, Apps.", Brand.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning); Application.Exit(); return; }
+                    Process.Start(Application.ExecutablePath, RestartArgs() + " --after " + Process.GetCurrentProcess().Id + " --relaunch " + next + (Visible && !IsIconic(Handle) ? "" : " -min")); exiting = true; tray.Visible = false; Application.Exit();
+                });
         };
         // the page's files changed (an update): WebView2 may keep serving the old ones from its cache for a while (the
         // folder mapping sends no cache headers), so its disk cache is cleared once before the page loads
@@ -2194,9 +2286,13 @@ partial class DeckForm : Form
                     {
                         string f = m["file"] as string;
                         if (f == null || !PageFile.IsMatch(f)) break;
-                        try { SaveFile(f, m["data"]); }
+                        bool saved = false;
+                        try { saved = SaveFile(f, m["data"]); }
                         catch (Exception ex) { Log("saving " + f + " failed: " + ex.Message); var r = Msg("toast"); r["text"] = "Couldn't save the layout: " + ex.Message; Post(r); }
-                        if (f == "state") { var d = m["data"] as Dictionary<string, object>; layout = d != null && d.ContainsKey("L") ? d["L"] : null; RefreshRules(); }
+                        // (a slot another program held when the page started isn't saved over: said so; the view's start toast says it for state)
+                        if (!saved && f != "state" && heldFiles.Contains(f.Replace('/', '\\'))) { var r = Msg("toast"); r["text"] = "Couldn't save to that slot: another program has its file open. Try again in a moment."; Post(r); }
+                        // (the warnings and game reports follow the view as written: not one that was only refused)
+                        if (f == "state" && saved) { var d = m["data"] as Dictionary<string, object>; layout = d != null && d.ContainsKey("L") ? d["L"] : null; RefreshRules(); }
                     }
                     break;
                 case "hist":
@@ -2266,20 +2362,51 @@ partial class DeckForm : Form
     // ---- files: state.json (working layout, active slot, view, edit mode) and slots\slotN.json, written whole through
     // a temp file so a crash mid-write can't leave half a layout ----
     static readonly Regex PageFile = new Regex(@"^(?:state|slots/slot[1-5])\z");   // what the page may write; settings.json is the host's alone
-    void SaveFile(string name, object data)
+    static bool CanOpen(string p) { try { if (!File.Exists(p)) return true; using (var f = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.Read)) { f.ReadByte(); return true; } } catch { return false; } }   // (a byte: one that opens but can't be read isn't free)
+    bool SaveFile(string name, object data)   // false: not written (held)
     {
         string p = P(name.Replace('/', '\\') + ".json"), tmp = p + ".tmp";
-        if (name == "settings" && settingsHeld) return;   // (defaults this run: the good file stays)
-        if (data == null) { if (File.Exists(p)) File.Delete(p); return; }
+        if (name == "settings" && settingsHeld) return false;   // (defaults this run: the good file stays)
+        if (heldFiles.Contains(name.Replace('/', '\\'))) { if (heldSaid.Add(name)) Log("not saving " + name + ": the page never got it (held by another program)"); return false; }
+        if (data == null) { if (File.Exists(p)) File.Delete(p); return true; }
         var bytes = new UTF8Encoding(false).GetBytes(json.Serialize(data));
         using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None)) { fs.Write(bytes, 0, bytes.Length); fs.Flush(true); }   // on disk before it replaces the old one
         if (File.Exists(p)) File.Replace(tmp, p, name == "state" ? p + ".bak" : null); else File.Move(tmp, p);
+        return true;
     }
     // a file that can't be read is logged; the working view (keep) is moved aside instead of being overwritten by the first edit
-    object ReadFile(string name, bool keep = false)
+    // keep: a damaged file is moved aside (a held one, another program reading or syncing it, isn't: it is tried again
+    // for 2 s, then left for the page's start to read)
+    // a view or slot still held when the page asks for it: the page gets nothing for it, so nothing is saved over it, and
+    // it is sent again once it can be read (Tick)
+    readonly HashSet<string> heldFiles = new HashSet<string>(), heldSaid = new HashSet<string>();
+    readonly Dictionary<string, long> heldAt = new Dictionary<string, long>();   // (held since: unix seconds)
+    readonly HashSet<string> gaveUpNow = new HashSet<string>();   // (a slot taken as damaged, not sent to the page yet)
+    // a file still unreadable after 2 minutes is damaged, not held (a bad sector, permissions from another install): it
+    // is moved aside, the view starts empty as when it can't be parsed, a slot comes in empty, and saving goes on. Only
+    // once the move worked: one a program really holds can't be moved, so it stays held and nothing is saved over it
+    bool GiveUp(string n)
+    {
+        string bad = n + ".json.bad-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+        try { File.Move(P(n + ".json"), P(bad)); }
+        catch { heldAt[n] = Source.Unix(); return false; }   // (again in 2 minutes)
+        heldFiles.Remove(n); heldAt.Remove(n); heldSaid.Remove(n.Replace('\\', '/'));
+        Log("reading " + n + " still failed after 2 minutes: taken as damaged, moved aside as " + bad);
+        if (n == "state") stateBad = bad;
+        else { gaveUpNow.Add(n); var t = Msg("toast"); t["text"] = "Slot " + n.Substring(n.Length - 1) + " couldn't be read, so it is empty now. The old file is kept as " + bad.Replace('\\', '/') + " in your files (Settings)."; t["ms"] = 15000; Post(t); }
+        return true;
+    }
+    object ReadFile(string name, bool keep = false, int tries = 10)
     {
         string p = P(name + ".json");
-        try { return File.Exists(p) ? json.DeserializeObject(File.ReadAllText(p)) : null; }
+        string text = null;
+        bool page = name == "state" || name.StartsWith("slots\\");
+        for (int i = 0; ; i++)
+            try { if (!File.Exists(p)) { heldFiles.Remove(name); heldAt.Remove(name); return null; } text = File.ReadAllText(p); break; }
+            catch (IOException ex) { if (i >= tries - 1) { Log("reading " + name + " failed (held): " + ex.Message); if (page) { heldFiles.Add(name); if (!heldAt.ContainsKey(name)) heldAt[name] = Source.Unix(); } return null; } System.Threading.Thread.Sleep(200); }
+            catch (UnauthorizedAccessException ex) { if (i >= tries - 1) { Log("reading " + name + " failed (held): " + ex.Message); if (page) { heldFiles.Add(name); if (!heldAt.ContainsKey(name)) heldAt[name] = Source.Unix(); } return null; } System.Threading.Thread.Sleep(200); }
+        heldFiles.Remove(name); heldSaid.Remove(name.Replace('\\', '/')); heldAt.Remove(name);
+        try { return json.DeserializeObject(text); }
         catch (Exception ex)
         {
             Log("reading " + name + " failed: " + ex.Message);
@@ -2292,19 +2419,46 @@ partial class DeckForm : Form
     void SendState()
     {
         var slots = new List<object>();
-        for (int i = 1; i <= 5; i++) slots.Add(ReadFile("slots\\slot" + i));
+        gaveUpNow.Clear();   // (all five go out here)
+        // (a file still held from before: one try, the 2 s of retries were spent already)
+        for (int i = 1; i <= 5; i++) slots.Add(ReadFile("slots\\slot" + i, false, heldFiles.Contains("slots\\slot" + i) ? 1 : 10));
         var r = Msg("state");
-        r["state"] = ReadFile("state"); r["slots"] = slots; r["fake"] = fake; r["dataDir"] = dataDir; r["version"] = AppInfo.Version; r["pc"] = Environment.MachineName;
+        var st = ReadFile("state", true, heldFiles.Contains("state") ? 1 : 10);   // (a damaged one is kept aside, as at the start)
+        // (the view the page gets is the one the warnings and game reports follow: one held at the start comes in here)
+        if (!heldFiles.Contains("state")) { var sd = st as Dictionary<string, object>; layout = sd != null && sd.ContainsKey("L") ? sd["L"] : null; RefreshRules(); }
+        var held = new List<object>(); for (int i = 0; i < 5; i++) if (heldFiles.Contains("slots\\slot" + (i + 1))) held.Add(i);
+        r["held"] = held;   // (the slots another program holds: a missing or damaged one is empty for good)
+        r["state"] = st; r["slots"] = slots; r["fake"] = fake; r["dataDir"] = dataDir; r["version"] = AppInfo.Version; r["pc"] = Environment.MachineName;
         r["nonClient"] = nonClient;
         r["ext"] = File.Exists(Path.Combine(appDir, "web", "extras.js")); r["brand"] = Brand.Name; r["updatable"] = Brand.Updates;
         Post(r);
+        if (stateBad != null && wasShowing) { var tb = Msg("toast"); tb["text"] = "Your view couldn't be read, so it starts empty. The old file is kept as " + stateBad + " in your files (Settings)."; tb["ms"] = 15000; Post(tb); stateBad = null; }
+        PostHeld();
         SendSettings();
+    }
+    // only the slots that were held and read now (index: layout); the others stay as the page has them
+    // a view held when the page asked for it: said whenever the window shows while it lasts (a start in the tray too)
+    const string HeldNote = "Your view is open in another program (a sync or a backup tool), so it isn't shown yet. It comes in once that program lets go, and nothing is saved over it until then.";
+    void PostHeld() { if (!heldFiles.Contains("state")) return; var t = Msg("toast"); t["text"] = HeldNote; t["ms"] = 15000; Post(t); }
+    void SendSlots()
+    {
+        var slots = new Dictionary<string, object>();
+        for (int i = 1; i <= 5; i++)
+        {
+            string n = "slots\\slot" + i;
+            if (gaveUpNow.Remove(n)) { slots[(i - 1).ToString()] = null; continue; }   // (damaged: empty)
+            if (!heldFiles.Contains(n) || !CanOpen(P(n + ".json"))) continue;
+            var d = ReadFile(n, false, 1);
+            if (!heldFiles.Contains(n)) slots[(i - 1).ToString()] = d;
+        }
+        if (slots.Count == 0) return;
+        var r = Msg("slots"); r["slots"] = slots; Post(r);
     }
     void SendSettings(bool keepDone = false, bool fpsDone = false)   // (keepDone, fpsDone: the answer to the page's keepSharing, gameFps)
     {
         var r = Msg("settings");
         r["autostart"] = Autostart(); r["hwinfo"] = settings.ContainsKey("hwinfo") ? settings["hwinfo"] : null;
-        r["keep"] = KeepSharing(); r["keepBusy"] = keepBusy; r["keepDone"] = keepDone;   // (until done, the page shows what was asked)
+        keepLast = 0; keepOld = false; r["keep"] = KeepSharing(); r["keepNote"] = KeepNote(); r["keepBusy"] = keepBusy; r["keepDone"] = keepDone;   // (until done, the page shows what was asked)
         r["fps"] = FpsWanted; r["fpsState"] = FpsState(); r["fpsBusy"] = fpsBusy; r["fpsDone"] = fpsDone;
         r["updates"] = UpdatesOn();
         r["gameDays"] = DaysSet("gameDays") ? KeepDays("gameDays") : (object)null; r["warnDays"] = DaysSet("warnDays") ? KeepDays("warnDays") : (object)null;   // (null: not set, nothing cut)
@@ -2396,55 +2550,91 @@ partial class DeckForm : Form
     }
     void UpdateNow()
     {
-        if (fake || Installed() == null) { OpenRelease(); return; }
+        if (fake || Brand.NoActions || Installed() == null) { OpenRelease(); return; }
         if (updating) return;
         updating = true;
         var r = Msg("toast"); r["text"] = "Downloading the new HW Deck..."; Post(r);
         System.Threading.ThreadPool.QueueUserWorkItem(delegate
         {
-            string msi = null, err = null;
+            string msi = null, err = null, dir = null, want = null;
             try
             {
                 ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;   // TLS 1.2
-                string dir = Path.Combine(Path.GetTempPath(), "hwdeck-update-" + Guid.NewGuid().ToString("N"));
+                dir = Path.Combine(Path.GetTempPath(), "hwdeck-update-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(dir);
                 using (var wc = new WebClient())
                 {
                     wc.Headers[HttpRequestHeader.UserAgent] = "HWDeck/" + AppInfo.Version;
                     string sums = wc.DownloadString(ReleasesPage + "latest/download/SHA256SUMS.txt");
-                    var m = Regex.Match(sums, @"(?m)^([0-9a-fA-F]{64})\s+(HWDeck-[\d.]+\.msi)\s*$");
+                    var m = Regex.Match(sums, @"(?m)^([0-9a-fA-F]{64})\s+(HWDeck-([\d.]+)\.msi)\s*$");
                     if (!m.Success) throw new Exception("the latest release has no installer");
+                    // ("latest" can change after the check that showed the button: never an older or the same version)
+                    if (!Newer(m.Groups[3].Value, AppInfo.Version)) throw new Exception("the latest release (" + m.Groups[3].Value + ") isn't newer than this one");
+                    want = m.Groups[1].Value;
                     msi = Path.Combine(dir, m.Groups[2].Value);
                     wc.DownloadFile(ReleasesPage + "latest/download/" + m.Groups[2].Value, msi);
-                    string hash;
-                    using (var sha = System.Security.Cryptography.SHA256.Create()) using (var fs = File.OpenRead(msi)) hash = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "");
+                    // (an antivirus looks at a new installer as it lands and may hold it a moment: tried again for 10 s)
+                    string hash = null;
+                    for (int i = 0; hash == null; i++)
+                        try { using (var sha = System.Security.Cryptography.SHA256.Create()) using (var fs = File.OpenRead(msi)) hash = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", ""); }
+                        catch (IOException) { if (i >= 19) throw; System.Threading.Thread.Sleep(500); }
+                        catch (UnauthorizedAccessException) { if (i >= 19) throw; System.Threading.Thread.Sleep(500); }
                     if (!hash.Equals(m.Groups[1].Value, StringComparison.OrdinalIgnoreCase)) throw new Exception("the download doesn't match its published checksum");
                 }
             }
             catch (Exception ex) { err = ex.Message; }
+            if (err != null && dir != null) try { Directory.Delete(dir, true); } catch { }   // (a partial or wrong download goes too)
             Try(() => BeginInvoke((Action)(() =>
             {
-                updating = false;
-                if (err != null) { Log("update failed: " + err); var t = Msg("toast"); t["text"] = "Couldn't update: " + err; Post(t); return; }
-                // after this app quits: the installer (its own window, one Windows prompt), then HW Deck again
-                string script = "$Msi = " + PsText(msi) + "; $Exe = " + PsText(Application.ExecutablePath) + "; $Pid0 = " + Process.GetCurrentProcess().Id + @"
+                if (err != null) { updating = false; Log("update failed: " + err); var t = Msg("toast"); t["text"] = "Couldn't update: " + err; Post(t); return; }
+                // after this app quits: the installer (its own window, one Windows prompt), then HW Deck again, with this
+                // copy's own arguments and the installer's result (it says so once it is up: see UpdateNote)
+                // (the installer is checked once more right before it runs and held so nothing can change it until it
+                // is done: the folder is the user's to write)
+                string script = "$Msi = " + PsText(msi) + "; $Exe = " + PsText(Application.ExecutablePath) + "; $More = " + PsText(RestartArgs()) + "; $Want = '" + want + "'; $Pid0 = " + Process.GetCurrentProcess().Id + @"
 try { Wait-Process -Id $Pid0 -Timeout 30 -ErrorAction SilentlyContinue } catch { }
-$p = Start-Process msiexec.exe -ArgumentList '/i', ('""' + $Msi + '""'), '/passive', '/norestart' -PassThru
-$p.WaitForExit()
+$code = -1
+$lk = $null
+try {
+  $lk = [IO.File]::Open($Msi, 'Open', 'Read', 'Read')
+  $h = -join ([Security.Cryptography.SHA256]::Create().ComputeHash($lk) | ForEach-Object { $_.ToString('x2') })
+  if ($h -ne $Want) { $code = -2 }
+  else { $p = Start-Process msiexec.exe -ArgumentList '/i', ('""' + $Msi + '""'), '/passive', '/norestart' -PassThru; $null = $p.Handle; $p.WaitForExit(); $code = $p.ExitCode }
+} catch { }
+if ($lk) { $lk.Dispose() }
 Remove-Item -LiteralPath (Split-Path $Msi) -Recurse -Force -ErrorAction SilentlyContinue
-Start-Process -FilePath $Exe";
+$a = @('--updated', $code); if ($More) { $a = @($More) + $a }
+Start-Process -FilePath $Exe -ArgumentList $a";
                 try
                 {
-                    var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+                    var psi = new ProcessStartInfo(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
                     psi.UseShellExecute = false; psi.CreateNoWindow = true;
                     Process.Start(psi);
                     Log("update: installing " + Path.GetFileName(msi));
                     var t = Msg("toast"); t["text"] = "Installing the update: HW Deck closes and opens again"; Post(t);
-                    exiting = true; tray.Visible = false; Application.Exit();
+                    // (a moment for the toast; still updating, so a second click does nothing). What comes next may take
+                    // the front: the installer's window and its Windows prompt
+                    AllowSetForegroundWindow(-1);
+                    var q = new Timer { Interval = 1500 };
+                    q.Tick += delegate { q.Stop(); exiting = true; tray.Visible = false; Application.Exit(); };
+                    q.Start();
                 }
-                catch (Exception ex) { Log("update failed: " + ex.Message); var t = Msg("toast"); t["text"] = "Couldn't update: " + ex.Message; Post(t); }
+                catch (Exception ex) { updating = false; Try(() => Directory.Delete(dir, true)); Log("update failed: " + ex.Message); var t = Msg("toast"); t["text"] = "Couldn't update: " + ex.Message; Post(t); }
             })));
         });
+    }
+    // started again by the update script with msiexec's exit code: what the user is told once the window is up
+    [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
+    public static int UpdateResult = int.MinValue;   // (none: an ordinary start)
+    static string UpdateNote()
+    {
+        int c = UpdateResult;
+        if (c == int.MinValue) return null;
+        return c == 0 ? Brand.Name + " is updated to " + AppInfo.Version : c == 3010 || c == 1641 ? Brand.Name + " is updated to " + AppInfo.Version + ". Windows needs a restart to finish it"
+             : c == 1602 || c == 1625 ? "The update was cancelled, so this is still " + AppInfo.Version
+             : c == 1618 ? "The update didn't install: another installation was running. Try Update now again in a minute"
+             : c == -2 ? "The update didn't install: the downloaded installer changed before it could run"
+             : "The update didn't install (installer code " + c + "). Try Update now again, or get it from the releases page";
     }
     void OpenRelease()
     {
@@ -2561,7 +2751,7 @@ Start-Process -FilePath $Exe";
         }
         catch (Exception ex) { Log("trimming alerts.log failed: " + ex.Message); }
     }
-    void AppendLog(string name, string line) { try { File.AppendAllText(P(name), line + "\r\n"); } catch { } }
+    void AppendLog(string name, string line) { try { Disk.Append(P(name), line + "\r\n"); } catch { } }
     void WriteAlerts()
     {
         if (alerts.Lines.Count == 0) return;
@@ -2628,6 +2818,7 @@ Start-Process -FilePath $Exe";
 
     readonly Dictionary<string, long> logged = new Dictionary<string, long>();
     bool lastPm;
+    bool gameFront;   // the session's game is the window in front this second
     DateTime trimDay = DateTime.Now.Date;
     void OnTick(object s, EventArgs e)
     {
@@ -2640,8 +2831,10 @@ Start-Process -FilePath $Exe";
             if (!logged.TryGetValue(k, out at) || now - at >= 60) { logged[k] = now; Log("tick failed: " + ex); }
         }
     }
+    IntPtr otherFront;   // NoFocus: the last window in front that wasn't this one
     void Tick()
     {
+        if (NoFocus) { var f = GetForegroundWindow(); if (f != IntPtr.Zero && f != Handle) otherFront = f; }
         long now = Source.Unix();
         if (now != lastSecond || force || indexVersion < 0) src.Poll();   // (the other ticks only watch the window)
         if (indexVersion != src.Version)
@@ -2657,7 +2850,9 @@ Start-Process -FilePath $Exe";
         {
             lastSecond = now;
             // a game seen running by the last poll, not one in its 30 s grace after closing (plain reads of fields the game poll sets)
-            if (src.Frames != null) src.Frames.Pid = games.InFront ? games.GamePid : 0;   // (out of front: no numbers, no 0 fps warnings)
+            // (the poll looks every 3 s; an alt-tab counts at once, so a game's background fps cap is never its numbers)
+            gameFront = games.InFront && (games.GamePid == 0 || Procs.Foreground() == games.GamePid);
+            if (src.Frames != null) src.Frames.Pid = gameFront ? games.GamePid : 0;   // (out of front: no numbers, no 0 fps warnings)
             src.Second(games.Game != null && now - games.Seen <= 6);
             hist.Sample(src, Bottleneck.ShareKeys, src.Bneck.Shares);
             ExtSecond(now);
@@ -2674,7 +2869,7 @@ Start-Process -FilePath $Exe";
                 foreach (var r in src.Readings) if (r.Sensor >= 0 && r.Sensor < src.Sensors.Count && src.Sensors[r.Sensor].Name.StartsWith("PresentMon")) pmKeys.Add(r.Key);
             }
             string gexe = games.GameExe;
-            pmOk = games.Game != null && games.InFront && (src.PmProc == null || gexe == null || string.Equals(src.PmProc, gexe, StringComparison.OrdinalIgnoreCase));
+            pmOk = games.Game != null && gameFront && (src.PmProc == null || gexe == null || string.Equals(src.PmProc, gexe, StringComparison.OrdinalIgnoreCase));
             alerts.Skip = pmOk ? new HashSet<string>() : pmKeys;
             // HWiNFO not sharing for 10 s (the free version stops every 12 h): say so in the log and the tray, end open episodes
             if (src.Status != "ok")
@@ -2695,9 +2890,20 @@ Start-Process -FilePath $Exe";
             if (asleep && Environment.TickCount - sleptAt > 60000) asleep = false;
             if (!asleep) alerts.Tick(src, index);
             WriteAlerts();
-            games.Sample(src, index, gated, alerts, pmOk, pmKeys, src.Bneck.Call, src.Bneck.Live);
+            games.Sample(src, index, gated, alerts, gameFront, pmOk, pmKeys, src.Bneck.Call, src.Bneck.Live);
             if (DateTime.Now.Date != trimDay) { trimDay = DateTime.Now.Date; TrimAlerts(); TrimGames(); }   // the days you keep, also on a PC that never restarts
             if (!fake && now - lastHwPath >= 60) { lastHwPath = now; RememberHwinfo(); }
+            // (free now: the page gets it; the view first, whole; slots alone, so the view and its undo stay as they are)
+            if (heldFiles.Count > 0 && pageReady && now % 5 == 0)
+            {
+                long un = Source.Unix();
+                var stale = heldFiles.Where(n => { long t; return heldAt.TryGetValue(n, out t) && un - t >= 120; }).ToList().Where(GiveUp).ToList();
+                // (a damaged view: the page keeps what was built meanwhile and saves it from now on, only the note goes out)
+                if (stale.Contains("state") && stateBad != null && wasShowing) { var tb = Msg("toast"); tb["text"] = "Your view couldn't be read, so it starts empty. The old file is kept as " + stateBad + " in your files (Settings)."; tb["ms"] = 15000; Post(tb); stateBad = null; }
+                if (stale.Any(n => n != "state")) SendSlots();   // (the damaged slots, empty, even while the view stays held)
+                if (heldFiles.Contains("state")) { if (CanOpen(P("state.json"))) SendState(); }
+                else if (heldFiles.Any(n => CanOpen(P(n + ".json")))) SendSlots();
+            }
         }
         if (now - lastSave >= 900) { lastSave = now; hist.Save(false); }
         bool showing = pageReady && Visible && !IsIconic(Handle);   // (Windows' own word: a restore that skips the focus doesn't always update WindowState)
@@ -2705,7 +2911,12 @@ Start-Process -FilePath $Exe";
         {
             force = true; SendSparks(subCells);   // back from the tray or the taskbar: the page missed those seconds
             Post(Msg("shown"));                  // and measures its tiles again on screen (hidden, some came out short)
-            if (stateBad != null) { var tb = Msg("toast"); tb["text"] = "Your view couldn't be read, so it starts empty. The old file is kept as " + stateBad + " in your files (Settings)."; tb["ms"] = 15000; Post(tb); stateBad = null; }
+            // (one toast: the page has one, so each would replace the one before)
+            var notes = new List<string>();
+            if (stateBad != null) { notes.Add("Your view couldn't be read, so it starts empty. The old file is kept as " + stateBad + " in your files (Settings)."); stateBad = null; }
+            if (UpdateNote() != null) { notes.Add(UpdateNote()); Log("update result: " + UpdateResult); UpdateResult = int.MinValue; }
+            if (heldFiles.Contains("state")) notes.Add(HeldNote);
+            if (notes.Count > 0) { var tn = Msg("toast"); tn["text"] = string.Join(" ", notes.Select(n => n.TrimEnd().EndsWith(".") ? n.TrimEnd() : n.TrimEnd() + ".")); tn["ms"] = notes.Count > 1 ? 20000 : 15000; Post(tn); }
         }
         wasShowing = showing;
         if (!showing || !(second || force)) return;
@@ -2735,7 +2946,7 @@ Start-Process -FilePath $Exe";
         var tk = Msg("tick");
         tk["ver"] = src.Version; tk["status"] = src.Status; tk["age"] = src.Age; tk["ts"] = now;
         tk["i"] = ix; tk["v"] = vs; tk["mn"] = mn; tk["mx"] = mx; tk["av"] = av;
-        tk["game"] = games.Game; tk["front"] = games.InFront; tk["gameSince"] = games.Since;   // plain reads of fields the game poll sets
+        tk["game"] = games.Game; tk["front"] = gameFront; tk["gameSince"] = games.Since;   // plain reads of fields the game poll sets
         tk["pm"] = pmOk || !second && lastPm; lastPm = (bool)tk["pm"];
         char bl = src.Bneck.Live; tk["bnl"] = bl == 'g' ? (object)1 : bl == 'c' ? (object)2 : bl == 'f' ? (object)3 : null;   // the call with no game too
         if (src.Conn.Has) tk["c12"] = new object[] { src.Conn.Lopsided, src.Conn.Hot, Math.Round(src.Conn.Share, 1) };
@@ -2761,31 +2972,42 @@ Start-Process -FilePath $Exe";
         catch { }
     }
     // kills HWiNFO, switches its shared memory back on in its INI (the free version writes SensorsSM=0 after 12 h)
-    // and starts it again. Exit codes: 0 done, 2 the INI couldn't be written, 3 no HWiNFO found
+    // and starts it again. Exit codes: 0 done, 2 the INI couldn't be written, 3 no HWiNFO found. $Unattended (Keep
+    // HWiNFO sharing's task, nobody at the PC): its welcome screen off and Sensors-only on, or it would wait on the
+    // welcome screen and share nothing. Program Files comes from Windows (the known folder), not from the environment,
+    // which the user's own settings can change, and HWiNFO only from this Windows session
     const string RestartScript = @"
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')   # (as admin: Windows' own modules only, never the user's)
 $ErrorActionPreference = 'Stop'
+$pfs =@([Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86')) | Where-Object { $_ }
 if (-not $Exe -or -not (Test-Path -LiteralPath $Exe)) {
   $Exe = $null
-  foreach ($c in ""$env:ProgramFiles\HWiNFO64\HWiNFO64.EXE"", ""${env:ProgramFiles(x86)}\HWiNFO64\HWiNFO64.EXE"", ""$env:ProgramFiles\HWiNFO32\HWiNFO32.EXE"", ""${env:ProgramFiles(x86)}\HWiNFO32\HWiNFO32.EXE"") {
+  foreach ($c in @(foreach ($d in $pfs) { ""$d\HWiNFO64\HWiNFO64.EXE"", ""$d\HWiNFO32\HWiNFO32.EXE"" })) {
     if (Test-Path -LiteralPath $c) { $Exe = $c; break }
   }
 }
 if (-not $Exe) { exit 3 }
 try { $sig = Get-AuthenticodeSignature -LiteralPath $Exe } catch { $sig = $null }
 if (-not $sig -or $sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -cnotmatch '^CN=""?REALiX, s\.r\.o\.""?,') { exit 4 }
-Get-Process HWiNFO64, HWiNFO32 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+$ses = (Get-Process -Id $PID).SessionId
+Get-Process HWiNFO64, HWiNFO32 -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $ses } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3
 $code = 0
 try {
   $ini = [IO.Path]::ChangeExtension($Exe, '.INI')
   $lines = @(if (Test-Path -LiteralPath $ini) { Get-Content -LiteralPath $ini })
-  if ($lines -match '^SensorsSM=') { $lines = @($lines | ForEach-Object { if ($_ -match '^SensorsSM=') { 'SensorsSM=1' } else { $_ } }) }
-  elseif ($lines | Where-Object { $_.Trim() -eq '[Settings]' }) {
-    $out = New-Object System.Collections.ArrayList
-    foreach ($l in $lines) { [void]$out.Add($l); if ($l.Trim() -eq '[Settings]') { [void]$out.Add('SensorsSM=1') } }
-    $lines = $out
+  $want = [ordered]@{ SensorsSM = '1' }
+  if ($Unattended) { $want['ShowWelcomeAndProgress'] = '0'; $want['SensorsOnly'] = '1' }
+  foreach ($k in $want.Keys) {
+    $set = $k + '=' + $want[$k]
+    if ($lines -match ('^' + $k + '=')) { $lines = @($lines | ForEach-Object { if ($_ -match ('^' + $k + '=')) { $set } else { $_ } }) }
+    elseif ($lines | Where-Object { $_.Trim() -eq '[Settings]' }) {
+      $out = New-Object System.Collections.ArrayList
+      foreach ($l in $lines) { [void]$out.Add($l); if ($l.Trim() -eq '[Settings]') { [void]$out.Add($set) } }
+      $lines = $out
+    }
+    else { $lines = @($lines) + @('[Settings]', $set) }
   }
-  else { $lines = @($lines) + @('[Settings]', 'SensorsSM=1') }
   Set-Content -LiteralPath $ini -Value $lines -Encoding Default
 } catch { $code = 2 }
 try { $sig = Get-AuthenticodeSignature -LiteralPath $Exe } catch { $sig = $null }
@@ -2798,13 +3020,14 @@ exit $code
     {
         var r = Msg("toast");
         if (fake) { r["text"] = "Demo data: there is no HWiNFO to restart"; Post(r); Restarted(-3); return; }
+        if (Brand.NoActions) { r["text"] = "Test copy: HWiNFO isn't restarted"; Post(r); Restarted(-3); return; }
         if (restarting) { r["text"] = "HWiNFO is restarting already"; Post(r); return; }   // (the page's button keeps turning)
         try
         {
             string exe = settings.ContainsKey("hwinfo") ? settings["hwinfo"] as string : null;
-            if (exe != null && (exe.IndexOf('\'') >= 0 || exe.IndexOf('"') >= 0 || !Regex.IsMatch(Path.GetFileName(exe), @"^HWiNFO(64|32)\.exe$", RegexOptions.IgnoreCase) || !File.Exists(exe))) exe = null;
+            if (exe != null && (!Regex.IsMatch(Path.GetFileName(exe), @"^HWiNFO(64|32)\.exe$", RegexOptions.IgnoreCase) || !File.Exists(exe))) exe = null;
             string script = "$Exe = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + Convert.ToBase64String(Encoding.Unicode.GetBytes(exe ?? "")) + "'))" + RestartScript;
-            var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+            var psi = new ProcessStartInfo(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
             psi.Verb = "runas"; psi.WindowStyle = ProcessWindowStyle.Hidden; psi.UseShellExecute = true;   // HWiNFO runs as admin: so must its restart
             var proc = Process.Start(psi);
             restarting = true;
@@ -2815,8 +3038,8 @@ exit $code
                 int code = -1;
                 try { if (proc != null && proc.WaitForExit(60000)) code = proc.ExitCode; } catch { }
                 string text = code == 0 ? "HWiNFO restarted with its shared memory on" : code == 2 ? "HWiNFO restarted, but its settings file couldn't be changed: turn on Shared Memory Support in its settings"
-                            : code == 3 ? "HWiNFO wasn't found: start it once yourself, HW Deck remembers where it is"
-                            : code == 4 ? "That HWiNFO isn't signed by its maker (REALiX), so HW Deck didn't start it as admin" : "The HWiNFO restart didn't finish";
+                            : code == 3 ? "HWiNFO wasn't found: start it once yourself, " + Brand.Name + " remembers where it is"
+                            : code == 4 ? "That HWiNFO isn't signed by its maker (REALiX), so " + Brand.Name + " didn't start it as admin" : "The HWiNFO restart didn't finish";
                 Log("hwinfo restart: " + code);
                 Try(() => BeginInvoke((Action)(() => { restarting = false; var t = Msg("toast"); t["text"] = text; Post(t); Restarted(code); })));
             });
@@ -2833,15 +3056,17 @@ exit $code
 
     // ---- Keep HWiNFO sharing: a Windows task that looks every hour and restarts HWiNFO (RestartScript) once it has run
     // 10 h 50 min, so about every 11 h and always before the free version's 12 h. It runs as admin like HWiNFO, so all
-    // it runs is stored inside it, never a file anyone could swap (the zip's folder is the user's to write), and it only
-    // restarts an HWiNFO installed under Program Files (started as admin with no prompt, a copy in a folder anyone can
+    // it runs is stored where only admins can write (HKLM\SOFTWARE\<name>\Keep, its result next to it), never a file
+    // anyone could swap, and it starts through cmd.exe, which clears what the user's own environment could slip into
+    // an admin PowerShell (the .NET profiler and COMPLUS_ settings) first. It only restarts an HWiNFO installed under
+    // Program Files (started as admin with no prompt, a copy in a folder anyone can
     // write to could bring someone else's files along). A closed HWiNFO stays closed. Once this copy of HW Deck is gone
     // (a deleted zip folder) the task deletes itself; the msi's uninstall deletes it too (installer\HWDeck.wxs, under the
     // same name). Anything full screen in front (a game, a video) gets to finish first, until HWiNFO has run 11 h 40 min,
     // and HWiNFO's window, which takes the focus as it starts, is minimized, so the window in front gets it back. The
     // Win32 calls for that are made in memory: Add-Type would compile a file into the user's temp folder and load it
     // as admin. On and off are one Windows prompt each ----
-    const int KeepVersion = 1;   // in its description: a later HW Deck can tell a task made before a change to its script
+    const int KeepVersion = 3;   // in its description: a later HW Deck can tell a task made before a change to its script
     string KeepTask { get { return runName + " - Keep HWiNFO sharing"; } }
     string KeepMark { get { return Brand.Name + ": " + Application.ExecutablePath; } }   // the end of its description: whose it is
     static bool InProgramFiles(string exe)
@@ -2859,22 +3084,25 @@ exit $code
     // 7 not admin (left alone). A drive that isn't there (unplugged, not mapped for admins) deletes nothing. Notification
     // states 2, 3, 4: a full-screen app, a Direct3D game, presentation mode
     const string KeepScript = @"
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')   # (as admin: Windows' own modules only, never the user's)
 $ErrorActionPreference = 'Stop'
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 7 }
 if (-not (Test-Path -LiteralPath $App)) {
   if (-not (Test-Path -LiteralPath ([IO.Path]::GetPathRoot($App)))) { exit 0 }
   Start-Sleep -Seconds 120
   if (-not (Test-Path -LiteralPath $App)) {
-    try { $f = New-Object -ComObject Schedule.Service; $f.Connect(); $f = $f.GetFolder('\'); if ($f.GetTask($Name).Definition.RegistrationInfo.Description.EndsWith(': ' + $App, [StringComparison]::OrdinalIgnoreCase)) { $f.DeleteTask($Name, 0) } } catch { }
+    try { $f = New-Object -ComObject Schedule.Service; $f.Connect(); $f = $f.GetFolder('\'); if ($f.GetTask($Name).Definition.RegistrationInfo.Description.EndsWith(': ' + $App, [StringComparison]::OrdinalIgnoreCase)) { $f.DeleteTask($Name, 0); $r = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').OpenSubKey($Key, $true); $r.DeleteValue($Name, $false); $r.DeleteValue($Name + ' result', $false); $n = $r.ValueCount + $r.SubKeyCount; $r.Close(); if (-not $n) { [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').DeleteSubKey($Key, $false) } } } catch { }
     exit 5
   }
 }
-$p = @(Get-Process HWiNFO64, HWiNFO32 -ErrorAction SilentlyContinue | Sort-Object StartTime)
+$ses = (Get-Process -Id $PID).SessionId
+$p = @(Get-Process HWiNFO64, HWiNFO32 -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $ses } | Sort-Object StartTime)
 if ($p.Count -eq 0) { exit 0 }
 if (((Get-Date) - $p[0].StartTime).TotalMinutes -lt $Min) { exit 0 }
 $Exe = $p[0].Path; $ok = $false
-if ($Exe) { $full = [IO.Path]::GetFullPath($Exe); foreach ($d in $env:ProgramFiles, ${env:ProgramFiles(x86)}) { if ($d -and $full.StartsWith($d.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { $ok = $true } } }
+if ($Exe) { $full = [IO.Path]::GetFullPath($Exe); foreach ($d in [Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86')) { if ($d -and $full.StartsWith($d.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { $ok = $true } } }
 if (-not $ok) { exit 6 }
+$Unattended = $true
 $tb = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object Reflection.AssemblyName 'KeepHw'), 'Run').DefineDynamicModule('KeepHw').DefineType('KeepHw', 'Public, Class')
 foreach ($f in ('user32.dll', 'GetForegroundWindow', [IntPtr], @()), ('user32.dll', 'GetWindowThreadProcessId', [UInt32], @([IntPtr], [UInt32].MakeByRefType())), ('user32.dll', 'PostMessageW', [Boolean], @([IntPtr], [UInt32], [IntPtr], [IntPtr])), ('shell32.dll', 'SHQueryUserNotificationState', [Int32], @([Int32].MakeByRefType()))) {
   $m = $tb.DefinePInvokeMethod($f[1], $f[0], 'Public, Static, PinvokeImpl', 'Standard', $f[2], [Type[]]$f[3], 'Winapi', 'Unicode'); $m.SetImplementationFlags('PreserveSig')
@@ -2883,7 +3111,8 @@ $W = $tb.CreateType()
 $until = $p[0].StartTime.AddMinutes(700)
 while ((Get-Date) -lt $until) { $q = 0; [void]$W::SHQueryUserNotificationState([ref]$q); if (2, 3, 4 -notcontains $q) { break }; Start-Sleep -Seconds 30 }
 $p[0].Refresh(); if ($p[0].HasExited) { exit 0 }
-$AfterStart = { for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $h = $W::GetForegroundWindow(); $q = [UInt32]0; [void]$W::GetWindowThreadProcessId($h, [ref]$q); if ((Get-Process -Id $q -ErrorAction SilentlyContinue).ProcessName -like 'HWiNFO*') { [void]$W::PostMessageW($h, 0x112, [IntPtr]0xF020, [IntPtr]::Zero) } } }";
+$AfterStart = { for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $h = $W::GetForegroundWindow(); $q = [UInt32]0; [void]$W::GetWindowThreadProcessId($h, [ref]$q); if ((Get-Process -Id $q -ErrorAction SilentlyContinue).ProcessName -like 'HWiNFO*') { [void]$W::PostMessageW($h, 0x112, [IntPtr]0xF020, [IntPtr]::Zero); break } } }";
+    static string PowerShellExe { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"); } }
     static string PsText(string s) { return "[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + Convert.ToBase64String(Encoding.Unicode.GetBytes(s ?? "")) + "'))"; }
     static object Com(object o, string name, System.Reflection.BindingFlags how, params object[] a) { return o.GetType().InvokeMember(name, how, null, o, a); }
     // on only when the task is there, enabled, this copy's (after a move or a fresh unzip it is the old folder's, which
@@ -2903,18 +3132,53 @@ $AfterStart = { for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $
             var me = System.Security.Principal.WindowsIdentity.GetCurrent();
             bool mine = string.IsNullOrEmpty(uid) || uid.Equals(me.User.Value, StringComparison.OrdinalIgnoreCase) || uid.Equals(me.Name, StringComparison.OrdinalIgnoreCase)
                      || uid.Equals(Environment.UserName, StringComparison.OrdinalIgnoreCase);
-            return mine && true.Equals(Com(task, "Enabled", get)) && desc != null && desc.EndsWith(KeepMark, StringComparison.OrdinalIgnoreCase);
+            bool on = mine && true.Equals(Com(task, "Enabled", get)) && desc != null && desc.EndsWith(KeepMark, StringComparison.OrdinalIgnoreCase);
+            if (on)
+            {
+                var v = Regex.Match(desc, @"Task version (\d+)\.");
+                keepOld = !v.Success || int.Parse(v.Groups[1].Value) < KeepVersion;
+                try
+                {
+                    using (var k = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64).OpenSubKey(KeepKey))
+                    { int c; if (k != null && int.TryParse((k.GetValue(KeepTask + " result") as string) ?? "", out c)) keepLast = c; }
+                }
+                catch { }
+                if (!AdminAccount()) keepLast = 7;   // (its hourly run stops there, and can't write that next to its script)
+            }
+            return on;
         }
         catch { return false; }
         finally { if (svc != null) Try(() => Marshal.ReleaseComObject(svc)); }
     }
-    // the elevated script that makes the task: it encodes the hourly script and registers the task around it
+    // the task's last result (its exit code, which it writes next to its script: Task Scheduler never sees it through
+    // conhost), and a task made by an older HW Deck (its script is the old one), read with KeepSharing
+    int keepLast; bool keepOld;
+    string KeepKey { get { return @"SOFTWARE\" + Brand.Name + @"\Keep"; } }
+    // the task is on but from an older HW Deck, or its last run couldn't restart HWiNFO: for under the switch (null: nothing)
+    string KeepNote()
+    {
+        if (keepOld) return "Its task is from an older " + Brand.Name + ": turn this off and on once to update it.";
+        string why = keepLast == 4 ? "that HWiNFO isn't signed by its maker (REALiX)" : keepLast == 6 ? "HWiNFO now runs from outside Program Files"
+                   : keepLast == 7 ? "this account isn't an admin anymore" : keepLast == 2 ? "it restarted HWiNFO, but couldn't change HWiNFO's settings file" : null;
+        return why == null ? null : "Last time it couldn't keep HWiNFO sharing: " + why + ".";
+    }
+    // the elevated script that makes the task: the hourly script into HKLM, then the task that starts it
     string KeepOnScript()
     {
         int min = 650, m;
         if (customData && int.TryParse(Environment.GetEnvironmentVariable("HWDECK_KEEP_MIN"), out m) && m >= 0) min = m;   // (tests, with their own --data: another age)
         string sid = System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
         string sys = Environment.GetFolderPath(Environment.SpecialFolder.System), x = System.Security.SecurityElement.Escape(Brand.Name);
+        // what the task runs: cmd.exe (no .NET, no AutoRun) drops the profiler settings and the COMPLUS_ ones that load
+        // code (another runtime, another JIT, a v2 profiler), then a short loader reads the hourly script from HKLM and
+        // runs it. Named one by one: listing them all takes FOR /F, whose child cmd.exe runs the user's AutoRun (no /D),
+        // as admin. No quotes inside cmd's line: conhost passes it on re-quoted, which drops every inner pair
+        string loader = "$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')\n$k = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').OpenSubKey(" + PsText(KeepKey) +
+            ")\nif (-not $k) { exit 3 }\n$s = $k.GetValue(" + PsText(KeepTask) + ")\nif (-not $s) { exit 3 }\n& ([ScriptBlock]::Create($s))";
+        string args = "--headless " + Path.Combine(sys, "cmd.exe") + " /d /s /c \"set COR_ENABLE_PROFILING=&set COR_PROFILER=&set COR_PROFILER_PATH=&set COR_PROFILER_PATH_32=&set COR_PROFILER_PATH_64=" +
+            "&set COMPLUS_Version=&set COMPLUS_InstallRoot=&set COMPLUS_DefaultVersion=&set COMPLUS_ProfAPI_ProfilerCompatibilitySetting=&set COMPLUS_AltJit=&set COMPLUS_AltJitName=" +
+            "&set COMPLUS_AltJitNgen=&set COMPLUS_JitName=&set COMPLUS_GCName=&set APPDOMAIN_MANAGER_ASM=&set APPDOMAIN_MANAGER_TYPE=&" + PowerShellExe + " -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " +
+            Convert.ToBase64String(Encoding.Unicode.GetBytes(loader)) + "\"";
         string xml = "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">" +
             "<RegistrationInfo><Author>" + x + "</Author><Description>" + System.Security.SecurityElement.Escape("Restarts HWiNFO once it has run about 11 hours, with its shared memory on, so the free version never stops sharing. " +
                 "Turn it off in " + Brand.Name + "'s Settings (Keep HWiNFO sharing). Task version " + KeepVersion + ". " + KeepMark) + "</Description></RegistrationInfo>" +
@@ -2924,33 +3188,49 @@ $AfterStart = { for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $
             "<StartWhenAvailable>true</StartWhenAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><ExecutionTimeLimit>PT1H</ExecutionTimeLimit>" +
             "<Priority>4</Priority></Settings>" +   // (the default, 7, would start HWiNFO below normal priority)
             // (conhost --headless: no window, where -WindowStyle Hidden still flashes one or opens Windows Terminal)
-            "<Actions Context=\"Author\"><Exec><Command>" + Path.Combine(sys, "conhost.exe") + "</Command><Arguments>--headless " + Path.Combine(sys, @"WindowsPowerShell\v1.0\powershell.exe") +
-            " -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand CMD</Arguments></Exec></Actions></Task>";
-        return "$Name = " + PsText(KeepTask) + "\n$hourly = @'\n$App = " + PsText(Application.ExecutablePath) + "; $Name = " + PsText(KeepTask) + "; $Min = " + min +
-            KeepScript + RestartScript + "\n'@\n$xml = @'\n" + xml + "\n'@\n$Me = '" + sid + "'" + @"
+            "<Actions Context=\"Author\"><Exec><Command>" + Path.Combine(sys, "conhost.exe") + "</Command><Arguments>" + System.Security.SecurityElement.Escape(args) + "</Arguments></Exec></Actions></Task>";
+        // (every exit records its code next to the script first, while the task's script is still there)
+        string hourly = Regex.Replace(KeepScript + RestartScript, @"\bexit (\d+|\$code)", "Leave $1");
+        return "$Name = " + PsText(KeepTask) + "; $Key = " + PsText(KeepKey) + "\n$hourly = @'\n$App = " + PsText(Application.ExecutablePath) + "; $Name = " + PsText(KeepTask) + "; $Key = " + PsText(KeepKey) + "; $Min = " + min +
+            // (a run with nothing to do yet, exit 0 before the restart, keeps the last real result)
+            "\nfunction Leave($c) { try { $r = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').OpenSubKey($Key, $true); if ($r -and $null -ne $r.GetValue($Name) -and ($c -ne 0 -or $Unattended)) { $r.SetValue($Name + ' result', [string]$c) } } catch { }; exit $c }" +
+            hourly + "\n'@\n$xml = @'\n" + xml + "\n'@\n$Me = '" + sid + "'" + @"
 $ErrorActionPreference = 'Stop'
 if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne $Me) { exit 8 }
-$xml = $xml.Replace('-EncodedCommand CMD', '-EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hourly)))
-$s = New-Object -ComObject Schedule.Service; $s.Connect()
-[void]$s.GetFolder('\').RegisterTask($Name, $xml, 6, $null, $null, 3)
+$s = New-Object -ComObject Schedule.Service; $s.Connect(); $f = $s.GetFolder('\')
+" + KeepOwner + @"
+$r = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').CreateSubKey($Key)
+$r.SetValue($Name, $hourly); $r.DeleteValue($Name + ' result', $false); $r.Close()
+[void]$f.RegisterTask($Name, $xml, 6, $null, $null, 3)
 exit 0";
     }
+    // one task per PC: another account's (exit 9) is neither taken over nor deleted, unless that account is gone
+    const string KeepOwner = @"
+try { $u = $f.GetTask($Name).Definition.Principal.UserId } catch { $u = $null }
+if ($u) {
+  try { $u = (New-Object Security.Principal.NTAccount $u).Translate([Security.Principal.SecurityIdentifier]).Value } catch { }
+  $alive = $true; try { [void](New-Object Security.Principal.SecurityIdentifier $u).Translate([Security.Principal.NTAccount]) } catch { $alive = $false }
+  if ($alive -and $u -ne $Me) { exit 9 }
+}";
     const string KeepOffScript = @"
 $ErrorActionPreference = 'Stop'
 $s = New-Object -ComObject Schedule.Service; $s.Connect(); $f = $s.GetFolder('\')
+" + KeepOwner + @"
 try { $f.DeleteTask($Name, 0) } catch { }
+try { $r = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').OpenSubKey($Key, $true); if ($r) { $r.DeleteValue($Name, $false); $r.DeleteValue($Name + ' result', $false); $n = $r.ValueCount + $r.SubKeyCount; $r.Close(); if (-not $n) { [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').DeleteSubKey($Key, $false) } } } catch { }
 try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
     void SetKeepSharing(bool on)
     {
         var r = Msg("toast");
         if (fake) { r["text"] = "Demo data: there is no HWiNFO to keep sharing"; Post(r); SendSettings(true); return; }
+        if (Brand.NoActions) { r["text"] = "Test copy: no task is made or deleted"; Post(r); SendSettings(true); return; }
         if (keepBusy) { SendSettings(true); return; }
         string hw = settings.ContainsKey("hwinfo") ? settings["hwinfo"] as string : null;
         if (on && hw != null && !InProgramFiles(hw)) { r["text"] = "Keep HWiNFO sharing only restarts an HWiNFO installed in Program Files, and yours runs from " + Path.GetDirectoryName(hw); Post(r); SendSettings(true); return; }
         try
         {
-            string script = on ? KeepOnScript() : "$Name = " + PsText(KeepTask) + KeepOffScript;
-            var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+            string script = "$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')\n" + (on ? KeepOnScript() : "$Name = " + PsText(KeepTask) + "; $Key = " + PsText(KeepKey) + "; $Me = '" + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value + "'" + KeepOffScript);
+            var psi = new ProcessStartInfo(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
             psi.Verb = "runas"; psi.WindowStyle = ProcessWindowStyle.Hidden; psi.UseShellExecute = true;   // a task that runs as admin takes an admin to make (or delete)
             var proc = Process.Start(psi);
             keepBusy = true;
@@ -2965,6 +3245,7 @@ try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
                     keepBusy = false;
                     var t = Msg("toast");
                     t["text"] = code == 8 ? "Keep HWiNFO sharing needs your own account to be an admin (Windows asked for another one)"
+                              : code == 9 ? "Another account on this PC has Keep HWiNFO sharing on: there is one for the whole PC"
                               : code != 0 ? "Couldn't turn Keep HWiNFO sharing " + (on ? "on" : "off") + " (code " + code + ")"
                               : on ? "Keep HWiNFO sharing is on: HWiNFO restarts after about 11 hours" : "Keep HWiNFO sharing is off, and its task is deleted";
                     Post(t); SendSettings(true);
@@ -2989,6 +3270,22 @@ try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
     [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern int NetLocalGroupGetMembers(string server, string group, int level, out IntPtr buf, int max, out int read, out int total, IntPtr resume);
     [DllImport("netapi32.dll")] static extern int NetApiBufferFree(IntPtr buf);
     // the account in the group as Windows has it now (the sign-in's token may be older)
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int cls, out int info, int len, out int ret);
+    // this account is an admin's: unelevated, Windows gives an admin a limited token (TokenElevationType 3); elevated, or
+    // with UAC off, the token is in Administrators
+    static bool AdminAccount()
+    {
+        try
+        {
+            using (var me = System.Security.Principal.WindowsIdentity.GetCurrent())
+            {
+                int t, n;
+                if (GetTokenInformation(me.Token, 18, out t, 4, out n) && t == 3) return true;
+                return new System.Security.Principal.WindowsPrincipal(me).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+        }
+        catch { return true; }   // (can't tell: no note)
+    }
     static bool InPerfLogUsers()
     {
         try
@@ -3026,6 +3323,7 @@ try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
     }
     // adds the account to the group (on) or takes it out if HW Deck put it there (off); exit 0 done, 3 nothing to do
     const string FpsAddScript = @"
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
 $ErrorActionPreference = 'Stop'
 try { Add-LocalGroupMember -SID 'S-1-5-32-559' -Member $Sid } catch { if ($_.FullyQualifiedErrorId -like 'MemberExists*') { exit 3 } else { throw } }
 $k = 'HKLM:\SOFTWARE\' + $Name
@@ -3034,6 +3332,7 @@ $v = @(((Get-ItemProperty $k -ErrorAction SilentlyContinue).PerfLogUsers -split 
 Set-ItemProperty $k -Name PerfLogUsers -Value ($v -join ';')
 exit 0";
     const string FpsRemoveScript = @"
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
 $ErrorActionPreference = 'Stop'
 $k = 'HKLM:\SOFTWARE\' + $Name
 $v = @(((Get-ItemProperty $k -ErrorAction SilentlyContinue).PerfLogUsers -split ';') | Where-Object { $_ })
@@ -3046,16 +3345,19 @@ exit 0";
     {
         var r = Msg("toast");
         if (src.Frames == null) { r["text"] = "Demo data: there is no game to count"; Post(r); SendSettings(fpsDone: true); return; }
+        if (Brand.NoActions) { r["text"] = "Test copy: Accurate game fps isn't changed"; Post(r); SendSettings(fpsDone: true); return; }
         if (fpsBusy) { SendSettings(fpsDone: true); return; }
         settings["gameFps"] = on; Try(() => SaveFile("settings", settings));
-        if (on) { src.Frames.Start(); if (src.Frames.On || src.Frames.State != "denied" || InPerfLogUsers()) { r["text"] = FpsText(); Post(r); SendSettings(fpsDone: true); return; } }
+        // (a trace that runs proves only this sign-in's token: turned off, then on again, the account is out of the group
+        // and the next sign-in would be refused, so the group is what decides)
+        if (on) { src.Frames.Start(); if (src.Frames.State == "failed" || InPerfLogUsers() || new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator)) { r["text"] = FpsText(); Post(r); SendSettings(fpsDone: true); return; } }
         else { src.Frames.Stop(); if (!PerfLogUsersByUs()) { r["text"] = "Accurate game fps is off"; Post(r); SendSettings(fpsDone: true); return; } }
         // the group: one Windows prompt
         string sid = System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
         string script = "$Sid = '" + sid + "'; $Name = " + PsText(Brand.Name) + (on ? FpsAddScript : FpsRemoveScript);
         try
         {
-            var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
+            var psi = new ProcessStartInfo(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
             psi.Verb = "runas"; psi.WindowStyle = ProcessWindowStyle.Hidden; psi.UseShellExecute = true;
             var proc = Process.Start(psi);
             fpsBusy = true;
@@ -3069,7 +3371,7 @@ exit 0";
                 {
                     fpsBusy = false;
                     var t = Msg("toast");
-                    if (on && code != 0 && code != 3) { settings["gameFps"] = false; Try(() => SaveFile("settings", settings)); }
+                    if (on && code != 0 && code != 3) { settings["gameFps"] = false; Try(() => SaveFile("settings", settings)); src.Frames.Stop(); }   // (the trace started to try it stops too)
                     t["text"] = code != 0 && code != 3 ? "Couldn't " + (on ? "allow" : "take back") + " fps counting (code " + code + ")"
                               : on ? FpsText() : "Accurate game fps is off, and the permission it needed is taken back";
                     Post(t); SendSettings(fpsDone: true);
@@ -3080,7 +3382,7 @@ exit 0";
         {
             var w = ex as System.ComponentModel.Win32Exception;
             bool no = w != null && w.NativeErrorCode == 1223;   // No in the Windows prompt
-            if (on) { settings["gameFps"] = false; Try(() => SaveFile("settings", settings)); }
+            if (on) { settings["gameFps"] = false; Try(() => SaveFile("settings", settings)); src.Frames.Stop(); }
             if (!no) Log("game fps failed: " + ex.Message);
             r["text"] = no ? (on ? "Cancelled: Accurate game fps stays off" : "Accurate game fps is off; the permission stays (Windows prompt cancelled)") : "Couldn't change Accurate game fps: " + ex.Message;
             Post(r); SendSettings(fpsDone: true);
@@ -3089,12 +3391,14 @@ exit 0";
     string FpsText()
     {
         string st = FpsState();
-        return st == "on" ? "Accurate game fps is on: HW Deck counts the game's own frames" : st == "signin" ? "Almost: sign out of Windows and back in, and HW Deck counts the game's own frames"
+        return st == "on" ? "Accurate game fps is on: " + Brand.Name + " counts the game's own frames" : st == "signin" ? "Almost: sign out of Windows and back in, and " + Brand.Name + " counts the game's own frames"
              : st == "denied" ? "Windows doesn't let this account count frames" : "Couldn't start counting frames";
     }
 
     // ---- start with Windows: a Run entry for this exe, in the tray ----
-    // on only when the entry starts this copy (after a move or a fresh unzip the old entry points elsewhere)
+    // on only when the entry starts this copy (after a move or a fresh unzip the old entry points elsewhere) and Task
+    // Manager's Startup apps hasn't turned it off (StartupApproved: an odd first byte is disabled)
+    const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
     bool Autostart()
     {
         try
@@ -3102,18 +3406,28 @@ exit 0";
             using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey))
             {
                 string v = k != null ? k.GetValue(runName) as string : null;
-                return v != null && v.IndexOf(Application.ExecutablePath, StringComparison.OrdinalIgnoreCase) >= 0;
+                if (v == null || v.IndexOf(Application.ExecutablePath, StringComparison.OrdinalIgnoreCase) < 0) return false;
+            }
+            using (var a = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(ApprovedKey))
+            {
+                var b = a != null ? a.GetValue(runName) as byte[] : null;
+                return b == null || b.Length == 0 || (b[0] & 1) == 0;
             }
         }
         catch { return false; }
     }
+    public static int Relaunches;   // the page's browser died and this copy was started again: how many times in a row
+    public static readonly List<string> OtherArgs = new List<string>();   // what Main didn't know: a build's own switches
     string RestartArgs()
     {
         // a trailing backslash before the closing quote would escape it
-        return (customData ? "--data \"" + (dataDir.EndsWith("\\") ? dataDir + "\\" : dataDir) + "\"" : "") + (fake ? " --fake " + src.Inner.Readings.Count : "");
+        Func<string, string> q = a => a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0 ? a : "\"" + a.Replace("\"", "\\\"") + (a.EndsWith("\\") ? "\\" : "") + "\"";
+        return ((customData ? "--data \"" + (dataDir.EndsWith("\\") ? dataDir + "\\" : dataDir) + "\"" : "") + (fake ? " --fake " + src.Inner.Readings.Count : "") +
+                string.Concat(OtherArgs.Select(a => " " + q(a)))).Trim();
     }
     void SetAutostart(bool on)
     {
+        if (Brand.NoActions) { var r = Msg("toast"); r["text"] = "Test copy: Start with Windows isn't changed"; Post(r); return; }
         try
         {
             using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey))
@@ -3121,6 +3435,9 @@ exit 0";
                 if (on) k.SetValue(runName, "\"" + Application.ExecutablePath + "\" -min " + RestartArgs());
                 else k.DeleteValue(runName, false);
             }
+            // turned on here, it starts again even if Task Manager had it off (no approval entry: on)
+            using (var a = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(ApprovedKey, true))
+                if (a != null) a.DeleteValue(runName, false);
         }
         catch (Exception ex) { Log("autostart failed: " + ex.Message); }
     }
@@ -3131,8 +3448,10 @@ exit 0";
         using (var d = new SaveFileDialog { Filter = "HW Deck layout (*.json)|*.json", FileName = (string.IsNullOrEmpty(name) ? "layout" : Regex.Replace(name, @"[\\/:*?""<>|]", "")) + ".hwdeck.json" })
         {
             if (d.ShowDialog(this) != DialogResult.OK) return;
-            File.WriteAllText(d.FileName, json.Serialize(new Dictionary<string, object> { { "hwdeck", 1 }, { "slot", data } }), new UTF8Encoding(false));
-            var r = Msg("toast"); r["text"] = "Exported to " + Path.GetFileName(d.FileName); Post(r);
+            var r = Msg("toast");
+            try { File.WriteAllText(d.FileName, json.Serialize(new Dictionary<string, object> { { "hwdeck", 1 }, { "slot", data } }), new UTF8Encoding(false)); r["text"] = "Exported to " + Path.GetFileName(d.FileName); }
+            catch (Exception ex) { Log("export failed: " + ex.Message); r["text"] = "Couldn't export: " + ex.Message; }
+            Post(r);
         }
     }
     void Import(int slot)
@@ -3157,8 +3476,23 @@ exit 0";
         // (a copy that never takes the focus, a test's, goes down and comes back without being activated even for a moment)
         if (a == "min") { if (NoFocus) ShowWindow(Handle, 7 /*SW_SHOWMINNOACTIVE*/); else KeepFocus(() => WindowState = FormWindowState.Minimized); }
         else if (a == "max" && NoFocus && WindowState == FormWindowState.Minimized) ShowWindow(Handle, 4 /*SW_SHOWNOACTIVATE: back as it was*/);
+        else if (a == "max" && NoFocus)
+        {
+            // (maximized or restored without being activated: restoring is SW_SHOWNOACTIVATE; maximizing has no such
+            // command, so: down without activation, told to come back maximized, back without activation)
+            if (WindowState == FormWindowState.Maximized) ShowWindow(Handle, 4 /*SW_SHOWNOACTIVATE*/);
+            else
+            {
+                ShowWindow(Handle, 7 /*SW_SHOWMINNOACTIVE*/);
+                var wp = new WINDOWPLACEMENT { length = Marshal.SizeOf(typeof(WINDOWPLACEMENT)) };
+                if (GetWindowPlacement(Handle, ref wp)) { wp.flags |= 2 /*WPF_RESTORETOMAXIMIZED*/; wp.showCmd = 7; SetWindowPlacement(Handle, ref wp); }
+                ShowWindow(Handle, 4 /*SW_SHOWNOACTIVATE*/);
+            }
+            SaveWin();
+        }
         else if (a == "max") { KeepFocus(() => WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized); SaveWin(); }
         else if (a == "close") HideToTray();
+        else if ((a == "drag" || a != null && a.StartsWith("resize:")) && NoFocus) { }   // (only a real mouse moves a window: in a test's copy they'd activate it)
         else if (a == "drag")
         {
             // a second press on the title bar within the double-click time: maximize or restore, as a caption does;
@@ -3178,6 +3512,9 @@ exit 0";
     }
 
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+    [StructLayout(LayoutKind.Sequential)] struct WINDOWPLACEMENT { public int length, flags, showCmd, minX, minY, maxX, maxY; public RECT normal; }
+    [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr h, ref WINDOWPLACEMENT wp);
+    [DllImport("user32.dll")] static extern bool SetWindowPlacement(IntPtr h, ref WINDOWPLACEMENT wp);
     [StructLayout(LayoutKind.Sequential)] struct APPBARDATA { public uint cbSize; public IntPtr hWnd; public uint uCallbackMessage; public uint uEdge; public RECT rc; public IntPtr lParam; }
     [DllImport("shell32.dll")] static extern IntPtr SHAppBarMessage(uint msg, ref APPBARDATA data);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hgt, uint flags);
@@ -3186,8 +3523,25 @@ exit 0";
     int sleptAt;
 
     // no native caption, but the resize frame stays: snapping, animations and maximize work like any window
+    // the smallest the window goes, in its monitor's pixels: given in WM_GETMINMAXINFO, not by MinimumSize, whose setter
+    // calls SetWindowPos without SWP_NOACTIVATE and so brings HW Deck to the front (at its start, or behind a game when
+    // a monitor's scale changes)
+    Size minTrack;
     protected override void WndProc(ref Message m)
     {
+        // Alt+F4, the taskbar's Close window: to the tray here, before WinForms notes the close as the user's (it keeps
+        // that after a cancel, so a later WM_CLOSE from Task Manager or taskkill would hide it instead of quitting)
+        if (m.Msg == 0x0112 /*WM_SYSCOMMAND*/ && ((int)m.WParam & 0xFFF0) == 0xF060 /*SC_CLOSE*/ && !exiting) { SaveWin(); HideToTray(); return; }
+        // a copy that never takes the focus (a test's) that still gets activated hands it straight back to the window that
+        // was in front (otherFront, kept by the Tick)
+        if (NoFocus && m.Msg == 0x0006 /*WM_ACTIVATE*/ && ((int)m.WParam & 0xFFFF) != 0 && otherFront != IntPtr.Zero && otherFront != Handle)
+        { var w = otherFront; BeginInvoke((Action)(() => { if (GetForegroundWindow() == Handle) SetForegroundWindow(w); })); }
+        if (m.Msg == 0x0024 /*WM_GETMINMAXINFO*/)
+        {
+            base.WndProc(ref m);
+            if (!minTrack.IsEmpty && m.LParam != IntPtr.Zero) { Marshal.WriteInt32(m.LParam, 24, minTrack.Width); Marshal.WriteInt32(m.LParam, 28, minTrack.Height); }   // ptMinTrackSize
+            return;
+        }
         if (m.Msg == 0x0218 /*WM_POWERBROADCAST*/)
         {
             long pbt = m.WParam.ToInt64();
@@ -3196,6 +3550,9 @@ exit 0";
             else if (pbt == 0x12 /*PBT_APMRESUMEAUTOMATIC*/ || pbt == 7 /*PBT_APMRESUMESUSPEND*/) asleep = false;
         }
         else if (m.Msg == 0x11 /*WM_QUERYENDSESSION*/) ending = true;
+        // minimized: the next tick that finds it on screen says so (shown), even after a minimize too short for any
+        // tick to have seen
+        else if (m.Msg == 0x05 /*WM_SIZE*/ && m.WParam.ToInt64() == 1 /*SIZE_MINIMIZED*/) wasShowing = false;
         else if (m.Msg == 0x16 /*WM_ENDSESSION*/)
         {
             if (m.WParam != IntPtr.Zero) { tray.Visible = false; EndMark(); exiting = true; BeginInvoke((Action)Application.Exit); }   // the session ends (or an installer asked): quit
@@ -3207,7 +3564,7 @@ exit 0";
             int dpi = (int)(m.WParam.ToInt64() & 0xFFFF);
             var r = (RECT)Marshal.PtrToStructure(m.LParam, typeof(RECT));
             var wa = Screen.FromRectangle(Rectangle.FromLTRB(r.L, r.T, r.R, r.B)).WorkingArea;
-            MinimumSize = new Size(Math.Min(720 * dpi / 96, wa.Width / 2), Math.Min(480 * dpi / 96, wa.Height / 2));
+            minTrack = new Size(Math.Min(720 * dpi / 96, wa.Width / 2), Math.Min(480 * dpi / 96, wa.Height / 2));
             SetWindowPos(Handle, IntPtr.Zero, r.L, r.T, r.R - r.L, r.B - r.T, 0x0004 /*NOZORDER*/ | 0x0010 /*NOACTIVATE*/);
             BeginInvoke((Action)FitToScreen);
             m.Result = IntPtr.Zero;
@@ -3276,7 +3633,7 @@ exit 0";
         {
             var b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
             bool max = WindowState == FormWindowState.Maximized || (WindowState == FormWindowState.Minimized && restoreMax);   // minimized from maximized comes back maximized
-            File.WriteAllText(WinPath, json.Serialize(new Dictionary<string, object> { { "x", b.X }, { "y", b.Y }, { "w", b.Width }, { "h", b.Height }, { "max", max } }));
+            Disk.Swap(WinPath, json.Serialize(new Dictionary<string, object> { { "x", b.X }, { "y", b.Y }, { "w", b.Width }, { "h", b.Height }, { "max", max } }));   // (a cut write never empties it)
         }
         catch { }
     }
@@ -3288,9 +3645,9 @@ exit 0";
             var d = json.Deserialize<Dictionary<string, object>>(File.ReadAllText(WinPath));
             var r = new Rectangle(Convert.ToInt32(d["x"]), Convert.ToInt32(d["y"]), Convert.ToInt32(d["w"]), Convert.ToInt32(d["h"]));
             if (!Screen.AllScreens.Any(sc => sc.WorkingArea.IntersectsWith(r))) return;   // that monitor is gone
-            MinimumSize = Size.Empty;   // HandleCreated sets the one for the monitor it is on
+            minTrack = Size.Empty;   // HandleCreated sets the one for the monitor it is on
             StartPosition = FormStartPosition.Manual; Bounds = r;
-            if (true.Equals(d["max"])) WindowState = FormWindowState.Maximized;
+            if (true.Equals(d["max"]) && !NoFocus) WindowState = FormWindowState.Maximized;   // (a maximized first show takes the focus)
         }
         catch { }
     }
@@ -3324,15 +3681,21 @@ exit 0";
         if (was != IntPtr.Zero && was != Handle && GetForegroundWindow() == Handle) SetForegroundWindow(was);
     }
     public volatile bool showAsked;         // a second launch before this window existed
+    public bool Quitting { get { return exiting; } }   // (a second launch's show signal isn't answered then)
     public void ShowWin()
     {
         if (!IsHandleCreated) { showAsked = true; return; }
         showAsked = false;
         Try(() => wv.Visible = true);
-        if (NoFocus) { KeepFocus(() => { Show(); if (WindowState == FormWindowState.Minimized) WindowState = restoreMax ? FormWindowState.Maximized : FormWindowState.Normal; }); return; }
+        // (a copy that never takes the focus comes back without being activated: a restore through WindowState activates,
+        // SW_SHOWNOACTIVATE brings a minimized window back as it was, maximized or not)
+        // (not Show(): for a form hidden while minimized or maximized it uses SW_SHOWMINIMIZED / SW_SHOWMAXIMIZED, which activate)
+        // (SW_SHOWNOACTIVATE keeps a normal window's place under the others; minimized or maximized, SW_SHOWNA shows it as it was)
+        if (NoFocus) { ShowWindow(Handle, WindowState == FormWindowState.Normal ? 4 /*SW_SHOWNOACTIVATE*/ : 8 /*SW_SHOWNA*/); if (IsIconic(Handle)) ShowWindow(Handle, 4); BeginInvoke((Action)FitToScreen); return; }
         Show();
         if (WindowState == FormWindowState.Minimized) WindowState = restoreMax ? FormWindowState.Maximized : FormWindowState.Normal;
         Activate(); SetForegroundWindow(Handle);
+        BeginInvoke((Action)FitToScreen);   // (its monitor may be gone since it went to the tray)
     }
 }
 
@@ -3390,7 +3753,7 @@ static class Program
         string appDir = AppDomain.CurrentDomain.BaseDirectory;
         if (new[] { @"web\index.html", @"web\deck.js", @"web\deck.css", "Microsoft.Web.WebView2.WinForms.dll", "Microsoft.Web.WebView2.Core.dll", "WebView2Loader.dll" }.Any(f => !File.Exists(Path.Combine(appDir, f))))
         {
-            MessageBox.Show(Brand.Name + " is missing some of its files. Extract the whole zip into a folder first, then start it from there.", Brand.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(Brand.Name + " is missing some of its files" + (Brand.Updates ? ". Install it again (or Repair it in Settings, Apps), then start it from the Start menu." : " (web\\ and the WebView2 files belong next to " + Path.GetFileName(Application.ExecutablePath) + ")."), Brand.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         for (int i = 0; i < args.Length; i++)
@@ -3415,6 +3778,9 @@ static class Program
                 int pid; if (int.TryParse(args[++i], out pid)) try { using (var old = Process.GetProcessById(pid)) old.WaitForExit(20000); } catch { }   // a restart: let the old copy finish saving
             }
             else if (a == "--fake") { fake = 300; int n; if (i + 1 < args.Length && int.TryParse(args[i + 1], out n)) { fake = Math.Max(1, Math.Min(20000, n)); i++; } }
+            else if (a == "--updated" && i + 1 < args.Length) { int c; if (int.TryParse(args[++i], out c)) DeckForm.UpdateResult = c; }   // (Update now's script, see UpdateNow)
+            else if (a == "--relaunch" && i + 1 < args.Length) { int c; if (int.TryParse(args[++i], out c)) DeckForm.Relaunches = c; }   // (how many times in a row the page's browser died)
+            else DeckForm.OtherArgs.Add(args[i]);   // (a build's own, like HW Dashboard's --test: kept for a restart)
         }
         // made-up values never go into the real history and logs: a demo without --data gets its own folder
         if (fake > 0 && !custom) data = Path.Combine(data, "demo");
@@ -3424,16 +3790,36 @@ static class Program
         ulong h = 14695981039346656037UL;
         foreach (char c in data.ToLowerInvariant()) { h ^= c; h *= 1099511628211UL; }
         string id = h.ToString("x16");
-        var mu = new System.Threading.Mutex(true, "HWDeck-" + id, out created);
+        System.Threading.Mutex mu;
+        try { mu = new System.Threading.Mutex(true, "HWDeck-" + id, out created); }
+        catch (UnauthorizedAccessException)
+        {
+            // the copy running on this data folder runs as admin: this one can't even look at it
+            if (!min) MessageBox.Show(Brand.Name + " is already running as administrator. Quit it from its tray icon first, then start it again.", Brand.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
         // a restart whose old copy is still letting go: wait for it instead of quitting (and leaving no HW Deck at all)
         if (!created && after) try { created = mu.WaitOne(30000); } catch (System.Threading.AbandonedMutexException) { created = true; }
         if (!created)
         {
             // the running copy shows its window (unless this launch asked for the tray, -min); this launch passes on its right to bring a window to the front
-            try { System.Threading.EventWaitHandle ev; if (!min && System.Threading.EventWaitHandle.TryOpenExisting("HWDeck-show-" + id, out ev)) { AllowSetForegroundWindow(-1); ev.Set(); ev.Dispose(); } } catch { }
-            return;
+            // a running copy answers (HWDeck-shown-); one that was quitting just then doesn't, and lets go in a moment:
+            // this launch then starts after all, instead of leaving none. (An answer left from an earlier launch that gave
+            // up is cleared first.)
+            bool asked = false;
+            System.Threading.EventWaitHandle ack = null;
+            try { System.Threading.EventWaitHandle.TryOpenExisting("HWDeck-shown-" + id, out ack); if (ack != null) ack.Reset(); } catch { }
+            try { System.Threading.EventWaitHandle ev; if (!min && System.Threading.EventWaitHandle.TryOpenExisting("HWDeck-show-" + id, out ev)) { AllowSetForegroundWindow(-1); ev.Set(); ev.Dispose(); asked = true; } } catch { }
+            if (asked)
+            {
+                bool answered = false;
+                try { answered = ack != null && ack.WaitOne(3000); } catch { }
+                if (!answered) try { created = mu.WaitOne(10000); } catch (System.Threading.AbandonedMutexException) { created = true; }
+            }
+            if (!created) return;
         }
         var show = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, "HWDeck-show-" + id);
+        var shown = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, "HWDeck-shown-" + id);
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += delegate(object s, System.Threading.ThreadExceptionEventArgs e) { Crash(data, e.Exception); };
         AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e) { Crash(data, e.ExceptionObject as Exception); };
@@ -3448,9 +3834,9 @@ static class Program
             return;
         }
         // the flag first, then the handle: a window made in between still sees the flag (HandleCreated shows it)
-        System.Threading.ThreadPool.RegisterWaitForSingleObject(show, delegate { form.showAsked = true; if (form.IsHandleCreated) { try { form.BeginInvoke((Action)form.ShowWin); } catch { } } }, null, -1, false);
+        System.Threading.ThreadPool.RegisterWaitForSingleObject(show, delegate { if (form.Quitting) return; shown.Set(); form.showAsked = true; if (form.IsHandleCreated) { try { form.BeginInvoke((Action)form.ShowWin); } catch { } } }, null, -1, false);
         Application.Run(form);
-        GC.KeepAlive(mu); GC.KeepAlive(show);
+        GC.KeepAlive(mu); GC.KeepAlive(show); GC.KeepAlive(shown);
     }
     [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
     // an error nothing else caught: into app.log instead of the .NET error dialog

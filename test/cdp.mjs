@@ -10,7 +10,11 @@ export async function connect(port = 9230, at = 'hwdeck.example') {   // at: wha
   await new Promise((ok, bad) => { ws.onopen = ok; ws.onerror = bad; });
   let id = 0; const wait = new Map(), listeners = [];
   ws.onmessage = e => { const m = JSON.parse(e.data); if (m.id && wait.has(m.id)) { wait.get(m.id)(m); wait.delete(m.id); } else if (m.method) for (const f of listeners) f(m); };
-  const cmd = (method, params = {}) => new Promise(ok => { const i = ++id; wait.set(i, ok); ws.send(JSON.stringify({ id: i, method, params })); });
+  // a page that never answers (stuck, or gone) fails its check instead of hanging the whole run
+  const fail = text => ({ result: { exceptionDetails: { text } } });
+  ws.onclose = () => { for (const [i, f] of wait) { wait.delete(i); f(fail('the page went away')); } };
+  const cmd = (method, params = {}) => new Promise(ok => { const i = ++id; wait.set(i, ok); ws.send(JSON.stringify({ id: i, method, params }));
+    setTimeout(() => { if (wait.has(i)) { wait.delete(i); ok(fail('no answer from the page in 5 minutes')); } }, 300000).unref(); });   // (unref: a finished test doesn't wait for it)
   const evaluate = async expr => {
     const r = await cmd('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
     if (r.result && r.result.exceptionDetails) throw new Error('page: ' + JSON.stringify(r.result.exceptionDetails.exception && r.result.exceptionDetails.exception.description || r.result.exceptionDetails.text));

@@ -14,7 +14,7 @@ const E = x => p.evaluate(x);
 const until = async (expr, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await E(expr)) return true; await p.sleep(150); } return false; };
 const click = async sel => { const c = await p.center(sel); if (!c) throw new Error('nothing at ' + sel); await p.click(c.x, c.y); await p.sleep(250); };
 
-ok('catalog arrives', await until('READ.length === 301 && feed.got'));
+ok('catalog arrives', await until('READ.length === 302 && feed.got'));
 ok('the working layout came back', await E('S.L.cats.length === 3 && S.active === 0 && S.screen === "tiles"'), await E('S.L.cats.map(c => c.name)'));
 ok('slot names came back', await E('S.slots[0] && S.slots[0].name === "Gaming" && !!S.slots[1] && S.slots[2] && S.slots[2].name === "Other PC" && !S.slots[3]'), await E('S.slots.map(s => s && s.name)'));
 ok('gates and curves came back', await E('Object.values(S.L.cells).some(c => c.gates && c.gates.mode === "yr") && Object.values(S.L.cells).some(c => c.curve && !c.pred) && Object.values(S.L.cells).some(c => c.pred)'));

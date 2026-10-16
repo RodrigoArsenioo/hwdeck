@@ -10,6 +10,7 @@ Set-Location $d
 # below normal priority, and so is every copy it starts: a game or work on this PC comes first
 (Get-Process -Id $PID).PriorityClass = 'BelowNormal'
 $failed = 0
+$t0 = Get-Date
 # test windows sit behind other windows: keep Chromium from treating a covered window as hidden (it would slow its
 # timers and stop its frames)
 $awake = '--disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling'
@@ -193,6 +194,14 @@ Quit-Deck $p 9234
 
 # the browser demo (built into dist\demo, served on port 8767 and opened in a headless Edge)
 powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\build-demo.ps1" | Out-Null
-Run 'browser demo' test/e2e-demo.mjs 0 ''
+if ($LASTEXITCODE) { "== browser demo`nFAIL the demo didn't build"; $failed++ } else { Run 'browser demo' test/e2e-demo.mjs 0 '' }
+
+# the app goes on after an exception in its own code (it logs "unhandled:", "tick failed:", "message ... failed:" or,
+# from the game poll, "games:"),
+# so a page that still looks right can hide one: any such line from this run fails it too
+$bad = foreach ($f in Get-ChildItem "$d\test" -Recurse -File -Include app.log, app.log.old -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 }) {
+  Get-Content -LiteralPath $f.FullName | Where-Object { $_ -match '^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)' -and [datetime]::ParseExact($Matches[1], 'yyyy-MM-dd HH:mm:ss', $null) -ge $t0.AddSeconds(-2) -and $_ -match '  (unhandled|tick failed|message \S+ failed|games): ' } | ForEach-Object { "$($f.Directory.Name): $_" }
+}
+if ($bad) { "== host exceptions`nFAIL the app logged exceptions it went on after"; $bad | Select-Object -First 20; $failed++ }
 
 if ($failed) { "`n$failed run(s) with failures"; exit 1 } else { "`nevery run passed" }

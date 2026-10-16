@@ -21,7 +21,7 @@ const host = m => ev(`send(${JSON.stringify(m)})`);
 const click = async sel => { const c = await p.center(sel); if (!c) throw new Error('nothing at ' + sel); await p.click(c.x, c.y); await p.sleep(400); };
 const T = sel => ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? e.textContent : null; })()`);
 
-ok('catalog arrives', await until('READ.length === 301 && feed.got'));
+ok('catalog arrives', await until('READ.length === 302 && feed.got'));
 await host({ t: 'fakeGame', game: null });   // whatever runs on this PC: from here on the test says what plays
 const cpuKey = 'f0000501.0/01000000';
 await host({ t: 'fakePin', key: cpuKey, v: 40 });   // under its lines until the made-up session below
@@ -91,7 +91,7 @@ ok('a guide runs through both charts at that minute, a dot on each line', await 
 tip = await hoverAt(3, '.gx-bnc');
 ok('over an older minute it says which call held most of it', tip === hhmm(s1 + 3 * 60) + 'fps 1701% low 73mostly cpu-bound', tip);
 tip = await hoverAt(40, '.gx-bnc');
-ok('over a gap: not in front', tip === hhmm(s1 + 40 * 60) + 'not in front', tip);
+ok('over a gap: not in front', tip === hhmm(s1 + 40 * 60) + 'not in front, or HW Deck was closed', tip);
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await p.sleep(250);
 ok('the read-out goes when the pointer leaves', await ev(`!document.querySelector("${det} .gx-hz").classList.contains("hv")`));
 ok('clock ticks from start to end', /^\d\d:\d\d.*\d\d:\d\d$/.test(await T(det + ' .gx-ticks')), await T(det + ' .gx-ticks'));
@@ -185,6 +185,16 @@ await ev('$("gmodal").classList.remove("open")'); await p.sleep(300);
 // ---- a made-up session: the report gets the lines, what crossed them with its peak, and the timeline ----
 await host({ t: 'fakeGame', game: 'Bench Game', front: true });
 ok('a made-up game runs in front', await until('feed.game === "Bench Game" && feed.front', 8000), await ev('[feed.game, feed.front, feed.gameSince, nowTs]'));
+// ---- Game time (1.4.7): HW Deck's own reading, minutes of the game so far; lines on its cell turn it like any cell ----
+const gtOf = c => `(() => { const e = evalCell(${c}); return { txt: e.txt, sub: e.sub, col: e.col, lvl: e.lvl }; })()`;
+{
+  const gr = await ev('(() => { const r = BYKEY.get(GTIME); return r ? [r.idx, r.unit, SENS[r.s].name, r.label] : null; })()');
+  ok('Game time is a reading of HW Deck\'s, in minutes, right after the bottleneck', !!gr && gr[0] === 301 && gr[1] === 'min' && gr[2] === 'HW Deck' && gr[3] === 'Game time', JSON.stringify(gr));
+  await ev(`(() => { addKeys([GTIME], null, null, 'Game time check'); window.__gt = Object.keys(S.L.cells).filter(i => S.L.cells[i].key === GTIME).pop(); return 1; })()`);
+  ok('in the game: a length and the game\'s name', await until(`(() => { const e = evalCell(__gt, S.L.cells[__gt], true, true); return /^\\d+m$/.test(e.txt) && e.sub === "Bench Game" && e.col === "white"; })()`, 6000), await ev(gtOf('__gt, S.L.cells[__gt], true, true')));
+  const gl0 = `'gtline', { key: GTIME, gates: { mode: 'y', dir: 'above', y: 0, hold: 0 } }, false, true`;
+  ok('its lines turn the cell: yellow past 0 min, the caption in hours and minutes', await ev(`(() => { const e = evalCell(${gl0}); return e.lvl === 1 && e.col === 'yellow' && e.sub === 'over yellow 0m' && /^\\d+m$/.test(e.txt); })()`), await ev(gtOf(gl0)));
+}
 const g0 = Date.now();   // the host's clock, not the page's last tick: a busy or covered window can get its ticks late
 await p.sleep(3000);
 await host({ t: 'fakePin', key: cpuKey, v: 70 }); await p.sleep(3000);
@@ -198,6 +208,11 @@ let t0 = Date.now(); while (!gl() && Date.now() - t0 < 6000) await p.sleep(250);
 const g = gl() || {};
 const item = n => (g.items || []).find(it => it[0] === n);
 ok('the session is logged', !!gl(), text(join(data, 'games.log')).slice(-300));
+await host({ t: 'fakeGame', game: 'Background App', front: false }); await p.sleep(4500);
+ok('an app that only runs in the background (an overlay, a tool from Steam) starts no session', await ev('feed.game === null'), await ev('feed.game'));
+await host({ t: 'fakeGame', game: null });
+ok('no game: Game time shows -- in grey', await until(`(() => { const e = evalCell(__gt, S.L.cells[__gt], true, true); return e.txt === '--' && e.col === 'grey' && e.sub === 'no game running'; })()`, 8000), await ev(gtOf('__gt, S.L.cells[__gt], true, true')));
+await ev(`(() => { const id = __gt; mutate(() => { for (const c of S.L.cats) c.cells = c.cells.filter(x => x !== id); S.L.cats = S.L.cats.filter(c => c.cells.length || c.name !== 'Game time check'); delete S.L.cells[id]; }); return 1; })()`);
 ok('its main readings, found by their HWiNFO names, marked as main', ['CPU temp', 'GPU temp', 'GPU hotspot', 'GPU memory', 'CPU power', 'GPU power', 'GPU usage', 'CPU usage', 'VRAM', 'RAM'].every(n => item(n) && item(n).length === 10 && item(n)[6] === 1 && typeof item(n)[9] === 'string'),
   (g.items || []).map(it => it[0] + ':' + it.length + ':' + it[6]).join(', '));
 ok('a cell\'s lines go with its reading (CPU temp: yellow 60, red 90)', item('CPU temp') && item('CPU temp')[4] === 60 && item('CPU temp')[5] === 90 && item('CPU temp')[3] === 91.5, JSON.stringify(item('CPU temp')));

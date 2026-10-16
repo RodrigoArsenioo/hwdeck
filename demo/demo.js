@@ -130,12 +130,13 @@
   add(8, 8, 'Framerate', 'FPS', t => core(t).fps != null ? core(t).fps : 60 + 0.2 * jit(72, t));
   add(8, 8, 'Framerate (1% low)', 'FPS', t => core(t).low != null ? core(t).low : 58 + 0.5 * jit(73, t));
   add(8, 8, 'Frame Time', 'ms', t => 1000 / (core(t).fps != null ? core(t).fps : 60));
-  // HW Deck's own: the bottleneck, 1 gpu, 2 cpu, 3 capped (none: no game)
+  // HW Deck's own: the bottleneck, 1 gpu, 2 cpu, 3 capped (none: no game), and how long the game has run (minutes)
   add(9, 8, 'Bottleneck', '', t => core(t).call);
+  add(9, 8, 'Game time', 'min', t => core(t).g ? (t - core(t).g.start) / 60 : null);
   const per = {};
   R.forEach(r => {
     const sk = SENSORS[r.s][0];
-    if (sk === 'hwdeck.0') r.key = 'hwdeck.0/bneck';
+    if (sk === 'hwdeck.0') r.key = r.label === 'Game time' ? 'hwdeck.0/gtime' : 'hwdeck.0/bneck';
     else { const j = per[r.s + ':' + r.type] = (per[r.s + ':' + r.type] || 0); per[r.s + ':' + r.type]++; r.key = sk + '/' + ((r.type << 24) | j).toString(16).padStart(8, '0'); }
   });
   const K = {}; for (const r of R) K[SENSORS[r.s][0] + '|' + r.label] = r.key;
@@ -176,7 +177,7 @@
     },
     views: { overview: { rows: [{ cols: [{ stack: ['gpu'] }, { stack: ['cpu'] }] }, { cols: [{ stack: ['fans'] }, { stack: ['game', 'storage'] }, { stack: ['memory', 'board'] }] }] } }
   };
-  const DEMO_STATE = { v: 1, L: DEMO, active: 0, edit: false, screen: 'overview', pins: [false, false], clock: true };
+  const DEMO_STATE = { v: 1, L: DEMO, active: 0, edit: false, screen: 'overview', pins: [false, false], clock: true, gameCalm: false };   // (no game is really in front in a browser: Full stays Full)
 
   // ---- this tab's storage: the only place anything is kept ----
   const SK = 'hwdeck-demo:';
@@ -289,7 +290,7 @@
     if (c.g && (!sess || sess.start !== c.g.start)) sess = { start: c.g.start, pm: {} };
     if (!c.g) sess = null;
     for (const r of R) {
-      const x = val(r, t), s = mma(r, t, x);
+      const x = val(r, t), s = SENSORS[r.s][0] === 'hwdeck.0' ? [null, null, null] : mma(r, t, x);   // (HW Deck's own readings have no HWiNFO min / max / average, as in the app)
       i.push(r.i); v.push(x); mn.push(s[0]); mx.push(s[1]); av.push(s[2]);
       if (sess && PM.has(r.key) && x != null) { const a = sess.pm[r.key] || (sess.pm[r.key] = [x, 0, 0, x]); a[0] = Math.min(a[0], x); a[1] += x; a[2]++; a[3] = Math.max(a[3], x); }
     }
@@ -315,8 +316,9 @@
         break;
       }
       case 'sub': {
-        const now = new Set([...(m.cells || []), ...(m.rows || [])]), fresh = (m.cells || []).filter(k => !subs.has(k));
-        subs = now; if (fresh.length) sparks(fresh);
+        // (like the app: a cell new to the cells gets its 15 min, also when its reading was a Storage row before)
+        const cells = m.cells || [], fresh = cells.filter(k => !subs.has(k));
+        subs = new Set(cells); if (fresh.length) sparks(fresh);
         break;
       }
       case 'save': if (typeof m.file === 'string' && /^(state|slots\/slot[1-5])$/.test(m.file)) keep(m.file, m.data); break;

@@ -20,7 +20,7 @@ const click = async sel => { const c = await p.center(sel); if (!c) throw new Er
 const storage = async on => { await E(`(() => { DR.L.pinned = ${on}; DR.L.hover = false; if (!${on}) { DR.R.hover = false; DR.R.byPick = false; } syncDrawers(); })()`); await p.sleep(260); };
 
 // ---- first run ----
-ok('catalog arrives', await until('READ.length === 301 && feed.got'), await E('READ.length'));   // 300 made up and HW Deck's own bottleneck
+ok('catalog arrives', await until('READ.length === 302 && feed.got'), await E('READ.length'));   // 300 made up and HW Deck's own bottleneck and game time
 ok('first run is empty, edit mode on', await E('S.L.cats.length === 0 && S.edit && !!document.querySelector("#view.empty")'));
 ok('5 empty slots', await E('S.slots.every(s => !s)'));
 ok('no extras in HW Deck itself: no extras.js, its own title, its readings have no kind', await E(`!EXT.loaded && !document.querySelector('script[src="extras.js"]') && document.title === "HW Deck" && READ.every(r => r.kind === null)`));
