@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.2 (not released yet)
+
+- A layout or setting that couldn't be saved because another program had the file open is saved again every few seconds until it goes in (it used to wait for your next change, and a quit lost it).
+- The quick graph you see when you hover a Yes/No cell shows a short Yes as Yes, as its full graph does.
+- Undo after Ctrl+arrows and a setting changed right away goes back through them in order.
+
 ## 1.5.1 (2026-10-16)
 
 - Game sessions: the sessions popup shows the game you are playing at the top, "now playing", with its full report updating live. A session now ends 5 seconds after the game closes (was 30), and starting the same game again within 5 minutes carries on that session: the break shows in its chart and doesn't count as play, in its length, the week's numbers or Game time. The browser demo shows both.

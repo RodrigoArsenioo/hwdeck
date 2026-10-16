@@ -2522,6 +2522,16 @@ function flushNudge() {
   const inSz = !!(document.activeElement && document.activeElement.matches && document.activeElement.matches('#insp input[data-sz]'));   // (pressed in a size field: the redraw gave it back its focus, it keeps it)
   const e = tileEl(n.cid); if (e && n.cid === sel && !inSz) e.focus({ preventScroll: true });
 }
+// the pending nudge in as its own, earlier undo step, with no redraw (the tile already shows it): a setting changed,
+// the first key typed in a field or a curve point pressed right after Ctrl+arrows takes the step after it (a redraw
+// there would rebuild the field being typed in, or the point under the press)
+function nudgeQuiet() {
+  if (!nudge) return;
+  clearTimeout(nudgeT); const n = nudge; nudge = null; lpill.classList.remove('on');
+  if (!S.L.cells[n.cid]) return;
+  const before = snapOf(); setSize(n.cid, n.w, n.h, n.tol); tidyViews(S.L);
+  if (snapOf() !== before) { pushUndo(before); saveState(); syncUndo(); syncSaves(); }
+}
 function nudgeSize(cid, dx, dy, quarter) {
   if (nudge && nudge.cid !== cid) flushNudge();
   const t = tileEl(cid), G = tileGeo(t); if (!G) return;
@@ -3179,6 +3189,7 @@ const insp = $('insp');
 $('inspClose').onclick = () => { const d = DR.R; clearTimeout(d.t); d.hover = false; d.pinned = false; d.byPick = false; clearSel(); saveState(); };
 function setCell(fn, withUndo) {
   const c = S.L.cells[sel]; if (!c) return;
+  if (withUndo) nudgeQuiet();
   const before = withUndo ? snapOf() : null;
   fn(c);
   if (withUndo) { if (snapOf() === before) return; pushUndo(before); syncUndo(); }   // clicking what is already on changes nothing
@@ -3189,7 +3200,7 @@ insp.addEventListener('focusin', e => { if (e.target.matches('input')) editSnap 
 insp.addEventListener('input', e => {
   const c = S.L.cells[sel]; if (!c) return; const t = e.target;
   // (only for what is typed: a box, a list or a size takes its own step when it changes)
-  if (!editSnap && t.id !== 'cPasteIn' && t.type !== 'checkbox' && t.tagName !== 'SELECT' && !(t.dataset && (t.dataset.sz || t.dataset.lay))) { snap(); syncUndo(); editSnap = true; }
+  if (!editSnap && t.id !== 'cPasteIn' && t.type !== 'checkbox' && t.tagName !== 'SELECT' && !(t.dataset && (t.dataset.sz || t.dataset.lay))) { nudgeQuiet(); snap(); syncUndo(); editSnap = true; }
   if (t.id === 'iName') {
     setCell(c => { c.name = t.value.trim() || undefined; });
     const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
@@ -3276,7 +3287,7 @@ insp.addEventListener('click', e => {
   const del = e.target.closest('[data-del]');
   if (del && c.curve.pts.length > 2) { setCell(c => { c.curve.pts.splice(Number(del.dataset.del), 1); }, true); renderInsp(); updateView(false, true); }
 });
-insp.addEventListener('pointerdown', e => { const pt = e.target.closest('.pt'); if (!pt || !e.isPrimary || dragPt) return; blurInsp(); dragPt = { i: Number(pt.dataset.i), moved: false, pid: e.pointerId, x0: e.clientX }; e.preventDefault(); });
+insp.addEventListener('pointerdown', e => { const pt = e.target.closest('.pt'); if (!pt || !e.isPrimary || dragPt) return; blurInsp(); nudgeQuiet(); dragPt = { i: Number(pt.dataset.i), moved: false, pid: e.pointerId, x0: e.clientX }; e.preventDefault(); });
 document.addEventListener('pointermove', e => {
   if (!dragPt || e.pointerId !== dragPt.pid) return;
   const c = S.L.cells[sel], box = $('cChart'), svg = $('cSvg'); if (!c || !svg) return;
@@ -3946,7 +3957,7 @@ function fillPrev() {
 function drawPrev() {
   const c = S.L.cells[HP.cid]; if (!c || isBneck(c)) { HP.rev0 = 0; return; }
   const r = c.key ? BYKEY.get(c.key) : null, g = c.gates, gk = gbK(r), det = gbDet(gateLines(g), gk);
-  const sp = gbArr(bucketArr(c), gk), vals = sp.filter(x => x !== null);
+  const sp = gbArr(bucketArr(c, isYN(r)), gk), vals = sp.filter(x => x !== null);   // (a Yes/No reading: each bucket's peak, as its popup)
   let gate = false;
   if (vals.length > 1 && det.y !== undefined) { const hi = Math.max(...vals), spn = Math.max(1.2, hi - Math.min(...vals)); gate = det.y > hi && det.y < hi + spn * 1.2; }
   const p = HP.rev0 && motionOn() ? Math.min(1, (performance.now() - HP.rev0) / 450) : 1;

@@ -2250,7 +2250,7 @@ partial class DeckForm : Form
 
     long savedAt;
     bool ended;
-    void SaveAll() { try { ExtStop(); } catch { } Try(() => { if (src.Frames != null) src.Frames.Stop(); }); SaveData(); EndMark(); }   // (a trace left running stays until Windows restarts)
+    void SaveAll() { try { ExtStop(); } catch { } Try(() => { if (src.Frames != null) src.Frames.Stop(); }); if (settingsRetry) SaveSettings(); SaveData(); EndMark(); }   // (a trace left running stays until Windows restarts)
     bool FpsWanted { get { return settings.ContainsKey("gameFps") && true.Equals(settings["gameFps"]); } }
 
     // ---- extras: a build may add readings (Extra), cell kinds (web\extras.js) and messages of its own ("x.*" both
@@ -2280,7 +2280,7 @@ partial class DeckForm : Form
         Hide();
         if (!true.Equals(settings.ContainsKey("trayHint") ? settings["trayHint"] : null))
         {
-            settings["trayHint"] = true; Try(() => SaveFile("settings", settings));
+            settings["trayHint"] = true; SaveSettings();
             Try(() => tray.ShowBalloonTip(6000, Brand.Name + " is still running", "It keeps checking your lines from here. Click the icon to open it, right-click it to exit.", ToolTipIcon.None));
         }
     }
@@ -2351,7 +2351,7 @@ partial class DeckForm : Form
         string stamp = PageStamp(), seen = settings.ContainsKey("pageStamp") ? settings["pageStamp"] as string : null;
         Action go = () => core.Navigate("https://hwdeck.example/index.html");
         if (stamp == seen) { go(); return; }
-        Action keep = () => { settings["pageStamp"] = stamp; Try(() => SaveFile("settings", settings)); };
+        Action keep = () => { settings["pageStamp"] = stamp; SaveSettings(); };
         try { core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache).ContinueWith(t => Try(() => BeginInvoke((Action)(() => { if (t.Status == System.Threading.Tasks.TaskStatus.RanToCompletion) keep(); go(); })))); }
         catch { keep(); go(); }   // a WebView2 runtime without it: load as before (and don't try again every start)
     }
@@ -2386,10 +2386,16 @@ partial class DeckForm : Form
                         if (f == "state" && m.ContainsKey("gen") && Convert.ToInt64(m["gen"]) != stateGen) { Log("not saving state: made before the page got its view"); break; }
                         bool saved = false;
                         try { saved = SaveFile(f, m["data"]); }
-                        catch (Exception ex) { Log("saving " + f + " failed: " + ex.Message); var r = Msg("toast"); r["text"] = "Couldn't save the layout: " + ex.Message; Post(r); }
+                        catch (Exception ex)
+                        {
+                            // (the view: the page is asked for it again in 5 s, until it goes in; one toast and log line for the run)
+                            if (f != "state" || !stateFailing) { Log("saving " + f + " failed: " + ex.Message); var r = Msg("toast"); r["text"] = "Couldn't save the layout: " + ex.Message + (f == "state" ? " Trying again." : ""); Post(r); }
+                            if (f == "state") { stateFailing = true; stateRetryAt = Source.Unix() + 5; }
+                        }
                         // (a slot another program held when the page started isn't saved over: said so; the view's start toast says it for state)
                         if (!saved && f != "state" && heldFiles.Contains(f.Replace('/', '\\'))) { var r = Msg("toast"); r["text"] = "Couldn't save to that slot: another program has its file open. Try again in a moment."; Post(r); }
                         // (the warnings and game reports follow the view as written: not one that was only refused)
+                        if (f == "state" && saved && stateFailing) { stateFailing = false; stateRetryAt = 0; Log("state saved after all"); }
                         if (f == "state" && saved) { var d = m["data"] as Dictionary<string, object>; layout = d != null && d.ContainsKey("L") ? d["L"] : null; RefreshRules(); }
                     }
                     break;
@@ -2433,7 +2439,7 @@ partial class DeckForm : Form
                     if (m.ContainsKey("games")) settings["gameDays"] = Days(m["games"]);
                     if (m.ContainsKey("warns")) settings["warnDays"] = Days(m["warns"]);
                     if (settings.ContainsKey("gameDays") && settings.ContainsKey("warnDays")) settings.Remove("daysUnknown");   // (both known again; until then the other log is left whole)
-                    Try(() => SaveFile("settings", settings)); TrimAlerts(); TrimGames(); SendSettings();
+                    SaveSettings(); TrimAlerts(); TrimGames(); SendSettings();
                     SendLog("games.log", "games");
                     break;
                 case "autostart": SetAutostart(true.Equals(m["on"])); SendSettings(); break;
@@ -2442,7 +2448,7 @@ partial class DeckForm : Form
                 case "getSettings": SendSettings(); break;
                 case "gameFps": SetGameFps(true.Equals(m["on"])); break;
                 case "openData": Process.Start("explorer.exe", "\"" + dataDir + "\""); break;
-                case "updates": settings["updates"] = true.Equals(m["on"]); updNext = 0; Try(() => SaveFile("settings", settings)); SendSettings(); break;
+                case "updates": settings["updates"] = true.Equals(m["on"]); updNext = 0; SaveSettings(); SendSettings(); break;
                 case "openRelease": OpenRelease(); break;
                 case "updateNow": UpdateNow(); break;
                 case "drag": Win("drag"); break;
@@ -2463,6 +2469,16 @@ partial class DeckForm : Form
     // a temp file so a crash mid-write can't leave half a layout ----
     static readonly Regex PageFile = new Regex(@"^(?:state|slots/slot[1-5])\z");   // what the page may write; settings.json is the host's alone
     static bool CanOpen(string p) { try { if (!File.Exists(p)) return true; using (var f = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.Read)) { var b = new byte[4096]; while (f.Read(b, 0, b.Length) > 0) { } return true; } } catch { return false; } }   // (to the end: one that opens but can't be read all through isn't free)
+    // a view save that failed (another program's handle on state.json): asked of the page again at this time, unix s
+    bool stateFailing; long stateRetryAt;
+    // settings.json written; one that failed (another program's handle) is logged once and written again every 5 s and
+    // at the exit, so a setting changed then isn't lost
+    volatile bool settingsRetry;
+    void SaveSettings()
+    {
+        try { if (SaveFile("settings", settings) && settingsRetry) { settingsRetry = false; Log("settings saved after all"); } }
+        catch (Exception ex) { if (!settingsRetry) Log("saving settings failed (trying again): " + ex.Message); settingsRetry = true; }
+    }
     bool SaveFile(string name, object data)   // false: not written (held)
     {
         string p = P(name.Replace('/', '\\') + ".json"), tmp = p + ".tmp";
@@ -2643,7 +2659,7 @@ partial class DeckForm : Form
                     settings["updLatest"] = tag.TrimStart('v');
                     settings["updUrl"] = url != null && url.StartsWith(ReleasesPage, StringComparison.Ordinal) ? url : ReleasesPage + "latest";
                 }
-                Try(() => SaveFile("settings", settings));
+                SaveSettings();
                 SendSettings();
             })));
         });
@@ -3013,6 +3029,10 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             else games.LogChanged = false;
             if (DateTime.Now.Date != trimDay) { trimDay = DateTime.Now.Date; TrimAlerts(); TrimGames(); }   // the days you keep, also on a PC that never restarts
             if (!fake && now - lastHwPath >= 60) { lastHwPath = now; RememberHwinfo(); }
+            // (a view save another program's handle refused: the page sends its view again, with its gen; a settings save the
+            // same: written again)
+            if (stateRetryAt > 0 && pageReady && Source.Unix() >= stateRetryAt) { stateRetryAt = 0; Post(Msg("saveView")); }
+            if (settingsRetry && now % 5 == 0) SaveSettings();
             // (free now: the page gets it; the view first, whole; slots alone, so the view and its undo stay as they are)
             if (heldFiles.Count > 0 && pageReady && now % 5 == 0)
             {
@@ -3471,7 +3491,7 @@ exit 0";
         if (src.Frames == null) { r["text"] = "Demo data: there is no game to count"; Post(r); SendSettings(fpsDone: true); return; }
         if (Brand.NoActions) { r["text"] = "Test copy: Accurate game fps isn't changed"; Post(r); SendSettings(fpsDone: true); return; }
         if (fpsBusy) { SendSettings(fpsDone: true); return; }
-        settings["gameFps"] = on; Try(() => SaveFile("settings", settings));
+        settings["gameFps"] = on; SaveSettings();
         // (a trace that runs proves only this sign-in's token: turned off, then on again, the account is out of the group
         // and the next sign-in would be refused, so the group is what decides)
         if (on) { src.Frames.Start(); if (src.Frames.State == "failed" || InPerfLogUsers() || new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator)) { r["text"] = FpsText(); Post(r); SendSettings(fpsDone: true); return; } }
@@ -3495,7 +3515,7 @@ exit 0";
                 {
                     fpsBusy = false;
                     var t = Msg("toast");
-                    if (on && code != 0 && code != 3) { settings["gameFps"] = false; Try(() => SaveFile("settings", settings)); src.Frames.Stop(); }   // (the trace started to try it stops too)
+                    if (on && code != 0 && code != 3) { settings["gameFps"] = false; SaveSettings(); src.Frames.Stop(); }   // (the trace started to try it stops too)
                     t["text"] = code != 0 && code != 3 ? "Couldn't " + (on ? "allow" : "take back") + " fps counting (code " + code + ")"
                               : on ? FpsText() : "Accurate game fps is off, and the permission it needed is taken back";
                     Post(t); SendSettings(fpsDone: true);
@@ -3506,7 +3526,7 @@ exit 0";
         {
             var w = ex as System.ComponentModel.Win32Exception;
             bool no = w != null && w.NativeErrorCode == 1223;   // No in the Windows prompt
-            if (on) { settings["gameFps"] = false; Try(() => SaveFile("settings", settings)); src.Frames.Stop(); }
+            if (on) { settings["gameFps"] = false; SaveSettings(); src.Frames.Stop(); }
             if (!no) Log("game fps failed: " + ex.Message);
             r["text"] = no ? (on ? "Cancelled: Accurate game fps stays off" : "Accurate game fps is off; the permission stays (Windows prompt cancelled)") : "Couldn't change Accurate game fps: " + ex.Message;
             Post(r); SendSettings(fpsDone: true);
