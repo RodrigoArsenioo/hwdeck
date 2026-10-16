@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.9 (not released yet)
+## 1.5.0 (2026-10-16)
 
 - Keep HWiNFO sharing: HWiNFO comes back by itself after the task restarts it. Its welcome screen used to wait for a click, sharing nothing. The task now turns that screen off and starts HWiNFO in Sensors-only mode.
 - Keep HWiNFO sharing says under its switch when the task couldn't do its job (HWiNFO moved out of Program Files, no admin rights, a signature that didn't check out).
