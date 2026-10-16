@@ -18,7 +18,7 @@
     <Property Id="RUNPREV"><RegistrySearch Id="RunPrev" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="HW Deck" Type="raw" /></Property>
     <Property Id="DESKTOPPREV"><RegistrySearch Id="DesktopPrev" Root="HKLM" Key="Software\HW Deck" Name="DesktopShortcut" Type="raw" Bitness="always64" /></Property>
     <Property Id="INSTALLFOLDER"><RegistrySearch Id="FolderPrev" Root="HKLM" Key="Software\HW Deck" Name="InstallFolder" Type="raw" Bitness="always64" /></Property>
-    <SetProperty Id="AUTOSTART" Value="{}" After="AppSearch" Sequence="first" Condition="WIX_UPGRADE_DETECTED AND NOT RUNPREV" />
+    <SetProperty Id="AUTOSTART" Value="{}" After="AppSearch" Sequence="first" Condition="WIX_UPGRADE_DETECTED AND NOT (RUNPREV ~&gt;&lt; INSTALLFOLDER)" />
     <SetProperty Id="DESKTOPSHORTCUT" Value="1" After="AppSearch" Sequence="first" Condition="WIX_UPGRADE_DETECTED AND DESKTOPPREV" />
     <!-- the installer's screens: the Start with Windows box has a property of its own, and Next sets AUTOSTART to 1 or 0
          (an unticked box is an empty property, which never reaches the part that installs: it would take AUTOSTART's

@@ -29,7 +29,16 @@ const CONN = 'hwdeck.0/12v';
 // the pin rule's hold and episode, in the host's seconds like the lines': lopsided for 3 s turns it, and an episode goes
 // on through a calm second or two (it ends on the 3rd), as the warning log has it
 let c12Since = 0;
-let notOkAt = 0, notOkMarked = false;   // (the feed not ok since: host seconds, 0 = ok; the 10 s Mark done)
+let notOkAt = 0, notOkMarked = false;
+function resetSeen() { for (const k in holdSince) delete holdSince[k]; for (const k in cellEp) delete cellEp[k]; c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; }
+// the pin rule, once a second in the tick as the host judges it: drawn or not, its readings there or not (gone, the
+// seconds are calm ones); only while a connector cell is in the view, as the host's rule
+function stepPins() {
+  if (feed.status !== 'ok' || !Object.values(S.L.cells).some(c => c && c.key === CONN)) return;
+  const c = feed.c12, now = nowTs, hot = c ? c[1] : -1, lop = !!(c && c[0]);
+  if (lop) { if (!c12Since) c12Since = now; c12Ep.calm = 0; if (now - c12Since >= 3 || c12Ep.on) { c12Ep.on = true; c12Ep.words = 'pin ' + (hot + 1) + ' carrying ' + c[2] + 'x its share'; } }
+  else { c12Since = 0; if (c12Ep.on && !c12Ep.calm) c12Ep.calm = now; if (c12Ep.on && now - c12Ep.calm >= 2) { c12Ep.on = false; c12Ep.calm = 0; } }
+}   // (the feed not ok since: host seconds, 0 = ok; the 10 s Mark done)
 const c12Ep = { on: false, calm: 0, words: '' };
 const pinVals = i => (feed.c12keys && feed.c12keys[i] || []).map(k => { const r = BYKEY.get(k); return r && r.v != null ? r.v : null; });
 const CONN_LINES = { mode: 'yr', dir: 'above', y: 9.2, r: 9.5, hold: 0 };
@@ -41,9 +50,7 @@ EXT.kinds['12v'] = {
   },
   after(out) {
     if (feed.status !== 'ok') return;   // (a stalled feed judges nothing: the cell stays grey)
-    const c = feed.c12, now = nowTs, a = pinVals(0), hot = c ? c[1] : -1, lop = !!(c && c[0]);
-    if (lop) { if (!c12Since) c12Since = now; c12Ep.calm = 0; if (now - c12Since >= 3 || c12Ep.on) { c12Ep.on = true; c12Ep.words = 'pin ' + (hot + 1) + ' carrying ' + c[2] + 'x its share'; } }
-    else { c12Since = 0; if (c12Ep.on && !c12Ep.calm) c12Ep.calm = now; if (c12Ep.on && now - c12Ep.calm >= 2) { c12Ep.on = false; c12Ep.calm = 0; } }
+    const c = feed.c12, a = pinVals(0), hot = c ? c[1] : -1;   // (the pin rule itself steps once a second: stepPins)
     if (out.lvl && hot >= 0 && a[hot] != null) out.sub = 'pin ' + (hot + 1) + ' at ' + fmt(a[hot], 1) + ' A';
     else if (c12Ep.on) { out.lvl = Math.max(out.lvl, 1); out.col = out.lvl === 2 ? 'red' : 'yellow'; out.warm = 0; out.sub = c12Ep.words; }
   },
@@ -503,9 +510,21 @@ const gameCalmNow = () => S.gameCalm !== false && !!feed.game && !!feed.front;
 const motionMode = () => { const m = motionPicked(); return m === 'full' && gameCalmNow() ? 'minimal' : m; };
 const motionOn = () => motionMode() === 'full';   // the moving parts: spins, rolls, glides, draw-ins
 function applyMotion() { document.documentElement.dataset.motion = motionMode(); }
-if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', () => { applyMotion(); if (feed.got) renderView(false); });
+if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', () => { applyMotion(); if (feed.got) redrawView(); });
+// the view drawn again for the motion, but not under a held cell or handle (it would move away under it, or lose the
+// click): when it's let go
+let viewLater = false;
+function redrawView() { if (drag || rs) { viewLater = true; return; } renderView(false); }
 let saveT = 0;
-function saveState() { clearTimeout(saveT); saveT = setTimeout(() => send({ t: 'save', file: 'state', data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, pins: [DR.L.pinned, DR.R.pinned], title: S.title, clock: S.clock, hide: S.hide } }), 300); }
+// cells gone from the view: their hold and episode end when the view is saved, as the host's do when it gets the save
+function dropGone() {
+  // (and a cell left with no line or curve, as the host's SetLayout drops its rule: app.cs, the cells loop)
+  const ruled = c => !!c && !!c.key && !c.pred && !isBneck(c) && (!!(c.gates && (c.gates.mode === 'y' || c.gates.mode === 'yr')) || !!c.curve);
+  for (const k in cellEp) if (!ruled(S.L.cells[k])) delete cellEp[k];
+  for (const k in holdSince) if (!ruled(S.L.cells[k])) delete holdSince[k];
+  if (!Object.values(S.L.cells).some(c => c && c.key === 'hwdeck.0/12v')) { c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; }   // (no connector cell left: its pin episode ends)
+}
+function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, pins: [DR.L.pinned, DR.R.pinned], title: S.title, clock: S.clock, hide: S.hide } }); }, 300); }
 function saveSlot(i) { send({ t: 'save', file: 'slots/slot' + (i + 1), data: S.slots[i] }); }
 // undo steps hold the layout and which slot it came from, so Clear then Undo is exactly where you were
 let undoStack = [], redoStack = [];
@@ -625,6 +644,7 @@ function evalCell(cid, c, peek, quick) {
 }
 function evalCell0(cid, c, peek, quick) {
   const r = c.key ? BYKEY.get(c.key) : null, live = feed.status === 'ok';
+  if (!peek && r && r.at !== nowTs) peek = true;   // (a value that didn't come with this second's tick, a key just subscribed or one left from before: judged at the tick that brings it)
   const v = cellValue(c);
   const out = { v, lvl: 0, warm: 0, warmR: 0, sub: '', curve: null, col: 'white' };
   const xk = xkOf(r);
@@ -1258,10 +1278,19 @@ function renderView(enter) {
   const was = flipNext && !enter ? catRects() : null;   // a layout change: the categories glide from where they were
   flipNext = false;
   buildView();
-  updateView(true);
+  updateView(true, true);
   autofit();
   playEntrance();
   if (was) playFlip(was);
+  pxFresh();
+}
+// the selected tile's px size fields follow its drawn size (a resize, the banner, a remeasure): in place, not the
+// field being typed in (a whole renderInsp would drop a paste box, the scroll, half-typed curve cells)
+function pxFresh() {
+  if (!S.edit || !sel || !document.querySelector('#insp input[data-sz="pw"]')) return;
+  const z = cellSize(sel), G = tileGeo(tileEl(sel)); if (!G) return;
+  const px = { pw: Math.round(pxW(G, z.w)), ph: Math.round(G.at(Math.min(z.w, G.k), z.h).th) };
+  for (const k of ['pw', 'ph']) { const b = document.querySelector('#insp input[data-sz="' + k + '"]'); if (b && b !== document.activeElement) b.value = px[k]; }
 }
 let flipNext = false;
 function catRects() { const m = new Map(); if (S.screen !== 'grid') for (const el of document.querySelectorAll('#view .dcat')) m.set(el.dataset.cat, el.getBoundingClientRect()); return m; }
@@ -1276,7 +1305,15 @@ function playFlip(was) {
 }
 
 // every tick: numbers, colours, captions, graphs; reads first (which cells are in sight), then writes
-function updateView(all) {
+// a second judged for the cells updateView didn't draw (skipDrawn), or for all of them while a drag holds the redraws
+function judgeRest(skipDrawn) {
+  for (const cid in S.L.cells) {
+    if (skipDrawn && E.has(cid)) continue;
+    const c = S.L.cells[cid]; if (!c) continue;
+    if (isMissing(c)) calmGone(cid); else evalCell(cid, c, false, true);
+  }
+}
+function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's, judges nothing)
   // seen: gets its number this time (all of them after a rebuild); sight: its graph is drawn (only what is on screen)
   const sr = sectionsEl.getBoundingClientRect(), seen = new Map(), sight = new Map();
   for (const [cid, r] of E) { const b = r.root.getBoundingClientRect(), on = b.bottom > sr.top - 60 && b.top < sr.bottom + 60 && b.height > 0; sight.set(cid, on); seen.set(cid, all || on); }
@@ -1284,8 +1321,8 @@ function updateView(all) {
   for (const [cid, r] of E) {
     const c = S.L.cells[cid]; if (!c) continue;
     const rd = c.key ? BYKEY.get(c.key) : null, vis = seen.get(cid);
-    if (isMissing(c)) { calmGone(cid); odo(r.v, '--'); setText(r.cap, missingTxt(c)); continue; }
-    const e = evalCell(cid, c, false, !vis);
+    if (isMissing(c)) { if (!peek) calmGone(cid); odo(r.v, '--'); setText(r.cap, missingTxt(c)); continue; }
+    const e = evalCell(cid, c, !!peek, !vis);
     const cat = catOf(cid); if (cat) cardLvl[cat.id] = Math.max(cardLvl[cat.id] || 0, e.lvl);
     const dec = decOfCell(c, rd);
     if (vis) odo(r.v, e.txt != null ? e.txt : fmtV(e.v, dec, rd));
@@ -1754,7 +1791,7 @@ function autofit() {
   if (ag && !gridForce && !gridN[key] && nOn === 1) {
     const ks = Object.keys(gridN); if (ks.length > 200) delete gridN[ks[0]];
     gridN[key] = (!ok && gridLim() >= floor) || lo < gridLim() - 0.05 ? 2 : 1;   // (one that fits nowhere: two only if they sit side by side at the smallest size)
-    if (gridN[key] === 2) { const en = entrance; enterNext = en !== null; slideDir = en || 0; gridForce = 2; try { buildView(); updateView(true); autofit(); } finally { gridForce = 0; } }   // (an entrance still to play plays on the two)
+    if (gridN[key] === 2) { const en = entrance; enterNext = en !== null; slideDir = en || 0; gridForce = 2; try { buildView(); updateView(true, true); autofit(); } finally { gridForce = 0; } }   // (an entrance still to play plays on the two)
   }
 }
 // a window that changed size (or the banner coming or going): an automatic view with room for more or fewer columns, or
@@ -1764,7 +1801,7 @@ function refit() {
   if ((drag && drag.started) || rs) { refitLater = true; return; }   // (a rebuild would move the view under the drag)
   if (S.screen !== 'grid' && !isCustom(S.screen) && lastAuto[S.screen] && JSON.stringify(autoRows(S.screen)) !== JSON.stringify(lastAuto[S.screen])) { renderView(false); return; }
   if (S.screen === 'grid' && !isCustom('grid') && $('view') && gridN[fitKey(cssScale())] !== ($('view').querySelectorAll('.gtable').length > 1 ? 2 : 1)) { renderView(false); return; }
-  autofit(); updateView(true);
+  autofit(); updateView(true, true); pxFresh();
 }
 window.addEventListener('resize', () => {
   layGen++;
@@ -1775,6 +1812,8 @@ window.addEventListener('resize', () => {
 
 // ---------- views: Tiles, Overview, Grid ----------
 let slotWanted = null;
+let gzDragCancel = null;   // (a Customize row being dragged: how to drop it nowhere)
+let stateGen = 0;   // (which view the host sent last: a save says it, so one made before a newer view is dropped)
 let heldSlots = new Set();   // (the slots another program held when the page asked: shown empty, not free)   // the slot state.json links the view to, held when the page started (null: none)
 let wantScreen = null, screenRaf = 0;   // a view asked for by a click, drawn on the next frame (requestScreen)
 function placeTabInd(still, to) {
@@ -1912,7 +1951,7 @@ function addKeys(keys, catId, index, newCatName) {
     if (!cat) { cat = { id: nid('c'), name: newCatName || 'New category', collapsed: false, cells: [] }; S.L.cats.push(cat); }
     const ids = keys.map(k => { const id = nid('a'); S.L.cells[id] = newCell(k); return id; });
     cat.cells.splice(index == null ? cat.cells.length : index, 0, ...ids);
-    if (ids.length === 1) sel = ids[0];
+    if (ids.length === 1) { sel = ids[0]; selCat = null; }
   }, keys.length > 1 ? 'Added ' + keys.length + ' cells' : null);
 }
 function targetForAdd() {
@@ -1953,7 +1992,22 @@ function startCurve(fanR, src) {
 
 // ---------- drag and drop (edit mode, any view): pointer events, one path for mouse, pen and touch ----------
 let drag = null, justDragged = false;
-function startDrag(ev, kind, data, label, val) { drag = { kind, data, x0: ev.clientX, y0: ev.clientY, started: false, label, val, target: null }; }
+// a drag or a handle let go with Escape: the release of its button still to come is no click
+let cancelPid = null;
+const swallowUp = ev => { if (cancelPid == null || ev.pointerId !== cancelPid) return false; cancelPid = null; justDragged = true; setTimeout(() => { justDragged = false; }, 0); return true; };
+document.addEventListener('pointerdown', () => { cancelPid = null; }, true);   // (a release that never came: the next press starts clean)
+document.addEventListener('pointercancel', ev => { if (ev.pointerId === cancelPid) cancelPid = null; });
+// a press that starts a drag lets a settings field go first: what was typed there is applied (its change), not lost
+// a field you typed in (not one the page wrote) that applies on its change: a size, a category's name
+document.addEventListener('input', e => { if (e.target && e.target.closest && e.target.closest('#insp')) e.target._typed = true; }, true);
+document.addEventListener('change', e => { if (e.target) e.target._typed = false; }, true);
+document.addEventListener('focusout', e => { if (e.target) e.target._typed = false; }, true);   // (typed back or reverted: no change, nothing pending)
+function blurInsp() { const a = document.activeElement; if (a && a.closest && a.closest('#insp')) a.blur(); }
+function startDrag(ev, kind, data, label, val) {
+  if (drag && drag.ghost) drag.ghost.remove();   // (a drag a new press replaces leaves nothing behind)
+  drag = { kind, data, x0: ev.clientX, y0: ev.clientY, started: false, label, val, target: null, pid: ev.pointerId };
+}
+const dragOwn = ev => !drag || drag.pid == null || ev.pointerId === drag.pid;   // (only the pointer that started it moves or drops it)
 function beginDrag() {
   drag.started = true;
   if (drag.kind !== 'cat') app.classList.add('dragging');   // the "+ New category" drop zone shows up
@@ -2016,7 +2070,12 @@ function hitTest(x, y) {
   if (catEl.classList.contains('collapsed') || under.closest('.dch, .ghdr')) {
     // on the header: first, where the mark is; on a folded category: last
     drag.target = { cat: catId, before: catEl.classList.contains('collapsed') ? null : front };
-    const rr = vrect(catEl.querySelector('.dch, .ghdr')); showMark(rr.x, rr.y + rr.h, rr.w, 3); return;
+    // (a lead, drawn first: the cell lands after it, so the mark goes there)
+    const le = !catEl.classList.contains('collapsed') && lead && !(drag.kind === 'cell' && drag.data === lead) && S.L.cells[lead] && document.querySelector('#view .dcat[data-cat="' + catId + '"] .dc[data-cid="' + lead + '"]');
+    if (le) { markAt(le, true); return; }
+    // (Grid's "continued" header, in the second table: the mark goes under the category's own header, where it lands)
+    const hdr = catEl.classList.contains('cont') ? document.querySelector('#view .dcat[data-cat="' + catId + '"]:not(.cont)') || catEl : catEl;
+    const rr = vrect(hdr.querySelector('.dch, .ghdr')); showMark(rr.x, rr.y + rr.h, rr.w, 3); return;
   }
   const cells = [...document.querySelectorAll('#view .dcat[data-cat="' + catId + '"] .dc')].filter(el => !(drag.kind === 'cell' && el.dataset.cid === drag.data));
   if (!cells.length) {
@@ -2034,17 +2093,23 @@ function hitTest(x, y) {
   const vertical = !best.el.classList.contains('tile') && !best.el.classList.contains('bcell');   // tiles and band cells sit side by side
   const after = vertical ? y > best.r.top + best.r.height / 2 : x > best.r.left + best.r.width / 2;
   const vis = cells.map(el => el.dataset.cid);
-  let before = vis[vis.indexOf(best.el.dataset.cid) + (after ? 1 : 0)] || null;
-  if (before && before === lead) before = front;
+  let before = vis[vis.indexOf(best.el.dataset.cid) + (after ? 1 : 0)] || null, mk = best.el, ma = after;
+  // (before the lead, drawn first: it lands after the lead, so the mark goes there)
+  if (before && before === lead) { before = front; const le = cells.find(el => el.dataset.cid === lead); if (le) { mk = le; ma = true; } }
   drag.target = { cat: catId, before };
-  const rr = vrect(best.el.tagName === 'TR' ? best.el.children[0] : best.el);
-  if (vertical) { const w = best.el.tagName === 'TR' ? vrect(best.el.closest('table')).w : rr.w; showMark(rr.x, after ? rr.y + rr.h - 1 : rr.y - 2, w, 3); }
+  markAt(mk, ma);
+}
+// the drop mark before or after a cell, as the cells sit: side by side (tiles, band cells) or one under another
+function markAt(el, after) {
+  const vertical = !el.classList.contains('tile') && !el.classList.contains('bcell'), rr = vrect(el.tagName === 'TR' ? el.children[0] : el);
+  if (vertical) { const w = el.tagName === 'TR' ? vrect(el.closest('table')).w : rr.w; showMark(rr.x, after ? rr.y + rr.h - 1 : rr.y - 2, w, 3); }
   else showMark(after ? rr.x + rr.w + 3 : rr.x - 6, rr.y, 3, rr.h);
 }
 function endDrag(cancel) {
   if (!drag) return;
   const d = drag; drag = null;
   if (refitLater) { refitLater = false; setTimeout(refit, 0); }
+  if (viewLater) { viewLater = false; setTimeout(() => renderView(false), 0); }
   dropmark.style.display = 'none'; app.classList.remove('dragging');
   if (d.ghost) d.ghost.remove();
   syncDrawers();
@@ -2062,16 +2127,21 @@ function endDrag(cancel) {
     const to = !t.newcat && catById(t.cat), at = to && t.before ? to.cells.indexOf(t.before) : -1;
     if (t.newcat) addKeys([d.data], null, null, r ? SENS[r.s].short : null); else addKeys([d.data], t.cat, at >= 0 ? at : null);
   } else if (d.kind === 'cell') {
+    if (nudge) flushNudge();   // (its own step first, so n0 tells whether the drop changed anything)
+    const n0 = undoSeq;
     mutate(() => {
       const from = catOf(d.data); from.cells.splice(from.cells.indexOf(d.data), 1);
+      // the lead (drawn first) let go in its own category anywhere but the front: drawn where the mark was, so not first
+      if (!t.newcat && from.id === t.cat && catLook(t.cat).lead === d.data && t.before !== (from.cells.find(id => S.L.cells[id]) || null)) setLook('cat', t.cat, 'lead', '');
       let to = t.newcat ? null : S.L.cats.find(c => c.id === t.cat);
       if (!to) { to = { id: nid('c'), name: 'New category', collapsed: false, cells: [] }; S.L.cats.push(to); }
       const at = t.before ? to.cells.indexOf(t.before) : -1;
       to.cells.splice(at >= 0 ? at : to.cells.length, 0, d.data);
       // the selection follows the cell, but a drag doesn't open its settings (a click does): another cell's go away
       if (sel !== d.data) { DR.R.key = d.data; DR.R.byPick = false; }
-      sel = d.data;
+      sel = d.data; selCat = null;
     });
+    if (undoSeq === n0) renderView(false);   // (let go where it was: nothing changed, but the selection moved to it)
   }
 }
 function autoScroll() {
@@ -2124,6 +2194,7 @@ const rowsNow = vn => { const v = stored(vn || S.screen); return v && v.rows ? c
 function ownRows(vn) { vn = vn || S.screen; const v = vset(vn); if (!v.rows) { v.rows = screenRows(); froze = true; } return v.rows; }
 let froze = false;   // set when a change made a view your own: the toast says so (with Undo)
 function layoutChange(fn) {
+  if (nudge) flushNudge();   // (a Ctrl+arrow just before is its own, earlier step)
   froze = false; flipNext = true;
   const before = snapOf(); fn(); tidyViews(S.L);
   if (snapOf() === before) { flipNext = false; syncUndo(); renderInsp(); return false; }
@@ -2448,7 +2519,8 @@ function flushNudge() {
   const n = nudge; nudge = null; lpill.classList.remove('on');
   if (!n || !S.L.cells[n.cid]) return;
   keyLayout(() => mutate(() => setSize(n.cid, n.w, n.h, n.tol)));
-  const e = tileEl(n.cid); if (e && n.cid === sel) e.focus({ preventScroll: true });
+  const inSz = !!(document.activeElement && document.activeElement.matches && document.activeElement.matches('#insp input[data-sz]'));   // (pressed in a size field: the redraw gave it back its focus, it keeps it)
+  const e = tileEl(n.cid); if (e && n.cid === sel && !inSz) e.focus({ preventScroll: true });
 }
 function nudgeSize(cid, dx, dy, quarter) {
   if (nudge && nudge.cid !== cid) flushNudge();
@@ -2463,7 +2535,7 @@ function nudgeSize(cid, dx, dy, quarter) {
   const r = t.getBoundingClientRect();
   pill(fmtSz(w) + ' x ' + fmtSz(h) + ' tiles, ' + Math.round(r.width) + ' x ' + Math.round(r.height) + ' px', r.right + 6, r.bottom + 6);
   clearTimeout(nudgeT);
-  nudgeT = setTimeout(function later() { if (rs || (drag && drag.started)) { nudgeT = setTimeout(later, 350); return; } flushNudge(); }, 350);   // (not under a drag: the redraw would leave it on the old tiles)
+  nudgeT = setTimeout(function later() { if (rs || dragPt || (drag && drag.started)) { nudgeT = setTimeout(later, 350); return; } flushNudge(); }, 350);   // (not under a drag: the redraw would leave it on the old tiles)
 }
 // a category: every tile one width or height; Line up the bottom: its tiles taller or shorter, all by the same factor, just
 // enough that its column ends level with the tallest one beside it
@@ -2488,7 +2560,7 @@ function fitRow(id) {
 }
 function startHandle(ev, el) {
   const v = stored(S.screen);
-  rs = { el, x0: ev.clientX, y0: ev.clientY, moved: false };
+  rs = { el, x0: ev.clientX, y0: ev.clientY, moved: false, pid: ev.pointerId };
   if (el.classList.contains('corner')) { if (!startCorner(el.closest('.tile'))) { rs = null; return; } }
   else {
     const rowEl = el.closest('.lrow'), ri = +rowEl.dataset.r, row = v && v.rows && v.rows[ri];
@@ -2526,19 +2598,21 @@ function endHandle(cancel) {
   if (!rs) return;
   const h = rs; rs = null;
   if (refitLater) { refitLater = false; setTimeout(refit, 0); }
+  if (viewLater) { viewLater = false; setTimeout(() => renderView(false), 0); }
   lpill.classList.remove('on'); h.el.classList.remove('on'); guides();
   justDragged = true; setTimeout(() => { justDragged = false; }, 0);
   if (!h.moved) return;
-  if (cancel) { renderView(false); return; }
+  if (cancel) { renderView(false); renderInsp(); return; }
   const before = snapOf();
   if (h.kind === 'split') mutate(() => { const row = stored(S.screen).rows[h.ri]; row.cols.forEach((c, i) => { c.w = h.w[i]; }); });
   else if (h.kind === 'rowh') mutate(() => { const row = stored(S.screen).rows[h.ri]; if (h.h) row.h = 1; else delete row.h; });
   else mutate(() => setSize(h.cid, h.w, h.h, snapAt(h)));
-  if (snapOf() === before) renderView(false);   // back where it started: draw it as it was
+  if (snapOf() === before) { renderView(false); renderInsp(); }   // back where it started: draw it as it was
 }
-document.addEventListener('pointermove', moveHandle);
-document.addEventListener('pointerup', () => endHandle(false));
-document.addEventListener('pointercancel', () => endHandle(true));
+const rsOwn = ev => !rs || rs.pid == null || ev.pointerId === rs.pid;   // (only the pointer that started it)
+document.addEventListener('pointermove', ev => { if (rsOwn(ev)) moveHandle(ev); });
+document.addEventListener('pointerup', ev => { if (swallowUp(ev)) return; if (rsOwn(ev)) endHandle(false); });
+document.addEventListener('pointercancel', ev => { if (rsOwn(ev)) endHandle(true); });
 function handleDblclick(el) {
   if (el.classList.contains('corner')) { mutate(() => setSize(el.closest('.tile').dataset.cid, 1, 1)); return; }
   const v = stored(S.screen), ri = +el.closest('.lrow').dataset.r, row = v && v.rows && v.rows[ri]; if (!row) return;
@@ -2642,7 +2716,7 @@ function templateRows(kind) {
 function templateView(kind) {
   const rows = templateRows(kind); if (!rows) return null;
   const v = clone(stored(S.screen) || {});
-  if (v.rows && v.rows.some(r => r.h)) autoHeights(S.screen, rows);
+  if (v.rows && v.rows.length && v.rows.every(r => r.h)) autoHeights(S.screen, rows);   // (Fill the window: every row filled, not a mix)
   v.rows = rows;
   return v;
 }
@@ -2668,6 +2742,10 @@ function announce(id) {
 
 // ---------- events: the view ----------
 function setEdit(on) {
+  // (a cell, a grip or a Storage row still held, not moved yet: it lets go, and its release does nothing)
+  if (drag) { cancelPid = drag.pid; endDrag(true); }
+  if (rs) { cancelPid = rs.pid; endHandle(true); }
+  editPress = null;
   S.edit = on; app.classList.toggle('editing', on);
   $('editBtn').classList.toggle('on', on);
   preview = null;
@@ -2693,6 +2771,7 @@ for (const k of ['L', 'R']) Object.assign(DR[k], { pinned: false, hover: false, 
 function drawerOpen(k) {
   const d = DR[k]; if (!S.edit) return false;
   if (drag && drag.started) return d.hover;
+  if (k === 'R' && dragPt) return true;   // (a fan curve point held: the drawer stays under it)
   const a = document.activeElement, typing = !!a && d.el.contains(a) && a.matches('input:not([type=checkbox]), select, textarea');
   if (d.hover || d.pinned || typing) return true;
   return k === 'L' ? !!relinkFor || (!S.L.cats.length && READ.length > 0) : d.byPick && (!!sel || !!selCat);
@@ -2734,17 +2813,30 @@ $('toastUndo').onclick = () => { if (nudge) flushNudge(); if (toastDepth >= 0 &&
 // the clean view: a cell opens when a press that started on it is let go, by the cell it was, not by the element (a
 // redraw between press and release, as when a fresh window settles, made the browser drop the click)
 let press = null, openedByUp = 0, draggedUp = 0;
+// editing: a cell or a category's header pressed (a typed size or name applies at the press, and its redraw can replace
+// it before the release: the browser then drops the click, so the release selects it)
+let editPress = null;
 sectionsEl.addEventListener('pointerdown', ev => {
-  press = null;
+  if (!ev.isPrimary) return;   // (a second finger while one drags or presses)
+  press = null; editPress = null;
   if (ev.button !== 0 || ev.target.closest('button,input') || (host && zoneAt(ev))) return;   // the window edge: a resize
   hidePrev();
   if (!S.edit) { const c = ev.target.closest('#view .dc'); if (c && !ev.target.closest('[data-x]')) press = { cid: c.dataset.cid, x: ev.clientX, y: ev.clientY }; return; }
   const hd = ev.target.closest('.ldiv, .lrs, .corner');
-  if (hd) { startHandle(ev, hd); ev.preventDefault(); return; }
+  if (hd) {
+    // (a field with something typed in it: it applies first, its change redraws, so this press starts nothing and the
+    // next one drags; a field that only has the focus lets go and the drag starts at once)
+    const a = document.activeElement;
+    if (a && a._typed && a.matches && a.matches('#insp input[data-sz], #insp input[data-csz], #lName')) { blurInsp(); ev.preventDefault(); return; }
+    blurInsp();
+    startHandle(ev, hd); ev.preventDefault(); return;
+  }
   const g = ev.target.closest('.dch .grip');
-  if (g) { const cat = g.closest('.dcat').dataset.cat; startDrag(ev, 'cat', cat, S.L.cats.find(c => c.id === cat).name); ev.preventDefault(); return; }
-  const cell = ev.target.closest('#view .dc');
+  if (g) { const cat = g.closest('.dcat').dataset.cat; startDrag(ev, 'cat', cat, S.L.cats.find(c => c.id === cat).name); blurInsp(); ev.preventDefault(); return; }
+  const cell = ev.target.closest('#view .dc'), hcat = !cell && ev.target.closest('#view .dcat');
+  if (hcat && ev.target.closest('.dch, .ghdr, .bh')) editPress = { cat: hcat.dataset.cat, el: hcat, x: ev.clientX, y: ev.clientY };
   if (cell) {
+    editPress = { cid: cell.dataset.cid, el: cell, x: ev.clientX, y: ev.clientY };
     const c = S.L.cells[cell.dataset.cid], r = c.key && BYKEY.get(c.key);
     startDrag(ev, 'cell', cell.dataset.cid, nameIn(cell.dataset.cid), r ? valTxt(r) : '');
     if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp')) document.activeElement.blur();
@@ -2752,6 +2844,15 @@ sectionsEl.addEventListener('pointerdown', ev => {
   }
 });
 sectionsEl.addEventListener('pointerup', ev => {
+  const ep = editPress; editPress = null;
+  if (ep && S.edit && ev.isPrimary && ev.button === 0 && !ep.el.isConnected && !(drag && drag.started) && Math.hypot(ev.clientX - ep.x, ev.clientY - ep.y) <= 8) {
+    const at = document.elementFromPoint(ev.clientX, ev.clientY);
+    const c = at && at.closest('#view .dc'), ce = at && at.closest('#view .dcat');
+    let done = false;
+    if (ep.cid && c && c.dataset.cid === ep.cid && S.L.cells[ep.cid]) { selectCell(ep.cid); done = true; }
+    else if (ep.cat && !c && ce && ce.dataset.cat === ep.cat && at.closest('.dch, .ghdr, .bh') && !at.closest('button, input') && S.L.cats.some(x => x.id === ep.cat)) { selectCat(ep.cat); done = true; }
+    if (done) { justDragged = true; setTimeout(() => { justDragged = false; }, 0); }   // (a click the browser still sends: not a second one)
+  }
   const p = press; press = null;
   if (p && Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 8) { draggedUp = performance.now(); return; }   // a drag, not a click: nothing opens
   if (!p || S.edit || ev.button !== 0 || !S.L.cells[p.cid]) return;
@@ -2777,6 +2878,7 @@ sectionsEl.addEventListener('click', ev => {
   if (cell) { selectCell(cell.dataset.cid); return; }
   // a category's header (its name, its empty space) selects the category; anywhere else: the view
   if (catEl && ev.target.closest('.dch, .ghdr, .bh') && !ev.target.closest('input')) { selectCat(catEl.dataset.cat); return; }
+  if (ev.target.closest('.cn-in')) return;   // (a click in a category's rename box: it is being named, nothing else)
   if (sel || selCat) clearSel();
 });
 function selectCell(cid) {
@@ -2815,9 +2917,9 @@ function renameCat(catEl) {
   };
   inp.onblur = () => commit(true);
 }
-document.addEventListener('pointermove', moveDrag);
-document.addEventListener('pointerup', () => endDrag(false));
-document.addEventListener('pointercancel', () => endDrag(true));
+document.addEventListener('pointermove', ev => { if (dragOwn(ev)) moveDrag(ev); });
+document.addEventListener('pointerup', ev => { if (swallowUp(ev)) return; if (dragOwn(ev)) endDrag(false); });
+document.addEventListener('pointercancel', ev => { if (dragOwn(ev)) endDrag(true); });
 // the spotlight under the pointer
 let spotEl = null, spotX = 0, spotY = 0, spotRaf = 0;
 sectionsEl.addEventListener('pointermove', e => {
@@ -2825,7 +2927,7 @@ sectionsEl.addEventListener('pointermove', e => {
   if (!spotRaf) spotRaf = requestAnimationFrame(() => { spotRaf = 0; if (!spotEl) return; const b = spotEl.getBoundingClientRect(); spotEl.style.setProperty('--mx', Math.round(spotX - b.left) + 'px'); spotEl.style.setProperty('--my', Math.round(spotY - b.top) + 'px'); });
 });
 let scrollT = 0;
-sectionsEl.addEventListener('scroll', () => { hidePrev(); if (!scrollT) scrollT = requestAnimationFrame(() => { scrollT = 0; if (!drag || !drag.started) updateView(false); }); });
+sectionsEl.addEventListener('scroll', () => { hidePrev(); if (!scrollT) scrollT = requestAnimationFrame(() => { scrollT = 0; if (!drag || !drag.started) updateView(false, true); }); });
 
 // ---------- events: Storage ----------
 $('vlist').addEventListener('scroll', () => requestAnimationFrame(drawRows));
@@ -2871,14 +2973,14 @@ $('vspace').addEventListener('click', e => {
     const cid = relinkFor, r = BYKEY.get(row.dataset.key);
     if (!S.L.cells[cid] || !r) { endRelink(); renderView(false); return; }   // the cell went while picking
     mutate(() => { S.L.cells[cid].key = r.key; S.L.cells[cid].match = matchOf(r); S.L.cells[cid].u = r.unit; }, 'Re-linked');
-    endRelink(); sel = cid; renderView(false); renderInsp();
+    endRelink(); sel = cid; selCat = null; renderView(false); renderInsp();
   }
 });
 $('vspace').addEventListener('pointerdown', e => {
-  if (!S.edit || e.button !== 0 || e.target.closest('button') || relinkFor || (host && zoneAt(e))) return;
+  if (!S.edit || !e.isPrimary || e.button !== 0 || e.target.closest('button') || relinkFor || (host && zoneAt(e))) return;
   const row = e.target.closest('.vrow.r'); if (!row) return;
   const r = BYKEY.get(row.dataset.key); if (!r) return;
-  startDrag(e, 'row', r.key, r.label, valTxt(r)); e.preventDefault();
+  startDrag(e, 'row', r.key, r.label, valTxt(r)); blurInsp(); e.preventDefault();
 });
 $('addPred').onclick = () => {
   const t = targetForAdd(), src = guessTemp(null);
@@ -2887,12 +2989,12 @@ $('addPred').onclick = () => {
     if (!cat) { cat = { id: nid('c'), name: 'Fans', collapsed: false, cells: [] }; S.L.cats.push(cat); }
     const id = nid('a');
     S.L.cells[id] = { pred: true, name: 'Predicted fan', graph: true, curve: { src: src ? src.key : '', pts: [[30, 500], [50, 800], [70, 1300], [85, 1800]].map(p => [cToU(p[0], src), p[1]]), tol: 15, hold: 10 } };
-    cat.cells.splice(t.index == null ? cat.cells.length : t.index, 0, id); sel = id;
+    cat.cells.splice(t.index == null ? cat.cells.length : t.index, 0, id); sel = id; selCat = null;
   });
 };
 function startRelink(cid) {
   if (!S.edit) setEdit(true);
-  relinkFor = cid; sel = cid; const c = S.L.cells[cid];
+  relinkFor = cid; sel = cid; selCat = null; const c = S.L.cells[cid];
   const lbl = c.match ? c.match.split('|')[1] : '';
   $('relinkBar').hidden = false; $('relinkTxt').textContent = 'Pick the reading for "' + (c.name || lbl || 'this cell') + '"';
   // the search starts with the label; if this PC calls it something else, the list says so and offers everything
@@ -2948,7 +3050,7 @@ function renderInsp() {
       h += '<div class="err" id="gErr"></div><div class="scale" id="gScale"></div>';
     } else if (r) {
       const pre = presetFor(r);
-      h += '<span class="hint">No lines: the cell never turns yellow or red.' + (pre ? ' Suggestion: <button class="linkbtn" id="iPreset">' + esc(pre.txt) + '</button>' : '') + '</span>';
+      h += '<span class="hint">' + (c.key === 'hwdeck.0/12v' ? 'No lines: only its pins\' balance turns it yellow.' : 'No lines: the cell never turns yellow or red.') + (pre ? ' Suggestion: <button class="linkbtn" id="iPreset">' + esc(pre.txt) + '</button>' : '') + '</span>';
     }
     h += '</div>';
   }
@@ -3052,7 +3154,9 @@ function drawCurveSvg(c, e) {
   const box = $('cChart'); const W = 270, H = 160, l = 34, rr = 8, t = 8, b = 22;
   const pts = c.curve.pts.slice().sort(ptOrd);
   const src0 = BYKEY.get(c.curve.src), fh = isF(src0 && src0.unit), xmin = fh ? 68 : 20, xmax = fh ? 212 : 100, xstep = fh ? 36 : 20;
-  const ax = niceAxis(Math.max(500, Math.max(...pts.map(p => p[1]), e.v || 0) * 1.15), 4), ymax = ax.max;
+  // (while a point is dragged, the scale it started with: one drawn from the point just set ran away under the pointer)
+  const top = dragPt && dragPt.top != null ? dragPt.top : Math.max(500, Math.max(...pts.map(p => p[1]), e.v || 0) * 1.15);
+  const ax = niceAxis(top, 4), ymax = ax.max;
   const X = v => l + (Math.max(xmin, Math.min(xmax, v)) - xmin) / (xmax - xmin) * (W - l - rr), Y = v => t + (1 - v / ymax) * (H - t - b);
   let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" id="cSvg">';
   for (let x = xmin; x <= xmax; x += xstep) s += '<line x1="' + X(x) + '" x2="' + X(x) + '" y1="' + t + '" y2="' + (H - b) + '" stroke="#202020"/><text x="' + X(x) + '" y="' + (H - 7) + '" fill="#6a6a6a" font-size="9" text-anchor="middle">' + x + '\u00b0</text>';
@@ -3069,7 +3173,7 @@ function drawCurveSvg(c, e) {
   }
   c.curve.pts.forEach((p, i) => { s += '<circle class="pt" data-i="' + i + '" cx="' + X(p[0]) + '" cy="' + Y(p[1]) + '" r="5" fill="#0f0f0f" stroke="#7fa6e8" stroke-width="1.6"/>'; });
   box.innerHTML = s + '</svg>';
-  box._scale = { l, t, W, H, b, rr, xmin, xmax, ymax };
+  box._scale = { l, t, W, H, b, rr, xmin, xmax, ymax, top };
 }
 const insp = $('insp');
 $('inspClose').onclick = () => { const d = DR.R; clearTimeout(d.t); d.hover = false; d.pinned = false; d.byPick = false; clearSel(); saveState(); };
@@ -3092,20 +3196,20 @@ insp.addEventListener('input', e => {
     if (el) el.textContent = nameIn(sel);
   }
   const lk = c.pred ? 1 : gbK(BYKEY.get(c.key));   // (memory lines are typed in GB, kept in MB)
-  if (t.id === 'iOY' || t.id === 'iOR') { setCell(c => { const o = c.gates.other || (c.gates.other = {}), k = t.id === 'iOY' ? 'y' : 'r'; if (t.value === '' || !isFinite(Number(t.value))) delete o[k]; else o[k] = Number(t.value) / lk; }); tickInsp(); updateView(false); }
-  if (t.id === 'iFade') { setCell(c => { if (t.value === '' || !isFinite(Number(t.value))) delete c.gates.fade; else c.gates.fade = Math.max(0, Number(t.value) / lk); }); tickInsp(); updateView(false); }
-  if (t.id === 'iY' || t.id === 'iR' || t.id === 'iHold') { setCell(c => { const k = t.id === 'iY' ? 'y' : t.id === 'iR' ? 'r' : 'hold'; c.gates[k] = t.value === '' ? NaN : k === 'hold' ? Math.min(1e9, Math.max(0, Number(t.value) || 0)) : Number(t.value) / lk; }); tickInsp(); updateView(false); }
-  if (t.id === 'cTol' || t.id === 'cHold') { if (t.value === '') return; setCell(c => { c.curve[t.id === 'cTol' ? 'tol' : 'hold'] = Math.max(t.id === 'cTol' ? 1 : 0, Number(t.value) || 0); }); tickInsp(); updateView(false); }
-  if (t.dataset && t.dataset.i != null && t.closest('#cTab') && t.value !== '') { setCell(c => { c.curve.pts[Number(t.dataset.i)][Number(t.dataset.j)] = Number(t.value); }); tickInsp(); updateView(false); }
+  if (t.id === 'iOY' || t.id === 'iOR') { setCell(c => { const o = c.gates.other || (c.gates.other = {}), k = t.id === 'iOY' ? 'y' : 'r'; if (t.value === '' || !isFinite(Number(t.value))) delete o[k]; else o[k] = Number(t.value) / lk; }); tickInsp(); updateView(false, true); }
+  if (t.id === 'iFade') { setCell(c => { if (t.value === '' || !isFinite(Number(t.value))) delete c.gates.fade; else c.gates.fade = Math.max(0, Number(t.value) / lk); }); tickInsp(); updateView(false, true); }
+  if (t.id === 'iY' || t.id === 'iR' || t.id === 'iHold') { setCell(c => { const k = t.id === 'iY' ? 'y' : t.id === 'iR' ? 'r' : 'hold'; c.gates[k] = t.value === '' ? NaN : k === 'hold' ? Math.min(1e9, Math.max(0, Number(t.value) || 0)) : Number(t.value) / lk; }); tickInsp(); updateView(false, true); }
+  if (t.id === 'cTol' || t.id === 'cHold') { if (t.value === '') return; setCell(c => { c.curve[t.id === 'cTol' ? 'tol' : 'hold'] = Math.max(t.id === 'cTol' ? 1 : 0, Number(t.value) || 0); }); tickInsp(); updateView(false, true); }
+  if (t.dataset && t.dataset.i != null && t.closest('#cTab') && t.value !== '') { setCell(c => { c.curve.pts[Number(t.dataset.i)][Number(t.dataset.j)] = Number(t.value); }); tickInsp(); updateView(false, true); }
 });
 insp.addEventListener('change', e => {
   const t = e.target, c = S.L.cells[sel]; if (!c) return;
   if (t.id === 'cTol' || t.id === 'cHold') t.value = c.curve[t.id === 'cTol' ? 'tol' : 'hold'];   // what it keeps, not what was typed
-  if (t.id === 'iDec') { setCell(c => { c.dec = Number(t.value); }, true); updateView(false); t.blur(); }
+  if (t.id === 'iDec') { setCell(c => { c.dec = Number(t.value); }, true); updateView(false, true); t.blur(); }
   if (t.id === 'iGraph') { setCell(c => { c.graph = t.value === '1'; }, true); renderView(false); t.blur(); }
-  if (t.id === 'iSrc') { setCell(c => { c.curve.src = t.value; }, true); subscribe(); renderInsp(); updateView(false); }
-  if (t.id === 'cWarn') { setCell(c => { if (t.checked) delete c.curve.warn; else c.curve.warn = false; }, true); renderInsp(); updateView(false); }
-  if (t.id === 'iOther') { setCell(c => { if (t.checked) c.gates.other = c.gates.other || {}; else delete c.gates.other; }, true); renderInsp(); updateView(false); }
+  if (t.id === 'iSrc') { setCell(c => { c.curve.src = t.value; }, true); subscribe(); renderInsp(); updateView(false, true); }
+  if (t.id === 'cWarn') { setCell(c => { if (t.checked) delete c.curve.warn; else c.curve.warn = false; }, true); renderInsp(); updateView(false, true); }
+  if (t.id === 'iOther') { setCell(c => { if (t.checked) c.gates.other = c.gates.other || {}; else delete c.gates.other; }, true); renderInsp(); updateView(false, true); }
   if (t.id === 'iCurveOn') {
     setCell(c => {
       // off keeps the curve aside, so on brings it back
@@ -3126,7 +3230,7 @@ insp.addEventListener('keydown', e => {
   if (e.target.id !== 'cPasteIn' || e.key !== 'Enter') return;
   const items = e.target.value.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
   const pts = items.map(s => s.split(/\s*[:=]\s*|\s+/)).filter(p => p.length === 2 && p[0] !== '' && p[1] !== '' && p.every(x => isFinite(Number(x)))).map(p => p.map(Number));
-  if (pts.length >= 2) { setCell(c => { c.curve.pts = pts.sort(ptOrd); }, true); renderInsp(); updateView(false); toast(plural(pts.length, 'point') + ' set' + (items.length > pts.length ? ', ' + (items.length - pts.length) + ' skipped (write them as temp:rpm)' : '')); }
+  if (pts.length >= 2) { setCell(c => { c.curve.pts = pts.sort(ptOrd); }, true); renderInsp(); updateView(false, true); toast(plural(pts.length, 'point') + ' set' + (items.length > pts.length ? ', ' + (items.length - pts.length) + ' skipped (write them as temp:rpm)' : '')); }
   else toast('Write the points as temp:rpm, separated by commas');
 });
 insp.addEventListener('click', e => {
@@ -3142,18 +3246,18 @@ insp.addEventListener('click', e => {
       if (g.mode === 'yr' && !Number.isFinite(g.r) && pre && pre.g.mode === 'yr' && g.y === pre.g.y) g.r = pre.g.r;
       seedLines(c, r, false);
     }, true);
-    renderInsp(); updateView(false);
+    renderInsp(); updateView(false, true);
   }
-  if (d) {
+  if (d && !(c.gates && c.gates.dir === d.dataset.v)) {   // (the one already on: nothing changes)
     setCell(c => {
       const g = c.gates; g.dir = d.dataset.v;
       // lines that are now on the wrong side (picked for "above" before the direction) move to the new side
       const r = BYKEY.get(c.key), v = r ? r.v : null;
       if (v != null && (gatesBad(g) || (Number.isFinite(g.y) && (g.dir === 'below' ? v <= g.y : v >= g.y)))) seedLines(c, r, true);
     }, true);
-    renderInsp(); updateView(false);
+    renderInsp(); updateView(false, true);
   }
-  if (e.target.closest('#iPreset')) { const p = presetFor(BYKEY.get(c.key)); setCell(c => { c.gates = Object.assign({}, p.g); }, true); renderInsp(); updateView(false); }
+  if (e.target.closest('#iPreset')) { const p = presetFor(BYKEY.get(c.key)); setCell(c => { c.gates = Object.assign({}, p.g); }, true); renderInsp(); updateView(false, true); }
   if (e.target.closest('#iRemove')) removeCell(sel);
   if (e.target.closest('#iRelink')) startRelink(sel);
   if (e.target.closest('#iOpen')) openDetail(sel);
@@ -3170,27 +3274,38 @@ insp.addEventListener('click', e => {
   }
   if (e.target.closest('#cPaste')) { const b = $('cPasteBox'); b.hidden = !b.hidden; if (!b.hidden) $('cPasteIn').focus(); }
   const del = e.target.closest('[data-del]');
-  if (del && c.curve.pts.length > 2) { setCell(c => { c.curve.pts.splice(Number(del.dataset.del), 1); }, true); renderInsp(); updateView(false); }
+  if (del && c.curve.pts.length > 2) { setCell(c => { c.curve.pts.splice(Number(del.dataset.del), 1); }, true); renderInsp(); updateView(false, true); }
 });
-insp.addEventListener('pointerdown', e => { const pt = e.target.closest('.pt'); if (!pt) return; dragPt = { i: Number(pt.dataset.i), moved: false }; e.preventDefault(); });
+insp.addEventListener('pointerdown', e => { const pt = e.target.closest('.pt'); if (!pt || !e.isPrimary || dragPt) return; blurInsp(); dragPt = { i: Number(pt.dataset.i), moved: false, pid: e.pointerId, x0: e.clientX }; e.preventDefault(); });
 document.addEventListener('pointermove', e => {
-  if (!dragPt) return;
+  if (!dragPt || e.pointerId !== dragPt.pid) return;
   const c = S.L.cells[sel], box = $('cChart'), svg = $('cSvg'); if (!c || !svg) return;
-  if (!dragPt.moved) { dragPt.moved = true; snap(); syncUndo(); }   // a click on a point is no undo step
+  if (!c.curve || !c.curve.pts[dragPt.i]) return;   // (its points changed under the drag)
+  if (!dragPt.moved) { dragPt.moved = true; dragPt.pts0 = JSON.parse(JSON.stringify(c.curve.pts)); dragPt.before = snapOf(); dragPt.top = box._scale.top; dragPt.ymax = box._scale.ymax; }   // (its undo step at the release)   // a click on a point is no undo step
   const sc = box._scale, r = svg.getBoundingClientRect(), k = sc.W / r.width;
   const x = (e.clientX - r.left) * k, y = (e.clientY - r.top) * k;
   const tv = Math.round(sc.xmin + (x - sc.l) / (sc.W - sc.l - sc.rr) * (sc.xmax - sc.xmin));
   const rv = Math.round((1 - (y - sc.t) / (sc.H - sc.t - sc.b)) * sc.ymax / 10) * 10;
-  c.curve.pts[dragPt.i] = [Math.max(sc.xmin, Math.min(sc.xmax, tv)), Math.max(0, rv)];
-  tickInsp(); updateView(false);
+  // (its temperature stays until the pointer moves sideways: one outside the chart's range jumped to its edge)
+  if (!dragPt.side && Math.abs(e.clientX - dragPt.x0) >= 3) dragPt.side = true;
+  c.curve.pts[dragPt.i] = [dragPt.side ? Math.max(sc.xmin, Math.min(sc.xmax, tv)) : dragPt.pts0[dragPt.i][0], Math.max(0, Math.min(dragPt.ymax, rv))];
+  tickInsp(); updateView(false, true);
   const ins = $('cTab').querySelectorAll('input[data-i="' + dragPt.i + '"]'); if (ins.length === 2) { ins[0].value = c.curve.pts[dragPt.i][0]; ins[1].value = c.curve.pts[dragPt.i][1]; }
 });
-document.addEventListener('pointerup', () => {
-  if (!dragPt) return;
-  const moved = dragPt.moved, c = S.L.cells[sel], was = c && c.curve ? JSON.stringify(c.curve.pts) : '';
-  dragPt = null; if (c && c.curve) c.curve.pts.sort(ptOrd);   // (also a point only clicked: the table may have been left unsorted under it)
+// a curve point let go with Escape: the points as they were, and the step its first move took goes too
+function ptCancel() {
+  const c = S.L.cells[sel], d = dragPt; dragPt = null;
+  if (d && d.moved && d.pts0 && c && c.curve) { c.curve.pts = d.pts0; saveState(); syncSaves(); }   // (back as it was, on disk too: a save may have gone out mid-drag; no step was taken)
+  syncDrawers(); renderInsp(); updateView(false, true);
+}
+const ptUp = e => {   // (a cancelled pointer ends it too: no point left following the next move)
+  if (!dragPt || e.pointerId !== dragPt.pid) return;
+  const moved = dragPt.moved, before = dragPt.before, c = S.L.cells[sel], was = c && c.curve ? JSON.stringify(c.curve.pts) : '';
+  dragPt = null; syncDrawers(); if (c && c.curve) c.curve.pts.sort(ptOrd);
+  if (moved && before && before !== snapOf()) { pushUndo(before); syncUndo(); }   // (the drag's one step)   // (also a point only clicked: the table may have been left unsorted under it)
   if (moved || (c && c.curve && JSON.stringify(c.curve.pts) !== was)) { saveState(); syncSaves(); renderInsp(); }
-});
+};
+document.addEventListener('pointerup', ptUp); document.addEventListener('pointercancel', ptUp);
 // the points table goes back in order once you leave it (not while you type in it: rows would jump under you)
 insp.addEventListener('focusout', e => {
   if (!e.target.closest('#cTab') || (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('#cTab'))) return;
@@ -3200,7 +3315,7 @@ insp.addEventListener('focusout', e => {
     if (JSON.stringify(now) === was) return;
     c.curve.pts = now; saveState(); syncSaves();
     for (const el of document.querySelectorAll('#cTab input[data-i]')) { const q = now[+el.dataset.i]; if (q) el.value = q[+el.dataset.j]; }
-    tickInsp(); updateView(false);
+    tickInsp(); updateView(false, true);
   }, 0);
 });
 insp.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.closest && e.target.closest('#cTab')) e.target.blur(); });
@@ -3233,7 +3348,7 @@ function viewPanel() {
       h += '<div class="fgrp"><span class="lab">Start from</span><div class="tpls">' + TPLS.map(([k, t, gc, gr, areas]) => '<button class="tpl" data-tpl="' + k + '"' + (k === 'copy' && !canCopy ? ' disabled title="' + VNAME[ov] + ' is placed automatically: there is nothing to copy"' : '') + '>' +
         '<span class="pic" style="grid-template-columns:' + gc + ';grid-template-rows:' + gr + '">' + areas.map(a => '<i style="grid-area:' + a + '"></i>').join('') + '</span>' + (k === 'copy' ? 'Copy from ' + VNAME[ov] : t) + '</button>').join('') + '</div>' +
         '<span class="hint">Rest the pointer on one to see it with your categories, click to use it. Undo brings yours back.</span></div>';
-      h += '<div class="fgrp">' + (vn === 'tiles' ? segL('Height', 'fill', [['fit', 'All fit'], ['fill', 'Fill the window']], own && v.rows.some(r => r.h) ? 'fill' : 'fit') +
+      h += '<div class="fgrp">' + (vn === 'tiles' ? segL('Height', 'fill', [['fit', 'All fit'], ['fill', 'Fill the window']], !own || !v.rows.some(r => r.h) ? 'fit' : v.rows.every(r => r.h) ? 'fill' : '') +
         '<span class="hint">Fill the window: room left under the tiles makes them taller (bigger graphs), up to twice their size.</span>' : '') +
         segL('Spacing', 'gap', [['tight', 'Tight'], ['', 'Normal'], ['roomy', 'Roomy']], v && v.gap || '') + '<span class="hint">The gaps between categories and between their ' + (vn === 'tiles' ? 'tiles' : 'rows') + '.</span></div>';
     } else {
@@ -3332,15 +3447,17 @@ function layoutAct(key, v) {
   const vn = S.screen, id = selCat;
   if (key === 'arr' && v === 'own') layoutChange(() => ownRows());
   else if ((key === 'arr' && v === 'auto') || key === 'auto') { if (stored(vn) && stored(vn).rows) mutate(() => { delete vset(vn).rows; }, VNAME[vn] + ' is placed automatically again'); }
+  else if (key === 'fill' && v !== 'fill' && !(stored(vn) && stored(vn).rows && stored(vn).rows.some(r => r.h))) return;   // (All fit already: an automatic view stays automatic)
   else if (key === 'fill') layoutChange(() => { const rows = ownRows(); if (v === 'fill') autoHeights(vn, rows); else for (const r of rows) delete r.h; });
   else if (key === 'gap') mutate(() => { if (v) vset(vn).gap = v; else delete vset(vn).gap; });
-  else if (key === 'tables' && !(stored('grid') && stored('grid').rows) && +v === document.querySelectorAll('#view .gtable').length) return;
+  else if (key === 'tables' && +v === (stored('grid') && stored('grid').rows ? (stored('grid').rows[0] || { cols: [] }).cols.length : document.querySelectorAll('#view .gtable').length)) return;   // (the count already lit: nothing cut again)
   else if (key === 'tables') layoutChange(() => { const g = vset('grid'); if (!g.rows) froze = true; g.rows = gridTables(+v); });
   else if (key === 'width') setWidth(id, v === 'auto' ? 0 : +v);
   else if (key === 'rowh') setRowHeight(id, +v);
   else if (key === 'move') moveCat(id, v);
   else if (key === 'table') layoutChange(() => {
-    const rows = ownRows(), p = posIn(rows, id), t = +v; if (!p || p.ci === t) return;
+    const t = +v, p = posIn(rowsNow(vn), id); if (!p || p.ci === t) return;   // (in that table already: an automatic view stays automatic)
+    const rows = ownRows();
     vset('grid').rows = placeCat(rows, id, t >= rows[0].cols.length ? { zone: 'right', table: rows[0].cols.length - 1 } : { zone: 'into', table: t });
   });
   else if (key === 'size' || key === 'title' || key === 'style') mutate(() => setLook('cat', id, key, v));
@@ -3419,6 +3536,7 @@ function keyLayout(fn) {
   if (merge && undoSeq === n0 + 1) undoStack.pop();   // (the press's own step: the burst stays one)
   if (undoSeq === n0 && !merge) keyStep.t = 0;   // (a key that changed nothing starts no burst: the next one isn't merged into an earlier change)
   else keyStep = { t: Date.now(), n: undoSeq };
+  if (merge && undoStack.length && undoStack[undoStack.length - 1] === snapOf()) { undoStack.pop(); keyStep.t = 0; }   // (the burst came back where it started: no step that changes nothing)
   syncUndo();
 }
 function focusCat(id) { const h = document.querySelector('#view .dcat[data-cat="' + id + '"] .dch'); if (h) h.focus({ preventScroll: false }); }
@@ -3906,7 +4024,7 @@ $('slist').addEventListener('click', e => {
       if (b.dataset.m === 'empty') askConfirm('Empty ' + slotName(i) + '?', 'The slot forgets its layout. The view you have now stays.', 'Empty slot', () => {
         S.slots[i] = null; if (S.active === i) S.active = null;
         const unslot = js => { const o = JSON.parse(js); if (o.active !== i) return js; o.active = null; return JSON.stringify(o); };   // (an undo can't link the view to it again)
-        undoStack = undoStack.map(unslot); redoStack = redoStack.map(unslot);
+        undoStack = undoStack.map(unslot); redoStack = redoStack.map(unslot); if (dragPt && dragPt.before) dragPt.before = unslot(dragPt.before);
         saveSlot(i); saveState(); syncSaves(); renderSaves();
       });
     };
@@ -4061,6 +4179,7 @@ const gmodal = $('gmodal');
 const afterFade = (el, fn) => setTimeout(() => { if (!el.classList.contains('open')) fn(); }, 250);
 new MutationObserver(() => {
   if (gmodal.classList.contains('open')) return;
+  if (gxLive.on !== false && host) { gxLive.on = false; send({ t: 'gamesLive', on: false }); }   // (no more Now playing until it opens again)
   afterFade(gmodal, () => {
     if ($('glist').firstChild) { $('glist').innerHTML = ''; gxSs = []; gxTl.length = 0; }
     gxText = '';
@@ -4069,7 +4188,7 @@ new MutationObserver(() => {
 }).observe(gmodal, { attributes: true, attributeFilter: ['class'] });
 new MutationObserver(() => { if (!$('wmodal').classList.contains('open')) afterFade($('wmodal'), () => { if ($('wlist').firstChild) { $('wlist').innerHTML = ''; wGroups = []; } }); }).observe($('wmodal'), { attributes: true, attributeFilter: ['class'] });
 let lastGameCount = 0;
-$('gamesBtn').onclick = () => { gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; recKey = null; gxLoaded = false; renderRec(); if (host) send({ t: 'games' }); else renderGames(''); };
+$('gamesBtn').onclick = () => { gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; recKey = null; gxLoaded = false; renderRec(); if (host) { send({ t: 'games' }); gxLive.on = true; send({ t: 'gamesLive', on: true }); } else renderGames(''); };
 let gxLoaded = false;   // the log is in since the popup opened (Start names the next "Session n" from it)
 // ---- sessions of your own: Start records one (the host follows it like a game's, beside any game), each running one
 // shows on top with its name (change it there), its time so far and Stop ----
@@ -4185,9 +4304,9 @@ const gxHasTl = D => D.N >= 2 && (D.sh.some(Boolean) || D.fv.some(v => v !== nul
 function gxTimeline(x, sp, gi) {
   const D = gxMinutes(x), N = D.N;
   if (!gxHasTl(D)) return '';
-  const T = gxTl[gi] = Object.assign({ start: x.start, custom: !!x.custom }, D);
+  const T = gxTl[gi] = Object.assign({ start: x.start, custom: !!x.custom, gaps: Array.isArray(x.gaps) ? x.gaps.filter(g => Array.isArray(g) && g.length >= 2) : [] }, D);
   const cut = x.end - x.start > N * 60 + 90;   // (the host keeps 24 hours of minutes)
-  let h = '<div class="gx-tl" data-g="' + gi + '"><div class="gx-ch">over time<span>' + (cut ? 'the first 24 hours, ' : '') + (x.custom ? 'per minute' : 'per minute, gaps are time the game was not in front or HW Deck was closed') + '</span></div><div class="gx-hz">';
+  let h = '<div class="gx-tl" data-g="' + gi + '"><div class="gx-ch">over time<span>' + (cut ? 'the first 24 hours, ' : '') + (x.custom ? 'per minute' : 'per minute, gaps are time the game was not in front or closed, or HW Deck was closed') + '</span></div><div class="gx-hz">';
   const have = D.fv.filter(v => v !== null);
   if (have.length) {
     // round steps, about 4 of them, from a little under the lowest 1% low to a little over the highest fps
@@ -4224,7 +4343,8 @@ function gxTimeline(x, sp, gi) {
   const t0 = x.start, t1 = x.start + N * 60, t2 = Math.min(t1, x.end), every = N > 960 ? 180 : N > 480 ? 60 : N > 90 ? 30 : N > 40 ? 15 : N > 15 ? 5 : 1;
   const day = u => GX_WD[new Date(u * 1000).getDay()].slice(0, 3) + ' ', long = t2 - t0 >= 16 * 3600;   // (a chart most of a day long: which day each end is)
   let tk = '<span class="e0">' + (long ? day(t0) : '') + hhmm(t0) + '</span>';
-  for (let u = Math.ceil(t0 / 60 / every) * every * 60; u < t2; u += every * 60) {
+  const tz = new Date(t0 * 1000).getTimezoneOffset() * 60;   // (rounded on the local clock: UTC minus local, in seconds)
+  for (let u = Math.ceil((t0 - tz) / 60 / every) * every * 60 + tz; u < t2; u += every * 60) {
     const pc = (u - t0) / (t1 - t0) * 100;
     if (pc > 9 && pc < 91 && hhmm(u) !== hhmm(t2)) tk += '<span style="left:' + pc.toFixed(2) + '%">' + hhmm(u) + '</span>';
   }
@@ -4259,15 +4379,22 @@ function gxHover(hz, e) {
   if (fpsAt) h += '<span>fps <em>' + gxF(T.fv[m]) + '</em></span><span>1% low <em>' + gxF(T.lv[m]) + '</em></span>';
   if (s && T.one[m]) { const k = s.indexOf(1); h += '<span><i class="b-' + GX_BN[k][0] + '"></i>mostly ' + GX_BN[k][1] + '</span>'; }
   else if (s) h += GX_BN.map(([k, t], j) => s[j] > 0.005 ? '<span><i class="b-' + k + '"></i>' + t + ' <em>' + Math.round(s[j] * 100) + '%</em></span>' : '').join('');
-  if (!s && !fpsAt) h += '<span>' + (T.custom ? 'nothing recorded' : 'not in front, or HW Deck was closed') + '</span>';
+  const brk = T.gaps.some(g => T.start + m * 60 + 59 >= g[0] && T.start + m * 60 <= g[1]);
+  if (!s && !fpsAt) h += '<span>' + (T.custom ? 'nothing recorded' : brk ? 'a break: the game was closed' : 'not in front, or HW Deck was closed') + '</span>';
   const tip = hz.querySelector('.gx-tip');
   if (tip._h !== h) { tip.innerHTML = h; tip._h = h; }
   const hr = hz.getBoundingClientRect(), gx = pr.left - hr.left + (m + 0.5) / T.N * pr.width, tw = tip.offsetWidth;
   tip.style.left = (gx + 14 + tw > hr.width ? gx - 14 - tw : gx + 14).toFixed(1) + 'px';
   hz.classList.add('hv');
 }
-$('glist').addEventListener('pointermove', e => gxHover(e.target.closest && e.target.closest('.gx-hz'), e));
-$('glist').addEventListener('pointerleave', () => gxHover(null));
+$('glist').addEventListener('pointermove', e => { gxPtAt(e); gxHover(e.target.closest && e.target.closest('.gx-hz'), e); });
+$('glist').addEventListener('pointerleave', () => { gxPt = null; gxHover(null); });
+// the pointer on the list, for the live row to wait for: a mouse or a pen over it, a finger only while it presses (a
+// touch screen keeps :hover on what was tapped last)
+let gxPt = null;
+const gxPtAt = e => { gxPt = { x: e.clientX, y: e.clientY, down: e.buttons > 0 || e.type === 'pointerdown', touch: e.pointerType === 'touch' }; };
+$('glist').addEventListener('pointerdown', gxPtAt);
+for (const ty of ['pointerup', 'pointercancel']) document.addEventListener(ty, e => { if (gxPt) { gxPt.down = false; if (e.pointerType === 'touch') gxPt = null; } }, true);
 // ---- a session's details: a summary, the chart, then its readings in categories (Customize: your own categories, any
 // reading, 8 to a category). The setup lives in the layout (L.games), the default is below ----
 const gxDefault = () => ({ secs: [
@@ -4290,7 +4417,7 @@ function gxSummary(x, sp, items) {
   return '<div class="gx-s5">' +
     '<div><em>average fps</em><b>' + gxF(x.fps) + '</b><span>1% low <i>' + gxF(x.low) + '</i></span></div>' +
     (x.custom ? '<div><em>length</em><b>' + durS(x.end - x.start) + '</b><span>' + hhmm(x.start) + ' to ' + hhmm(x.end) + '</span></div>'
-      : '<div><em>played</em><b>' + durTxt(x.end - x.start) + '</b><span>' + (away >= 60 ? durTxt(x.front) + ' in front' : 'all of it in front') + '</span></div>') +
+      : '<div><em>played</em><b>' + durTxt(gxPlay(x)) + '</b><span>' + (away >= 60 ? durTxt(x.front) + ' in front' : 'all of it in front') + '</span></div>') +
     '<div><em>hottest</em><b class="' + hl + '">' + (hot ? gxF(hot.m, 1) + '<small>' + esc(hot.u) + '</small>' : '--') + '</b><span>' + (hot ? esc(hot.main && GX_MAIN[hot.n] ? GX_MAIN[hot.n][0] : hot.n) : '') + '</span></div>' +
     '<div class="w2"><em>limited by</em>' + (sp.n ? gxNbar(sp) + '<span class="gx-split">' + split + '</span>' : '<b>--</b>') + '</div>' +
     '<div><em>warnings</em><b class="' + (wn ? 'y' : '') + '">' + wn + '</b><span>' + (wl.length ? esc(wl[0][0]) + ' ' + esc(gxF(wl[0][1], gxN(wl[0][1]) % 1 ? 1 : 0)) + ' ' + esc(wl[0][2]) : wn ? '' : 'none') + '</span></div></div>';
@@ -4448,7 +4575,8 @@ $('gcz').addEventListener('input', e => { if (e.target.id === 'gzQ') { GZ.q = e.
 $('gcz').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.gz-name')) e.target.blur(); if (e.key === 'Enter' && e.target.id === 'gzQ') { const r = document.querySelector('#gcz .vrow.r .add:not([disabled])'); if (r) r.click(); } });
 // a category or a reading dragged by its grip to another place in its list
 $('gcz').addEventListener('pointerdown', e => {
-  let g = e.target.closest('.grip'); if (!g || e.button !== 0) return;
+  let g = e.target.closest('.grip'); if (!g || e.button !== 0 || !e.isPrimary) return;
+  const pid = e.pointerId;   // (only this pointer moves or drops it)
   const a = document.activeElement;
   if (a && a.matches('#gcz .gz-name')) {   // (a name still being typed: applied first, its change re-renders the rows)
     const ln = g.parentNode.parentNode.dataset.list, ri = g.parentNode.dataset.i;
@@ -4459,46 +4587,76 @@ $('gcz').addEventListener('pointerdown', e => {
   e.preventDefault(); row.classList.add('drag');
   let to = from;
   const move = ev => {
+    if (ev.pointerId !== pid) return;
+    if (!list.isConnected) { cancel(); return; }   // (its list was drawn again under it: no drop)
     to = rows.findIndex(r => { const b = r.getBoundingClientRect(); return ev.clientY < b.top + b.height / 2; }); if (to < 0) to = rows.length;
     for (const r of rows) r.classList.toggle('drop', +r.dataset.i === to && to !== from && to !== from + 1);
     list.classList.toggle('dropend', to === rows.length && from !== rows.length - 1);
   };
-  const up = () => {
-    document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up);
+  const up = ev => {
+    if (ev.pointerId !== pid) return;
+    if (!list.isConnected) { cancel(); return; }
+    gzDragCancel = null;
+    document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', cancel);
     row.classList.remove('drag'); for (const r of rows) r.classList.remove('drop'); list.classList.remove('dropend');
     const at = to > from ? to - 1 : to; if (at === from) return;
     gzEdit(G => { const arr = list.dataset.list === 'secs' ? G.secs : G.secs.find(x => x.id === GZ.sel).cells; arr.splice(at, 0, arr.splice(from, 1)[0]); });
   };
-  document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
+  const cancel = ev => {   // (a touch the browser took as a scroll, or Escape: no drop)
+    if (ev && ev.pointerId !== pid) return;
+    gzDragCancel = null;
+    document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', cancel);
+    row.classList.remove('drag'); for (const r of rows) r.classList.remove('drop'); list.classList.remove('dropend');
+  };
+  gzDragCancel = () => cancel();
+  document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', cancel);
 });
+// a session's breaks (the game closed and started again within 5 minutes: one session) aren't play
+const gxGap = x => Array.isArray(x.gaps) ? x.gaps.reduce((p, g) => p + (Array.isArray(g) && g.length >= 2 ? Math.max(0, g[1] - g[0]) : 0), 0) : 0;
+const gxPlay = x => Math.max(0, x.end - x.start - gxGap(x));
+// the week's numbers and strip (gsum); returns each day's count and length, for the day headers
+function gxSum(ss, live) {
+  // the week: today and the 6 days before, from the first bar's midnight, as the strip draws them
+  const days = [];
+  for (let i = 6; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); days.push(d); }
+  const now = Date.now() / 1000, week = days[0].getTime() / 1000, recent = ss.filter(x => x.start >= week && !x.custom), per = {};   // (the week's numbers are games')
+  for (const x of recent) per[x.game] = (per[x.game] || 0) + gxPlay(x);
+  const top = Object.keys(per).sort((a, b) => per[b] - per[a])[0];
+  const total = recent.reduce((p, x) => p + gxPlay(x), 0);
+  const dayKey = u => localDay(new Date(u * 1000)), byDay = {};
+  for (const x of ss) { const d = byDay[dayKey(x.start)] || (byDay[dayKey(x.start)] = { n: 0, t: 0 }); d.n++; d.t += gxPlay(x); }
+  // the week strip: minutes played on each of the last 7 days, today last
+  let wk = '';
+  const dayMins = days.map(d => { const k = localDay(d); return recent.filter(x => dayKey(x.start) === k).reduce((p, x) => p + gxPlay(x) / 60, 0); });
+  const peak = Math.max(60, ...dayMins);
+  days.forEach((d, i) => { const v = dayMins[i]; wk += '<span class="gx-wd' + (i === 6 ? ' today' : '') + '" title="' + (v ? durTxt(v * 60) : 'nothing') + '"><i' + (v ? '' : ' class="z"') + ' style="height:' + (v ? Math.max(3, Math.round(v / peak * 22)) : 2) + 'px"></i><em>' + GX_WD[d.getDay()][0].toUpperCase() + '</em></span>'; });
+  const gs = $('gsum'), gh = ss.some(x => !x.custom) ? '<div class="gx-sum"><div class="gx-sumtxt">' +
+    '<div class="gx-stat"><em>last 7 days</em><b>' + recent.length + '<small>' + (recent.length === 1 ? 'session' : 'sessions') + '</small></b></div>' +
+    '<div class="gx-stat"><em>played</em><b>' + (total ? durTxt(total) : '0m') + '</b></div>' +
+    (top ? '<div class="gx-stat"><em>most played</em><b>' + esc(top) + '<small>' + durTxt(per[top]) + '</small></b></div>' : '') +
+    '</div><div class="gx-week">' + wk + '</div></div>' : '';
+  // (written only when they changed, and the live row's updates wait while text in them is picked)
+  const sl = live && getSelection(), held = sl && sl.rangeCount && !sl.isCollapsed && sl.getRangeAt(0).intersectsNode(gs);
+  if (gs._h !== gh && !held) { gs.innerHTML = gh; gs._h = gh; }
+  return byDay;
+}
+const gxDayTot = same => same.n + (same.n === 1 ? ' session, ' : ' sessions, ') + durS(same.t);
 function renderGames(text, keep) {
+  // a session's name being typed stays through the redraw: its value, caret and focus, on the same session's field
+  const nf = document.activeElement, nx = nf && nf.matches && nf.matches('#glist .gx-nm') ? gxSs[+nf.dataset.g] : null;
+  const nk = nx ? { start: nx.start, game: nx.game, v: nf.value, a: nf.selectionStart, b: nf.selectionEnd, typed: nf.value !== nx.game || !!nf._nmKeep } : null;
+  if (nx) nf._nmKeep = 0;   // (the old field goes: nothing saved from it on its way out)
   gxText = text || ''; gxLoaded = true; renderRec();
   const ss = [];
   for (const line of (text || '').split(/\r?\n/)) {
     try { const x = line.trim() ? JSON.parse(line) : null; if (x && typeof x === 'object' && Number.isFinite(x.start) && Number.isFinite(x.end) && x.end >= x.start) ss.push(x); } catch (e) { }
   }
+  if (gxNow && !ss.some(x => x.start === gxNow.start && x.game === gxNow.game)) ss.push(gxNow);   // (the session in progress: Now playing)
   const keepCut = feed.gameDays ? Date.now() / 1000 - feed.gameDays * 86400 : -Infinity;   // (no days set after a damaged settings file: nothing is cut)
   for (let i = ss.length - 1; i >= 0; i--) if (ss[i].end < keepCut) ss.splice(i, 1);   // (older than the days kept: going at the next trim)
   ss.sort((a, b) => b.start - a.start);
-  lastGameCount = ss.length; gxTl.length = 0; gxSs = ss;
-  const now = Date.now() / 1000, week = now - 7 * 86400, recent = ss.filter(x => x.start >= week && !x.custom), per = {};   // (the week's numbers are games')
-  for (const x of recent) per[x.game] = (per[x.game] || 0) + (x.end - x.start);
-  const top = Object.keys(per).sort((a, b) => per[b] - per[a])[0];
-  const total = recent.reduce((p, x) => p + (x.end - x.start), 0);
-  const dayKey = u => localDay(new Date(u * 1000)), byDay = {};
-  for (const x of ss) { const d = byDay[dayKey(x.start)] || (byDay[dayKey(x.start)] = { n: 0, t: 0 }); d.n++; d.t += x.end - x.start; }
-  // the week strip: minutes played on each of the last 7 days, today last
-  let wk = '';
-  const days = [];
-  for (let i = 6; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); days.push(d); }
-  const dayMins = days.map(d => { const k = localDay(d); return recent.filter(x => dayKey(x.start) === k).reduce((p, x) => p + (x.end - x.start) / 60, 0); });
-  const peak = Math.max(60, ...dayMins);
-  days.forEach((d, i) => { const v = dayMins[i]; wk += '<span class="gx-wd' + (i === 6 ? ' today' : '') + '" title="' + (v ? durTxt(v * 60) : 'nothing') + '"><i' + (v ? '' : ' class="z"') + ' style="height:' + (v ? Math.max(3, Math.round(v / peak * 22)) : 2) + 'px"></i><em>' + GX_WD[d.getDay()][0].toUpperCase() + '</em></span>'; });
-  $('gsum').innerHTML = ss.some(x => !x.custom) ? '<div class="gx-sum"><div class="gx-sumtxt">' +
-    '<div class="gx-stat"><em>last 7 days</em><b>' + recent.length + '<small>' + (recent.length === 1 ? 'session' : 'sessions') + '</small></b></div>' +
-    '<div class="gx-stat"><em>played</em><b>' + (total ? durTxt(total) : '0m') + '</b></div>' +
-    (top ? '<div class="gx-stat"><em>most played</em><b>' + esc(top) + '<small>' + durTxt(per[top]) + '</small></b></div>' : '') +
-    '</div><div class="gx-week">' + wk + '</div></div>' : '';
+  lastGameCount = ss.filter(x => !x.live).length; gxTl.length = 0; gxSs = ss;   // (Clear's count: the log's, not the one in progress)
+  const byDay = gxSum(ss), now = Date.now() / 1000, dayKey = u => localDay(new Date(u * 1000));
   const today = localDay(new Date()), yd = new Date(); yd.setDate(yd.getDate() - 1);
   const yest = localDay(yd);
   let h = '', lastDay = null;
@@ -4509,41 +4667,80 @@ function renderGames(text, keep) {
       const d = new Date(x.start * 1000), same = byDay[dk];
       const name = dk === today ? 'today' : dk === yest ? 'yesterday' : now - x.start < 6 * 86400 ? GX_WD[d.getDay()] : '';
       const date = (name && name !== 'today' && name !== 'yesterday' ? '' : GX_WD[d.getDay()].slice(0, 3) + ' ') + d.getDate() + ' ' + GX_MON[d.getMonth()];   // "thursday 8 oct", "yesterday sat 10 oct"
-      h += '<div class="gx-day"><div>' + (name ? name + '<span>' + date + '</span>' : date) + '</div><div class="gx-tot">' + same.n + (same.n === 1 ? ' session, ' : ' sessions, ') + durS(same.t) + '</div></div>';
+      h += '<div class="gx-day"><div>' + (name ? name + '<span>' + date + '</span>' : date) + '</div><div class="gx-tot">' + gxDayTot(same) + '</div></div>';
     }
-    const sp = gxSplit(x), away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0;
-    const wn = Math.max(0, +x.warns || 0), wl = Array.isArray(x.wl) ? x.wl.filter(w => Array.isArray(w) && w.length >= 3) : [];
-    const st = wn ? '<span class="gx-wv">' + wn + (wn === 1 ? ' warning' : ' warnings') + '</span>' + (wl.length ? '<span class="gx-sub" title="' + esc(wl.map(w => w[0] + ' ' + gxF(w[1], gxN(w[1]) % 1 ? 1 : 0) + ' ' + w[2]).join(', ')) + '">' + esc(wl[0][0]) + ' ' + esc(gxF(wl[0][1], gxN(wl[0][1]) % 1 ? 1 : 0)) + ' ' + esc(wl[0][2]) + '</span>' : '') : '<span class="gx-ok">none</span>';
-    h += '<div class="gx-sess' + (x.custom ? ' cust' : '') + '" data-g="' + i + '"><div class="gx-row">' + GX_CHEV +
-         '<span class="gx-gm"><span class="gx-gn">' + esc(x.game) + '</span><span class="gx-sub">' + hhmm(x.start) + ' to ' + hhmm(x.end) + (x.custom ? ', started by you' : x.from - x.start > 90 ? ', tracked from ' + hhmm(x.from) : '') + '</span></span>' +
-         '<span class="gx-c gx-num"><span>' + durS(x.end - x.start) + '</span>' + (x.custom ? '' : away >= 60 ? '<span class="gx-sub">' + durTxt(x.front) + ' in front</span>' : '') + '</span>' +
-         '<span class="gx-c gx-num gx-fps">' + gxF(x.fps) + '</span><span class="gx-c gx-num gx-lo">' + gxF(x.low) + '</span>' +
-         '<span class="gx-c">' + (sp.n ? gxNbar(sp) + '<span class="gx-sub">' + sp.top[0] + ' ' + sp.top[1] + '%</span>' : '<span class="gx-sub">--</span>') + '</span>' +
-         '<span class="gx-c gx-st">' + st + '</span></div>' +
-         '<div class="gx-det"><div>' + (i === 0 && !Array.isArray(keep) ? gxDetail(x, sp, i, false, gxActs(x, i)) : '<div class="gx-lz" data-g="' + i + '"></div>') + '</div></div></div>';
+    h += gxSessHtml(x, i, i === 0 && !Array.isArray(keep));
   });
   const list = $('glist');
   list.innerHTML = h ? '<div class="gx-cols"><span></span><span>session</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
-                     : '<div class="wempty ico pad">No sessions yet. A game shows up here once you played it for over a minute and it closed; Start session records one of your own.</div>';
+                     : '<div class="wempty ico pad">No sessions yet. A game shows up here while you play it, and stays once you played it for over a minute; Start session records one of your own.</div>';
   const first = list.querySelector('.gx-sess');
   if (Array.isArray(keep)) {   // (drawn again: what was open stays open, at once)
     list.classList.add('still');
     for (const el of list.querySelectorAll('.gx-sess')) { const x = gxSs[+el.dataset.g]; if (!x || !keep.includes(x.start)) continue; gxFill(el); const z = el.querySelector('.gx-tlz'); if (z) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g); el.classList.add('open'); }
     requestAnimationFrame(() => requestAnimationFrame(() => list.classList.remove('still')));
   } else if (first) first.classList.add('open');   // the newest session opens with the popup
+  if (nk) {
+    const j = gxSs.findIndex(x => x.start === nk.start && x.game === nk.game), el = j >= 0 && list.querySelector('.gx-nm[data-g="' + j + '"]');
+    if (el) {
+      if (nk.typed) { el.value = nk.v; el._nmKeep = 1; }   // (a value the page put back: leaving the field saves it, no change event comes for it)
+      el.focus({ preventScroll: true }); try { el.setSelectionRange(nk.a, nk.b); } catch (e) { }
+    }
+  }
+}
+// a session's row and its details (full: built now, else when it opens); the one in progress says so and goes "to now"
+function gxSessHtml(x, i, full) {
+    const sp = gxSplit(x), away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0, nb = Array.isArray(x.gaps) ? x.gaps.length : 0;
+    const wn = Math.max(0, +x.warns || 0), wl = Array.isArray(x.wl) ? x.wl.filter(w => Array.isArray(w) && w.length >= 3) : [];
+    const st = wn ? '<span class="gx-wv">' + wn + (wn === 1 ? ' warning' : ' warnings') + '</span>' + (wl.length ? '<span class="gx-sub" title="' + esc(wl.map(w => w[0] + ' ' + gxF(w[1], gxN(w[1]) % 1 ? 1 : 0) + ' ' + w[2]).join(', ')) + '">' + esc(wl[0][0]) + ' ' + esc(gxF(wl[0][1], gxN(wl[0][1]) % 1 ? 1 : 0)) + ' ' + esc(wl[0][2]) + '</span>' : '') : '<span class="gx-ok">none</span>';
+    return '<div class="gx-sess' + (x.custom ? ' cust' : '') + (x.live ? ' live' : '') + '" data-g="' + i + '"><div class="gx-row">' + GX_CHEV +
+         '<span class="gx-gm"><span class="gx-gn' + (x.live ? ' lv"><span class="gx-gt">' + esc(x.game) + '</span><span class="gx-now">now playing</span>' : '">' + esc(x.game)) + '</span><span class="gx-sub">' + hhmm(x.start) + ' to ' + (x.live ? 'now' : hhmm(x.end)) + (x.custom ? ', started by you' : x.from - x.start > 90 ? ', tracked from ' + hhmm(x.from) : '') + (nb ? ', ' + (nb === 1 ? '1 break' : nb + ' breaks') : '') + '</span></span>' +
+         '<span class="gx-c gx-num"><span>' + durS(gxPlay(x)) + '</span>' + (x.live ? '<span class="gx-sub">so far</span>' : x.custom ? '' : away >= 60 ? '<span class="gx-sub">' + durTxt(x.front) + ' in front</span>' : '') + '</span>' +
+         '<span class="gx-c gx-num gx-fps">' + gxF(x.fps) + '</span><span class="gx-c gx-num gx-lo">' + gxF(x.low) + '</span>' +
+         '<span class="gx-c">' + (sp.n ? gxNbar(sp) + '<span class="gx-sub">' + sp.top[0] + ' ' + sp.top[1] + '%</span>' : '<span class="gx-sub">--</span>') + '</span>' +
+         '<span class="gx-c gx-st">' + st + '</span></div>' +
+         '<div class="gx-det"><div>' + (full ? gxDetail(x, sp, i, false, gxActs(x, i)) : '<div class="gx-lz" data-g="' + i + '"></div>') + '</div></div></div>';
+}
+// the session in progress from the host (every 5 s while the popup is open; null: none): its row drawn again in place,
+// open as it was; one that came or went redraws the list
+let gxNow = null;
+function gxLive(s) {
+  gxNow = s && typeof s === 'object' && Number.isFinite(s.start) && Number.isFinite(s.end) && s.end >= s.start ? s : null;
+  if (!gmodal.classList.contains('open') || !gxLoaded) return;
+  const list = $('glist'), i = gxSs.findIndex(x => x.live);
+  if (!gxNow) return;   // (no game, or it just ended: the log that comes with its end draws the list again)
+  if (i < 0 || gxSs[i].start !== gxNow.start || gxSs[i].game !== gxNow.game) { renderGames(gxText, list.querySelector('.gx-sess') ? gxOpen() : undefined); return; }
+  const el = list.querySelector('.gx-sess[data-g="' + i + '"]'); if (!el) return;
+  // (the pointer on it, or text picked in it: not drawn again under the hover read-out, a click or the selection; the
+  // next update after)
+  const sl = getSelection(), r = gxPt && (!gxPt.touch || gxPt.down) ? el.getBoundingClientRect() : null;
+  if ((r && gxPt.x >= r.left && gxPt.x < r.right && gxPt.y >= r.top && gxPt.y < r.bottom) || (sl && sl.rangeCount && !sl.isCollapsed && sl.getRangeAt(0).intersectsNode(el))) return;
+  gxSs[i] = gxNow;
+  const open = el.classList.contains('open'), tmp = document.createElement('div');
+  tmp.innerHTML = gxSessHtml(gxNow, i, open);
+  const ne = tmp.firstChild;
+  if (open) { const z = ne.querySelector('.gx-tlz'); if (z) z.outerHTML = gxTimeline(gxNow, gxSplit(gxNow), i); list.classList.add('still'); ne.classList.add('open'); requestAnimationFrame(() => requestAnimationFrame(() => list.classList.remove('still'))); }
+  el.replaceWith(ne);
+  // (its day's total and the week's numbers follow it)
+  const byDay = gxSum(gxSs, true), d = byDay[localDay(new Date(gxNow.start * 1000))];
+  let hd = ne.previousElementSibling; while (hd && !hd.classList.contains('gx-day')) hd = hd.previousElementSibling;
+  if (hd && d) setText(hd.querySelector('.gx-tot'), gxDayTot(d));
 }
 let gxSs = [];   // the sessions as listed, for the timelines drawn when they open
 // a session's details, built the first time it opens (all of them up front made a big log slow and heavy)
 function gxFill(sess) { const z = sess && sess.querySelector('.gx-lz'); if (!z) return; const i = +z.dataset.g, x = gxSs[i]; if (x) z.outerHTML = gxDetail(x, gxSplit(x), i, false, gxActs(x, i)); }
 // under a session's details: its name (one of your own) and Delete
-const gxActs = (x, i) => '<div class="gx-acts">' + (x.custom ? '<label class="gx-nmf"><em>name</em><input class="gx-nm" data-g="' + i + '" value="' + esc(x.game) + '" maxlength="60" spellcheck="false" title="Its name: type a new one, Enter to keep it"></label>' : '') +
+const gxActs = (x, i) => x.live ? '' : '<div class="gx-acts">' + (x.custom ? '<label class="gx-nmf"><em>name</em><input class="gx-nm" data-g="' + i + '" value="' + esc(x.game) + '" maxlength="60" spellcheck="false" title="Its name: type a new one, Enter to keep it"></label>' : '') +
   '<span class="sp"></span><button class="wclear gx-del" data-g="' + i + '" title="Delete this session (a copy is kept in games.log.bak)">Delete session</button></div>';
 const gxOpen = () => [...document.querySelectorAll('#glist .gx-sess.open')].map(s => gxSs[+s.dataset.g] && gxSs[+s.dataset.g].start);
-$('glist').addEventListener('change', e => {
-  if (!e.target.matches('.gx-nm')) return;
-  const x = gxSs[+e.target.dataset.g], v = e.target.value.trim().slice(0, 60);
-  if (x && v && v !== x.game) send({ t: 'gedit', act: 'name', start: x.start, end: x.end, game: x.game, name: v }); else if (x) e.target.value = x.game;
-});
+// a custom session's new name: saved when the field changes, or when it is left with a name a redraw put back
+function gxName(el) {
+  el._nmKeep = 0;
+  const x = gxSs[+el.dataset.g], v = el.value.trim().slice(0, 60);
+  if (x && v && v !== x.game) send({ t: 'gedit', act: 'name', start: x.start, end: x.end, game: x.game, name: v }); else if (x) el.value = x.game;
+}
+$('glist').addEventListener('change', e => { if (e.target.matches('.gx-nm')) gxName(e.target); });
+$('glist').addEventListener('focusout', e => { if (e.target.matches('.gx-nm') && e.target._nmKeep) gxName(e.target); });
 $('glist').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.gx-nm')) e.target.blur(); });
 $('glist').addEventListener('click', e => {
   const d = e.target.closest('.gx-del');
@@ -4557,7 +4754,7 @@ $('glist').addEventListener('click', e => {
 function showGame() {
   const rs = feed.rec || [];
   $('gameDot').classList.toggle('on', !!feed.game || rs.length > 0);
-  $('gamesBtn').title = 'Sessions' + (feed.game ? ': ' + feed.game + ' running, ' + durTxt(Math.max(60, nowTs - feed.gameSince)) + (feed.front ? '' : ' (in the background)') : '') + (rs.length ? (feed.game ? ', ' : ': ') + 'recording ' + rs.map(x => x[1]).join(', ') : '');
+  $('gamesBtn').title = 'Sessions' + (feed.game ? ': ' + feed.game + ' running, ' + durTxt(Math.max(60, nowTs - feed.gameSince - (feed.gameGap || 0))) + (feed.front ? '' : ' (in the background)') : '') + (rs.length ? (feed.game ? ', ' : ': ') + 'recording ' + rs.map(x => x[1]).join(', ') : '');
   if (gmodal.classList.contains('open')) renderRec();
 }
 
@@ -4659,10 +4856,16 @@ function toastStale() { if (toastDepth >= 0 && undoSeq !== toastDepth) retireToa
 function retireToastUndo() { $('toastUndo').hidden = true; toastDepth = -1; }
 
 // ---------- keys ----------
+// a curve point or a Customize row held: keys wait (Escape lets go), before any field's own handler gets them
 document.addEventListener('keydown', ev => {
-  if (drag && drag.started) { if (ev.key === 'Escape') endDrag(true); ev.preventDefault(); return; }   // nothing else mid-drag
+  if (!dragPt && !gzDragCancel) return;
+  if (ev.key === 'Escape') { if (dragPt) ptCancel(); else gzDragCancel(); }
+  ev.preventDefault(); ev.stopPropagation();
+}, true);
+document.addEventListener('keydown', ev => {
+  if (drag && drag.started) { if (ev.key === 'Escape') { cancelPid = drag.pid; endDrag(true); editPress = null; } ev.preventDefault(); return; }   // nothing else mid-drag
   if (rs) {
-    if (ev.key === 'Escape') endHandle(true);
+    if (ev.key === 'Escape') { cancelPid = rs.pid; endHandle(true); }
     else if (ev.key === 'Alt' && rs.kind === 'corner' && rs.last) moveCorner(Object.assign({ altKey: true }, rs.last));   // Alt: any size, at once
     ev.preventDefault(); return;
   }
@@ -4672,7 +4875,7 @@ document.addEventListener('keydown', ev => {
   // (a name or a size still being typed goes in first: those apply when the field is left)
   if (ctrl && k === 's') { ev.preventDefault(); if (cmodal.classList.contains('open')) return; if (nudge) flushNudge(); const a = document.activeElement; if (a && a.matches && a.matches('#lName, #insp input[data-sz], #insp input[data-csz], #gcz .gz-name, #cTab input')) { a.blur(); if (a.isConnected && !a.closest('#cTab')) a.focus(); } setTimeout(() => { if (!cmodal.classList.contains('open')) onSave(); }, 0); return; }   // (a layout field still being typed: left and taken back, which applies it if it changed)
   if (ev.key === 'Escape') {
-    if (drag) { endDrag(true); return; }
+    if (drag) { cancelPid = drag.pid; endDrag(true); editPress = null; return; }   // (a held press let go: its release does nothing)
     if (cmodal.classList.contains('open')) { closeConfirm(); return; }
     if (smenu) { closeSmenu(); return; }
     if (modalCid) { closeDetail(); return; }
@@ -4742,6 +4945,7 @@ $('wmax').onclick = () => send({ t: 'win', a: 'max' });
 $('wclose').onclick = () => send({ t: 'win', a: 'close' });
 const EDGE = 6;
 function edgeZone(x, y) {
+  if (feed.winMax) return null;   // (maximized: nothing to resize, the top edge drags the title bar)
   const w = innerWidth, h = innerHeight, l = x < EDGE, r = x > w - EDGE, t = y < EDGE, b = y > h - EDGE;
   if (t && l) return 'tl'; if (t && r) return 'tr'; if (b && l) return 'bl'; if (b && r) return 'br';
   return l ? 'l' : r ? 'r' : t ? 't' : b ? 'b' : null;
@@ -4766,7 +4970,7 @@ const agoTxt = s => {
 };
 // Accurate game fps: how it stands, under its text (nothing while it is off)
 const fpsNote = () => !feed.fps || feed.fpsWait ? '' : '<small class="' + (feed.fpsState === 'on' ? '' : 'y') + '">' + ({ on: 'On: ' + esc(feed.brand || 'HW Deck') + ' counts the game\'s own frames.', signin: 'Almost: sign out of Windows and back in to finish.',
-  denied: 'Windows doesn\'t let this account count frames.', failed: 'Couldn\'t start counting frames.' }[feed.fpsState] || '') + '</small>';
+  denied: 'Windows doesn\'t let this account count frames: turn this off and on to ask again.', failed: 'Couldn\'t start counting frames.' }[feed.fpsState] || '') + '</small>';
 const keepTip = () => feed.keep ? '' : ' Keep HWiNFO sharing in Settings restarts it before that happens.';
 function showFeed() {
   const dot = $('dot'), ban = $('banner'), was = ban.hidden;
@@ -4793,6 +4997,7 @@ function onHost(m) {
     feed.ext = !!m.ext;
     if (m.ext && !EXT.loaded) { EXT.loaded = true; const sc = document.createElement('script'); sc.src = 'extras.js'; sc.onload = () => { EXT.ready = true; packMemo.clear(); renderView(false); renderStorage(); renderInsp(); bootCheck(); }; document.head.appendChild(sc); }
     S.slots = (m.slots || []).slice(0, 5).map(cleanSlot);
+    stateGen = Number.isFinite(m.gen) ? m.gen : 0;
     heldSlots = new Set(Array.isArray(m.held) ? m.held : []);
     while (S.slots.length < 5) S.slots.push(null);
     const st = m.state;
@@ -4807,7 +5012,7 @@ function onHost(m) {
     S.title = st && typeof st.title === 'string' && st.title.trim() ? st.title.slice(0, 60) : undefined; S.clock = !st || st.clock !== false;
     S.hide = cleanHide(st && st.hide); hideSets();
     renderTitle(); $('rstBtn').disabled = feed.fake; if (feed.fake) $('rstBtn').title = 'Demo data: there is no HWiNFO to restart';
-    undoStack = []; redoStack = []; keyStep.t = 0; sel = null; selCat = null; preview = null;
+    undoStack = []; redoStack = []; keyStep.t = 0; sel = null; selCat = null; preview = null; if (dragPt) dragPt.before = null;   // (a point held takes no step from the view it was in)
     app.classList.toggle('editing', S.edit); $('editBtn').classList.toggle('on', S.edit);
     for (const b of document.querySelectorAll('#screens button[data-s]')) b.classList.toggle('active', b.dataset.s === S.screen);
     placeTabInd(true);
@@ -4829,40 +5034,44 @@ function onHost(m) {
     const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp input, #insp select, #insp textarea, .cn-in');
     if (sameKeys && typing) { for (const [cid, r] of E) { const c = S.L.cells[cid], n = r.root.querySelector('.tn > span, .nm > span, .gname > span'); if (c && n) setText(n, nameIn(cid)); } renderStorage(); }
     else { renderView(false); renderStorage(); renderInsp(); }
-    if (GZ.on) renderGz();
+    if (GZ.on) { if (document.activeElement && document.activeElement.matches('#gcz .gz-name')) { gzCompute(); gzChips(); gzDraw(); } else renderGz(); }   // (a name being typed stays: only the readings list is new)
     showFeed();
     boot.cat = true; bootCheck();
   } else if (m.t === 'spark') {
     for (const k in m.keys) ringFill(k, m.ts, m.keys[k]);
-    if (m.ts > nowTs) nowTs = m.ts;
+    if (m.ts - nowTs > 2) { if (lastTick && m.ts - lastTick > 2) resetSeen(); nowTs = m.ts; }   // (only after a gap, a show from the tray: else the second moves at its tick, with its values)
     if (curveWait && m.keys[curveWait.src]) {
       const c = S.L.cells[curveWait.cid], s2 = series(curveWait.src, 30).filter(x => isFinite(x)), src = BYKEY.get(curveWait.src);
       if (c && c.curve && c.curve.src === curveWait.src && s2.length) { c.curve.pts = startCurve(BYKEY.get(c.key), { v: s2[s2.length - 1], unit: src ? src.unit : '' }); saveState(); if (sel === curveWait.cid) renderInsp(); }
       curveWait = null;
     }
-    updateView(true);
+    updateView(true, true);   // (the second is judged at its tick, as the host does)
   } else if (m.t === 'tick') {
     const was = feed.status, first = !feed.got;
     const calmWas = motionMode();
     feed.status = m.status; feed.age = m.age; feed.got = true; feed.game = m.game; feed.front = m.front; feed.gameSince = m.gameSince; feed.pm = !!m.pm;
-    if (motionMode() !== calmWas) { applyMotion(); if (setmodal.classList.contains('open')) renderSettings(); if (!first) renderView(false); }   // a game came to the front or left it
+    if (motionMode() !== calmWas) { applyMotion(); if (setmodal.classList.contains('open')) renderSettings(); if (!first) redrawView(); }   // a game came to the front or left it
     feed.c12 = Array.isArray(m.c12) ? m.c12 : null;
+    feed.gameGap = Number.isFinite(m.gameGap) ? m.gameGap : 0;   // (the session's breaks: not play)
     feed.gs = m.gs && typeof m.gs === 'object' ? m.gs : null;   // this game session's min, average, max of the game's own readings
     feed.bnl = m.bnl;   // the bottleneck's call this second, game or not
     feed.rec = Array.isArray(m.rec) ? m.rec.filter(x => Array.isArray(x) && x.length >= 2) : [];   // your own sessions running: [start, name]
-    if (lastTick && m.ts - lastTick > 2) { for (const k in holdSince) delete holdSince[k]; for (const k in cellEp) delete cellEp[k]; c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; }   // seconds we didn't see (hidden): holds and episodes start again
+    if (lastTick && m.ts - lastTick > 2) resetSeen();   // seconds we didn't see (hidden): holds and episodes start again
     // as the log: HWiNFO not sharing for 10 s ends every hold and episode (its Mark); a shorter stall's seconds don't
     // count as calm ones (the log counts calm seconds, the page their times: moved on by the stall)
     if (m.status !== 'ok') { if (!notOkAt) notOkAt = m.ts; if (!notOkMarked && m.ts - notOkAt >= 10) { notOkMarked = true; for (const k in holdSince) delete holdSince[k]; for (const k in cellEp) delete cellEp[k]; c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; } }
     else if (notOkAt) { const gap = m.ts - notOkAt; for (const k in cellEp) if (cellEp[k].calmTs) cellEp[k].calmTs += gap; if (c12Ep.calm) c12Ep.calm += gap; notOkAt = 0; notOkMarked = false; }
+    const sameSec = m.ts === lastTick;   // (a forced tick repeats the second: drawn, not judged again, as on the host)
     nowTs = lastTick = m.ts;
+    if (!sameSec) stepPins();
     if (S.clock) setText($('clock'), hhmmss(m.ts));
-    for (let j = 0; j < m.i.length; j++) { const r = READ[m.i[j]]; if (!r) continue; r.v = m.v[j]; if (m.mn[j] != null) { r.mn = m.mn[j]; r.mx = m.mx[j]; r.av = m.av[j]; } }
+    for (let j = 0; j < m.i.length; j++) { const r = READ[m.i[j]]; if (!r) continue; r.v = m.v[j]; r.at = m.ts; if (m.mn[j] != null) { r.mn = m.mn[j]; r.mx = m.mx[j]; r.av = m.av[j]; } }
     const live = m.status === 'ok';
     for (const k of cellKeys()) { const r = BYKEY.get(k); ringPut(k, m.ts, live && r ? r.v : null); }
     showFeed(); showGame();
     if ((first || was !== m.status) && (!READ.length || !S.L.cats.length)) renderView(false);
-    if (!drag || !drag.started) { updateView(false); tickInsp(); if (!dragPt && drawerOpen('L')) drawRows(); }
+    if (!drag || !drag.started) { updateView(false, sameSec); tickInsp(); if (!dragPt && drawerOpen('L')) drawRows(); }
+    if (!sameSec) judgeRest(!drag || !drag.started);   // (the cells not drawn, or all of them under a drag: judged each second as the host does)
     if (GZ.on && gmodal.classList.contains('open')) gzDraw();
     if (!boot.tick) { boot.tick = true; if (m.status !== 'ok') boot.cat = boot.x = true; bootCheck(m.status !== 'ok' && !READ.length); }   // (no HWiNFO: nothing more to wait for)
     if (modalCid) { refreshModal(); if (bigRange !== '15m' && Date.now() - histAsked > 60000) askHist(); }
@@ -4874,6 +5083,9 @@ function onHost(m) {
   } else if (m.t === 'alerts') { if (wmodal.classList.contains('open')) renderWarnings(m.log); }   // (one that comes in after a close isn't drawn)
   else if (m.t === 'games') { if (gmodal.classList.contains('open')) renderGames(m.log, $('glist').querySelector('.gx-sess') ? gxOpen() : undefined); }   // (an edit: what was open stays open; one after a close isn't kept)
   else if (m.t === 'toast') toast(m.text, false, m.ms);
+  else if (m.t === 'saveView') saveState();
+  else if (m.t === 'gameNow') gxLive(m.s);
+  else if (m.t === 'winMax') feed.winMax = !!m.max;   // (the view's file was set aside: the one shown is written)
   else if (m.t === 'zero') { feed.zero = new Set(Array.isArray(m.keys) ? m.keys : []); renderStorage(); if (GZ.on) { gzCompute(); gzChips(); gzDraw(); } }
   // the window just came up (from the tray, a cold start, or minimized): what was measured while it was hidden came
   // out short (a Smart Life tile without its bar), so every tile is measured again on screen
@@ -4896,7 +5108,7 @@ function onHost(m) {
     const changed = new Set(); for (const i of sent) if (S.slots[i] && !same(S.slots[i], sl[i])) changed.add(i);
     if (changed.size) {
       const unslot = js => { const o = JSON.parse(js); if (!changed.has(o.active)) return js; o.active = null; return JSON.stringify(o); };
-      undoStack = undoStack.map(unslot); redoStack = redoStack.map(unslot);
+      undoStack = undoStack.map(unslot); redoStack = redoStack.map(unslot); if (dragPt && dragPt.before) dragPt.before = unslot(dragPt.before);
       if (changed.has(S.active)) { S.active = null; saveState(); }
     }
     for (const k of sent) heldSlots.delete(k);
@@ -4904,7 +5116,7 @@ function onHost(m) {
     if (slotWanted != null && sent.includes(slotWanted) && sl[slotWanted] && S.active == null) {   // (the slot the view was linked to, held at the start)
       // (its undo steps since the start are that view's too: no Load, Clear, Save or Import came between, or slotWanted would be gone)
       const w = slotWanted, relink = js => { const o = JSON.parse(js); if (o.active != null) return js; o.active = w; return JSON.stringify(o); };
-      undoStack = undoStack.map(relink); redoStack = redoStack.map(relink);
+      undoStack = undoStack.map(relink); redoStack = redoStack.map(relink); if (dragPt && dragPt.before) dragPt.before = relink(dragPt.before);
       S.active = w; saveState();
     }
     if (slotWanted != null && sent.includes(slotWanted)) slotWanted = null;
@@ -4918,7 +5130,7 @@ function onHost(m) {
     if (S.active === i) { S.active = null; saveState(); }   // (the view is no longer what that slot holds: Ctrl+S won't put it over the import)
     // (nor can an undo step make the view that slot again)
     const unslot = js => { const o = JSON.parse(js); if (o.active !== i) return js; o.active = null; return JSON.stringify(o); };
-    undoStack = undoStack.map(unslot); redoStack = redoStack.map(unslot);
+    undoStack = undoStack.map(unslot); redoStack = redoStack.map(unslot); if (dragPt && dragPt.before) dragPt.before = unslot(dragPt.before);
     syncSaves(); renderSaves();
     toast('Imported into slot ' + (m.slot + 1) + ': load it to use it');
   }

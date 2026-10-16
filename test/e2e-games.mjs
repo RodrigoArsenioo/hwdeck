@@ -208,6 +208,27 @@ let t0 = Date.now(); while (!gl() && Date.now() - t0 < 6000) await p.sleep(250);
 const g = gl() || {};
 const item = n => (g.items || []).find(it => it[0] === n);
 ok('the session is logged', !!gl(), text(join(data, 'games.log')).slice(-300));
+// the same game again within 5 minutes: its session goes on (one line in the end, the break kept apart: not play), and
+// the sessions popup shows it while it runs (Now playing, updated every 5 s)
+{
+  const first = gl();
+  await host({ t: 'fakeGame', game: 'Bench Game', front: true });
+  ok('the same game again within 5 minutes: its session goes on (the same start)', await until(`feed.game === "Bench Game" && feed.gameSince === ${first.start}`, 8000), await ev('[feed.game, feed.gameSince]'));
+  let t1 = Date.now(); while (gl() && Date.now() - t1 < 6000) await p.sleep(250);
+  ok('its line comes out of the log while it goes on', !gl(), text(join(data, 'games.log')).slice(-200));
+  await ev('$("gamesBtn").click()');
+  ok('the sessions popup shows it on top: now playing, to now, 1 break', await until(`(() => { const r = document.querySelector('#glist .gx-sess'); return !!r && r.classList.contains('live') && /now playing/.test(r.textContent) && /to now/.test(r.textContent) && /1 break/.test(r.textContent); })()`, 12000),
+    await ev(`(document.querySelector('#glist .gx-sess') || {}).textContent`));
+  const s1 = await ev('gxNow ? gxNow.secs : -1'); await p.sleep(5600);
+  ok('and it goes on live (its seconds count on, no Delete on it)', await ev(`!!gxNow && gxNow.secs > ${s1} && !document.querySelector('#glist .gx-sess.live .gx-del')`), await ev('[gxNow && gxNow.secs, ' + s1 + ']'));
+  await ev('$("gmodal").classList.remove("open")'); await p.sleep(400);
+  await host({ t: 'fakeGame', game: null });
+  t1 = Date.now(); while (!gl() && Date.now() - t1 < 6000) await p.sleep(250);
+  const m = gl() || {}, gap = Array.isArray(m.gaps) && m.gaps[0] ? m.gaps[0][1] - m.gaps[0][0] : -1;
+  ok('ended again: one line from the first start to the new end, its break kept apart', m.start === first.start && m.end > first.end && Array.isArray(m.gaps) && m.gaps.length === 1 && m.gaps[0][0] >= first.end - 1 && gap >= 0 && m.secs > first.secs,
+    JSON.stringify([first.start, first.end, first.secs, m.start, m.end, m.gaps, m.secs]));
+  ok('only one line for it in the log', text(join(data, 'games.log')).trim().split('\n').filter(l => /"game":"Bench Game"/.test(l)).length === 1);
+}
 await host({ t: 'fakeGame', game: 'Background App', front: false }); await p.sleep(4500);
 ok('an app that only runs in the background (an overlay, a tool from Steam) starts no session', await ev('feed.game === null'), await ev('feed.game'));
 await host({ t: 'fakeGame', game: null });

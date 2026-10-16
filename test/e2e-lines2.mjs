@@ -52,7 +52,7 @@ await E(`closeDetail()`); await p.sleep(500);
 await E(`(() => { S.L.cells.pump.gates.other = { y: ${v0 + 30} }; afterChange(); return 1; })()`); await p.sleep(2200);
 s = await st();
 ok('yellow on the other side: yellow, under yellow', s.yellow && !s.red && /^under yellow /.test(s.cap), JSON.stringify(s));
-await E(`(() => { S.L.cells.pump.gates.other = { y: ${v0 - 60}, r: ${v0 - 80} }; afterChange(); return 1; })()`); await p.sleep(2200);
+await E(`(() => { S.L.cells.pump.gates.other = { y: ${v0 - 60}, r: ${v0 - 80} }; afterChange(); return 1; })()`); await p.sleep(3200);   // (the episode ends on its 3rd calm second, as in the log)
 s = await st();
 ok('the value between the two sides: normal', !s.yellow && !s.red, JSON.stringify(s));
 ok('the host logs it back to normal', await (async () => { for (let i = 0; i < 20; i++) { if (/OK\s+Two sided: back to normal/.test(log())) return true; await p.sleep(300); } return false; })(), log().split('\n').slice(-3).join(' | '));

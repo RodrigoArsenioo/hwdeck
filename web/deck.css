@@ -198,7 +198,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .app.fitting .dcat.isempty, .app.fitting .rl, .app.fitting .dch .grip, .app.fitting .dch .chev, .app.fitting .dch .acts, .app.fitting .dch .cnt { display: none !important; }   /* while edit mode works out the text size: as outside it */
 .dc.sel { outline: 2px solid var(--edit); outline-offset: -1px; }
 .dc.dragging { opacity: 0.35; }
-.app.editing .dc { cursor: grab; touch-action: none; }
+.app.editing .dc, .app.editing tr.dc > td { cursor: grab; touch-action: none; }   /* (a table row takes no touch-action: Grid's cells, on their td) */
 .app.editing #view { user-select: none; } .app.editing #view input { user-select: text; }
 .dc.missing .v { color: var(--dim); }
 .rl { margin-top: 0.4rem; align-self: flex-start; font-size: 11.5px; padding: 3px 9px; }
@@ -649,6 +649,10 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 #gmodal .gx-gm, #gmodal .gx-c { display: grid; gap: 5px; min-width: 0; }
 #gmodal .gx-gn { color: #d6d6d6; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #gmodal .open .gx-gn { color: #ececec; }
+#gmodal .gx-now { margin-left: 8px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: #dcdcdc; background: #262626; border: 1px solid #3a3a3a; vertical-align: 1px; }   /* the session in progress */
+#gmodal .gx-gn.lv { display: flex; align-items: center; }   /* (its name takes the ellipsis, the tag stays whole) */
+#gmodal .gx-gt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#gmodal .gx-gn.lv .gx-now { flex: none; }
 #gmodal .gx-sub { font-size: 11.5px; color: #6f6f6f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 #gmodal .gx-num { text-align: right; justify-items: end; font-size: 12.5px; color: #c4c4c4; font-variant-numeric: tabular-nums; }
 #gmodal .gx-fps { color: #e8e8e8; font-weight: 600; font-size: 13px; }
@@ -877,7 +881,7 @@ html[data-motion="minimal"] #grun .rdot, html[data-motion="off"] #grun .rdot { a
 #gcz .gz-s, #gcz .gz-c { display: flex; align-items: center; gap: 10px; background: #171717; border: 1px solid #262626; border-radius: 9px; padding: 6px 8px 6px 10px; margin-bottom: 6px; font-size: 12.5px; cursor: default; }
 #gcz .gz-s.on { border-color: #3a4f75; background: #18202e; } #gcz .gz-s.off .nm, #gcz .gz-s.off .gz-name { color: #555; }
 #gcz .gz-s.drag, #gcz .gz-c.drag { opacity: .55; } #gcz .drop { box-shadow: 0 -2px 0 var(--edit); } #gcz .dropend > :last-of-type { box-shadow: 0 2px 0 var(--edit); }
-#gcz .grip { width: 10px; height: 16px; flex: none; cursor: grab; background: radial-gradient(circle, #6a6a6a 1.2px, transparent 1.4px) 0 0 / 5px 5px; }
+#gcz .grip { width: 10px; height: 16px; flex: none; cursor: grab; touch-action: none; background: radial-gradient(circle, #6a6a6a 1.2px, transparent 1.4px) 0 0 / 5px 5px; }
 #gcz .nm { color: #e0e0e0; min-width: 0; padding: 4px 0; } #gcz .gz-s .nm { cursor: default; }
 #gcz .gz-name { background: none; border: 1px solid transparent; color: #e0e0e0; font: inherit; border-radius: 6px; padding: 3px 6px; margin-left: -6px; min-width: 0; width: 46%; }
 #gcz .gz-name:hover { border-color: #2c2c2c; } #gcz .gz-name:focus { border-color: var(--edit); outline: none; background: #101010; }

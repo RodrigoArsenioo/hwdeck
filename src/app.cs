@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.5.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.5.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.5.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.5.1.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.5.0";
+    public const string Version = "1.5.1";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -1063,6 +1063,7 @@ class Alerts
     public void SetLayout(object layout, Source src)
     {
         var list = new List<Rule>();
+        string connId = null; IDictionary<string, object> connC = null;   // (the first 12V-2x6 connector cell: its pins are watched, lines or not)
         var cells = F(layout as IDictionary<string, object>, "cells") as IDictionary<string, object>;
         var all = cells != null ? cells.ToList() : new List<KeyValuePair<string, object>>();
         foreach (var kv in Always) all.Add(new KeyValuePair<string, object>("x:" + kv.Key, kv.Value));
@@ -1075,6 +1076,7 @@ class Alerts
             var cv = F(c, "curve") as IDictionary<string, object>;
             string mode = g != null ? F(g, "mode") as string : null;
             bool gated = mode == "y" || mode == "yr";
+            if (key == Connector.Key && connId == null && !kv.Key.StartsWith("x:")) { connId = kv.Key; connC = c; }
             if (!gated && cv == null) continue;
             var rd = src.Readings.FirstOrDefault(x => x.Key == key);
             string name = Clean(F(c, "name") as string);
@@ -1129,6 +1131,15 @@ class Alerts
             list.Add(new Rule { Id = r.Id + ":uneven", Key = r.Key, Name = r.Name + " pins", Unit = r.Unit, Dec = 2, Mode = "none", Hold = 3,
                                 Level = () => Conn != null && Conn.Lopsided ? 1 : 0,
                                 Why = () => Conn == null ? "" : " (pin " + (Conn.Hot + 1) + " carrying " + Math.Round(Conn.Share, 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + "x its share)" });
+        // (a connector cell with no lines still watches its pins, as on the page: the rule comes from the cell itself)
+        if (connId != null && !list.Any(x => x.Key == Connector.Key && x.Level != null))
+        {
+            var rd = src.Readings.FirstOrDefault(x => x.Key == Connector.Key);
+            string nm = Clean(F(connC, "name") as string); if (nm.Length == 0) nm = rd != null ? Clean(rd.Label) : Connector.Key;
+            list.Add(new Rule { Id = connId + ":uneven", Key = Connector.Key, Name = nm + " pins", Unit = rd != null ? rd.Unit : "", Dec = 2, Mode = "none", Hold = 3,
+                                Level = () => Conn != null && Conn.Lopsided ? 1 : 0,
+                                Why = () => Conn == null ? "" : " (pin " + (Conn.Hot + 1) + " carrying " + Math.Round(Conn.Share, 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + "x its share)" });
+        }
         foreach (var kv in Own)
         {
             var j = kv.Value;
@@ -1173,10 +1184,14 @@ class Alerts
                 // its reading went away mid-episode (a drive unplugged, a sensor gone): the episode ends like a calm one
                 St g;
                 if (state.TryGetValue(r.Id, out g) && g.Logged == 0) g.Since = 0;   // (one still in its hold starts it again)
-                else if (g != null && g.Logged > 0 && ++g.Calm >= 3)
+                else if (g != null && g.Logged > 0)
                 {
-                    Lines.Add(string.Format("{0}  OK      {1}: back to normal (reading gone, peak {2})", AppInfo.Stamp(), g.Name, g.PeakTxt));
-                    g.Logged = 0; g.Calm = 0; g.Name = null; g.Since = 0;
+                    g.Since = 0;   // (like a calm second: its hold starts again, as on the page)
+                    if (++g.Calm >= 3)
+                    {
+                        Lines.Add(string.Format("{0}  OK      {1}: back to normal (reading gone, peak {2})", AppInfo.Stamp(), g.Name, g.PeakTxt));
+                        g.Logged = 0; g.Calm = 0; g.Name = null; g.Since = 0;
+                    }
                 }
                 continue;
             }
@@ -1508,6 +1523,8 @@ class Games
                    public int G, C, F, MinAt = -1, MG, MC, MF, MFn, MLn; public double MFs, MLs; public string Tb = "";
                    public List<int[]> Tc = new List<int[]>();
                    public List<double?> Tf = new List<double?>(), Tl = new List<double?>();
+                   // its breaks: the game closed and started again within 5 minutes (one session), from and to, unix seconds
+                   public List<long[]> Gaps = new List<long[]>();
                    // what crossed a line (up to 5): its name, unit, worst value and which way worse is
                    public List<string> WarnNames = new List<string>(), WarnUnits = new List<string>(); public List<double> WarnPeaks = new List<double>(); public List<bool> WarnBelow = new List<bool>();
                    // the game's own readings (PresentMon's: fps, frame times) while it was in front: min, sum, samples, max
@@ -1522,7 +1539,11 @@ class Games
     readonly Dictionary<int, string> paths = new Dictionary<int, string>();
     List<KeyValuePair<string, string>> roots; DateTime rootsAt = DateTime.MinValue;
     System.Threading.Timer timer; int busy, pollNo;
-    public string Game; public bool InFront; public long Since, Seen;   // the session (30 s grace after the game closes)
+    public string Game; public bool InFront; public long Since, Seen;   // the session (it ends 5 s after the game closes)
+    public const int EndAfter = 5, MergeWithin = 300;   // (seconds: gone this long, the session ends; started again within this, it goes on)
+    // the session that just ended, kept MergeWithin seconds: the same game started again goes on with it (Reopen)
+    Report done; string doneLine; string doneGame; long doneStart, doneEnd;
+    public volatile bool LogChanged;   // a line came into games.log or went out of it (the page's open popup gets it again)
     public string GameExe;                  // the exe of the game's process (the one in front if several)
     public volatile int GamePid;            // that process (0: none), whose frames HW Deck counts (Frames)
     long otherSince;                        // since when another game is the one in front
@@ -1609,10 +1630,10 @@ class Games
             if (found != null)
             {
                 if (Game != null && (found != Game || now - Seen > 3600)) Close();
-                if (Game == null) { Game = found; Since = found == resumeGame && now - resumeLast <= 600 ? resumeStart : now; }
+                if (Game == null) { Game = found; Since = found == resumeGame && now - resumeLast <= 600 ? resumeStart : found == doneGame && now - doneEnd <= MergeWithin ? doneStart : now; }
                 Seen = now;
             }
-            else if (Game != null && now - Seen > 30) Close();   // 30 s grace: restarts and loading screens
+            else if (Game != null && now - Seen > EndAfter) Close();   // gone 5 s: it ends (back within 5 minutes, it goes on: Reopen)
             if (Game != null || now - resumeLast > 600) resumeGame = null;
         }
         polled = true;
@@ -1692,6 +1713,7 @@ class Games
         if (r.Items == null) r.Items = new Dictionary<string, double[]>();
         if (r.Names == null) r.Names = new Dictionary<string, string[]>();
         if (r.Ln == null) r.Ln = new Dictionary<string, Lines>();
+        if (r.Gaps == null) r.Gaps = new List<long[]>();
     }
     // a warning during the session: a new one joins the list, one already on it keeps its worst value
     static void Warn(Report r, Alerts.Warm w)
@@ -1732,10 +1754,19 @@ class Games
         if (game != null)
         {
             bool started = rep == null;   // (what warned before the session started isn't its warning)
-            if (started) rep = new Report { Start = since, From = Source.Unix(), Game = game };
+            if (started) rep = Reopen(game, since) ?? new Report { Start = since, From = Source.Unix(), Game = game };
             int secs = rep.Secs;
-            // (the game gone a few seconds, in its 30 s grace: no play time and no readings, unless it comes back)
+            // (the game gone a few seconds, before its session ends: no play time and no readings, unless it comes back)
             Feed(rep, src, index, gated, started ? 0 : fresh, started ? new Alerts.Warm[0] : hot, front, front, front && pmOk, pmKeys, call, now0 - seen > 6);
+            // (a session taken back: on disk with its first second, then its old line out of the log; a crash in between
+            // counts the earlier part twice at worst, never loses it)
+            if (reopened)
+            {
+                reopened = false;
+                try { Disk.Swap(curPath, json.Serialize(rep)); } catch { }
+                if (reopenLine != null && !pending.Remove(reopenLine)) { try { DropLine(reopenLine); } catch (Exception ex) { log("games: the merged session's line stayed: " + ex.Message); } }
+                reopenLine = null; LogChanged = true;
+            }
             if (rep.Secs != secs && rep.Secs % 60 == 0) { try { Disk.Swap(curPath, json.Serialize(rep)); } catch { } }
         }
         // your own sessions, beside the game's, count every second like a game in front: the fps of whatever is in front
@@ -1831,11 +1862,76 @@ class Games
         // it ended when the game was last seen, or (a run that quit mid-game, a PC that slept) at its last sample
         long end = r.Last > r.Start ? r.Last : Source.Unix();
         lock (lk) if (Seen > r.Start && Seen < end) end = Seen;
-        if (end - r.Start < 60) return;   // under a minute of play isn't a session worth a line
-        Write(r, end);
+        // kept 5 minutes: the same game started again goes on with it (a minute of play too short for a line as well)
+        done = r; doneLine = null; lock (lk) { doneGame = r.Game; doneStart = r.Start; doneEnd = end; }
+        LogChanged = true;   // (the page's list: the session in progress ended, written or not)
+        Fill(r);
+        if (end - r.Start - r.Gaps.Sum(g => g[1] - g[0]) < 60) return;   // under a minute of play (its breaks aren't) isn't a session worth a line
+        doneLine = Write(r, end);
     }
-    // a session's line in games.log
-    void Write(Report r, long end)
+    // the same game started again within 5 minutes of its session's end: that session goes on (its line comes out of
+    // the log; the break is kept apart, not play); null: a new one
+    Report Reopen(string game, long since)
+    {
+        var d = done; string line = doneLine; long end;
+        done = null; doneLine = null;
+        lock (lk) { end = doneEnd; doneGame = null; }
+        if (d == null || d.Game != game || d.Start != since) return null;
+        Fill(d);
+        d.Gaps.Add(new[] { end, Source.Unix() });
+        // (its line comes out only once the session is on disk again, after its first second: Sample, reopenLine)
+        reopened = true; reopenLine = line;
+        return d;
+    }
+    bool reopened; string reopenLine;
+    // a session deleted or the log cleared: what just ended is not taken back by a merge
+    public void Forget(long start = 0, string game = null)
+    {
+        var d = done;
+        if (d == null || (game != null && (d.Game != game || d.Start != start))) return;
+        done = null; doneLine = null;
+        lock (lk) { doneGame = null; if (Game != null && rep == null && Since == d.Start) Since = Source.Unix(); }   // (its game back already: a new session, not the deleted one's start)
+    }
+    void DropLine(string line)
+    {
+        if (!File.Exists(logPath)) return;
+        var lines = File.ReadAllLines(logPath).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
+        int i = lines.LastIndexOf(line); if (i < 0) return;
+        lines.RemoveAt(i); Disk.SwapLines(logPath, lines);
+    }
+    // the breaks of the session in progress (Game time leaves them out)
+    public long GapSecs
+    {
+        get
+        {
+            var r = rep; if (r != null) return r.Gaps != null ? r.Gaps.Sum(g => g[1] - g[0]) : 0;
+            // (a merge's first second: the session goes on before its report is taken back, its break already counts out)
+            var d = done; long since, end; string g0; lock (lk) { since = Since; end = doneEnd; g0 = Game; }
+            return d != null && g0 != null && d.Start == since ? (d.Gaps != null ? d.Gaps.Sum(g => g[1] - g[0]) : 0) + Math.Max(0, Source.Unix() - end) : 0;
+        }
+    }
+    public List<long[]> GapsNow { get { var r = rep; return r != null && r.Gaps != null ? r.Gaps.ToList() : new List<long[]>(); } }
+    // the session in progress as its line will be (live: 1), for the page's Now playing; null: none
+    public Dictionary<string, object> LiveLine()
+    {
+        var r = rep; string game; lock (lk) game = Game;
+        if (r == null || game == null || r.Secs < 1) return null;
+        Report c;
+        try { c = json.Deserialize<Report>(json.Serialize(r)); } catch { return null; }   // (a copy: the minute in progress goes into its timeline, not the real one's)
+        Fill(c); c.Ln = r.Ln;
+        var d = Line(c, Math.Max(c.Last, c.Start)); d["live"] = 1;
+        return d;
+    }
+    // a session's line in games.log (returned)
+    string Write(Report r, long end)
+    {
+        var line = json.Serialize(Line(r, end));
+        pending.Add(line);
+        WritePending();
+        LogChanged = true;
+        return line;
+    }
+    Dictionary<string, object> Line(Report r, long end)
     {
         Fill(r);
         if (r.MinAt >= 0) Minute(r, -1);   // the last minute into the timeline
@@ -1857,8 +1953,8 @@ class Games
                                                  { "fps", avg(r.FpsSum, r.FpsN) }, { "low", avg(r.LowSum, r.LowN) }, { "items", items }, { "warns", r.Warns },
                                                  { "g", r.G }, { "c", r.C }, { "f", r.F }, { "wl", wl }, { "tf", r.Tf }, { "tl", r.Tl }, { "tb", r.Tb }, { "tc", r.Tc } };
         if (r.Custom == 1) d["custom"] = 1;
-        pending.Add(json.Serialize(d));
-        WritePending();
+        if (r.Gaps.Count > 0) d["gaps"] = r.Gaps;
+        return d;
     }
     // session lines not in games.log yet (a write that failed is tried again every second and at exit, not dropped)
     readonly List<string> pending = new List<string>();
@@ -2059,7 +2155,7 @@ partial class DeckForm : Form
         if (!fake) { src.Frames = new Frames(runName + " frames " + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value); if (FpsWanted && !Brand.NoActions) src.Frames.Start(); }   // (a test copy never takes over the trace)
         // (a session over 10 minutes quiet, the PC asleep, is about to end: not its length with the sleep in it)
         // (the game gone, in its grace: held at its last counted second, as the session is)
-        src.GameMin = () => { string g = games.Game; long since = games.Since, last = games.LastFed, seen = games.Seen, now = Source.Unix(); bool grace = last > 0 && now - seen > 6; return g != null && since > 0 && !(last > 0 && now - last > 600) ? Math.Max(0, (grace ? last : now) - since) / 60.0 : double.NaN; };
+        src.GameMin = () => { string g = games.Game; long since = games.Since, last = games.LastFed, seen = games.Seen, now = Source.Unix(); bool grace = last > 0 && now - seen > 6; return g != null && since > 0 && !(last > 0 && now - last > 600) ? Math.Max(0, (grace ? last : now) - since - games.GapSecs) / 60.0 : double.NaN; };   // (its breaks aren't play)
         var st = ReadFile("state", true) as Dictionary<string, object>;
         if (st != null && st.ContainsKey("L")) layout = st["L"];
         TrimAlerts(); TrimGames();
@@ -2082,7 +2178,7 @@ partial class DeckForm : Form
         RestoreWin();
         ResizeBegin += delegate { moving = true; };
         ResizeEnd += delegate { moving = false; if (fitAfterMove) { fitAfterMove = false; FitToScreen(); } SaveWin(); };
-        Resize += delegate { if (WindowState != FormWindowState.Minimized) restoreMax = WindowState == FormWindowState.Maximized; };
+        Resize += delegate { if (WindowState != FormWindowState.Minimized) { restoreMax = WindowState == FormWindowState.Maximized; PostMax(); } };
         Shown += delegate { FitToScreen(); };
 
         wv = new WebView2();
@@ -2280,12 +2376,14 @@ partial class DeckForm : Form
         {
             switch (t)
             {
-                case "ready": pageReady = true; sentVersion = -1; subCells.Clear(); subRows.Clear(); SendState(); force = true; OnTick(null, null); break;
+                case "ready": pageReady = true; sentVersion = -1; subCells.Clear(); subRows.Clear(); SendState(); PostMax(); force = true; OnTick(null, null); break;
                 case "sub": Subscribe(m); break;
                 case "save":
                     {
                         string f = m["file"] as string;
                         if (f == null || !PageFile.IsMatch(f)) break;
+                        // (a view save made before the page got the view it shows now: that one would go over it)
+                        if (f == "state" && m.ContainsKey("gen") && Convert.ToInt64(m["gen"]) != stateGen) { Log("not saving state: made before the page got its view"); break; }
                         bool saved = false;
                         try { saved = SaveFile(f, m["data"]); }
                         catch (Exception ex) { Log("saving " + f + " failed: " + ex.Message); var r = Msg("toast"); r["text"] = "Couldn't save the layout: " + ex.Message; Post(r); }
@@ -2307,7 +2405,8 @@ partial class DeckForm : Form
                 case "alerts": SendLog("alerts.log", "alerts"); break;
                 case "alerts:clear": Wipe("alerts.log"); SendCleared("alerts"); break;
                 case "games": SendLog("games.log", "games"); break;
-                case "games:clear": Wipe("games.log"); SendCleared("games"); break;
+                case "gamesLive": gamesLive = true.Equals(m["on"]); if (gamesLive) PostLive(); break;   // the sessions popup opened or closed
+                case "games:clear": Wipe("games.log"); games.Forget(); SendCleared("games"); break;
                 // a session of your own: start, stop, a new name while it runs
                 case "rec":
                     {
@@ -2324,6 +2423,7 @@ partial class DeckForm : Form
                         string act = m["act"] as string, game = m["game"] as string, name = Games.CleanName(m.ContainsKey("name") ? m["name"] : null);
                         long st = Games.Long(m["start"]), en = Games.Long(m["end"]);
                         string at = "\"start\":" + st.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        if (act == "del") games.Forget(st, game);   // (deleted: not taken back by a merge)
                         try { games.EditLog(o => !Games.Is(o, st, en, game) ? 0 : act == "del" ? 1 : act == "name" && name != null && o.ContainsKey("custom") ? Rename(o, name) : 0, line => line.Contains(at), true); }
                         finally { SendLog("games.log", "games"); }   // (the page shows the log as it is, whatever happened)
                     }
@@ -2362,7 +2462,7 @@ partial class DeckForm : Form
     // ---- files: state.json (working layout, active slot, view, edit mode) and slots\slotN.json, written whole through
     // a temp file so a crash mid-write can't leave half a layout ----
     static readonly Regex PageFile = new Regex(@"^(?:state|slots/slot[1-5])\z");   // what the page may write; settings.json is the host's alone
-    static bool CanOpen(string p) { try { if (!File.Exists(p)) return true; using (var f = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.Read)) { f.ReadByte(); return true; } } catch { return false; } }   // (a byte: one that opens but can't be read isn't free)
+    static bool CanOpen(string p) { try { if (!File.Exists(p)) return true; using (var f = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.Read)) { var b = new byte[4096]; while (f.Read(b, 0, b.Length) > 0) { } return true; } } catch { return false; } }   // (to the end: one that opens but can't be read all through isn't free)
     bool SaveFile(string name, object data)   // false: not written (held)
     {
         string p = P(name.Replace('/', '\\') + ".json"), tmp = p + ".tmp";
@@ -2382,18 +2482,22 @@ partial class DeckForm : Form
     readonly HashSet<string> heldFiles = new HashSet<string>(), heldSaid = new HashSet<string>();
     readonly Dictionary<string, long> heldAt = new Dictionary<string, long>();   // (held since: unix seconds)
     readonly HashSet<string> gaveUpNow = new HashSet<string>();   // (a slot taken as damaged, not sent to the page yet)
+    readonly List<string> goneNotes = new List<string>();   // (the notes of files taken as damaged, not said yet)
+    long stateGen;   // (which view the page got last: a state save made before it is dropped)
     // a file still unreadable after 2 minutes is damaged, not held (a bad sector, permissions from another install): it
     // is moved aside, the view starts empty as when it can't be parsed, a slot comes in empty, and saving goes on. Only
     // once the move worked: one a program really holds can't be moved, so it stays held and nothing is saved over it
     bool GiveUp(string n)
     {
+        if (CanOpen(P(n + ".json"))) return false;   // (it reads now: nothing damaged, the re-sends after this read it)
         string bad = n + ".json.bad-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
         try { File.Move(P(n + ".json"), P(bad)); }
         catch { heldAt[n] = Source.Unix(); return false; }   // (again in 2 minutes)
         heldFiles.Remove(n); heldAt.Remove(n); heldSaid.Remove(n.Replace('\\', '/'));
         Log("reading " + n + " still failed after 2 minutes: taken as damaged, moved aside as " + bad);
-        if (n == "state") stateBad = bad;
-        else { gaveUpNow.Add(n); var t = Msg("toast"); t["text"] = "Slot " + n.Substring(n.Length - 1) + " couldn't be read, so it is empty now. The old file is kept as " + bad.Replace('\\', '/') + " in your files (Settings)."; t["ms"] = 15000; Post(t); }
+        // (its note: one toast with the others now if the window is open, else when it opens)
+        if (n == "state") goneNotes.Add("Your view couldn't be read, so its file is set aside as " + bad + " in your files (Settings). The view you see now is kept.");
+        else { gaveUpNow.Add(n); goneNotes.Add("Slot " + n.Substring(n.Length - 1) + " couldn't be read, so it is empty now. The old file is kept as " + bad.Replace('\\', '/') + " in your files (Settings)."); }
         return true;
     }
     object ReadFile(string name, bool keep = false, int tries = 10)
@@ -2416,15 +2520,28 @@ partial class DeckForm : Form
             return null;
         }
     }
-    void SendState()
+    // maximized or not, for the page: maximized, its edges aren't resize borders (the top one drags the title bar)
+    void PostMax() { if (!pageReady || !IsHandleCreated) return; var r = Msg("winMax"); r["max"] = IsZoomed(Handle); Post(r); }   // (Windows' word: WindowState lags a maximize from the title bar)
+    bool gamesLive;   // the page's sessions popup is open
+    void PostLive() { var r = Msg("gameNow"); r["s"] = games.LiveLine(); Post(r); }
+    void SendState(bool again = false)   // (again: the Tick's re-send of a held view, which posts nothing while it is still held)
     {
         var slots = new List<object>();
         gaveUpNow.Clear();   // (all five go out here)
+        var heldBefore = new HashSet<int>(); for (int i = 0; i < 5; i++) if (heldFiles.Contains("slots\\slot" + (i + 1))) heldBefore.Add(i);
         // (a file still held from before: one try, the 2 s of retries were spent already)
         for (int i = 1; i <= 5; i++) slots.Add(ReadFile("slots\\slot" + i, false, heldFiles.Contains("slots\\slot" + i) ? 1 : 10));
         var r = Msg("state");
         var st = ReadFile("state", true, heldFiles.Contains("state") ? 1 : 10);   // (a damaged one is kept aside, as at the start)
         // (the view the page gets is the one the warnings and game reports follow: one held at the start comes in here)
+        if (again && heldFiles.Contains("state"))   // (still unreadable: the page keeps what it has, no reset every 5 s; slots freed meanwhile go alone)
+        {
+            var freed = new Dictionary<string, object>();
+            for (int i = 0; i < 5; i++) if (heldBefore.Contains(i) && !heldFiles.Contains("slots\\slot" + (i + 1))) freed[i.ToString()] = slots[i];
+            if (freed.Count > 0) { var rf = Msg("slots"); rf["slots"] = freed; Post(rf); }
+            return;
+        }
+        r["gen"] = ++stateGen;   // (only for a view that goes out: the page saves with the number it got)
         if (!heldFiles.Contains("state")) { var sd = st as Dictionary<string, object>; layout = sd != null && sd.ContainsKey("L") ? sd["L"] : null; RefreshRules(); }
         var held = new List<object>(); for (int i = 0; i < 5; i++) if (heldFiles.Contains("slots\\slot" + (i + 1))) held.Add(i);
         r["held"] = held;   // (the slots another program holds: a missing or damaged one is empty for good)
@@ -2891,6 +3008,9 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             if (!asleep) alerts.Tick(src, index);
             WriteAlerts();
             games.Sample(src, index, gated, alerts, gameFront, pmOk, pmKeys, src.Bneck.Call, src.Bneck.Live);
+            // (the sessions popup open: the session in progress every 5 s, Now playing; the log again once a line came or went)
+            if (gamesLive && pageReady) { if (games.LogChanged) { games.LogChanged = false; PostLive(); SendLog("games.log", "games"); } else if (now % 5 == 0) PostLive(); }   // (the live one first: the log that comes after has it)
+            else games.LogChanged = false;
             if (DateTime.Now.Date != trimDay) { trimDay = DateTime.Now.Date; TrimAlerts(); TrimGames(); }   // the days you keep, also on a PC that never restarts
             if (!fake && now - lastHwPath >= 60) { lastHwPath = now; RememberHwinfo(); }
             // (free now: the page gets it; the view first, whole; slots alone, so the view and its undo stay as they are)
@@ -2898,11 +3018,13 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             {
                 long un = Source.Unix();
                 var stale = heldFiles.Where(n => { long t; return heldAt.TryGetValue(n, out t) && un - t >= 120; }).ToList().Where(GiveUp).ToList();
-                // (a damaged view: the page keeps what was built meanwhile and saves it from now on, only the note goes out)
-                if (stale.Contains("state") && stateBad != null && wasShowing) { var tb = Msg("toast"); tb["text"] = "Your view couldn't be read, so it starts empty. The old file is kept as " + stateBad + " in your files (Settings)."; tb["ms"] = 15000; Post(tb); stateBad = null; }
+                // (a damaged view: the page keeps what it shows, built meanwhile or the empty first run, and writes it now)
+                if (stale.Contains("state")) Post(Msg("saveView"));
                 if (stale.Any(n => n != "state")) SendSlots();   // (the damaged slots, empty, even while the view stays held)
-                if (heldFiles.Contains("state")) { if (CanOpen(P("state.json"))) SendState(); }
+                if (heldFiles.Contains("state")) { if (CanOpen(P("state.json"))) SendState(true); else if (heldFiles.Any(n => n != "state" && CanOpen(P(n + ".json")))) SendSlots(); }   // (slots freed while the view stays held go alone)
                 else if (heldFiles.Any(n => CanOpen(P(n + ".json")))) SendSlots();
+                // (the notes of what was given up: one toast, after anything above that could post its own)
+                if (goneNotes.Count > 0 && wasShowing) { var tb = Msg("toast"); tb["text"] = string.Join(" ", goneNotes); tb["ms"] = goneNotes.Count > 1 ? 20000 : 15000; Post(tb); goneNotes.Clear(); }
             }
         }
         if (now - lastSave >= 900) { lastSave = now; hist.Save(false); }
@@ -2916,6 +3038,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             if (stateBad != null) { notes.Add("Your view couldn't be read, so it starts empty. The old file is kept as " + stateBad + " in your files (Settings)."); stateBad = null; }
             if (UpdateNote() != null) { notes.Add(UpdateNote()); Log("update result: " + UpdateResult); UpdateResult = int.MinValue; }
             if (heldFiles.Contains("state")) notes.Add(HeldNote);
+            notes.AddRange(goneNotes); goneNotes.Clear();
             if (notes.Count > 0) { var tn = Msg("toast"); tn["text"] = string.Join(" ", notes.Select(n => n.TrimEnd().EndsWith(".") ? n.TrimEnd() : n.TrimEnd() + ".")); tn["ms"] = notes.Count > 1 ? 20000 : 15000; Post(tn); }
         }
         wasShowing = showing;
@@ -2945,6 +3068,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
         }
         var tk = Msg("tick");
         tk["ver"] = src.Version; tk["status"] = src.Status; tk["age"] = src.Age; tk["ts"] = now;
+        tk["gameGap"] = games.GapSecs;   // (the session's breaks: not play)
         tk["i"] = ix; tk["v"] = vs; tk["mn"] = mn; tk["mx"] = mx; tk["av"] = av;
         tk["game"] = games.Game; tk["front"] = gameFront; tk["gameSince"] = games.Since;   // plain reads of fields the game poll sets
         tk["pm"] = pmOk || !second && lastPm; lastPm = (bool)tk["pm"];
@@ -3098,7 +3222,7 @@ if (-not (Test-Path -LiteralPath $App)) {
 $ses = (Get-Process -Id $PID).SessionId
 $p = @(Get-Process HWiNFO64, HWiNFO32 -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $ses } | Sort-Object StartTime)
 if ($p.Count -eq 0) { exit 0 }
-if (((Get-Date) - $p[0].StartTime).TotalMinutes -lt $Min) { exit 0 }
+if (([DateTime]::UtcNow - $p[0].StartTime.ToUniversalTime()).TotalMinutes -lt $Min) { exit 0 }
 $Exe = $p[0].Path; $ok = $false
 if ($Exe) { $full = [IO.Path]::GetFullPath($Exe); foreach ($d in [Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86')) { if ($d -and $full.StartsWith($d.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { $ok = $true } } }
 if (-not $ok) { exit 6 }
@@ -3108,8 +3232,8 @@ foreach ($f in ('user32.dll', 'GetForegroundWindow', [IntPtr], @()), ('user32.dl
   $m = $tb.DefinePInvokeMethod($f[1], $f[0], 'Public, Static, PinvokeImpl', 'Standard', $f[2], [Type[]]$f[3], 'Winapi', 'Unicode'); $m.SetImplementationFlags('PreserveSig')
 }
 $W = $tb.CreateType()
-$until = $p[0].StartTime.AddMinutes(700)
-while ((Get-Date) -lt $until) { $q = 0; [void]$W::SHQueryUserNotificationState([ref]$q); if (2, 3, 4 -notcontains $q) { break }; Start-Sleep -Seconds 30 }
+$until = $p[0].StartTime.ToUniversalTime().AddMinutes(700)
+while ([DateTime]::UtcNow -lt $until) { $q = 0; [void]$W::SHQueryUserNotificationState([ref]$q); if (2, 3, 4 -notcontains $q) { break }; Start-Sleep -Seconds 30 }
 $p[0].Refresh(); if ($p[0].HasExited) { exit 0 }
 $AfterStart = { for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $h = $W::GetForegroundWindow(); $q = [UInt32]0; [void]$W::GetWindowThreadProcessId($h, [ref]$q); if ((Get-Process -Id $q -ErrorAction SilentlyContinue).ProcessName -like 'HWiNFO*') { [void]$W::PostMessageW($h, 0x112, [IntPtr]0xF020, [IntPtr]::Zero); break } } }";
     static string PowerShellExe { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"); } }
@@ -3392,7 +3516,7 @@ exit 0";
     {
         string st = FpsState();
         return st == "on" ? "Accurate game fps is on: " + Brand.Name + " counts the game's own frames" : st == "signin" ? "Almost: sign out of Windows and back in, and " + Brand.Name + " counts the game's own frames"
-             : st == "denied" ? "Windows doesn't let this account count frames" : "Couldn't start counting frames";
+             : st == "denied" ? "Windows doesn't let this account count frames: turn this off and on to ask again" : "Couldn't start counting frames";
     }
 
     // ---- start with Windows: a Run entry for this exe, in the tray ----
@@ -3531,6 +3655,8 @@ exit 0";
     {
         // Alt+F4, the taskbar's Close window: to the tray here, before WinForms notes the close as the user's (it keeps
         // that after a cancel, so a later WM_CLOSE from Task Manager or taskkill would hide it instead of quitting)
+        // a WM_CLOSE gets here only from outside now (Task Manager, taskkill): a quit, so a launch meanwhile starts after it
+        if (m.Msg == 0x0010 /*WM_CLOSE*/ && !exiting) exiting = true;
         if (m.Msg == 0x0112 /*WM_SYSCOMMAND*/ && ((int)m.WParam & 0xFFF0) == 0xF060 /*SC_CLOSE*/ && !exiting) { SaveWin(); HideToTray(); return; }
         // a copy that never takes the focus (a test's) that still gets activated hands it straight back to the window that
         // was in front (otherFront, kept by the Tick)

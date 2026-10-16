@@ -60,6 +60,14 @@ ok('its popup: the six pins, amps and watts', await until('document.querySelecto
 await ev('closeDetail()');
 await ev(`showScreen("grid")`); await p.sleep(1500);
 ok('Grid: the pins in its row', await ev(`!!document.querySelector('#view .dc[data-cid="${cid}"] .xpins')`));
+// its lines set to None: the pins still turn it yellow, and the warning history still has it
+await ev(`mutate(() => { S.L.cells["${cid}"].gates.mode = 'none'; })`); await p.sleep(1500);
+const before2 = log().length;
+await pin([6, 3, 3, 3, 3, 3]); await p.sleep(5000);
+const after2 = log().slice(before2);
+ok('no lines: uneven pins still turn it yellow and are in the warning history', await ev(`evalCell("${cid}", S.L.cells["${cid}"], true, true).lvl === 1`) && /YELLOW +12V-2x6 connector pins: /.test(after2),
+  after2.split('\n').filter(l => /12V/.test(l)).join(' | '));
+await pin([3, 3, 3, 3, 3, 3]);
 ok('no page errors', errs.length === 0, errs.join(' | '));
 for (const k of pins) await ev(`send({ t: 'fakePin', key: ${JSON.stringify(k)}, v: null })`);
 p.close();

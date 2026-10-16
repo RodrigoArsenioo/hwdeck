@@ -6,7 +6,7 @@
 (() => {
   'use strict';
   const RELEASES = 'https://github.com/RodrigoArsenioo/hwdeck/releases/latest';
-  const VERSION = '1.5.0';
+  const VERSION = '1.5.1';
   const T0 = Math.floor(Date.now() / 1000);
   const nowS = () => Math.floor(Date.now() / 1000);
   const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
@@ -21,10 +21,11 @@
   const jit = (seed, t) => hash(seed, t) * 2 - 1;
   const interp = (pts, x) => { if (x <= pts[0][0]) return pts[0][1]; for (let i = 1; i < pts.length; i++) if (x <= pts[i][0]) { const [a, b] = [pts[i - 1], pts[i]]; return a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]); } return pts[pts.length - 1][1]; };
 
-  // ---- when a game runs: in the last two hours 6 minutes in every 9 (one started just before the page opened), before
-  // that most evenings, in blocks of 44 minutes ----
+  // ---- when a game runs: in about the last two hours two 6-minute runs 3 minutes apart (the same game again within 5
+  // minutes: one session) every 21 minutes, one started just before the page opened; before that most evenings, in
+  // blocks of 44 minutes ----
   const GAMES = ['Cyberpunk 2077', 'Baldur\'s Gate 3', 'Counter-Strike 2', 'Forza Horizon 5', 'Elden Ring'];
-  const CYCLE = 540, PLAY = 360, RECENT = T0 - 7200, FIRST = T0 - 140;
+  const CYCLE = 1260, PLAY = 360, BACK = 540, FIRST = T0 - 140, RECENT = FIRST - 6 * CYCLE;   // (a pair's start: every run it plays is whole)
   const tzOff = -new Date().getTimezoneOffset() * 60;
   function eveningOf(day) {   // the evening of a local day: when play starts (hours) and how long, or null
     if (hash(91, day) < 0.25) return null;
@@ -32,13 +33,42 @@
   }
   function gameAt(t) {
     if (t >= RECENT) {
-      const k = Math.floor((t - FIRST) / CYCLE), s = FIRST + k * CYCLE;
-      return t - s < PLAY ? { start: s, k: 100000 + k, name: GAMES[0] } : null;
+      const k = Math.floor((t - FIRST) / CYCLE), s = FIRST + k * CYCLE, o = t - s;
+      return o < PLAY ? { start: s, k: 100000 + 2 * k, name: GAMES[0] } : o >= BACK && o < BACK + PLAY ? { start: s + BACK, k: 100001 + 2 * k, name: GAMES[0] } : null;
     }
     const day = Math.floor((t + tzOff) / 86400), ev = eveningOf(day); if (!ev) return null;
     const into = (t + tzOff) - day * 86400 - ev.from * 3600; if (into < 0 || into > ev.len * 3600) return null;
     const blk = Math.floor(into / 3000), off = into - blk * 3000; if (off >= 2640) return null;
     return { start: t - off, k: day * 10 + blk, name: GAMES[1 + Math.floor(hash(94, day) * 4)] };
+  }
+
+  // the same game's runs with breaks under 5 minutes are one session, as in the app: its first start, its breaks and
+  // their total (kept per run: the runs before it don't change)
+  const merged = new Map();
+  function mergedOf(t) {
+    const g = gameAt(t); if (!g) return null;
+    let m = merged.get(g.k);
+    if (!m) {
+      let start = g.start; const gaps = [];
+      for (let n = 0; n < 60; n++) {
+        let x = start - 1, back = 0;
+        while (back <= 300 && !gameAt(x)) { x--; back++; }
+        const q = back > 0 && back <= 300 ? gameAt(x) : null;
+        if (!q || q.name !== g.name) break;
+        gaps.unshift([x + 1, start]); start = q.start;
+      }
+      m = { start, gaps, gap: gaps.reduce((a, q) => a + q[1] - q[0], 0) };
+      if (merged.size > 500) merged.clear();
+      merged.set(g.k, m);
+    }
+    return Object.assign({ g }, m);
+  }
+  // the session a game in progress belongs to: what came before its last break deleted, or the log cleared in that break,
+  // is not taken back (a new session, as the app's)
+  function sessAt(t) {
+    const m = mergedOf(t); if (!m || !m.gaps.length) return m;
+    const gp = m.gaps[m.gaps.length - 1];
+    return forgot({ start: m.start, end: gp[0], name: m.g.name }, gp[1]) ? { g: m.g, start: m.g.start, gaps: [], gap: 0 } : m;
   }
 
   // ---- the PC each second: loads, frame rate, what limits it ----
@@ -62,7 +92,11 @@
     memo.set(t, c); return c;
   }
   const lag = (t, f) => { let s = 0; for (let j = 0; j < 7; j++) s += f(core(t - j * 15)); return s / 7; };   // over the last 1.5 min: heat
-  const cpuT = t => 41 + 0.42 * lag(t, c => c.eff) + 0.35 * jit(21, t);
+  // (the CPU warning in the history, at HOT_AT: the CPU really ran that hot then, warming for a few minutes around it)
+  const HOT_PTS = [[-240, 40], [-60, 79], [-20, 82], [0, 85.6], [4, 86.1], [9, 84.9], [60, 80], [240, 40]];
+  // (and the pump's warning three days back: it really dipped then)
+  const PUMP_AT = T0 - 3 * 86400 + 4000, PUMP_PTS = [[-90, 2700], [-30, 2300], [-2, 1520], [0, 1420], [3, 1380], [7, 1500], [40, 2300], [90, 2700]];
+  const cpuT = t => { const v = 41 + 0.42 * lag(t, c => c.eff) + 0.35 * jit(21, t), d = t - HOT_AT; return d > -240 && d < 240 ? Math.max(v, interp(HOT_PTS, d)) : v; };
   const gpuT = t => 33 + 0.38 * lag(t, c => c.gpu) + 0.25 * jit(22, t);
 
   // ---- the sensors and readings, named and keyed like HWiNFO's (key: sensor id / type << 24 | index) ----
@@ -109,7 +143,7 @@
   add(2, 3, 'CPU Fan', 'RPM', t => interp(FANS.cpu, cpuT(t)) * (1 + 0.012 * jit(37, t)));
   add(2, 3, 'Chassis Fan 1', 'RPM', t => interp(FANS.front, gpuT(t)) * (1 + 0.01 * jit(38, t)));
   add(2, 3, 'Chassis Fan 2', 'RPM', t => interp(FANS.top, cpuT(t)) * (1 + 0.01 * jit(39, t)));
-  add(2, 3, 'AIO Pump', 'RPM', t => 2580 + 25 * jit(40, t));
+  add(2, 3, 'AIO Pump', 'RPM', t => { const v = 2580 + 25 * jit(40, t), d = t - PUMP_AT; return d > -90 && d < 90 ? Math.min(v, interp(PUMP_PTS, d)) : v; });
   add(2, 2, '+12V', 'V', t => 12.096 + 0.012 * jit(41, t));
   add(2, 2, '+5V', 'V', t => 5.04 + 0.006 * jit(42, t));
   add(2, 2, '+3.3V', 'V', t => 3.344 + 0.004 * jit(43, t));
@@ -132,7 +166,7 @@
   add(8, 8, 'Frame Time', 'ms', t => 1000 / (core(t).fps != null ? core(t).fps : 60));
   // HW Deck's own: the bottleneck, 1 gpu, 2 cpu, 3 capped (none: no game), and how long the game has run (minutes)
   add(9, 8, 'Bottleneck', '', t => core(t).call);
-  add(9, 8, 'Game time', 'min', t => core(t).g ? (t - core(t).g.start) / 60 : null);
+  add(9, 8, 'Game time', 'min', t => { const m = core(t).g ? sessAt(t) : null; return m ? (t - m.start - m.gap) / 60 : null; });   // (its breaks aren't play)
   const per = {};
   R.forEach(r => {
     const sk = SENSORS[r.s][0];
@@ -188,26 +222,27 @@
   // ---- the warning log and the game reports the popups open on ----
   const p2 = n => ('0' + n).slice(-2);
   const stamp = u => { const d = new Date(u * 1000), o = -d.getTimezoneOffset(); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()) + (o >= 0 ? '+' : '-') + p2(Math.floor(Math.abs(o) / 60)) + ':' + p2(Math.abs(o) % 60); };
-  const sessions = (() => {   // the evening blocks of the last 5 days, newest last
+  const sessions = (() => {   // the evening blocks of the week the graphs and the strip show, each ending at its midnight (gameAt goes on to the next day there) and at RECENT, newest last
     const out = [], today = Math.floor((T0 + tzOff) / 86400);
-    for (let day = today - 5; day < today; day++) {
+    for (let day = today - 7; day <= today; day++) {
       const ev = eveningOf(day); if (!ev) continue;
-      const t0 = day * 86400 - tzOff + ev.from * 3600;
-      for (let b = 0; b * 3000 < ev.len * 3600 && out.length < 8; b++) { const s = Math.round(t0 + b * 3000), e = Math.round(Math.min(s + 2640, t0 + ev.len * 3600)); if (e - s >= 600) out.push({ start: s, end: e, name: gameAt(s + 5) ? gameAt(s + 5).name : GAMES[1] }); }
+      const t0 = day * 86400 - tzOff + ev.from * 3600, mid = (day + 1) * 86400 - tzOff;
+      for (let b = 0; b * 3000 < ev.len * 3600; b++) { const s = Math.round(t0 + b * 3000), e = Math.round(Math.min(s + 2640, t0 + ev.len * 3600, mid, RECENT)); if (e - s >= 60) out.push({ start: s, end: e, name: gameAt(s + 5) ? gameAt(s + 5).name : GAMES[1] }); }   // (the recent play takes over at RECENT; a minute or more, as the app)
     }
-    return out.slice(-6);
+    return out;
   })();
   // the one warning of a game session: 20 minutes into the newest long one (its report says so too)
   const hot = sessions.slice().reverse().find(s => s.end - s.start >= 1800), HOT_AT = hot ? hot.start + 1210 : T0 - 86400;
   const alertsLog = (() => {
-    const L = [], at = HOT_AT;
-    L.push(stamp(at) + '  YELLOW  CPU temperature: 85.6 °C', stamp(at + 9) + '  OK      CPU temperature: back to normal (peak 86.1 °C)');
-    L.push(stamp(T0 - 3 * 86400 + 4000) + '  YELLOW  Pump: 1420 RPM', stamp(T0 - 3 * 86400 + 4007) + '  OK      Pump: back to normal (peak 1380 RPM)');
-    return L.join('\r\n');
+    const at = HOT_AT, pump = PUMP_AT;
+    const E = [[at, [stamp(at) + '  YELLOW  CPU temperature: 85.6 °C', stamp(at + 9) + '  OK      CPU temperature: back to normal (peak 86.1 °C)']],
+      [pump, [stamp(pump) + '  YELLOW  Pump: 1420 RPM', stamp(pump + 7) + '  OK      Pump: back to normal (peak 1380 RPM)']]];
+    return E.sort((a, b) => a[0] - b[0]).flatMap(e => e[1]).join('\r\n');   // (in time order, as the app appends them)
   })();
   function report(s) {
     const mins = Math.ceil((s.end - s.start) / 60), tf = [], tl = [], tc = []; let tb = '', g = 0, c = 0, f = 0, fs = 0, fn = 0, ls = 0, fr = 0;
     const acc = {};   // name: [sum, n, max]
+    const brk = t => !!s.gaps && s.gaps.some(q => t >= q[0] && t < q[1]);   // (a merged session's break: no samples, as the app's)
     const want = [['GPU temp', '°C', t => gpuT(t), 80, 88, 1], ['GPU hotspot', '°C', t => val(BYKEY.get(key(1, 'GPU Hot Spot Temperature')), t), 92, 100, 1],
       ['GPU memory', '°C', t => val(BYKEY.get(key(1, 'GPU Memory Junction Temperature')), t), 95, 105, 1], ['GPU power', 'W', t => val(BYKEY.get(key(1, 'GPU Power')), t), null, null, 1],
       ['GPU usage', '%', t => core(t).gpu, null, null, 1], ['CPU temp', '°C', cpuT, 85, 95, 1], ['CPU power', 'W', t => val(BYKEY.get(key(0, 'CPU Package Power')), t), null, null, 1],
@@ -222,7 +257,7 @@
         if (call === 1) mg += 10; else if (call === 2) mc += 10; else if (call === 3) mf += 10;
         if (k.fps != null) { ff += k.fps; fl += k.low; nf++; }
         if (k.g) fr += 10;
-        for (const w of want) { const v = w[2](t), a = acc[w[0]] || (acc[w[0]] = [0, 0, -1e9]); a[0] += v; a[1]++; a[2] = Math.max(a[2], v); }
+        if (!brk(t)) for (const w of want) { const v = w[2](t), a = acc[w[0]] || (acc[w[0]] = [0, 0, -1e9]); a[0] += v; a[1]++; a[2] = Math.max(a[2], v); }
       }
       if (!n) break;
       g += mg; c += mc; f += mf; fs += ff; ls += fl; fn += nf;
@@ -232,20 +267,35 @@
     // the readings the session details were set up with (Customize), by key
     const st = load('state') || DEMO_STATE, gs = st && st.L && st.L.games && Array.isArray(st.L.games.secs) ? st.L.games.secs : [];
     const tk = [...new Set(gs.flatMap(x => Array.isArray(x.cells) ? x.cells.map(c => c && c.key).filter(k => typeof k === 'string' && BYKEY.has(k)) : []))], ta = {};
-    for (let t = s.start; t < s.end; t += 60) for (const k of tk) { const v = val(BYKEY.get(k), t); if (v == null) continue; const a = ta[k] || (ta[k] = [0, 0, -1e9]); a[0] += v; a[1]++; a[2] = Math.max(a[2], v); }
+    for (let t = s.start; t < s.end; t += 60) if (!brk(t)) for (const k of tk) { const v = val(BYKEY.get(k), t); if (v == null) continue; const a = ta[k] || (ta[k] = [0, 0, -1e9]); a[0] += v; a[1]++; a[2] = Math.max(a[2], v); }
     const warn = s === hot;
-    const items = want.map(w => { const a = acc[w[0]]; return [w[0], w[1], Math.round(a[0] / a[1] * 10) / 10, warn && w[0] === 'CPU temp' ? 86.1 : Math.round(a[2] * 10) / 10, w[3], w[4], w[5], w[6] || null, 0]; })
+    const items = want.filter(w => acc[w[0]]).map(w => { const a = acc[w[0]]; return [w[0], w[1], Math.round(a[0] / a[1] * 10) / 10, warn && w[0] === 'CPU temp' ? 86.1 : Math.round(a[2] * 10) / 10, w[3], w[4], w[5], w[6] || null, 0]; })
       .concat(tk.filter(k => ta[k]).map(k => { const r = BYKEY.get(k), a = ta[k]; return [r.label, r.unit, Math.round(a[0] / a[1] * 10) / 10, Math.round(a[2] * 10) / 10, null, null, 0, null, 0, k]; }));
     const out = { game: s.name, start: s.start, end: s.end, from: s.start, secs: s.end - s.start, front: s.custom ? fr : s.end - s.start, fps: fn ? Math.round(fs / fn) : null, low: fn ? Math.round(ls / fn) : null, items,
       warns: warn ? 1 : 0, wl: warn ? [['CPU temperature', 86.1, '°C']] : [], g, c, f, tf, tl, tb, tc };
     if (s.custom) out.custom = 1;
+    if (s.gaps && s.gaps.length) { const gp = s.gaps.reduce((a, q) => a + q[1] - q[0], 0); out.gaps = s.gaps; out.secs = Math.max(0, out.secs - gp); out.front = Math.max(0, out.front - gp); }   // (its breaks: not play)
     return out;
   }
   // the sessions: the made-up evenings, the ones you recorded here (own), less the ones you deleted and the older than you keep
   const days = k => load(k) || 30, sid = x => x.start + '|' + x.end + '|' + x.name;
+  const goneSet = new Set(load('gone') || []), clr = load('gamesCleared'), clears = Array.isArray(clr) ? clr : clr ? [1] : [];   // (when you cleared it)
+  const forgot = (a, to) => goneSet.has(sid(a)) || clears.some(c => c >= a.end && c < to);   // (a: a session that ended; to: its game back)
+  // the recent pairs that ended by t, as the app logs them: one session across its break, its first run alone while the
+  // break lasts, the second alone when the first was deleted or cleared in the break
+  function recentDone(t) {
+    const out = [];
+    for (let k = Math.ceil((RECENT - FIRST) / CYCLE); FIRST + k * CYCLE + PLAY <= t; k++) {
+      const s = FIRST + k * CYCLE, a = { start: s, end: s + PLAY, name: GAMES[0] }, b = s + BACK;
+      if (t < b) { out.push(a); continue; }   // (in its break)
+      if (t < b + PLAY) continue;   // (going on: the session in progress)
+      out.push(forgot(a, b) ? { start: b, end: b + PLAY, name: GAMES[0] } : { start: s, end: b + PLAY, name: GAMES[0], gaps: [[s + PLAY, b]] });
+    }
+    return out;
+  }
   const gamesLog = () => {
     const gone = new Set(load('gone') || []), cut = nowS() - days('gameDays') * 86400;
-    const all = (load('gamesCleared') ? [] : sessions).concat(load('own') || []).filter(s => !gone.has(sid(s)) && s.end >= cut).sort((a, b) => a.start - b.start);
+    const all = (clears.length ? [] : sessions).concat(recentDone(nowS()).filter(s => !clears.some(c => c >= s.end)), load('own') || []).filter(s => !gone.has(sid(s)) && s.end >= cut).sort((a, b) => a.start - b.start);
     return all.map(s => JSON.stringify(report(s))).join('\r\n');
   };
   const settingsMsg = () => ({ t: 'settings', autostart: false, hwinfo: 'Made-up readings in this demo', updates: false, latest: null, gameDays: days('gameDays'), warnDays: days('warnDays') });
@@ -277,6 +327,8 @@
   const toast = text => post({ t: 'toast', text, ms: 4000 });
   const IN_APP = 'Works in the app: download HW Deck from the link below';
   let subs = new Set(), timer = 0;
+  // (a hidden tab's timer ran at most once a minute: its minutes come back when it shows, as the app's do)
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && subs.size) { post({ t: 'shown' }); sparks([...subs]); tick(); } });
   const since = new Map();   // HWiNFO's own min / max / average, since the page opened (seeded with the hour before)
   function mma(r, t, v) {
     let a = since.get(r.key);
@@ -285,18 +337,29 @@
     return a[3] ? [a[0], a[1], Math.round(a[2] / a[3] * 1000) / 1000] : [null, null, null];
   }
   let sess = null;   // this game session's numbers of the game's own readings: min, sum, n, max
+  let liveOn = false, liveWas = false;   // the sessions popup is open; a game was in progress at the last tick
+  // the game in progress as the app sends it to the sessions popup (Now playing); null: none
+  function liveLine(t) {
+    const m = sessAt(t); if (!m || t - m.start - m.gap < 1) return null;   // (none yet in its first second, as the app's)
+    const r = report({ name: m.g.name, start: m.start, end: t, gaps: m.gaps });
+    r.live = 1;
+    return r;
+  }
   function tick() {
     const t = nowS(), c = core(t), i = [], v = [], mn = [], mx = [], av = [];
-    if (c.g && (!sess || sess.start !== c.g.start)) sess = { start: c.g.start, pm: {} };
-    if (!c.g) sess = null;
+    const mg = c.g ? sessAt(t) : null;
+    if (mg && (!sess || sess.start !== mg.start)) sess = { start: mg.start, pm: {} };   // (one session across its breaks, as the app's)
     for (const r of R) {
       const x = val(r, t), s = SENSORS[r.s][0] === 'hwdeck.0' ? [null, null, null] : mma(r, t, x);   // (HW Deck's own readings have no HWiNFO min / max / average, as in the app)
       i.push(r.i); v.push(x); mn.push(s[0]); mx.push(s[1]); av.push(s[2]);
-      if (sess && PM.has(r.key) && x != null) { const a = sess.pm[r.key] || (sess.pm[r.key] = [x, 0, 0, x]); a[0] = Math.min(a[0], x); a[1] += x; a[2]++; a[3] = Math.max(a[3], x); }
+      if (sess && c.g && PM.has(r.key) && x != null) { const a = sess.pm[r.key] || (sess.pm[r.key] = [x, 0, 0, x]); a[0] = Math.min(a[0], x); a[1] += x; a[2]++; a[3] = Math.max(a[3], x); }
     }
-    const m = { t: 'tick', ver: 1, status: 'ok', age: 0, ts: t, i, v, mn, mx, av, game: c.g ? c.g.name : null, front: !!c.g, gameSince: c.g ? c.g.start : 0, pm: !!c.g, bnl: c.call || (c.gpu >= 95 ? 1 : c.thr >= 80 ? 2 : 3), rec: load('rec') || [] };
-    if (sess) { m.gs = {}; for (const k in sess.pm) { const a = sess.pm[k]; m.gs[k] = [a[0], Math.round(a[1] / a[2] * 100) / 100, a[3]]; } }
+    const m = { t: 'tick', ver: 1, status: 'ok', age: 0, ts: t, i, v, mn, mx, av, game: c.g ? c.g.name : null, front: !!c.g, gameSince: mg ? mg.start : 0, gameGap: mg ? mg.gap : 0, pm: !!c.g, bnl: c.call || (c.gpu >= 95 ? 1 : c.thr >= 80 ? 2 : 3), rec: load('rec') || [] };
+    if (sess && c.g) { m.gs = {}; for (const k in sess.pm) { const a = sess.pm[k]; m.gs[k] = [a[0], Math.round(a[1] / a[2] * 100) / 100, a[3]]; } }
     post(m);
+    // (the sessions popup open: the game in progress every 5 s, and at its start or end at once, then the log, as the app)
+    if (liveOn && (t % 5 === 0 || !!c.g !== liveWas)) { post({ t: 'gameNow', s: liveLine(t) }); if (!!c.g !== liveWas) post({ t: 'games', log: gamesLog() }); }
+    liveWas = !!c.g;
   }
   function sparks(keys) {
     const t = nowS(), out = {};
@@ -315,6 +378,7 @@
         tick();
         break;
       }
+      case 'gamesLive': liveOn = !!m.on; if (liveOn) post({ t: 'gameNow', s: liveLine(nowS()) }); break;   // the sessions popup opened or closed
       case 'sub': {
         // (like the app: a cell new to the cells gets its 15 min, also when its reading was a Storage row before)
         const cells = m.cells || [], fresh = cells.filter(k => !subs.has(k));
@@ -325,8 +389,8 @@
       case 'hist': if (typeof m.key === 'string') post(hist(m.key, m.range)); break;
       case 'alerts': post({ t: 'alerts', log: load('alertsCleared') ? '' : alertsLog }); break;
       case 'alerts:clear': keep('alertsCleared', true); post({ t: 'alerts', log: '' }); break;
-      case 'games': post({ t: 'games', log: gamesLog() }); break;
-      case 'games:clear': keep('gamesCleared', true); keep('own', []); post({ t: 'games', log: '' }); break;
+      case 'games': setTimeout(() => post({ t: 'games', log: gamesLog() }), 0); break;   // (after the gameNow the popup asks for with it, as the app's)
+      case 'games:clear': clears.push(nowS()); keep('gamesCleared', clears.slice(-20)); keep('own', []); post({ t: 'games', log: '' }); break;
       case 'rec': {   // your own sessions, recorded from the made-up readings
         const rec = load('rec') || [], at = rec.findIndex(x => x[0] === m.start), t = nowS();
         if (m.act === 'start' && rec.length < 8 && !rec.some(x => x[0] === t)) rec.push([t, String(m.name || 'Session').slice(0, 60)]);
@@ -341,7 +405,7 @@
       }
       case 'gedit': {
         const k = m.start + '|' + m.end + '|' + m.game, own = load('own') || [], i = own.findIndex(s => sid(s) === k);
-        if (m.act === 'del') { if (i >= 0) own.splice(i, 1); else keep('gone', (load('gone') || []).concat([k])); }
+        if (m.act === 'del') { if (i >= 0) own.splice(i, 1); else { goneSet.add(k); keep('gone', (load('gone') || []).concat([k])); } }
         if (m.act === 'name' && i >= 0 && m.name) own[i].name = String(m.name).slice(0, 60);
         keep('own', own); post({ t: 'games', log: gamesLog() });
         break;
