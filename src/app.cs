@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.5.2.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.5.2.0")]
+[assembly: System.Reflection.AssemblyVersion("1.5.3.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.5.3.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.5.2";
+    public const string Version = "1.5.3";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -53,10 +53,13 @@ static class Disk
     public static void SwapLines(string path, IEnumerable<string> lines) { Swap(path, string.Concat(lines.Select(l => l + "\r\n"))); }
     public static void Append(string path, string text)
     {
-        var b = Utf8.GetBytes(text);
-        using (var fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, 1))   // (unbuffered: nothing left to write after a cut)
+        using (var fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete, 1))   // (unbuffered: nothing left to write after a cut)
         {
             long at = fs.Seek(0, SeekOrigin.End);
+            // a last line cut short (power lost or a blue screen right after a write) ends here first, so the new
+            // text isn't glued to it and lost with it
+            if (at > 0) { fs.Seek(at - 1, SeekOrigin.Begin); int e = fs.ReadByte(); if (e == '\r') text = "\n" + text; else if (e != '\n') text = "\r\n" + text; fs.Seek(at, SeekOrigin.Begin); }
+            var b = Utf8.GetBytes(text);
             try { fs.Write(b, 0, b.Length); }
             catch { try { fs.SetLength(at); } catch { } throw; }
         }
@@ -119,6 +122,7 @@ class HwSource : Source
     byte[] sbuf = new byte[0], rbuf = new byte[0];
     ulong idHash; long namesAt;
     static readonly Encoding Ansi = Encoding.GetEncoding(1252);
+    static double Fin(double v) { return double.IsInfinity(v) ? double.NaN : v; }
 
     public override void Poll()
     {
@@ -157,8 +161,11 @@ class HwSource : Source
                 for (int i = 0; i < rCount; i++)
                 {
                     int o = i * (int)rSize;
-                    Values[i] = BitConverter.ToDouble(rbuf, o + 284); Min[i] = BitConverter.ToDouble(rbuf, o + 292);
-                    Max[i] = BitConverter.ToDouble(rbuf, o + 300); Avg[i] = BitConverter.ToDouble(rbuf, o + 308);
+                    // (an infinite value, a division by zero in a custom sensor or a PresentMon reading with no frames, is
+                    // no reading: kept, it would turn the page's messages and a game's report line into text that
+                    // isn't JSON)
+                    Values[i] = Fin(BitConverter.ToDouble(rbuf, o + 284)); Min[i] = Fin(BitConverter.ToDouble(rbuf, o + 292));
+                    Max[i] = Fin(BitConverter.ToDouble(rbuf, o + 300)); Avg[i] = Fin(BitConverter.ToDouble(rbuf, o + 308));
                 }
                 PmProc = null;
                 if (pmSensor >= 0 && pmSensor < sCount)
@@ -723,7 +730,7 @@ class History
     // once a second; moreKeys / more: readings only the history keeps (not in the catalog), NaN for none
     public void Sample(Source src, string[] moreKeys = null, double[] more = null)
     {
-        if (held && Source.Unix() >= retryAt) Load();
+        if (held && (Source.Unix() >= retryAt || retryAt - Source.Unix() > 60)) Load();   // (or the clock set back)
         if (moreKeys != null) foreach (var k in moreKeys) { Track t; if (!tracks.TryGetValue(k, out t)) tracks[k] = t = new Track(); t.Share = true; }
         if (src.Version != version)
         {
@@ -738,8 +745,19 @@ class History
         }
         long now = Source.Unix();
         int si = (int)(now % SecLen), minute = (int)(now / 60), ten = (int)(now / 600);
-        if (minute != curMin) { foreach (var t in tracks.Values) CloseMin(t); if (curMin >= 0) minAt[curMin % MinLen] = curMin; curMin = minute; }
-        if (ten != curTen) { foreach (var t in tracks.Values) CloseTen(t); if (curTen >= 0) tenAt[curTen % TenLen] = curTen; curTen = ten; }
+        // (the clock set back a little: the seconds lived again go into the minute and block in progress, not over an older
+        // one; set back further: what was in progress is dropped, the slots go on from the new clock)
+        bool bigBack = curMin >= 0 && curMin - minute > 5;
+        if (minute != curMin && (minute > curMin || curMin < 0 || bigBack))
+        {
+            foreach (var t in tracks.Values) { if (bigBack) { t.MSum = 0; t.MCnt = 0; t.MPeak = double.MinValue; } else CloseMin(t); }
+            if (curMin >= 0 && !bigBack) minAt[curMin % MinLen] = curMin; curMin = minute;
+        }
+        if (ten != curTen && (ten > curTen || curTen < 0 || bigBack))
+        {
+            foreach (var t in tracks.Values) { if (bigBack) { t.TSum = 0; t.TCnt = 0; t.TPeak = double.MinValue; } else CloseTen(t); }
+            if (curTen >= 0 && !bigBack) tenAt[curTen % TenLen] = curTen; curTen = ten;
+        }
         foreach (var t in tracks.Values) t.Sec[si] = float.NaN;
         if (src.Status == "ok")
             for (int i = 0; i < byIndex.Length && i < src.Values.Length; i++)
@@ -1172,10 +1190,14 @@ class Alerts
         return p[p.Length - 1][1];
     }
 
+    long lastNow;
     public void Tick(Source src, Dictionary<string, int> index)
     {
         if (src.Status != "ok") return;   // no readings, no verdicts (the host marks a longer outage)
         long now = Source.Unix();
+        // the clock set back (a time sync): a hold keeps the time it has run
+        if (lastNow - now > 1) foreach (var st in state.Values) if (st.Since > 0) st.Since += now - lastNow;
+        lastNow = now;
         foreach (var r in rules)
         {
             int i;
@@ -1222,7 +1244,7 @@ class Alerts
             }
             St s;
             if (!state.TryGetValue(r.Id, out s)) { s = new St(); state[r.Id] = s; }
-            if (raw > 0) { if (s.Since == 0) s.Since = now; } else s.Since = 0;
+            if (raw > 0) { if (s.Since == 0 || s.Since > now) s.Since = now; } else s.Since = 0;   // (the clock set back: the hold counts from the step)
             // an episode already open goes on at its level while the value is past a line, even when a calm second
             // restarted the hold (only a new episode waits for the hold; a step up to red inside one that has lasted it
             // counts at once): a value hovering on its line is one episode, not OK and YELLOW over and over
@@ -1537,6 +1559,7 @@ class Games
     static readonly Regex NotGameExe = new Regex(@"launcher|leagueclient|crash(report|handler|pad|sender)|report|redist|setup|^unins|helper|anticheat|battleye|beservice|prereq|bootstrap|boot(64)?$|updater|overlay|dxsetup|cefprocess|webhelper|qtwebengine|browser|diagnose|installer|config(64)?$|blizzarderror|capturepro|^upc$|^battle\.net|^eadesktop$|^eabackgroundservice$|^galaxyclient|^riotclient|^playnite|^heroic$|^(msedge|chrome|firefox|opera|brave|vivaldi|discord|steam|hyp|spotify|vlc|kodi|xboxpcapp)$|^plex( ?media ?(player|server)| ?htpc)?$|^lghub(_\w+)?$", RegexOptions.IgnoreCase);
     readonly object lk = new object();
     readonly Dictionary<int, string> paths = new Dictionary<int, string>();
+    HashSet<int> hotPids = new HashSet<int>();   // the last look's processes in a game folder
     List<KeyValuePair<string, string>> roots; DateTime rootsAt = DateTime.MinValue;
     System.Threading.Timer timer; int busy, pollNo;
     public string Game; public bool InFront; public long Since, Seen;   // the session (it ends 5 s after the game closes)
@@ -1548,7 +1571,12 @@ class Games
     public volatile int GamePid;            // that process (0: none), whose frames HW Deck counts (Frames)
     long otherSince;                        // since when another game is the one in front
     Report rep;
-    readonly string logPath, curPath, custPath;
+    // curPath / custPath: where this run saves the session in progress and your own: the main files, or a spare beside
+    // them (games.current.2.json, .3) while another program holds one; curUnread / custUnread: files held at the start,
+    // read once free; stale: files whose sessions are logged or taken but whose delete failed, tried again
+    readonly string logPath, pendPath, curMain, custMain;   // pendPath: session lines games.log refused, until they go in
+    string curPath, custPath;
+    readonly List<string> curUnread = new List<string>(), custUnread = new List<string>(), stale = new List<string>();
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
     readonly Action<string> log;
     int headVersion = -1; List<string> head = new List<string>();
@@ -1556,12 +1584,157 @@ class Games
     string resumeGame; long resumeStart, resumeLast;   // a session the last run left open, picked up if its game still runs
     public Games(string dir, Action<string> log)
     {
-        logPath = Path.Combine(dir, "games.log"); curPath = Path.Combine(dir, "games.current.json"); custPath = Path.Combine(dir, "games.custom.json"); this.log = log;
-        try { if (File.Exists(curPath)) rep = json.Deserialize<Report>(File.ReadAllText(curPath)); } catch { rep = null; }
-        if (rep != null) { if (rep.Last <= 0) rep.Last = rep.Start + rep.Secs; resumeGame = rep.Game; resumeStart = rep.Start; resumeLast = rep.Last; }
+        logPath = Path.Combine(dir, "games.log"); curPath = curMain = Path.Combine(dir, "games.current.json"); custPath = custMain = Path.Combine(dir, "games.custom.json"); this.log = log;
+        pendPath = logPath + ".pending";
+        TakePending();
+        var read = new List<string>();
+        foreach (var f in new[] { curMain, Spare(curMain, 2), Spare(curMain, 3) })
+        {
+            if (!File.Exists(f)) continue;
+            string t = ReadHeld(f);
+            if (t == null && File.Exists(f)) { curUnread.Add(f); continue; }
+            read.Add(f); rep = Later(rep, Fresh(ParseCur(t)));
+        }
+        curPath = new[] { curMain, Spare(curMain, 2), Spare(curMain, 3) }.First(f => !curUnread.Contains(f) || f.EndsWith(".3.json"));
+        if (curUnread.Count > 0) log(Path.GetFileName(curUnread[0]) + " is held by another program: saving to " + Path.GetFileName(curPath) + " until it is free");
+        // (saved first, then the other files go: a crash in between leaves a copy twice, never none)
+        // (a session ahead of the clock: the clock is behind since the last run, or was ahead then; either way it is
+        // logged at its own times, not moved, and its game, still running, starts a new one)
+        if (rep != null && rep.Last - Source.Unix() > 5) { LogLeft(rep); rep = null; }
+        if (rep == null || SaveCur()) foreach (var f in read) if (f != curPath || rep == null) Gone(f);
+        if (rep != null) { resumeGame = rep.Game; resumeStart = rep.Start; resumeLast = rep.Last; }
         LoadCustom();
         timer = new System.Threading.Timer(delegate { if (System.Threading.Interlocked.Exchange(ref busy, 1) == 1) return; try { Poll(); } catch (Exception ex) { log("games: " + ex.Message); } finally { busy = 0; } }, null, 2500, 3000);
     }
+    // a file another program holds for a moment (a sync or backup tool at logon) isn't damage: a few tries; null:
+    // still held (or gone)
+    static string ReadHeld(string p, int tries = 5)
+    {
+        for (int i = 0; i < tries; i++)
+            try { return File.ReadAllText(p); }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+            catch (IOException) { if (i + 1 < tries) System.Threading.Thread.Sleep(200); }
+            catch (UnauthorizedAccessException) { if (i + 1 < tries) System.Threading.Thread.Sleep(200); }
+        return null;
+    }
+    static string Spare(string p, int n) { return p.Substring(0, p.Length - 5) + "." + n + ".json"; }   // games.current.json: games.current.2.json
+    Report ParseCur(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        Report r; try { r = json.Deserialize<Report>(text); } catch { return null; }
+        if (r == null || r.Start <= 0) return null;
+        Fill(r); if (r.Last <= 0) r.Last = r.Start + r.Secs;
+        return r;
+    }
+    // a session file games.log already has to its last second (a file whose delete failed after its line went in): none
+    Report Fresh(Report r) { return r == null || Forgotten(r) || LoggedThrough(r.Game, r.Start) >= r.Last ? null : r; }
+    // sessions deleted or cleared in this run: a file read later (held, or not deletable) doesn't bring them back
+    readonly HashSet<string> forgotten = new HashSet<string>(); long clearedAt;
+    bool Forgotten(Report r) { return forgotten.Contains(r.Game + "|" + r.Start) || (clearedAt > 0 && r.Last <= clearedAt); }
+    // two sessions left open (in two of the files): the later goes on, the other is logged at its last second (the same
+    // session saved in both: its latest save)
+    Report Later(Report a, Report b)
+    {
+        if (a == null) return b; if (b == null) return a;
+        if (a.Game == b.Game && a.Start == b.Start) return a.Last >= b.Last ? a : b;
+        Report later = a.Last >= b.Last ? a : b, other = later == a ? b : a;
+        LogLeft(other);
+        return later;
+    }
+    void LogLeft(Report o) { if (o.Last - o.Start - o.Gaps.Sum(g => Math.Max(0, g[1] - g[0])) >= 60) Write(o, o.Last); }
+    // games.log's lines (and those waiting to go in) for one session: its game and start, with their ends
+    List<KeyValuePair<string, long>> SameStart(string game, long start)
+    {
+        var found = new List<KeyValuePair<string, long>>();
+        string key = "\"start\":" + start.ToString(System.Globalization.CultureInfo.InvariantCulture) + ",";
+        IEnumerable<string> lines = pending.ToList();
+        var have = LogLines(); if (have != null) lines = have.Concat(lines);
+        foreach (var l in lines)
+        {
+            if (l.IndexOf(key, StringComparison.Ordinal) < 0) continue;
+            try
+            {
+                var d = json.DeserializeObject(l) as Dictionary<string, object>;
+                if (d != null && d.ContainsKey("game") && d.ContainsKey("end") && (d["game"] as string) == game && Convert.ToInt64(d["start"]) == start)
+                    found.Add(new KeyValuePair<string, long>(l, Convert.ToInt64(d["end"])));
+            }
+            catch { }
+        }
+        return found;
+    }
+    // games.log's lines, read with the sharing its append uses; none for no file; null: it can't be read now
+    List<string> LogLines()
+    {
+        try
+        {
+            if (!File.Exists(logPath)) return new List<string>();
+            var l = new List<string>();
+            using (var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var sr = new StreamReader(fs, new UTF8Encoding(false))) { string x; while ((x = sr.ReadLine()) != null) l.Add(x); }
+            return l;
+        }
+        catch { return null; }
+    }
+    // a line's game, start and end (null: not a session line)
+    Tuple<string, long, long> Key(string line)
+    {
+        try
+        {
+            var d = json.DeserializeObject(line) as Dictionary<string, object>;
+            if (d == null || !d.ContainsKey("game") || !d.ContainsKey("start") || !d.ContainsKey("end")) return null;
+            return Tuple.Create(d["game"] as string, Convert.ToInt64(d["start"]), Convert.ToInt64(d["end"]));
+        }
+        catch { return null; }
+    }
+    long LoggedThrough(string game, long start) { var f = SameStart(game, start); return f.Count > 0 ? f.Max(x => x.Value) : -1; }
+    // a file whose session is logged or taken: deleted, or (held) emptied, or tried again later
+    void Gone(string f)
+    {
+        try { if (File.Exists(f) && (File.GetAttributes(f) & FileAttributes.ReadOnly) != 0) File.SetAttributes(f, FileAttributes.Normal); } catch { }   // (a restored copy can come back read-only)
+        try { File.Delete(f); stale.Remove(f); return; } catch { }
+        try { Disk.Swap(f, ""); } catch { }   // (an empty file is no session)
+        if (File.Exists(f) && !stale.Contains(f)) stale.Add(f);
+    }
+    // every 30 s: a file held at the start is read once free (a session the last run left open is logged at its last
+    // second: its game, if still running, has a session of its own by now; your own go on, or are logged), this run
+    // goes back to the main file, and the files left over go
+    void RetryHeld()
+    {
+        foreach (var f in curUnread.ToList())
+        {
+            string t = ReadHeld(f, 1);
+            if (t == null && File.Exists(f)) continue;
+            curUnread.Remove(f);
+            var old = ParseCur(t);
+            if (old != null && !(rep != null && rep.Game == old.Game && rep.Start == old.Start)) { old = Fresh(old); if (old != null) LogLeft(old); }
+            if (f != curPath && f != curMain) Gone(f);   // (the main file is written next, or goes then)
+            log(Path.GetFileName(f) + " is free again" + (old != null ? ": the session it held is logged" : ""));
+        }
+        if (curPath != curMain && !curUnread.Contains(curMain))
+        {
+            string was = curPath; curPath = curMain;
+            if (rep == null) { Gone(curMain); Gone(was); } else if (SaveCur()) Gone(was); else curPath = was;
+        }
+        foreach (var f in custUnread.ToList())
+        {
+            string t = ReadHeld(f, 1);
+            if (t == null && File.Exists(f)) continue;
+            custUnread.Remove(f);
+            if (t != null) TakeCustom(t, f);
+            if (f != custPath && f != custMain) Gone(f);
+            log(Path.GetFileName(f) + " is free again");
+        }
+        if (custPath != custMain && !custUnread.Contains(custMain))
+        {
+            string was = custPath; custPath = custMain;
+            if (SaveCustom()) Gone(was); else custPath = was;
+        }
+        else if (custom.Count > 0) SaveCustom();
+        foreach (var f in stale.ToList()) Gone(f);
+        if (pendHeld.Count > 0) TakePending();
+    }
+    bool SaveCur() { var r = rep; if (r == null) return false; try { Disk.Swap(curPath, json.Serialize(r)); stale.Remove(curPath); return true; } catch { return false; } }
     public string LogPath { get { return logPath; } }
     public long LastFed { get { var r = rep; return r != null ? r.Last : 0; } }   // the game session's last counted second (0: none)
 
@@ -1592,24 +1765,30 @@ class Games
             if (++pollNo % 20 == 0) paths.Clear();   // pids get reused: re-resolve every minute
             var devices = Procs.Devices();
             int fg = Procs.Foreground();
-            var alive = new HashSet<int>();
+            var alive = new HashSet<int>(); var inRoot = new HashSet<int>();
             foreach (var p in Process.GetProcesses())
             {
                 int pid = p.Id; p.Dispose(); alive.Add(pid);
                 string path;
-                if (!paths.TryGetValue(pid, out path)) { path = Procs.ImagePath(pid, devices); paths[pid] = path; }
-                if (path == null || NotGameExe.IsMatch(Path.GetFileNameWithoutExtension(path))) continue;
+                // (a pid freed and given to a new process between two looks stays alive in the cache: the window in
+                // front and anything in a game folder are looked up again every time)
+                if (!paths.TryGetValue(pid, out path) || pid == fg || hotPids.Contains(pid)) { path = Procs.ImagePath(pid, devices); paths[pid] = path; }
+                if (path == null) continue;
                 string lp = path.ToLowerInvariant(), name = null;
                 foreach (var r in roots) if (lp.StartsWith(r.Key)) { name = r.Value; break; }
                 if (name == null) continue;
+                inRoot.Add(pid);
+                if (NotGameExe.IsMatch(Path.GetFileNameWithoutExtension(path))) continue;
                 if (pid == fg) { fgName = name; fgExe = Path.GetFileName(path); fgPid = pid; }
                 if (!names.ContainsKey(name)) { names[name] = Path.GetFileName(path); pids[name] = pid; }
             }
             foreach (var pid in paths.Keys.Where(k => !alive.Contains(k)).ToList()) paths.Remove(pid);
+            hotPids = inRoot;
         }
         long now = Source.Unix();
         lock (lk)
         {
+            if (lastNow - now > 5) return;   // (the clock set back and Sample hasn't moved the times back yet: the next look)
             // (tests: the made-up game as it is now, read under the lock a test's change takes too)
             if (pretend) { names.Clear(); pids.Clear(); fgName = fgExe = null; fgPid = 0; if (pGame != null) { names[pGame] = "game.exe"; if (pFront) { fgName = pGame; fgExe = "game.exe"; } } }
             // the session's game stays the game while it runs (a tool beside it doesn't split the session on every
@@ -1630,7 +1809,7 @@ class Games
             if (found != null)
             {
                 if (Game != null && (found != Game || now - Seen > 3600)) Close();
-                if (Game == null) { Game = found; Since = found == resumeGame && now - resumeLast <= 600 ? resumeStart : found == doneGame && now - doneEnd <= MergeWithin ? doneStart : now; }
+                if (Game == null) { Game = found; Since = found == resumeGame && now - resumeLast <= 600 ? resumeStart : found == doneGame && now >= doneEnd && now - doneEnd <= MergeWithin ? doneStart : now; }
                 Seen = now;
             }
             else if (Game != null && now - Seen > EndAfter) Close();   // gone 5 s: it ends (back within 5 minutes, it goes on: Reopen)
@@ -1640,6 +1819,7 @@ class Games
     }
     void Close() { Game = null; }   // under lk; the report closes on the next Sample
 
+    static readonly Regex TjRe = new Regex(@"distance to tj ?max", RegexOptions.IgnoreCase);
     // the readings a report follows besides the gated cells: picked by their HWiNFO names
     static readonly string[][] Heads = {
         new[] { "CPU temp", "temp", @"^(CPU \(Tctl/Tdie\)|CPU Package|Core Max|CPU \(Tctl\)|CPU Die \(average\))$", "" },
@@ -1734,22 +1914,36 @@ class Games
     {
         if (!polled || rep == null || rep.Pm == null) return null;   // (before the first look: still the last run's)
         return rep.Pm.Where(kv => kv.Value != null && kv.Value.Length == 4 && kv.Value[2] > 0)
-                     .ToDictionary(kv => kv.Key, kv => (object)new object[] { Math.Round(kv.Value[0], 2), Math.Round(kv.Value[1] / kv.Value[2], 2), Math.Round(kv.Value[3], 2) });
+                     .ToDictionary(kv => kv.Key, kv => (object)new object[] { Fin(kv.Value[0], 2), Fin(kv.Value[1] / kv.Value[2], 2), Fin(kv.Value[3], 2) });
     }
+    // a number for the page or games.log: rounded, never NaN or infinite (a file from an older version can hold one)
+    static object Fin(double v, int dec) { return double.IsNaN(v) || double.IsInfinity(v) ? null : (object)Math.Round(v, dec); }
+    static List<double?> Fin(List<double?> l) { return l == null ? null : l.Select(v => v.HasValue && (double.IsNaN(v.Value) || double.IsInfinity(v.Value)) ? null : v).ToList(); }
     public void Sample(Source src, Dictionary<string, int> index, Dictionary<string, Lines> gated, Alerts alerts, bool frontNow, bool pmOk, HashSet<string> pmKeys, char call, char live)
     {
         var hot = alerts.Hot.ToArray(); alerts.Hot.Clear();
         int fresh = alerts.NewAlerts; alerts.NewAlerts = 0;
+        // the clock set back (a time sync): every time kept moves back with it, so the sessions go on with the time they
+        // ran (Poll stands aside until this is done: lastNow under the lock)
+        long now0 = Source.Unix();
+        if (lastNow - now0 > 5) Shift(now0 - lastNow);
+        lock (lk) lastNow = now0;
         if (!polled) return;
         string game; bool front; long since, seen;
         lock (lk) { game = Game; front = InFront && frontNow; since = Since; seen = Seen; }
         // the PC slept (or the app stalled) for over 10 minutes: a session ends at its last second, not after the night;
         // a game still running starts a new one now
-        long now0 = Source.Unix();
+        for (int i = custom.Count - 1; i >= 0; i--)
+        {
+            var b = custom[i];   // (the clock set back past its last second: a session you started goes on, moved back with it)
+            if (b.Last > 0 && b.Last - now0 > 5) { long d = now0 - b.Last; b.Start += d; b.From += d; b.Last = now0; foreach (var g in b.Gaps) { g[0] += d; g[1] += d; } }
+        }
         for (int i = custom.Count - 1; i >= 0; i--)
             if (custom[i].Last > 0 && now0 - custom[i].Last > 600) { var c = custom[i]; custom.RemoveAt(i); if (c.Secs >= 10) Write(c, c.Last); SaveCustom(); }
         if (rep != null && rep.Last > 0 && now0 - rep.Last > 600) { Finish(); lock (lk) { if (Game != null) { Since = now0; since = now0; } } }
         if (pending.Count > 0) WritePending();
+        if (dropLater.Count > 0 && now0 % 5 == 0) DropLater();
+        if ((curUnread.Count > 0 || custUnread.Count > 0 || stale.Count > 0 || pendHeld.Count > 0 || curPath != curMain || custPath != custMain) && now0 % 30 == 0) RetryHeld();
         if (rep != null && (game == null || rep.Start != since)) Finish();
         if (game != null)
         {
@@ -1763,11 +1957,11 @@ class Games
             if (reopened)
             {
                 reopened = false;
-                try { Disk.Swap(curPath, json.Serialize(rep)); } catch { }
-                if (reopenLine != null && !pending.Remove(reopenLine)) { try { DropLine(reopenLine); } catch (Exception ex) { log("games: the merged session's line stayed: " + ex.Message); } }
+                SaveCur();
+                if (reopenLine != null && !pending.Remove(reopenLine)) { try { DropLine(reopenLine); } catch (Exception ex) { log("games: the merged session's line stayed (tried again): " + ex.Message); dropLater.Add(reopenLine); } }
                 reopenLine = null; LogChanged = true;
             }
-            if (rep.Secs != secs && rep.Secs % 60 == 0) { try { Disk.Swap(curPath, json.Serialize(rep)); } catch { } }
+            if (rep.Secs != secs && rep.Secs % 60 == 0) SaveCur();
         }
         // your own sessions, beside the game's, count every second like a game in front: the fps of whatever is in front
         // (PresentMon follows it) and the bottleneck's call of the moment; Front is the time a game was in front
@@ -1828,7 +2022,8 @@ class Games
                 string hn; bool main = headName.TryGetValue(key, out hn);
                 Lines ln;
                 string name = main ? hn : gated.TryGetValue(key, out ln) && !string.IsNullOrWhiteSpace(ln.Name) ? ln.Name.Trim() : r.Label;
-                rep.Names[key] = new[] { name, r.Unit, main ? "m" : "" };
+                bool tj = TjRe.IsMatch(r.Label ?? "") || TjRe.IsMatch(r.Orig ?? "");   // (how far under the throttle point: not a temperature that got hot)
+                rep.Names[key] = tj ? new[] { name, r.Unit, main ? "m" : "", "tj" } : new[] { name, r.Unit, main ? "m" : "" };
             }
             else if (it.Length < 4) { var x = new double[4]; Array.Copy(it, x, it.Length); rep.Items[key] = it = x; }
             it[0] += v; it[1]++; if (v > it[2]) it[2] = v;
@@ -1857,7 +2052,7 @@ class Games
     {
         var r = rep; rep = null;
         lock (lk) { if (r != null && r.Game == resumeGame && r.Start == resumeStart) resumeGame = null; }   // (logged: the game starting again later is a new session)
-        try { File.Delete(curPath); } catch { }
+        Gone(curPath);
         if (r == null) return;
         // it ended when the game was last seen, or (a run that quit mid-game, a PC that slept) at its last sample
         long end = r.Last > r.Start ? r.Last : Source.Unix();
@@ -1866,7 +2061,7 @@ class Games
         done = r; doneLine = null; lock (lk) { doneGame = r.Game; doneStart = r.Start; doneEnd = end; }
         LogChanged = true;   // (the page's list: the session in progress ended, written or not)
         Fill(r);
-        if (end - r.Start - r.Gaps.Sum(g => g[1] - g[0]) < 60) return;   // under a minute of play (its breaks aren't) isn't a session worth a line
+        if (end - r.Start - r.Gaps.Sum(g => Math.Max(0, g[1] - g[0])) < 60) return;   // under a minute of play (its breaks aren't) isn't a session worth a line
         doneLine = Write(r, end);
     }
     // the same game started again within 5 minutes of its session's end: that session goes on (its line comes out of
@@ -1878,17 +2073,52 @@ class Games
         lock (lk) { end = doneEnd; doneGame = null; }
         if (d == null || d.Game != game || d.Start != since) return null;
         Fill(d);
-        d.Gaps.Add(new[] { end, Source.Unix() });
+        long nowR = Source.Unix(); d.Gaps.Add(new[] { Math.Min(end, nowR), nowR });
         // (its line comes out only once the session is on disk again, after its first second: Sample, reopenLine)
         reopened = true; reopenLine = line;
         return d;
     }
+    long lastNow;
+    // the clock set back by -st seconds: the sessions (in progress, just ended, your own), the times the poller keeps
+    // and the last start move back with it
+    void Shift(long st)
+    {
+        Action<Report> mv = r => { if (r == null) return; r.Start += st; r.From += st; r.Last += st; if (r.Gaps != null) foreach (var g in r.Gaps) { g[0] += st; g[1] += st; } };
+        mv(rep); mv(done); foreach (var c in custom) mv(c);
+        lock (lk)
+        {
+            if (Since > 0) Since += st; if (Seen > 0) Seen += st; if (doneStart > 0) doneStart += st; if (doneEnd > 0) doneEnd += st; if (otherSince > 0) otherSince += st;
+            if (resumeStart > 0) resumeStart += st; if (resumeLast > 0) resumeLast += st;
+        }
+        if (lastStart > 0) lastStart += st;
+        log("the clock was set back " + (-st) + " s: the game sessions moved back with it");
+    }
     bool reopened; string reopenLine;
+    // merged sessions' old lines the log held when they were to come out, tried again every 5 s (one still waiting
+    // to be written just leaves the queue)
+    readonly List<string> dropLater = new List<string>();
+    void DropLater()
+    {
+        for (int i = dropLater.Count - 1; i >= 0; i--)
+        {
+            if (pending.Remove(dropLater[i])) { dropLater.RemoveAt(i); continue; }
+            try { DropLine(dropLater[i]); dropLater.RemoveAt(i); LogChanged = true; } catch { }
+        }
+    }
     // a session deleted or the log cleared: what just ended is not taken back by a merge
     public void Forget(long start = 0, string game = null)
     {
+        // (what waits to go into games.log for those sessions goes too: it would bring them back; so would a file read later)
+        if (game == null) clearedAt = Source.Unix(); else forgotten.Add(game + "|" + start);
+        foreach (var f in stale.ToList()) Gone(f);
+        Func<string, bool> theirs = l => { if (game == null) return true; var k = Key(l); return k != null && k.Item1 == game && k.Item2 == start; };
+        pending.RemoveAll(l => theirs(l)); dropLater.RemoveAll(l => theirs(l));
+        if (game == null) foreach (var f in pendHeld) if (!pendDrop.Contains(f)) pendDrop.Add(f);   // (a held games.log.pending: dropped once read)
+        if (pending.Count == 0) PendDone(); else { try { Disk.SwapLines(PendFile(), pending); } catch { } }
         var d = done;
-        if (d == null || (game != null && (d.Game != game || d.Start != start))) return;
+        // (its line's start too: a clock set back since moved the kept session, not its line)
+        var dk = doneLine != null ? Key(doneLine) : null;
+        if (d == null || (game != null && (d.Game != game || (d.Start != start && !(dk != null && dk.Item2 == start))))) return;
         done = null; doneLine = null;
         lock (lk) { doneGame = null; if (Game != null && rep == null && Since == d.Start) Since = Source.Unix(); }   // (its game back already: a new session, not the deleted one's start)
     }
@@ -1904,10 +2134,10 @@ class Games
     {
         get
         {
-            var r = rep; if (r != null) return r.Gaps != null ? r.Gaps.Sum(g => g[1] - g[0]) : 0;
+            var r = rep; if (r != null) return r.Gaps != null ? r.Gaps.Sum(g => Math.Max(0, g[1] - g[0])) : 0;
             // (a merge's first second: the session goes on before its report is taken back, its break already counts out)
             var d = done; long since, end; string g0; lock (lk) { since = Since; end = doneEnd; g0 = Game; }
-            return d != null && g0 != null && d.Start == since ? (d.Gaps != null ? d.Gaps.Sum(g => g[1] - g[0]) : 0) + Math.Max(0, Source.Unix() - end) : 0;
+            return d != null && g0 != null && d.Start == since ? (d.Gaps != null ? d.Gaps.Sum(g => Math.Max(0, g[1] - g[0])) : 0) + Math.Max(0, Source.Unix() - end) : 0;
         }
     }
     public List<long[]> GapsNow { get { var r = rep; return r != null && r.Gaps != null ? r.Gaps.ToList() : new List<long[]>(); } }
@@ -1925,6 +2155,11 @@ class Games
     // a session's line in games.log (returned)
     string Write(Report r, long end)
     {
+        // one line per session (its game and start): an earlier save of it (a crash in a merge, a file whose delete
+        // failed) comes out; one that ends as late or later is the newer: nothing to write
+        var same = SameStart(r.Game, r.Start);
+        foreach (var x in same) if (x.Value >= end) return x.Key;
+        foreach (var x in same) if (!pending.Remove(x.Key)) { try { DropLine(x.Key); } catch { if (!dropLater.Contains(x.Key)) dropLater.Add(x.Key); } }
         var line = json.Serialize(Line(r, end));
         pending.Add(line);
         WritePending();
@@ -1935,7 +2170,7 @@ class Games
     {
         Fill(r);
         if (r.MinAt >= 0) Minute(r, -1);   // the last minute into the timeline
-        Func<double, int, object> avg = (sum, n) => n > 0 ? (object)Math.Round(sum / n) : null;
+        Func<double, int, object> avg = (sum, n) => n > 0 ? Fin(sum / n, 0) : null;
         Func<double, object> num = v => double.IsNaN(v) || double.IsInfinity(v) ? null : (object)v;
         // an item: name, unit, avg, max (all an older line has), its yellow and red lines, 1 for a main reading, the
         // scale of VRAM / RAM (used + free) and 1 for lines that warn below
@@ -1944,14 +2179,14 @@ class Games
             var nm = r.Names[kv.Key]; Lines ln; r.Ln.TryGetValue(kv.Key, out ln);
             bool main = nm.Length > 2 ? nm[2] == "m" : Heads.Any(h => h[0] == nm[0]);
             double tot = kv.Value.Length > 3 ? kv.Value[3] : 0;
-            return (object)new object[] { nm[0], nm[1], Math.Round(kv.Value[0] / Math.Max(1, kv.Value[1]), 1), Math.Round(kv.Value[2], 1),
-                                          ln != null ? num(ln.Y) : null, ln != null ? num(ln.R) : null, main ? 1 : 0, tot > 0 ? (object)Math.Round(tot, 1) : null, ln != null && ln.Below ? 1 : 0, kv.Key };
+            return (object)new object[] { nm[0], nm[1], Fin(kv.Value[0] / Math.Max(1, kv.Value[1]), 3), Fin(kv.Value[2], 3),
+                                          ln != null ? num(ln.Y) : null, ln != null ? num(ln.R) : null, main ? 1 : 0, tot > 0 ? Fin(tot, 1) : null, ln != null && ln.Below ? 1 : 0, kv.Key, nm.Length > 3 && nm[3] == "tj" ? 1 : 0 };
         }).ToList();
         var wl = new List<object>();
-        for (int i = 0; i < r.WarnNames.Count; i++) wl.Add(new object[] { r.WarnNames[i], r.WarnPeaks[i], r.WarnUnits[i] });
+        for (int i = 0; i < r.WarnNames.Count; i++) wl.Add(new object[] { r.WarnNames[i], i < r.WarnPeaks.Count ? Fin(r.WarnPeaks[i], 3) : null, i < r.WarnUnits.Count ? r.WarnUnits[i] : "" });
         var d = new Dictionary<string, object> { { "game", r.Game }, { "start", r.Start }, { "end", end }, { "from", r.From }, { "secs", r.Secs }, { "front", r.Front },
                                                  { "fps", avg(r.FpsSum, r.FpsN) }, { "low", avg(r.LowSum, r.LowN) }, { "items", items }, { "warns", r.Warns },
-                                                 { "g", r.G }, { "c", r.C }, { "f", r.F }, { "wl", wl }, { "tf", r.Tf }, { "tl", r.Tl }, { "tb", r.Tb }, { "tc", r.Tc } };
+                                                 { "g", r.G }, { "c", r.C }, { "f", r.F }, { "wl", wl }, { "tf", Fin(r.Tf) }, { "tl", Fin(r.Tl) }, { "tb", r.Tb }, { "tc", r.Tc }, { "p", 3 } };   // p: the decimals its items keep
         if (r.Custom == 1) d["custom"] = 1;
         if (r.Gaps.Count > 0) d["gaps"] = r.Gaps;
         return d;
@@ -1960,10 +2195,71 @@ class Games
     readonly List<string> pending = new List<string>();
     void WritePending()
     {
-        try { Disk.AppendLines(logPath, pending); pending.Clear(); }
-        catch (Exception ex) { if (pending.Count == 1) log("game report write failed (tried again): " + ex.Message); }
+        // (one line per session, judged by games.log as it is now: a line it already has as long or longer isn't added,
+        // an earlier, shorter one of the same session comes out; Write judged it too, maybe while the log couldn't be read)
+        var have = LogLines(); var blocked = new List<string>();
+        if (have != null)
+        {
+            var keys = have.Select(l => new { l, k = l.IndexOf("\"start\":", StringComparison.Ordinal) >= 0 ? Key(l) : null }).Where(x => x.k != null).ToList();
+            foreach (var line in pending.ToList())
+            {
+                var k = Key(line); if (k == null) continue;
+                var same = keys.Where(x => x.k.Item1 == k.Item1 && x.k.Item2 == k.Item2).ToList();
+                if (same.Any(x => x.k.Item3 >= k.Item3)) { pending.Remove(line); continue; }
+                // (an earlier line of it the log won't give up yet: not added beside it, it waits, on disk too)
+                foreach (var x in same) { try { DropLine(x.l); dropLater.Remove(x.l); LogChanged = true; } catch { blocked.Add(line); break; } }
+            }
+        }
+        var go = pending.Where(l => !blocked.Contains(l)).ToList();
+        if (pending.Count == 0) { PendDone(); return; }
+        if (go.Count == 0) { try { Disk.SwapLines(PendFile(), pending); } catch { } return; }
+        try { Disk.AppendLines(logPath, go); LogChanged = true; foreach (var l in go) pending.Remove(l); if (pending.Count == 0) PendDone(); else { try { Disk.SwapLines(PendFile(), pending); } catch { } } }
+        catch (Exception ex)
+        {
+            if (pending.Count == 1) log("game report write failed (tried again): " + ex.Message);
+            try { Disk.SwapLines(PendFile(), pending); } catch { }   // (on disk meanwhile: a quit or a crash before it goes in loses nothing)
+        }
     }
-    public void Flush() { if (rep != null) { try { Disk.Swap(curPath, json.Serialize(rep)); } catch { } } SaveCustom(); if (pending.Count > 0) WritePending(); }
+    // games.log.pending, or .pending.2 while the first is held unread (never written over before it is read)
+    readonly List<string> pendHeld = new List<string>(), pendDrop = new List<string>();   // pendDrop: held ones cleared meanwhile
+    string PendFile() { return pendHeld.Contains(pendPath) ? pendPath + ".2" : pendPath; }
+    void PendDone() { foreach (var f in new[] { pendPath, pendPath + ".2" }) if (!pendHeld.Contains(f) && File.Exists(f)) { try { File.Delete(f); } catch { } } }
+    // lines games.log refused at the last quit or crash: in now, once (one line per session, as Write)
+    void TakePending()
+    {
+        foreach (var f in new[] { pendPath, pendPath + ".2" })
+        {
+            if (!File.Exists(f)) { pendHeld.Remove(f); continue; }
+            string t = ReadHeld(f, pendHeld.Contains(f) ? 1 : 5);
+            if (t == null) { if (File.Exists(f) && !pendHeld.Contains(f)) { pendHeld.Add(f); log(Path.GetFileName(f) + " is held by another program: read once it is free"); } continue; }
+            pendHeld.Remove(f);
+            if (pendDrop.Remove(f)) { try { File.Delete(f); } catch { } continue; }   // (the sessions were cleared while it was held)
+            TakePendingLines(t.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries));
+        }
+        if (pending.Count > 0) { WritePending(); LogChanged = true; } else PendDone();
+    }
+    void TakePendingLines(string[] ls)
+    {
+        foreach (var l in ls.Where(x => !string.IsNullOrWhiteSpace(x)))
+        {
+            try
+            {
+                var d = json.DeserializeObject(l) as Dictionary<string, object>;
+                if (d == null || !d.ContainsKey("game") || !d.ContainsKey("start") || !d.ContainsKey("end")) continue;
+                string g = d["game"] as string; long st = Convert.ToInt64(d["start"]), en = Convert.ToInt64(d["end"]);
+                var same = SameStart(g, st);
+                if (same.Any(x => x.Value >= en)) continue;
+                foreach (var x in same) if (!pending.Remove(x.Key)) { try { DropLine(x.Key); } catch { if (!dropLater.Contains(x.Key)) dropLater.Add(x.Key); } }
+                pending.Add(l);
+            }
+            catch { }
+        }
+    }
+    public void Flush()
+    {
+        SaveCur(); SaveCustom(); DropLater();
+        if (pending.Count > 0) WritePending();
+    }
 
     // ---- sessions of your own: started and stopped by hand, named by you, any number at once beside a game's (all
     // on the form's thread). games.custom.json holds them while they run: a restart within 10 minutes goes on with
@@ -1973,13 +2269,28 @@ class Games
     readonly List<Report> custom = new List<Report>();
     void LoadCustom()
     {
-        if (!File.Exists(custPath)) return;
+        var read = new List<string>();
+        foreach (var f in new[] { custMain, Spare(custMain, 2), Spare(custMain, 3) })
+        {
+            if (!File.Exists(f)) continue;
+            string t = ReadHeld(f);
+            if (t == null && File.Exists(f)) { custUnread.Add(f); continue; }
+            read.Add(f); TakeCustom(t, f);
+        }
+        custPath = new[] { custMain, Spare(custMain, 2), Spare(custMain, 3) }.First(f => !custUnread.Contains(f) || f.EndsWith(".3.json"));
+        if (custUnread.Count > 0) log(Path.GetFileName(custUnread[0]) + " is held by another program: saving to " + Path.GetFileName(custPath) + " until it is free");
+        if (read.Count == 0) return;
+        if (SaveCustom()) foreach (var f in read) if (f != custPath) Gone(f);
+    }
+    void TakeCustom(string text, string from)
+    {
         List<Report> list;
-        try { list = json.Deserialize<List<Report>>(File.ReadAllText(custPath)) ?? new List<Report>(); }
+        if (string.IsNullOrWhiteSpace(text)) return;
+        try { list = json.Deserialize<List<Report>>(text) ?? new List<Report>(); }
         catch (Exception ex)   // (put aside, not deleted: its sessions can still be read by hand)
         {
-            log("games.custom.json can't be read: " + ex.Message);
-            try { File.Move(custPath, custPath + ".bad-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture)); } catch { }
+            log(Path.GetFileName(from) + " can't be read: " + ex.Message);
+            try { File.Move(from, from + ".bad-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture)); } catch { }
             return;
         }
         long now = Source.Unix();
@@ -1987,18 +2298,16 @@ class Games
         {
             r.Custom = 1; Fill(r);
             if (r.Last <= 0) r.Last = r.Start + r.Secs;
-            if (now - r.Last <= 600) custom.Add(r); else if (r.Secs >= 10) Write(r, r.Last);
+            if (custom.Any(c => c.Start == r.Start && c.Game == r.Game)) continue;   // (the same session in two files)
+            if (r.Last - now > 5) { if (r.Secs >= 10) Write(r, r.Last); continue; }   // (ahead of the clock: logged at its own times)
+            if (Forgotten(r) || LoggedThrough(r.Game, r.Start) >= r.Last) continue;   // (stopped and logged already: a file whose delete failed; deleted)
+            if (now - r.Last <= 600 && custom.Count < MaxCustom) custom.Add(r); else if (r.Secs >= 10) Write(r, r.Last);
         }
-        SaveCustom();
     }
-    void SaveCustom()
+    bool SaveCustom()
     {
-        try
-        {
-            if (custom.Count == 0) { if (File.Exists(custPath)) File.Delete(custPath); return; }
-            Disk.Swap(custPath, json.Serialize(custom));
-        }
-        catch { }
+        if (custom.Count == 0) { Gone(custPath); return true; }
+        try { Disk.Swap(custPath, json.Serialize(custom)); stale.Remove(custPath); return true; } catch { return false; }
     }
     public static string CleanName(object o)
     {
@@ -2091,17 +2400,33 @@ partial class DeckForm : Form
     // are set again
     bool settingsBad { get { return settings.ContainsKey("daysUnknown"); } }
     bool DaysSet(string k) { return !settingsHeld && (!settingsBad || settings.ContainsKey(k)); }   // (held: the real days unknown this run)
-    bool settingsHeld;   // settings.json held by another program at start: this run goes on defaults and never saves over it
-    Dictionary<string, object> ReadSettings()
+    bool settingsHeld;   // settings.json held by another program at start: defaults (never saved over it) until it can be read
+    // the run started on an empty set, so every key in it now was set in this run: those stay on top of the file's
+    void RetrySettings()
+    {
+        settingsHeld = false;
+        var d = ReadSettings(1);
+        if (settingsHeld) return;
+        bool changed = settings.Count > 0;
+        foreach (var kv in settings) d[kv.Key] = kv.Value;
+        settings = d;
+        Log("settings.json read after all" + (changed ? ", with the changes made meanwhile" : ""));
+        if (changed) SaveSettings();
+        TrimAlerts(); TrimGames();   // (the start's trims ran on unknown days: nothing cut then)
+        if (src.Frames != null && FpsWanted && !Brand.NoActions) Try(() => src.Frames.Start());
+        if (pageReady) SendSettings();
+    }
+    Dictionary<string, object> ReadSettings(int tries = 5)
     {
         string p = P("settings.json"), text = null;
         if (!File.Exists(p)) return new Dictionary<string, object>();
         // (a sync or backup tool can hold it for a moment at logon: that isn't damage)
-        for (int i = 0; i < 5 && text == null; i++)
+        for (int i = 0; i < tries && text == null; i++)
             try { text = File.ReadAllText(p); }
-            catch (IOException) { System.Threading.Thread.Sleep(200); }
-            catch (UnauthorizedAccessException) { System.Threading.Thread.Sleep(200); }
-        if (text == null) { settingsHeld = true; Log("settings.json is held by another program: running on defaults, not saving over it"); return new Dictionary<string, object>(); }
+            catch (FileNotFoundException) { return new Dictionary<string, object>(); }
+            catch (IOException) { if (i + 1 < tries) System.Threading.Thread.Sleep(200); }
+            catch (UnauthorizedAccessException) { if (i + 1 < tries) System.Threading.Thread.Sleep(200); }
+        if (text == null) { if (tries > 1) Log("settings.json is held by another program: running on defaults, read again every 5 s, not saving over it"); settingsHeld = true; return new Dictionary<string, object>(); }
         try { var d = json.DeserializeObject(text) as Dictionary<string, object>; if (d != null) return d; } catch { }
         // damaged: kept aside (the next save would write over it), and the days count as unknown
         Log("settings.json can't be read: kept aside, nothing trimmed by days until they are set again");
@@ -2261,7 +2586,8 @@ partial class DeckForm : Form
     partial void ExtStop();                                             // quitting or the session ending: save what it keeps
     void SaveData()
     {
-        if (Source.Unix() - savedAt < 5) return;   // the window closing and the app exiting both ask
+        long ago = Source.Unix() - savedAt;
+        if (ago >= 0 && ago < 5) return;   // the window closing and the app exiting both ask (the clock set back since: saved)
         savedAt = Source.Unix();
         hist.CloseOpen(); hist.Save(true); hist.DropOpen(); games.Flush();
     }
@@ -3031,8 +3357,9 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             if (!fake && now - lastHwPath >= 60) { lastHwPath = now; RememberHwinfo(); }
             // (a view save another program's handle refused: the page sends its view again, with its gen; a settings save the
             // same: written again)
-            if (stateRetryAt > 0 && pageReady && Source.Unix() >= stateRetryAt) { stateRetryAt = 0; Post(Msg("saveView")); }
+            if (stateRetryAt > 0 && pageReady && (Source.Unix() >= stateRetryAt || stateRetryAt - Source.Unix() > 5)) { stateRetryAt = 0; Post(Msg("saveView")); }   // (or the clock set back)
             if (settingsRetry && now % 5 == 0) SaveSettings();
+            if (settingsHeld && now % 5 == 2) RetrySettings();
             // (free now: the page gets it; the view first, whole; slots alone, so the view and its undo stay as they are)
             if (heldFiles.Count > 0 && pageReady && now % 5 == 0)
             {
@@ -3047,7 +3374,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
                 if (goneNotes.Count > 0 && wasShowing) { var tb = Msg("toast"); tb["text"] = string.Join(" ", goneNotes); tb["ms"] = goneNotes.Count > 1 ? 20000 : 15000; Post(tb); goneNotes.Clear(); }
             }
         }
-        if (now - lastSave >= 900) { lastSave = now; hist.Save(false); }
+        if (now - lastSave >= 900 || now < lastSave) { lastSave = now; hist.Save(false); }   // (the clock set back: saved now, counted from there)
         bool showing = pageReady && Visible && !IsIconic(Handle);   // (Windows' own word: a restore that skips the focus doesn't always update WindowState)
         if (showing && !wasShowing)
         {
@@ -3109,7 +3436,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             {
                 string path = Procs.ImagePath(p.Id, devices); p.Dispose();
                 if (path == null || (settings.ContainsKey("hwinfo") && path.Equals(settings["hwinfo"] as string, StringComparison.OrdinalIgnoreCase))) continue;
-                settings["hwinfo"] = path; SaveFile("settings", settings); SendSettings();
+                settings["hwinfo"] = path; SaveSettings(); SendSettings();
                 break;
             }
         }
@@ -3645,15 +3972,16 @@ exit 0";
             bool dbl = dragArmed && now - lastDrag < SystemInformation.DoubleClickTime && Math.Abs(at.X - lastDragAt.X) <= SystemInformation.DoubleClickSize.Width && Math.Abs(at.Y - lastDragAt.Y) <= SystemInformation.DoubleClickSize.Height;
             dragArmed = !dbl; lastDrag = now; lastDragAt = at;
             if (dbl) Win("max");
-            else { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, 2, 0); }
+            else if (ButtonDown()) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, 2, 0); }   // (a tap's mousedown comes after the finger is up: no move loop with nothing held)
         }
         else if (a != null && a.StartsWith("resize:") && WindowState != FormWindowState.Maximized)
         {
             var map = new Dictionary<string, int> { { "l", 10 }, { "r", 11 }, { "t", 12 }, { "tl", 13 }, { "tr", 14 }, { "b", 15 }, { "bl", 16 }, { "br", 17 } };
             int ht;
-            if (map.TryGetValue(a.Substring(7), out ht)) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, ht, 0); }
+            if (map.TryGetValue(a.Substring(7), out ht) && ButtonDown()) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, ht, 0); }
         }
     }
+    static bool ButtonDown() { return (Control.MouseButtons & (MouseButtons.Left | MouseButtons.Right)) != 0; }   // (either: swapped buttons)
 
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
     [StructLayout(LayoutKind.Sequential)] struct WINDOWPLACEMENT { public int length, flags, showCmd, minX, minY, maxX, maxY; public RECT normal; }

@@ -234,7 +234,7 @@ ok('an app that only runs in the background (an overlay, a tool from Steam) star
 await host({ t: 'fakeGame', game: null });
 ok('no game: Game time shows -- in grey', await until(`(() => { const e = evalCell(__gt, S.L.cells[__gt], true, true); return e.txt === '--' && e.col === 'grey' && e.sub === 'no game running'; })()`, 8000), await ev(gtOf('__gt, S.L.cells[__gt], true, true')));
 await ev(`(() => { const id = __gt; mutate(() => { for (const c of S.L.cats) c.cells = c.cells.filter(x => x !== id); S.L.cats = S.L.cats.filter(c => c.cells.length || c.name !== 'Game time check'); delete S.L.cells[id]; }); return 1; })()`);
-ok('its main readings, found by their HWiNFO names, marked as main', ['CPU temp', 'GPU temp', 'GPU hotspot', 'GPU memory', 'CPU power', 'GPU power', 'GPU usage', 'CPU usage', 'VRAM', 'RAM'].every(n => item(n) && item(n).length === 10 && item(n)[6] === 1 && typeof item(n)[9] === 'string'),
+ok('its main readings, found by their HWiNFO names, marked as main', ['CPU temp', 'GPU temp', 'GPU hotspot', 'GPU memory', 'CPU power', 'GPU power', 'GPU usage', 'CPU usage', 'VRAM', 'RAM'].every(n => item(n) && item(n).length === 11 && item(n)[6] === 1 && typeof item(n)[9] === 'string' && item(n)[10] === 0),
   (g.items || []).map(it => it[0] + ':' + it.length + ':' + it[6]).join(', '));
 ok('a cell\'s lines go with its reading (CPU temp: yellow 60, red 90)', item('CPU temp') && item('CPU temp')[4] === 60 && item('CPU temp')[5] === 90 && item('CPU temp')[3] === 91.5, JSON.stringify(item('CPU temp')));
 ok('RAM carries its scale (used + free), in MB like HWiNFO', item('RAM') && item('RAM')[1] === 'MB' && item('RAM')[7] > item('RAM')[3], JSON.stringify(item('RAM')));
