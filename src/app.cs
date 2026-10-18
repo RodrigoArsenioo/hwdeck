@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.5.3.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.5.3.0")]
+[assembly: System.Reflection.AssemblyVersion("1.5.4.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.5.4.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.5.3";
+    public const string Version = "1.5.4";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -1545,7 +1545,7 @@ class Games
                    public int G, C, F, MinAt = -1, MG, MC, MF, MFn, MLn; public double MFs, MLs; public string Tb = "";
                    public List<int[]> Tc = new List<int[]>();
                    public List<double?> Tf = new List<double?>(), Tl = new List<double?>();
-                   // its breaks: the game closed and started again within 5 minutes (one session), from and to, unix seconds
+                   // its breaks: the game closed and started again within Same game again (one session), from and to, unix seconds
                    public List<long[]> Gaps = new List<long[]>();
                    // what crossed a line (up to 5): its name, unit, worst value and which way worse is
                    public List<string> WarnNames = new List<string>(), WarnUnits = new List<string>(); public List<double> WarnPeaks = new List<double>(); public List<bool> WarnBelow = new List<bool>();
@@ -1563,7 +1563,8 @@ class Games
     List<KeyValuePair<string, string>> roots; DateTime rootsAt = DateTime.MinValue;
     System.Threading.Timer timer; int busy, pollNo;
     public string Game; public bool InFront; public long Since, Seen;   // the session (it ends 5 s after the game closes)
-    public const int EndAfter = 5, MergeWithin = 300;   // (seconds: gone this long, the session ends; started again within this, it goes on)
+    public const int EndAfter = 5;   // (seconds: gone this long, the session ends)
+    public volatile int MergeWithin = 1800;   // (seconds: started again within this, it goes on; Settings, Same game again: 30 minutes unless set, 0 never)
     // the session that just ended, kept MergeWithin seconds: the same game started again goes on with it (Reopen)
     Report done; string doneLine; string doneGame; long doneStart, doneEnd;
     public volatile bool LogChanged;   // a line came into games.log or went out of it (the page's open popup gets it again)
@@ -1603,6 +1604,7 @@ class Games
         if (rep != null && rep.Last - Source.Unix() > 5) { LogLeft(rep); rep = null; }
         if (rep == null || SaveCur()) foreach (var f in read) if (f != curPath || rep == null) Gone(f);
         if (rep != null) { resumeGame = rep.Game; resumeStart = rep.Start; resumeLast = rep.Last; }
+        donePath = Path.Combine(dir, "games.done.json"); LoadDone();
         LoadCustom();
         timer = new System.Threading.Timer(delegate { if (System.Threading.Interlocked.Exchange(ref busy, 1) == 1) return; try { Poll(); } catch (Exception ex) { log("games: " + ex.Message); } finally { busy = 0; } }, null, 2500, 3000);
     }
@@ -1809,10 +1811,10 @@ class Games
             if (found != null)
             {
                 if (Game != null && (found != Game || now - Seen > 3600)) Close();
-                if (Game == null) { Game = found; Since = found == resumeGame && now - resumeLast <= 600 ? resumeStart : found == doneGame && now >= doneEnd && now - doneEnd <= MergeWithin ? doneStart : now; }
+                if (Game == null) { Game = found; Since = found == resumeGame && now - resumeLast <= 600 ? resumeStart : found == doneGame && MergeWithin > 0 && now >= doneEnd && now - doneEnd <= MergeWithin ? doneStart : now; }
                 Seen = now;
             }
-            else if (Game != null && now - Seen > EndAfter) Close();   // gone 5 s: it ends (back within 5 minutes, it goes on: Reopen)
+            else if (Game != null && now - Seen > EndAfter) Close();   // gone 5 s: it ends (back within MergeWithin, it goes on: Reopen)
             if (Game != null || now - resumeLast > 600) resumeGame = null;
         }
         polled = true;
@@ -2057,19 +2059,43 @@ class Games
         // it ended when the game was last seen, or (a run that quit mid-game, a PC that slept) at its last sample
         long end = r.Last > r.Start ? r.Last : Source.Unix();
         lock (lk) if (Seen > r.Start && Seen < end) end = Seen;
-        // kept 5 minutes: the same game started again goes on with it (a minute of play too short for a line as well)
+        // kept (and on disk, games.done.json): the same game started again within MergeWithin goes on with it (a minute of
+        // play too short for a line as well)
         done = r; doneLine = null; lock (lk) { doneGame = r.Game; doneStart = r.Start; doneEnd = end; }
         LogChanged = true;   // (the page's list: the session in progress ended, written or not)
         Fill(r);
-        if (end - r.Start - r.Gaps.Sum(g => Math.Max(0, g[1] - g[0])) < 60) return;   // under a minute of play (its breaks aren't) isn't a session worth a line
-        doneLine = Write(r, end);
+        if (end - r.Start - r.Gaps.Sum(g => Math.Max(0, g[1] - g[0])) >= 60) doneLine = Write(r, end);   // under a minute of play (its breaks aren't) isn't a session worth a line
+        SaveDone();
     }
-    // the same game started again within 5 minutes of its session's end: that session goes on (its line comes out of
+    // the session that just ended, on disk too: a HW Deck restart, an update or a reboot in its break keeps the merge
+    // (Same game again goes up to 4 hours); written at its end, gone once it is taken back or deleted
+    class DoneFile { public Report R; public string Line; public long End; }
+    string donePath;
+    void SaveDone()
+    {
+        var d = done; if (d == null) return; long end; lock (lk) end = doneEnd;
+        try { Disk.Swap(donePath, json.Serialize(new DoneFile { R = d, Line = doneLine, End = end })); } catch (Exception ex) { log("games: the session that ended isn't kept on disk: " + ex.Message); }
+    }
+    void DropDone() { try { if (donePath != null && File.Exists(donePath)) File.Delete(donePath); } catch { } }
+    void LoadDone()
+    {
+        try
+        {
+            if (!File.Exists(donePath)) return;
+            var f = json.Deserialize<DoneFile>(File.ReadAllText(donePath));
+            long now = Source.Unix();
+            // (too old for any window, ahead of the clock, or not a session: gone)
+            if (f == null || f.R == null || string.IsNullOrEmpty(f.R.Game) || f.End < f.R.Start || f.End > now + 5 || now - f.End > 4 * 3600) { DropDone(); return; }
+            done = f.R; doneLine = f.Line; lock (lk) { doneGame = f.R.Game; doneStart = f.R.Start; doneEnd = f.End; }
+        }
+        catch (Exception ex) { log("games: games.done.json not read: " + ex.Message); DropDone(); }
+    }
+    // the same game started again within MergeWithin of its session's end: that session goes on (its line comes out of
     // the log; the break is kept apart, not play); null: a new one
     Report Reopen(string game, long since)
     {
         var d = done; string line = doneLine; long end;
-        done = null; doneLine = null;
+        done = null; doneLine = null; DropDone();
         lock (lk) { end = doneEnd; doneGame = null; }
         if (d == null || d.Game != game || d.Start != since) return null;
         Fill(d);
@@ -2119,7 +2145,7 @@ class Games
         // (its line's start too: a clock set back since moved the kept session, not its line)
         var dk = doneLine != null ? Key(doneLine) : null;
         if (d == null || (game != null && (d.Game != game || (d.Start != start && !(dk != null && dk.Item2 == start))))) return;
-        done = null; doneLine = null;
+        done = null; doneLine = null; DropDone();
         lock (lk) { doneGame = null; if (Game != null && rep == null && Since == d.Start) Since = Source.Unix(); }   // (its game back already: a new session, not the deleted one's start)
     }
     void DropLine(string line)
@@ -2409,7 +2435,7 @@ partial class DeckForm : Form
         if (settingsHeld) return;
         bool changed = settings.Count > 0;
         foreach (var kv in settings) d[kv.Key] = kv.Value;
-        settings = d;
+        settings = d; games.MergeWithin = MergeMins() * 60;
         Log("settings.json read after all" + (changed ? ", with the changes made meanwhile" : ""));
         if (changed) SaveSettings();
         TrimAlerts(); TrimGames();   // (the start's trims ran on unknown days: nothing cut then)
@@ -2475,6 +2501,7 @@ partial class DeckForm : Form
         games = new Games(dataDir, Log);
         runName = custom ? Brand.Name + " (" + Path.GetFileName(data) + " " + ((uint)data.ToLowerInvariant().Aggregate(2166136261u, (h, ch) => (h ^ ch) * 16777619u)).ToString("x8") + ")" : Brand.Name;
         settings = ReadSettings();
+        games.MergeWithin = MergeMins() * 60;
         // the game's own frames (Settings: Accurate game fps): on when it was turned on and Windows lets this account trace
         // (trace names are for the whole PC: the account's own id in it, so two accounts signed in at once don't stop each other's)
         if (!fake) { src.Frames = new Frames(runName + " frames " + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value); if (FpsWanted && !Brand.NoActions) src.Frames.Start(); }   // (a test copy never takes over the trace)
@@ -2768,6 +2795,13 @@ partial class DeckForm : Form
                     SaveSettings(); TrimAlerts(); TrimGames(); SendSettings();
                     SendLog("games.log", "games");
                     break;
+                case "gameMerge":
+                    {
+                        object mo = m.ContainsKey("min") ? m["min"] : null; long v = mo == null ? long.MinValue : Games.Long(mo);
+                        if (v != long.MinValue) { settings["gameMerge"] = (int)Math.Max(0, Math.Min(240, v)); games.MergeWithin = MergeMins() * 60; SaveSettings(); }
+                        SendSettings();
+                    }
+                    break;
                 case "autostart": SetAutostart(true.Equals(m["on"])); SendSettings(); break;
                 case "restartHwinfo": RestartHwinfo(); break;
                 case "keepSharing": SetKeepSharing(true.Equals(m["on"])); break;
@@ -2921,6 +2955,7 @@ partial class DeckForm : Form
         r["fps"] = FpsWanted; r["fpsState"] = FpsState(); r["fpsBusy"] = fpsBusy; r["fpsDone"] = fpsDone;
         r["updates"] = UpdatesOn();
         r["gameDays"] = DaysSet("gameDays") ? KeepDays("gameDays") : (object)null; r["warnDays"] = DaysSet("warnDays") ? KeepDays("warnDays") : (object)null;   // (null: not set, nothing cut)
+        r["gameMerge"] = MergeMins();
         string latest = settings.ContainsKey("updLatest") ? settings["updLatest"] as string : null;
         r["latest"] = UpdatesOn() && Newer(latest, AppInfo.Version) ? latest : null;
         r["canUpdate"] = Installed() != null;   // (installed with the msi: its Update button installs the new one)
@@ -3175,6 +3210,8 @@ Start-Process -FilePath $Exe -ArgumentList $a";
     }
     // how long the logs keep what they have: 30 days unless Settings says otherwise (1 to 3650)
     static int Days(object o) { long d = Games.Long(o); return d == long.MinValue ? 30 : (int)Math.Max(1, Math.Min(3650, d)); }
+    // the same game started again within this many minutes goes on with its session (Settings: Same game again; 0: never)
+    int MergeMins() { object o; long v = settings.TryGetValue("gameMerge", out o) && o != null ? Games.Long(o) : long.MinValue; return v == long.MinValue ? 30 : (int)Math.Max(0, Math.Min(240, v)); }
     int KeepDays(string k) { return settings.ContainsKey(k) ? Days(settings[k]) : 30; }
     static int Rename(Dictionary<string, object> o, string name) { o["game"] = name; return 2; }
     // the game log: sessions that ended more than the days you keep ago go (into games.log.bak)

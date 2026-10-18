@@ -871,7 +871,12 @@ html[data-motion="minimal"] #grun .rdot, html[data-motion="off"] #grun .rdot { a
 #gmodal .gx-nm:hover { border-color: #363636; } #gmodal .gx-nm:focus { border-color: var(--edit); outline: none; background: #101010; }
 #gmodal .gx-del { flex: none; padding: 5px 14px; }
 /* Settings: days */
-.setdays { display: inline-flex; align-items: center; gap: 8px; } .setdays .setin { width: 84px; text-align: right; font-variant-numeric: tabular-nums; } .setdays i { font-style: normal; color: var(--muted); font-size: 12.5px; }
+.setdays { display: inline-flex; align-items: center; gap: 8px; } .setdays .setin { width: 84px; text-align: right; font-variant-numeric: tabular-nums; } .setdays i { font-style: normal; color: var(--muted); font-size: 12.5px; min-width: 30px; }   /* (one width for days and min: the fields line up) */
+/* Settings in sections: a header, then its rows in a block, with room between the blocks */
+.setsec { margin: 0 0 18px; } .setsec:first-child { margin-top: 10px; } .setsec:last-child { margin-bottom: 2px; }
+.setsec > h3 { margin: 0 0 7px 3px; font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em; color: #8c8c8c; }   /* (its own case: HWiNFO stays HWiNFO) */
+.setbox { background: #191919; border: 1px solid #242424; border-radius: 11px; padding: 0 15px; }
+.setbox .setrow { padding: 12px 0; }
 #gcz { border: 1px solid #2c3d5c; background: #141820; border-radius: 12px; padding: 14px 16px 12px; margin: 4px 0 16px; }
 #gcz .gz-head { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #9aa7bd; margin-bottom: 12px; } #gcz .sp { flex: 1; }
 #gcz .gz-done { border-color: #3a4f75; color: #c9dafa; }

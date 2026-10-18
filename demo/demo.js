@@ -6,7 +6,7 @@
 (() => {
   'use strict';
   const RELEASES = 'https://github.com/RodrigoArsenioo/hwdeck/releases/latest';
-  const VERSION = '1.5.3';
+  const VERSION = '1.5.4';
   const T0 = Math.floor(Date.now() / 1000);
   const nowS = () => Math.floor(Date.now() / 1000);
   const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
@@ -21,9 +21,9 @@
   const jit = (seed, t) => hash(seed, t) * 2 - 1;
   const interp = (pts, x) => { if (x <= pts[0][0]) return pts[0][1]; for (let i = 1; i < pts.length; i++) if (x <= pts[i][0]) { const [a, b] = [pts[i - 1], pts[i]]; return a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]); } return pts[pts.length - 1][1]; };
 
-  // ---- when a game runs: in about the last two hours two 6-minute runs 3 minutes apart (the same game again within 5
-  // minutes: one session) every 21 minutes, one started just before the page opened; before that most evenings, in
-  // blocks of 44 minutes ----
+  // ---- when a game runs: in about the last two hours two 6-minute runs 3 minutes apart every 21 minutes, one started
+  // just before the page opened; before that most evenings, in blocks of 44 minutes 6 minutes apart (how they make
+  // sessions: Settings' Same game again, below) ----
   const GAMES = ['Cyberpunk 2077', 'Baldur\'s Gate 3', 'Counter-Strike 2', 'Forza Horizon 5', 'Elden Ring'];
   const CYCLE = 1260, PLAY = 360, BACK = 540, FIRST = T0 - 140, RECENT = FIRST - 6 * CYCLE;   // (a pair's start: every run it plays is whole)
   const tzOff = -new Date().getTimezoneOffset() * 60;
@@ -42,33 +42,43 @@
     return { start: t - off, k: day * 10 + blk, name: GAMES[1 + Math.floor(hash(94, day) * 4)] };
   }
 
-  // the same game's runs with breaks under 5 minutes are one session, as in the app: its first start, its breaks and
-  // their total (kept per run: the runs before it don't change)
-  const merged = new Map();
-  function mergedOf(t) {
-    const g = gameAt(t); if (!g) return null;
-    let m = merged.get(g.k);
-    if (!m) {
-      let start = g.start; const gaps = [];
-      for (let n = 0; n < 60; n++) {
-        let x = start - 1, back = 0;
-        while (back <= 300 && !gameAt(x)) { x--; back++; }
-        const q = back > 0 && back <= 300 ? gameAt(x) : null;
-        if (!q || q.name !== g.name) break;
-        gaps.unshift([x + 1, start]); start = q.start;
+  // ---- sessions, as the app makes them: the same game started again within Settings' Same game again (30 minutes
+  // unless set, 0 never) goes on with its session, its breaks kept apart ----
+  const mergeS = () => { const v = load('gameMerge'); return (Number.isFinite(v) ? Math.max(0, Math.min(240, v)) : 30) * 60; };
+  // every run that overlaps [a, b], oldest first, as gameAt plays them: the evening blocks (each ending at its midnight,
+  // where gameAt goes on to the next day, and at RECENT), then the recent pairs
+  function runsIn(a, b) {
+    const out = [];
+    for (let day = Math.floor((a + tzOff) / 86400) - 1; day <= Math.floor((b + tzOff) / 86400); day++) {
+      const ev = eveningOf(day); if (!ev) continue;
+      const t0 = day * 86400 - tzOff + ev.from * 3600, mid = (day + 1) * 86400 - tzOff, name = GAMES[1 + Math.floor(hash(94, day) * 4)];
+      for (let n = 0; n * 3000 < ev.len * 3600; n++) {
+        const st = Math.round(t0 + n * 3000), en = Math.round(Math.min(st + 2640, t0 + Math.floor(ev.len * 3600) + 1, mid, RECENT));   // (gameAt plays its last second too)
+        if (en > st && en > a && st <= b) out.push({ start: st, end: en, name });
       }
-      m = { start, gaps, gap: gaps.reduce((a, q) => a + q[1] - q[0], 0) };
-      if (merged.size > 500) merged.clear();
-      merged.set(g.k, m);
     }
-    return Object.assign({ g }, m);
+    for (let k = Math.max(Math.ceil((RECENT - FIRST) / CYCLE), Math.floor((a - FIRST) / CYCLE) - 1); FIRST + k * CYCLE <= b; k++)
+      for (const o of [0, BACK]) { const st = FIRST + k * CYCLE + o, en = st + PLAY; if (en > a && st <= b) out.push({ start: st, end: en, name: GAMES[0] }); }
+    return out.sort((x, y) => x.start - y.start);
   }
-  // the session a game in progress belongs to: what came before its last break deleted, or the log cleared in that break,
-  // is not taken back (a new session, as the app's)
+  // the sessions those runs make, oldest first: { start, end, name, gaps, live }; the one in progress at b is live and
+  // ends at b. What came before a break, deleted or cleared in that break, is not taken back: a new session, as the app's
+  function sessionsIn(a, b) {
+    const W = mergeS(), out = [];
+    for (const r of runsIn(a, b)) {
+      const e = Math.min(r.end, b), last = out[out.length - 1];
+      if (last && last.name === r.name && r.start - last.end <= W && !forgot(last, r.start) && !gone(r)) { last.gaps.push([last.end, r.start]); last.end = e; last.live = r.end > b; }   // (a deleted run doesn't join the one before)
+      else out.push({ start: r.start, end: e, name: r.name, gaps: [], live: r.end > b });
+    }
+    return out;
+  }
+  // the session a game in progress at t belongs to: its first start, its breaks and their total; null: no game
   function sessAt(t) {
-    const m = mergedOf(t); if (!m || !m.gaps.length) return m;
-    const gp = m.gaps[m.gaps.length - 1];
-    return forgot({ start: m.start, end: gp[0], name: m.g.name }, gp[1]) ? { g: m.g, start: m.g.start, gaps: [], gap: 0 } : m;
+    if (!gameAt(t)) return null;
+    // (an evening's session is under 5 hours; the recent play can go on as long as the tab is open: from its start)
+    const x = sessionsIn(t >= RECENT ? Math.min(t - 43200, RECENT) : t - 43200, t).pop();
+    if (!x || !x.live) return null;
+    return { g: { name: x.name }, start: x.start, gaps: x.gaps, gap: x.gaps.reduce((a, q) => a + q[1] - q[0], 0) };
   }
 
   // ---- the PC each second: loads, frame rate, what limits it ----
@@ -222,17 +232,8 @@
   // ---- the warning log and the game reports the popups open on ----
   const p2 = n => ('0' + n).slice(-2);
   const stamp = u => { const d = new Date(u * 1000), o = -d.getTimezoneOffset(); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()) + (o >= 0 ? '+' : '-') + p2(Math.floor(Math.abs(o) / 60)) + ':' + p2(Math.abs(o) % 60); };
-  const sessions = (() => {   // the evening blocks of the week the graphs and the strip show, each ending at its midnight (gameAt goes on to the next day there) and at RECENT, newest last
-    const out = [], today = Math.floor((T0 + tzOff) / 86400);
-    for (let day = today - 7; day <= today; day++) {
-      const ev = eveningOf(day); if (!ev) continue;
-      const t0 = day * 86400 - tzOff + ev.from * 3600, mid = (day + 1) * 86400 - tzOff;
-      for (let b = 0; b * 3000 < ev.len * 3600; b++) { const s = Math.round(t0 + b * 3000), e = Math.round(Math.min(s + 2640, t0 + ev.len * 3600, mid, RECENT)); if (e - s >= 60) out.push({ start: s, end: e, name: gameAt(s + 5) ? gameAt(s + 5).name : GAMES[1] }); }   // (the recent play takes over at RECENT; a minute or more, as the app)
-    }
-    return out;
-  })();
-  // the one warning of a game session: 20 minutes into the newest long one (its report says so too)
-  const hot = sessions.slice().reverse().find(s => s.end - s.start >= 1800), HOT_AT = hot ? hot.start + 1210 : T0 - 86400;
+  // the one warning of a game session: 20 minutes into the newest long evening run (its session's report says so too)
+  const hot = runsIn(T0 - 8 * 86400, RECENT - 1).reverse().find(r => r.end - r.start >= 1800), HOT_AT = hot ? hot.start + 1210 : T0 - 86400;
   const alertsLog = (() => {
     const at = HOT_AT, pump = PUMP_AT;
     const E = [[at, [stamp(at) + '  YELLOW  CPU temperature: 85.6 °C', stamp(at + 9) + '  OK      CPU temperature: back to normal (peak 86.1 °C)']],
@@ -268,7 +269,7 @@
     const st = load('state') || DEMO_STATE, gs = st && st.L && st.L.games && Array.isArray(st.L.games.secs) ? st.L.games.secs : [];
     const tk = [...new Set(gs.flatMap(x => Array.isArray(x.cells) ? x.cells.map(c => c && c.key).filter(k => typeof k === 'string' && BYKEY.has(k)) : []))], ta = {};
     for (let t = s.start; t < s.end; t += 60) if (!brk(t)) for (const k of tk) { const v = val(BYKEY.get(k), t); if (v == null) continue; const a = ta[k] || (ta[k] = [0, 0, -1e9]); a[0] += v; a[1]++; a[2] = Math.max(a[2], v); }
-    const warn = s === hot;
+    const warn = !s.custom && s.start <= HOT_AT && HOT_AT < s.end && !brk(HOT_AT);   // (the session the warning was in)
     const items = want.filter(w => acc[w[0]]).map(w => { const a = acc[w[0]]; return [w[0], w[1], Math.round(a[0] / a[1] * 10) / 10, warn && w[0] === 'CPU temp' ? 86.1 : Math.round(a[2] * 10) / 10, w[3], w[4], w[5], w[6] || null, 0]; })
       .concat(tk.filter(k => ta[k]).map(k => { const r = BYKEY.get(k), a = ta[k]; return [r.label, r.unit, Math.round(a[0] / a[1] * 10) / 10, Math.round(a[2] * 10) / 10, null, null, 0, null, 0, k]; }));
     const out = { game: s.name, start: s.start, end: s.end, from: s.start, secs: s.end - s.start, front: s.custom ? fr : s.end - s.start, fps: fn ? Math.round(fs / fn) : null, low: fn ? Math.round(ls / fn) : null, items,
@@ -280,25 +281,17 @@
   // the sessions: the made-up evenings, the ones you recorded here (own), less the ones you deleted and the older than you keep
   const days = k => load(k) || 30, sid = x => x.start + '|' + x.end + '|' + x.name;
   const goneSet = new Set(load('gone') || []), clr = load('gamesCleared'), clears = Array.isArray(clr) ? clr : clr ? [1] : [];   // (when you cleared it)
-  const forgot = (a, to) => goneSet.has(sid(a)) || clears.some(c => c >= a.end && c < to);   // (a: a session that ended; to: its game back)
-  // the recent pairs that ended by t, as the app logs them: one session across its break, its first run alone while the
-  // break lasts, the second alone when the first was deleted or cleared in the break
-  function recentDone(t) {
-    const out = [];
-    for (let k = Math.ceil((RECENT - FIRST) / CYCLE); FIRST + k * CYCLE + PLAY <= t; k++) {
-      const s = FIRST + k * CYCLE, a = { start: s, end: s + PLAY, name: GAMES[0] }, b = s + BACK;
-      if (t < b) { out.push(a); continue; }   // (in its break)
-      if (t < b + PLAY) continue;   // (going on: the session in progress)
-      out.push(forgot(a, b) ? { start: b, end: b + PLAY, name: GAMES[0] } : { start: s, end: b + PLAY, name: GAMES[0], gaps: [[s + PLAY, b]] });
-    }
-    return out;
-  }
+  // a deleted session, by its time range: one a new Same game again would group otherwise stays out all the same
+  const goneR = k => { const q = String(k).split('|'); return { start: +q[0], end: +q[1], name: q.slice(2).join('|') }; }, goneList = [...goneSet].map(goneR);
+  const gone = x => goneList.some(g => g.name === x.name && x.start < g.end && x.end > g.start);
+  const forgot = (a, to) => gone(a) || clears.some(c => c >= a.end && c < to);   // (a: a session that ended; to: its game back)
   const gamesLog = () => {
-    const gone = new Set(load('gone') || []), cut = nowS() - days('gameDays') * 86400;
-    const all = (clears.length ? [] : sessions).concat(recentDone(nowS()).filter(s => !clears.some(c => c >= s.end)), load('own') || []).filter(s => !gone.has(sid(s)) && s.end >= cut).sort((a, b) => a.start - b.start);
-    return all.map(s => JSON.stringify(report(s))).join('\r\n');
+    const now = nowS(), cut = now - days('gameDays') * 86400;
+    const made = sessionsIn(now - 8 * 86400, now).filter(x => !x.live && !gone(x) && !clears.some(c => c >= x.end));
+    const all = made.concat((load('own') || []).filter(x => !goneSet.has(sid(x)))).filter(x => x.end >= cut).sort((a, b) => a.start - b.start);
+    return all.map(x => JSON.stringify(report(x))).join('\r\n');
   };
-  const settingsMsg = () => ({ t: 'settings', autostart: false, hwinfo: 'Made-up readings in this demo', updates: false, latest: null, gameDays: days('gameDays'), warnDays: days('warnDays') });
+  const settingsMsg = () => ({ t: 'settings', autostart: false, hwinfo: 'Made-up readings in this demo', updates: false, latest: null, gameDays: days('gameDays'), warnDays: days('warnDays'), gameMerge: Math.round(mergeS() / 60) });
 
   // ---- the long history a popup asks for: 1 h to 24 h as minutes, 7 days as 10-minute blocks ----
   function hist(k, range) {
@@ -405,9 +398,16 @@
       }
       case 'gedit': {
         const k = m.start + '|' + m.end + '|' + m.game, own = load('own') || [], i = own.findIndex(s => sid(s) === k);
-        if (m.act === 'del') { if (i >= 0) own.splice(i, 1); else { goneSet.add(k); keep('gone', (load('gone') || []).concat([k])); } }
+        if (m.act === 'del') { if (i >= 0) own.splice(i, 1); else { goneSet.add(k); goneList.push(goneR(k)); keep('gone', (load('gone') || []).concat([k])); } }
         if (m.act === 'name' && i >= 0 && m.name) own[i].name = String(m.name).slice(0, 60);
         keep('own', own); post({ t: 'games', log: gamesLog() });
+        break;
+      }
+      case 'gameMerge': {   // (Same game again: here every made-up session is grouped by it again; the app keeps the ones it wrote)
+        const v = Math.round(Number(m.min));
+        if (Number.isFinite(v)) keep('gameMerge', Math.max(0, Math.min(240, v)));
+        post(settingsMsg());
+        if (liveOn) { post({ t: 'gameNow', s: liveLine(nowS()) }); post({ t: 'games', log: gamesLog() }); }
         break;
       }
       case 'keep': {

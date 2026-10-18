@@ -251,8 +251,8 @@ ok('and without one, no note', await E('!$("sKeep").closest(".setrow").querySele
 // ---- Accurate game fps (Settings): off by default, under Keep HWiNFO sharing; a click asks the host, its answer shows ----
 await E(`(() => { feed.fake = true; send({ t: 'getSettings' }); return 1; })()`); await until('feed.keep === false', 4000);
 await E(`(() => { renderSettings(); return 1; })()`);
-ok('Accurate game fps: off by default, right under Keep HWiNFO sharing, not for the demo data', await E(`(() => { const b = $("sFps"), row = b && b.closest(".setrow"); return !!b && !b.classList.contains("on") && b.disabled && feed.fps === false && feed.fpsState === "off"
-  && /HWiNFO's fps can be another app's/.test(row.textContent) && /Keep HWiNFO sharing/.test(row.previousElementSibling.textContent) && !/On:|Almost/.test(row.textContent); })()`));
+ok('Accurate game fps: off by default, in the Games section, not for the demo data', await E(`(() => { const b = $("sFps"), row = b && b.closest(".setrow"); return !!b && !b.classList.contains("on") && b.disabled && feed.fps === false && feed.fpsState === "off"
+  && /HWiNFO's fps can be another app's/.test(row.textContent) && row.closest(".setsec").querySelector("h3").textContent === "Games" && !/On:|Almost/.test(row.textContent); })()`));
 await E(`(() => { feed.fake = false; renderSettings(); __sent = []; $("sFps").click(); return 1; })()`);
 ok('a click sends the ask to turn it on', await E('__sent.some(m => m.t === "gameFps" && m.on === true)'), await E('JSON.stringify(__sent)'));
 ok('refused (no game to count in demo data), it goes back off and can be clicked again', await until('feed.fps === false && !feed.fpsWait && !$("sFps").classList.contains("on") && !$("sFps").disabled', 4000) && /no game to count/.test(await E('$("toastTxt").textContent')), await E('$("toastTxt").textContent'));

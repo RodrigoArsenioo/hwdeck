@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.4 (2026-10-18)
+
+- Settings, Same game again: how long a game can be closed and still carry on its session when you start it again. 30 minutes unless you change it (it was a fixed 5); 0 makes every start a new session.
+- Settings are grouped: Window, Startup, HWiNFO, Games, Data, Keys and About, each in its own block.
+
 ## 1.5.3 (2026-10-17)
 
 - Yes/No readings (throttling flags and the like) show as Yes or No everywhere: their HWiNFO average as a share of Yes (it showed "0% yes" or "1% yes"), their lines in Grid, the popup and its graph, game session reports and the warning history (they showed "1 Yes/No"). Lines added to a Yes/No cell start where they warn on Yes (they started where a Yes/No reading never gets, so it never warned; such lines saved by an older version are moved there, without marking a saved slot as changed), and lines added to a usage (%) cell stay within 100%. Lines suggested for "bad when below" are never put under zero on a reading that doesn't go there (they are left for you to type), and Intel's Distance to TjMAX gets lines for when it gets low (it was offered the high-temperature ones, which never warn); a game session's "hottest" no longer picks it, renamed or not.

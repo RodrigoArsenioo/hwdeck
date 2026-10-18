@@ -208,12 +208,12 @@ let t0 = Date.now(); while (!gl() && Date.now() - t0 < 6000) await p.sleep(250);
 const g = gl() || {};
 const item = n => (g.items || []).find(it => it[0] === n);
 ok('the session is logged', !!gl(), text(join(data, 'games.log')).slice(-300));
-// the same game again within 5 minutes: its session goes on (one line in the end, the break kept apart: not play), and
+// the same game again within Same game again (30 minutes unless set): its session goes on (one line in the end, the break kept apart: not play), and
 // the sessions popup shows it while it runs (Now playing, updated every 5 s)
 {
   const first = gl();
   await host({ t: 'fakeGame', game: 'Bench Game', front: true });
-  ok('the same game again within 5 minutes: its session goes on (the same start)', await until(`feed.game === "Bench Game" && feed.gameSince === ${first.start}`, 8000), await ev('[feed.game, feed.gameSince]'));
+  ok('the same game again soon after: its session goes on (the same start)', await until(`feed.game === "Bench Game" && feed.gameSince === ${first.start}`, 8000), await ev('[feed.game, feed.gameSince]'));
   let t1 = Date.now(); while (gl() && Date.now() - t1 < 6000) await p.sleep(250);
   ok('its line comes out of the log while it goes on', !gl(), text(join(data, 'games.log')).slice(-200));
   await ev('$("gamesBtn").click()');
@@ -228,6 +228,20 @@ ok('the session is logged', !!gl(), text(join(data, 'games.log')).slice(-300));
   ok('ended again: one line from the first start to the new end, its break kept apart', m.start === first.start && m.end > first.end && Array.isArray(m.gaps) && m.gaps.length === 1 && m.gaps[0][0] >= first.end - 1 && gap >= 0 && m.secs > first.secs,
     JSON.stringify([first.start, first.end, first.secs, m.start, m.end, m.gaps, m.secs]));
   ok('only one line for it in the log', text(join(data, 'games.log')).trim().split('\n').filter(l => /"game":"Bench Game"/.test(l)).length === 1);
+}
+// Settings, Same game again: 30 minutes unless set; set to 0, a game started again after it closed is a new session
+{
+  await ev('$("setBtn").click()');
+  ok('Settings: Same game again, 30 minutes unless set', await until('!!$("sGameMerge") && $("sGameMerge").value === "30"', 6000), await ev('$("sGameMerge") && $("sGameMerge").value'));
+  await ev('(() => { const i = $("sGameMerge"); i.value = "0"; i.dispatchEvent(new Event("change", { bubbles: true })); })()');
+  let t1 = Date.now(); while (!/"gameMerge":0\b/.test(text(join(data, 'settings.json'))) && Date.now() - t1 < 6000) await p.sleep(250);
+  ok('set to 0: kept in settings.json, and Settings shows it', /"gameMerge":0\b/.test(text(join(data, 'settings.json'))) && await until('feed.gameMerge === 0 && $("sGameMerge").value === "0"', 4000), text(join(data, 'settings.json')).slice(0, 300));
+  await ev('setmodal.classList.remove("open")'); await p.sleep(300);
+  const last = gl() || {};
+  await host({ t: 'fakeGame', game: 'Bench Game', front: true });
+  ok('with 0, the same game started again is a new session (its own start)', await until(`feed.game === "Bench Game" && feed.gameSince > ${last.end || 0} && !feed.gameGap`, 8000), await ev('[feed.game, feed.gameSince, feed.gameGap]') + ' last ' + JSON.stringify([last.start, last.end]));
+  ok('and the last one stays in the log as it was', !!gl() && gl().start === last.start && gl().end === last.end);
+  await host({ t: 'fakeGame', game: null }); await p.sleep(7000);
 }
 await host({ t: 'fakeGame', game: 'Background App', front: false }); await p.sleep(4500);
 ok('an app that only runs in the background (an overlay, a tool from Steam) starts no session', await ev('feed.game === null'), await ev('feed.game'));

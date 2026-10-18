@@ -55,7 +55,7 @@ await E('closeDetail(); $("gamesBtn").click()');
 ok('game sessions from the last days, one with a warning', await until('document.querySelectorAll("#glist .gx-sess").length >= 3 && /1 warning/.test($("glist").textContent)', 3000), await E('document.querySelectorAll("#glist .gx-sess").length'));
 ok('the game in progress on top, now playing, open as the newest', await until('!feed.game || (() => { const r = document.querySelector("#glist .gx-sess"); return !!r && r.classList.contains("live") && r.classList.contains("open") && /now playing/.test(r.textContent) && /to now/.test(r.textContent); })()', 4000),
   await E('[feed.game, (document.querySelector("#glist .gx-sess") || {}).className, ((document.querySelector("#glist .gx-sess") || {}).textContent || "").slice(0, 120)]'));
-ok('the recent runs 3 minutes apart listed as one session, its break kept apart', await E('[...document.querySelectorAll("#glist .gx-sess:not(.live)")].some(r => /1 break/.test(r.textContent))'));
+ok('runs of the same game close together listed as one session, their breaks kept apart', await E('[...document.querySelectorAll("#glist .gx-sess:not(.live)")].some(r => /\\d+ breaks?/.test(r.textContent))'));
 await E('$("gmodal").classList.remove("open"); $("logBtn").click()');
 ok('the warning history has its lines', await until('/CPU temperature/.test($("wlist").textContent)', 3000));
 await E('$("wmodal").classList.remove("open")');
