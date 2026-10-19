@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.5 (2026-10-19)
+
+- A click anywhere on the 12V-2x6 connector cell opens it, its pin bars too (they didn't).
+
 ## 1.5.4 (2026-10-18)
 
 - Settings, Same game again: how long a game can be closed and still carry on its session when you start it again. 30 minutes unless you change it (it was a fixed 5); 0 makes every start a new session.

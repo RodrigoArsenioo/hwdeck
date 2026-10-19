@@ -55,6 +55,13 @@ ok('under 15 A in all, a spread means nothing: normal, the history says OK', awa
   after.split('\n').filter(l => /12V/.test(l)).join(' | '));
 ok('the uneven pins logged once', (after.match(/YELLOW +12V-2x6 connector pins:/g) || []).length === 1);
 
+// (a click on the pins' bars opens it too: they are only drawn, not a control)
+{
+  const at = await p.center(`#view .dc[data-cid="${cid}"] .xpins`);
+  if (at) { await p.click(at.x, at.y); await p.sleep(900); }
+  ok('a click on the pins opens the cell', !!at && await until(`modalCid === "${cid}"`, 3000), JSON.stringify(at) + ' ' + await ev('modalCid'));
+  await ev('closeDetail()'); await p.sleep(400);
+}
 await ev(`openDetail("${cid}")`); await p.sleep(1200);
 ok('its popup: the six pins, amps and watts', await until('document.querySelectorAll("#mextra .mpin").length === 6 && /A/.test(document.querySelector("#mextra .mpin .num").textContent)', 3000));
 await ev('closeDetail()');

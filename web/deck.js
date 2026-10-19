@@ -22,6 +22,9 @@ const send = m => { if (host) host.postMessage(m); };
 const EXT = window.EXT = { kinds: {}, msg: null, loaded: false, kindOf: null, after: null, head: null, tag: null, keys: null };
 const xkOf = r => { if (!r) return null; const k = r.kind || (EXT.kindOf ? EXT.kindOf(r) : null); return k ? EXT.kinds[k] || null : null; };
 const xBody = (cid, r, where) => { const xk = xkOf(r); return xk && xk.body ? '<div class="xb" data-x="1">' + xk.body(cid, r, where) + '</div>' : null; };
+// a control in a cell's own body (an extra's button, a field, a link): a click there is the control's; anywhere else in
+// the body (the pins' bars, a strip) it opens the cell as anywhere on it
+const inCtl = t => !!(t && t.closest && t.closest('[data-x] button, [data-x] input, [data-x] select, [data-x] textarea, [data-x] a, [data-x] [role=button]'));
 // HW Deck's own 12V-2x6 connector (a GPU that reports its pins): its most loaded pin as the value, with lines like any
 // cell (9.2 / 9.5 A to start with), the pins as bars, the pin table in its popup, and yellow when a pin carries 1.5x its
 // share for 3 s (the host keeps that in the warning log too)
@@ -2863,7 +2866,7 @@ sectionsEl.addEventListener('pointerdown', ev => {
   press = null; editPress = null;
   if (ev.button !== 0 || ev.target.closest('button,input') || (host && zoneAt(ev))) return;   // the window edge: a resize
   hidePrev();
-  if (!S.edit) { const c = ev.target.closest('#view .dc'); if (c && !ev.target.closest('[data-x]')) press = { cid: c.dataset.cid, x: ev.clientX, y: ev.clientY }; return; }
+  if (!S.edit) { const c = ev.target.closest('#view .dc'); if (c && !inCtl(ev.target)) press = { cid: c.dataset.cid, x: ev.clientX, y: ev.clientY }; return; }
   const hd = ev.target.closest('.ldiv, .lrs, .corner');
   if (hd) {
     // (a field with something typed in it: it applies first, its change redraws, so this press starts nothing and the
@@ -2917,7 +2920,7 @@ sectionsEl.addEventListener('click', ev => {
   if (ev.target.closest('.rl')) { startRelink(ev.target.closest('.dc').dataset.cid); return; }
   if (ev.target.closest('.ldiv, .lrs, .corner')) return;
   const cell = ev.target.closest('#view .dc');
-  if (!S.edit) { if (cell && !ev.target.closest('[data-x]') && performance.now() - openedByUp > 500 && performance.now() - draggedUp > 500) openDetail(cell.dataset.cid); return; }   // (already open from the release, or a drag)
+  if (!S.edit) { if (cell && !inCtl(ev.target) && performance.now() - openedByUp > 500 && performance.now() - draggedUp > 500) openDetail(cell.dataset.cid); return; }   // (already open from the release, or a drag)
   if (cell) { selectCell(cell.dataset.cid); return; }
   // a category's header (its name, its empty space) selects the category; anywhere else: the view
   if (catEl && ev.target.closest('.dch, .ghdr, .bh') && !ev.target.closest('input')) { selectCat(catEl.dataset.cat); return; }
