@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.5.5.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.5.5.0")]
+[assembly: System.Reflection.AssemblyVersion("1.5.6.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.5.6.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.5.5";
+    public const string Version = "1.5.6";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -2656,6 +2656,7 @@ partial class DeckForm : Form
     {
         if (!e.IsSuccess) { WebViewFailed(e.InitializationException); return; }
         var core = wv.CoreWebView2;
+        Try(() => browserPid = core.BrowserProcessId);
         // an app, not a browser: no dev tools (unless a test asked for the debug port), no browser keys (print, find,
         // reload), no autofill, no zoom, nothing dropped or clicked can take the page somewhere else
         bool debug = (Environment.GetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") ?? "").Contains("remote-debugging");
@@ -2686,17 +2687,21 @@ partial class DeckForm : Form
         core.ProcessFailed += delegate(object s2, CoreWebView2ProcessFailedEventArgs ev)
         {
             Log("webview process failed: " + ev.ProcessFailedKind);
-            // the page's process died: load it again; the browser itself died: only a new start helps; the rest
-            // (GPU, utility processes) come back by themselves
+            // the page's process died: load it again; the browser itself died: only a new start helps; the GPU process
+            // comes back by itself, but one that came back while the graphics driver was being swapped (a driver update
+            // or reset) can leave the page drawn on the CPU, at a few fps, until the browser starts again: a new start
+            // once that settles (MaybeGpuRestart); the rest (utility processes) come back by themselves
             if (ev.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited || ev.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
                 Try(() => { pageReady = false; wv.CoreWebView2.Reload(); });
+            else if (ev.ProcessFailedKind == CoreWebView2ProcessFailedKind.GpuProcessExited && !exiting && !ending)
+            { gpuLost = true; gpuLostAt = Environment.TickCount; }   // (each new loss pushes the start back)
             else if (ev.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited && !exiting && !ending)   // at a sign-out Windows may end the browser first
                 Try(() =>
                 {
                     // (a browser that keeps dying: after the third time within minutes, no more starts, it says so)
-                    int next = (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMinutes < 10 ? Relaunches + 1 : 1;
+                    int next = NextRelaunch();
                     if (next > 2) { Log("the page's browser keeps closing: not started again"); exiting = true; tray.Visible = false; MessageBox.Show(Brand.Name + "'s page keeps closing (its WebView2 browser stopped " + next + " times in a few minutes), so " + Brand.Name + " stopped. Start it again later, or repair the Microsoft Edge WebView2 Runtime in Settings, Apps.", Brand.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning); Application.Exit(); return; }
-                    Process.Start(Application.ExecutablePath, RestartArgs() + " --after " + Process.GetCurrentProcess().Id + " --relaunch " + next + (Visible && !IsIconic(Handle) ? "" : " -min")); exiting = true; tray.Visible = false; Application.Exit();
+                    Relaunch(next);
                 });
         };
         // the page's files changed (an update): WebView2 may keep serving the old ones from its cache for a while (the
@@ -3349,6 +3354,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             // (the poll looks every 3 s; an alt-tab counts at once, so a game's background fps cap is never its numbers)
             gameFront = games.InFront && (games.GamePid == 0 || Procs.Foreground() == games.GamePid);
             if (src.Frames != null) src.Frames.Pid = gameFront ? games.GamePid : 0;   // (out of front: no numbers, no 0 fps warnings)
+            if (MaybeGpuRestart()) return;   // (this copy is closing)
             src.Second(games.Game != null && now - games.Seen <= 6);
             hist.Sample(src, Bottleneck.ShareKeys, src.Bneck.Shares);
             ExtSecond(now);
@@ -3924,7 +3930,33 @@ exit 0";
         }
         catch { return false; }
     }
-    public static int Relaunches;   // the page's browser died and this copy was started again: how many times in a row
+    public static int Relaunches;   // the page's browser (or its GPU process) died and this copy was started again: how many times in a row
+    int NextRelaunch() { return (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMinutes < 10 ? Relaunches + 1 : 1; }
+    // a new copy that waits for this one to save and quit, and comes back as the window is now
+    // (and for the page's browser too: one still closing would be joined by the new copy's page, GPU state and all)
+    void Relaunch(int next)
+    {
+        Process.Start(Application.ExecutablePath, RestartArgs() + " --after " + Process.GetCurrentProcess().Id + (browserPid != 0 ? " --after-browser " + browserPid : "") + " --relaunch " + next + (Visible && !IsIconic(Handle) ? "" : " -min"));
+        exiting = true; tray.Visible = false; Application.Exit();
+    }
+    uint browserPid;   // the page's WebView2 browser process
+    bool gpuLost, gpuWaitLogged; int gpuLostAt;   // the page's GPU process died (ProcessFailed), at this TickCount
+    // the new start for a lost GPU process: 30 s after the last loss (a driver install can take it down more than once);
+    // a start that shows the window waits while a game or another full-screen app is in front (a new window can take
+    // the focus); after two starts within minutes the next one waits until this copy has run 10 minutes
+    bool MaybeGpuRestart()
+    {
+        if (!gpuLost || exiting || ending || asleep || unchecked(Environment.TickCount - gpuLostAt) < 30000) return false;
+        if (Visible && !IsIconic(Handle) && (gameFront || FullScreenInFront())) return false;
+        int next = NextRelaunch();
+        if (next > 2) { if (!gpuWaitLogged) Log("the page's GPU process keeps closing: starting again once this copy has run 10 minutes"); gpuWaitLogged = true; return false; }
+        gpuLost = false;
+        Log("starting again: the page's GPU process closed");
+        if (!Try(() => Relaunch(next))) Log("starting again failed");
+        return exiting;
+    }
+    [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
+    static bool FullScreenInFront() { int q; return SHQueryUserNotificationState(out q) == 0 && (q == 2 || q == 3 || q == 4 || q == 7); }   // (busy: full screen, D3D full screen, presentation mode, a full-screen store app)
     public static readonly List<string> OtherArgs = new List<string>();   // what Main didn't know: a build's own switches
     string RestartArgs()
     {
@@ -4287,6 +4319,11 @@ static class Program
             {
                 after = true;
                 int pid; if (int.TryParse(args[++i], out pid)) try { using (var old = Process.GetProcessById(pid)) old.WaitForExit(20000); } catch { }   // a restart: let the old copy finish saving
+            }
+            else if (a == "--after-browser" && i + 1 < args.Length)
+            {
+                // (and its page's browser: a new page would join one still closing; only a WebView2 browser, that pid may be reused)
+                int pid; if (int.TryParse(args[++i], out pid)) try { using (var old = Process.GetProcessById(pid)) if (old.ProcessName.Equals("msedgewebview2", StringComparison.OrdinalIgnoreCase)) old.WaitForExit(10000); } catch { }
             }
             else if (a == "--fake") { fake = 300; int n; if (i + 1 < args.Length && int.TryParse(args[i + 1], out n)) { fake = Math.Max(1, Math.Min(20000, n)); i++; } }
             else if (a == "--updated" && i + 1 < args.Length) { int c; if (int.TryParse(args[++i], out c)) DeckForm.UpdateResult = c; }   // (Update now's script, see UpdateNow)

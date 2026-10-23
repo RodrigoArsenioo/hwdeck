@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.6 (2026-10-23)
+
+- After a graphics driver update (or a driver reset) the window could stay slow, a few frames a second, until HW Deck was started again. It now starts itself again 30 seconds later, and waits while a game or another full-screen app is in front.
+
 ## 1.5.5 (2026-10-19)
 
 - A click anywhere on the 12V-2x6 connector cell opens it, its pin bars too (they didn't).
