@@ -4,6 +4,7 @@
 import { connect, checks } from './cdp.mjs';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const port = Number(process.argv[2] || 9232);
 const data = process.argv[3] || 'test/data-h';
@@ -247,6 +248,34 @@ await E(`onHost({ t: 'settings', keep: true, keepBusy: false, keepNote: "Last ti
 ok('on, with the task\'s last trouble under it, in yellow', await E(`(() => { const s = $("sKeep").closest(".setrow").querySelector("small.y"); return !!s && s.textContent === "Last time it couldn't keep HWiNFO sharing: test."; })()`), await E('$("sKeep").closest(".setrow").textContent'));
 await E(`onHost({ t: 'settings', keep: true, keepBusy: false })`);
 ok('and without one, no note', await E('!$("sKeep").closest(".setrow").querySelector("small.y")'));
+
+// ---- the task's script is pinned to its version: a task keeps the script it was made with, and only a higher
+// KeepVersion tells Settings to say "turn this off and on once to update it" (1.5.1 changed the script and kept 3,
+// so 1.5.0's tasks never heard). What reaches a task is hashed with C# comments and spacing left out. Changed it?
+// Bump KeepVersion in src/app.cs, then pin both here. Only a change that can't reach a made task (the one-time
+// part after RegisterTask) takes a new hash without a bump ----
+const KEEP_PIN = { version: 4, hash: '1244eee2ee830807' };
+const cs = readFileSync(new URL('../src/app.cs', import.meta.url), 'utf8');
+const csDecl = at => {   // the declaration from `at` to its ';' or closing '}', comments out, spacing squeezed
+  let i = cs.indexOf(at), o = '', d = 0;
+  if (i < 0) return null;
+  while (i < cs.length) {
+    const c = cs[i], n = cs[i + 1];
+    if (c === '/' && n === '/') { i = cs.indexOf('\n', i); continue; }
+    if (c === '/' && n === '*') { i = cs.indexOf('*/', i) + 2; continue; }
+    if (c === '@' && n === '"') { let j = i + 2; while (!(cs[j] === '"' && cs[j + 1] !== '"')) j += cs[j] === '"' ? 2 : 1; o += cs.slice(i, j + 1); i = j + 1; continue; }
+    if (c === '"' || c === "'") { let j = i + 1; while (cs[j] !== c) j += cs[j] === '\\' ? 2 : 1; o += cs.slice(i, j + 1); i = j + 1; continue; }
+    if (/\s/.test(c)) { if (o && !o.endsWith(' ')) o += ' '; i++; continue; }
+    o += c; i++;
+    if (c === '{') d++;
+    if ((c === '}' && --d === 0) || (c === ';' && d === 0)) break;
+  }
+  return o.replace(/\r\n/g, '\n');
+};
+const keepParts = ['const string RestartScript =', 'const string KeepScript =', 'static string PowerShellExe', 'static string PsText(', 'string KeepOnScript()'].map(csDecl);
+const keepHash = keepParts.includes(null) ? 'missing' : createHash('sha256').update(keepParts.join('\n')).digest('hex').slice(0, 16);
+const keepVer = +((cs.match(/const int KeepVersion = (\d+);/) || [])[1]);
+ok('the Keep task\'s script matches the hash pinned to its KeepVersion (changed: bump KeepVersion, then pin both)', keepVer === KEEP_PIN.version && keepHash === KEEP_PIN.hash, `KeepVersion ${keepVer}, hash ${keepHash} (pinned ${KEEP_PIN.version}, ${KEEP_PIN.hash})`);
 
 // ---- Accurate game fps (Settings): off by default, under Keep HWiNFO sharing; a click asks the host, its answer shows ----
 await E(`(() => { feed.fake = true; send({ t: 'getSettings' }); return 1; })()`); await until('feed.keep === false', 4000);

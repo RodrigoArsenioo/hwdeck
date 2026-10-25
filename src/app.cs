@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.5.6.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.5.6.0")]
+[assembly: System.Reflection.AssemblyVersion("1.5.7.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.5.7.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.5.6";
+    public const string Version = "1.5.7";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -3580,7 +3580,7 @@ exit $code
     // and HWiNFO's window, which takes the focus as it starts, is minimized, so the window in front gets it back. The
     // Win32 calls for that are made in memory: Add-Type would compile a file into the user's temp folder and load it
     // as admin. On and off are one Windows prompt each ----
-    const int KeepVersion = 3;   // in its description: a later HW Deck can tell a task made before a change to its script
+    const int KeepVersion = 4;   // in its description: a later HW Deck can tell a task made before a change to its script (test/e2e-hardening.mjs pins the script to it)
     string KeepTask { get { return runName + " - Keep HWiNFO sharing"; } }
     string KeepMark { get { return Brand.Name + ": " + Application.ExecutablePath; } }   // the end of its description: whose it is
     static bool InProgramFiles(string exe)

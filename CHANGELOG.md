@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.7 (2026-10-25)
+
+- Keep HWiNFO sharing: a task turned on with 1.5.0 kept that version's script, which counted HWiNFO's run time in local time, so the night the clocks go back it could restart HWiNFO an hour late, after the free version's 12 hours. Settings now says to turn it off and on once, which updates it.
+
 ## 1.5.6 (2026-10-23)
 
 - After a graphics driver update (or a driver reset) the window could stay slow, a few frames a second, until HW Deck was started again. It now starts itself again 30 seconds later, and waits while a game or another full-screen app is in front.
