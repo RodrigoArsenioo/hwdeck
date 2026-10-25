@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.5.7.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.5.7.0")]
+[assembly: System.Reflection.AssemblyVersion("1.5.8.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.5.8.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.5.7";
+    public const string Version = "1.5.8";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -3486,10 +3486,26 @@ Start-Process -FilePath $Exe -ArgumentList $a";
         catch { }
     }
     // kills HWiNFO, switches its shared memory back on in its INI (the free version writes SensorsSM=0 after 12 h)
-    // and starts it again. Exit codes: 0 done, 2 the INI couldn't be written, 3 no HWiNFO found. $Unattended (Keep
-    // HWiNFO sharing's task, nobody at the PC): its welcome screen off and Sensors-only on, or it would wait on the
-    // welcome screen and share nothing. Program Files comes from Windows (the known folder), not from the environment,
-    // which the user's own settings can change, and HWiNFO only from this Windows session
+    // and starts it again. Exit codes: 0 done, 2 the INI couldn't be written, 3 no HWiNFO found. Every restart comes
+    // back in the tray and never bothers anyone: the INI also gets its welcome screen off, Sensors-only, started
+    // minimized, and its close button minimizing (to the tray); then, until it shares (its own poll time: another program
+    // can keep the old map open) and 5 s more, 25 s at most, a Sensors window that shows anyway is closed into the tray,
+    // and the window in front as it starts gets the focus back (HWiNFO takes it, with all its windows hidden; a hung
+    // window is left alone). Windows refuses SetForegroundWindow to a script in
+    // the background (and flashes the taskbar button), so this one joins HWiNFO's input and that window's and brings
+    // it to the top. Never a minimize: on a window in the tray it shows it, minimized on the taskbar.
+    // $W (WinApi) is made first. Program Files comes from Windows (the known folder), not from the environment, which
+    // the user's own settings can change, and HWiNFO only from this Windows session
+    const string WinApi = @"
+$tb = [AppDomain]::CurrentDomain.DefineDynamicAssembly(([Reflection.AssemblyName]'KeepHw'), 'Run').DefineDynamicModule('KeepHw').DefineType('KeepHw', 'Public, Class')
+foreach ($f in ('user32.dll', 'GetForegroundWindow', [IntPtr], @()), ('user32.dll', 'BringWindowToTop', [Boolean], @([IntPtr])), ('user32.dll', 'GetWindowThreadProcessId', [UInt32], @([IntPtr], [UInt32].MakeByRefType())),
+  ('user32.dll', 'AttachThreadInput', [Boolean], @([UInt32], [UInt32], [Boolean])), ('kernel32.dll', 'GetCurrentThreadId', [UInt32], @()), ('user32.dll', 'FindWindowExW', [IntPtr], @([IntPtr], [IntPtr], [String], [String])),
+  ('user32.dll', 'GetWindowTextW', [Int32], @([IntPtr], [Text.StringBuilder], [Int32])), ('user32.dll', 'IsWindow', [Boolean], @([IntPtr])), ('user32.dll', 'IsWindowVisible', [Boolean], @([IntPtr])), ('user32.dll', 'IsHungAppWindow', [Boolean], @([IntPtr])),
+  ('user32.dll', 'PostMessageW', [Boolean], @([IntPtr], [UInt32], [IntPtr], [IntPtr])), ('shell32.dll', 'SHQueryUserNotificationState', [Int32], @([Int32].MakeByRefType())),
+  ('user32.dll', 'GetLastInputInfo', [Boolean], @([UInt32[]])), ('kernel32.dll', 'GetTickCount', [UInt32], @())) {
+  $m = $tb.DefinePInvokeMethod($f[1], $f[0], 'Public, Static, PinvokeImpl', 'Standard', $f[2], [Type[]]$f[3], 'Winapi', 'Unicode'); $m.SetImplementationFlags('PreserveSig')
+}
+$W = $tb.CreateType()";
     const string RestartScript = @"
 $env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')   # (as admin: Windows' own modules only, never the user's)
 $ErrorActionPreference = 'Stop'
@@ -3510,8 +3526,7 @@ $code = 0
 try {
   $ini = [IO.Path]::ChangeExtension($Exe, '.INI')
   $lines = @(if (Test-Path -LiteralPath $ini) { Get-Content -LiteralPath $ini })
-  $want = [ordered]@{ SensorsSM = '1' }
-  if ($Unattended) { $want['ShowWelcomeAndProgress'] = '0'; $want['SensorsOnly'] = '1' }
+  $want = [ordered]@{ SensorsSM = '1'; ShowWelcomeAndProgress = '0'; SensorsOnly = '1'; MinimalizeMainWnd = '1'; MinimalizeSensors = '1'; MinimalizeSensorsClose = '1' }
   foreach ($k in $want.Keys) {
     $set = $k + '=' + $want[$k]
     if ($lines -match ('^' + $k + '=')) { $lines = @($lines | ForEach-Object { if ($_ -match ('^' + $k + '=')) { $set } else { $_ } }) }
@@ -3526,8 +3541,26 @@ try {
 } catch { $code = 2 }
 try { $sig = Get-AuthenticodeSignature -LiteralPath $Exe } catch { $sig = $null }
 if (-not $sig -or $sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -cnotmatch '^CN=""?REALiX, s\.r\.o\.""?,') { exit 4 }   # (again: the file could have changed meanwhile)
-[void][Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo $Exe))
-if ($AfterStart) { & $AfterStart }
+$Front = $W::GetForegroundWindow(); $st0 = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$new = [Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo $Exe))
+try {
+  $t0 = [DateTime]::UtcNow; $up = $null
+  while ($new -and ([DateTime]::UtcNow - $t0).TotalSeconds -lt 25 -and -not ($up -and ([DateTime]::UtcNow - $up).TotalSeconds -gt 5)) {
+    Start-Sleep -Milliseconds 200
+    if (-not $up) { try { $mm = [IO.MemoryMappedFiles.MemoryMappedFile]::OpenExisting('Global\HWiNFO_SENS_SM2', 'Read'); $va = $mm.CreateViewAccessor(0, 20, 'Read'); if ($va.ReadUInt32(0) -eq 0x53695748 -and $va.ReadInt64(12) -ge $st0) { $up = [DateTime]::UtcNow }; $va.Dispose(); $mm.Dispose() } catch { } }
+    $h = [IntPtr]::Zero
+    while ($code -eq 0 -and ($h = $W::FindWindowExW([IntPtr]::Zero, $h, '#32770', [NullString]::Value)) -ne [IntPtr]::Zero) {
+      $q = [UInt32]0; [void]$W::GetWindowThreadProcessId($h, [ref]$q)
+      if ($q -eq $new.Id -and $W::IsWindowVisible($h)) { $t = New-Object Text.StringBuilder 256; [void]$W::GetWindowTextW($h, $t, 256); if ($t.ToString() -match 'Sensors') { [void]$W::PostMessageW($h, 0x112, [IntPtr]0xF060, [IntPtr]::Zero) } }
+    }
+    $q = [UInt32]0; $ft = $W::GetWindowThreadProcessId($W::GetForegroundWindow(), [ref]$q)
+    if ($q -eq $new.Id -and $Front -ne [IntPtr]::Zero -and $W::IsWindow($Front) -and -not $W::IsHungAppWindow($Front)) {
+      $q = [UInt32]0; $tt = $W::GetWindowThreadProcessId($Front, [ref]$q); $me = $W::GetCurrentThreadId()
+      $a = $W::AttachThreadInput($me, $ft, $true); $b = $W::AttachThreadInput($ft, $tt, $true); [void]$W::BringWindowToTop($Front)
+      if ($b) { [void]$W::AttachThreadInput($ft, $tt, $false) }; if ($a) { [void]$W::AttachThreadInput($me, $ft, $false) }
+    }
+  }
+} catch { }
 exit $code
 ";
     void RestartHwinfo()
@@ -3540,7 +3573,7 @@ exit $code
         {
             string exe = settings.ContainsKey("hwinfo") ? settings["hwinfo"] as string : null;
             if (exe != null && (!Regex.IsMatch(Path.GetFileName(exe), @"^HWiNFO(64|32)\.exe$", RegexOptions.IgnoreCase) || !File.Exists(exe))) exe = null;
-            string script = "$Exe = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + Convert.ToBase64String(Encoding.Unicode.GetBytes(exe ?? "")) + "'))" + RestartScript;
+            string script = "$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')\n$Exe = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + Convert.ToBase64String(Encoding.Unicode.GetBytes(exe ?? "")) + "'))" + WinApi + RestartScript;
             var psi = new ProcessStartInfo(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
             psi.Verb = "runas"; psi.WindowStyle = ProcessWindowStyle.Hidden; psi.UseShellExecute = true;   // HWiNFO runs as admin: so must its restart
             var proc = Process.Start(psi);
@@ -3550,7 +3583,7 @@ exit $code
             System.Threading.ThreadPool.QueueUserWorkItem(delegate
             {
                 int code = -1;
-                try { if (proc != null && proc.WaitForExit(60000)) code = proc.ExitCode; } catch { }
+                try { if (proc != null && proc.WaitForExit(90000)) code = proc.ExitCode; } catch { }
                 string text = code == 0 ? "HWiNFO restarted with its shared memory on" : code == 2 ? "HWiNFO restarted, but its settings file couldn't be changed: turn on Shared Memory Support in its settings"
                             : code == 3 ? "HWiNFO wasn't found: start it once yourself, " + Brand.Name + " remembers where it is"
                             : code == 4 ? "That HWiNFO isn't signed by its maker (REALiX), so " + Brand.Name + " didn't start it as admin" : "The HWiNFO restart didn't finish";
@@ -3576,11 +3609,12 @@ exit $code
     // Program Files (started as admin with no prompt, a copy in a folder anyone can
     // write to could bring someone else's files along). A closed HWiNFO stays closed. Once this copy of HW Deck is gone
     // (a deleted zip folder) the task deletes itself; the msi's uninstall deletes it too (installer\HWDeck.wxs, under the
-    // same name). Anything full screen in front (a game, a video) gets to finish first, until HWiNFO has run 11 h 40 min,
-    // and HWiNFO's window, which takes the focus as it starts, is minimized, so the window in front gets it back. The
-    // Win32 calls for that are made in memory: Add-Type would compile a file into the user's temp folder and load it
-    // as admin. On and off are one Windows prompt each ----
-    const int KeepVersion = 4;   // in its description: a later HW Deck can tell a task made before a change to its script (test/e2e-hardening.mjs pins the script to it)
+    // same name). Anything full screen in front (a game, a video) gets to finish first, and so does someone at the PC (it
+    // waits for 2 minutes without a key or the mouse touched: HWiNFO takes the focus for a moment as it starts), until
+    // HWiNFO has run 11 h 40 min, and HWiNFO comes back in the tray with the focus left where it was (RestartScript).
+    // The Win32 calls for that are made in memory (WinApi): Add-Type would compile a file into the user's temp folder
+    // and load it as admin. On and off are one Windows prompt each ----
+    const int KeepVersion = 5;   // in its description: a later HW Deck can tell a task made before a change to its script (test/e2e-hardening.mjs pins the script to it)
     string KeepTask { get { return runName + " - Keep HWiNFO sharing"; } }
     string KeepMark { get { return Brand.Name + ": " + Application.ExecutablePath; } }   // the end of its description: whose it is
     static bool InProgramFiles(string exe)
@@ -3616,16 +3650,10 @@ if (([DateTime]::UtcNow - $p[0].StartTime.ToUniversalTime()).TotalMinutes -lt $M
 $Exe = $p[0].Path; $ok = $false
 if ($Exe) { $full = [IO.Path]::GetFullPath($Exe); foreach ($d in [Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86')) { if ($d -and $full.StartsWith($d.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { $ok = $true } } }
 if (-not $ok) { exit 6 }
-$Unattended = $true
-$tb = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object Reflection.AssemblyName 'KeepHw'), 'Run').DefineDynamicModule('KeepHw').DefineType('KeepHw', 'Public, Class')
-foreach ($f in ('user32.dll', 'GetForegroundWindow', [IntPtr], @()), ('user32.dll', 'GetWindowThreadProcessId', [UInt32], @([IntPtr], [UInt32].MakeByRefType())), ('user32.dll', 'PostMessageW', [Boolean], @([IntPtr], [UInt32], [IntPtr], [IntPtr])), ('shell32.dll', 'SHQueryUserNotificationState', [Int32], @([Int32].MakeByRefType()))) {
-  $m = $tb.DefinePInvokeMethod($f[1], $f[0], 'Public, Static, PinvokeImpl', 'Standard', $f[2], [Type[]]$f[3], 'Winapi', 'Unicode'); $m.SetImplementationFlags('PreserveSig')
-}
-$W = $tb.CreateType()
+$Unattended = $true" + WinApi + @"
 $until = $p[0].StartTime.ToUniversalTime().AddMinutes(700)
-while ([DateTime]::UtcNow -lt $until) { $q = 0; [void]$W::SHQueryUserNotificationState([ref]$q); if (2, 3, 4 -notcontains $q) { break }; Start-Sleep -Seconds 30 }
-$p[0].Refresh(); if ($p[0].HasExited) { exit 0 }
-$AfterStart = { for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $h = $W::GetForegroundWindow(); $q = [UInt32]0; [void]$W::GetWindowThreadProcessId($h, [ref]$q); if ((Get-Process -Id $q -ErrorAction SilentlyContinue).ProcessName -like 'HWiNFO*') { [void]$W::PostMessageW($h, 0x112, [IntPtr]0xF020, [IntPtr]::Zero); break } } }";
+while ([DateTime]::UtcNow -lt $until) { $q = 0; [void]$W::SHQueryUserNotificationState([ref]$q); $li = [UInt32[]](8, 0); if (2, 3, 4 -notcontains $q -and (-not $W::GetLastInputInfo($li) -or ([long]$W::GetTickCount() - $li[1] + 4294967296) % 4294967296 -ge $Idle * 1000)) { break }; Start-Sleep -Seconds 30 }
+$p[0].Refresh(); if ($p[0].HasExited) { exit 0 }";
     static string PowerShellExe { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"); } }
     static string PsText(string s) { return "[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + Convert.ToBase64String(Encoding.Unicode.GetBytes(s ?? "")) + "'))"; }
     static object Com(object o, string name, System.Reflection.BindingFlags how, params object[] a) { return o.GetType().InvokeMember(name, how, null, o, a); }
@@ -3679,8 +3707,9 @@ $AfterStart = { for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $
     // the elevated script that makes the task: the hourly script into HKLM, then the task that starts it
     string KeepOnScript()
     {
-        int min = 650, m;
+        int min = 650, idle = 120, m;
         if (customData && int.TryParse(Environment.GetEnvironmentVariable("HWDECK_KEEP_MIN"), out m) && m >= 0) min = m;   // (tests, with their own --data: another age)
+        if (customData && int.TryParse(Environment.GetEnvironmentVariable("HWDECK_KEEP_IDLE"), out m) && m >= 0) idle = m;   // (and another idle time, in seconds)
         string sid = System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
         string sys = Environment.GetFolderPath(Environment.SpecialFolder.System), x = System.Security.SecurityElement.Escape(Brand.Name);
         // what the task runs: cmd.exe (no .NET, no AutoRun) drops the profiler settings and the COMPLUS_ ones that load
@@ -3705,10 +3734,16 @@ $AfterStart = { for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $
             "<Actions Context=\"Author\"><Exec><Command>" + Path.Combine(sys, "conhost.exe") + "</Command><Arguments>" + System.Security.SecurityElement.Escape(args) + "</Arguments></Exec></Actions></Task>";
         // (every exit records its code next to the script first, while the task's script is still there)
         string hourly = Regex.Replace(KeepScript + RestartScript, @"\bexit (\d+|\$code)", "Leave $1");
-        return "$Name = " + PsText(KeepTask) + "; $Key = " + PsText(KeepKey) + "\n$hourly = @'\n$App = " + PsText(Application.ExecutablePath) + "; $Name = " + PsText(KeepTask) + "; $Key = " + PsText(KeepKey) + "; $Min = " + min +
+        string stored = "$App = " + PsText(Application.ExecutablePath) + "; $Name = " + PsText(KeepTask) + "; $Key = " + PsText(KeepKey) + "; $Min = " + min + "; $Idle = " + idle +
             // (a run with nothing to do yet, exit 0 before the restart, keeps the last real result)
             "\nfunction Leave($c) { try { $r = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').OpenSubKey($Key, $true); if ($r -and $null -ne $r.GetValue($Name) -and ($c -ne 0 -or $Unattended)) { $r.SetValue($Name + ' result', [string]$c) } } catch { }; exit $c }" +
-            hourly + "\n'@\n$xml = @'\n" + xml + "\n'@\n$Me = '" + sid + "'" + @"
+            hourly;
+        // (deflated on the way: this whole script goes to the admin PowerShell on its command line, which holds 32767
+        // characters, and -EncodedCommand makes each one 2.7)
+        var zs = new MemoryStream();
+        using (var z = new System.IO.Compression.DeflateStream(zs, System.IO.Compression.CompressionMode.Compress, true)) { var b = Encoding.UTF8.GetBytes(stored); z.Write(b, 0, b.Length); }
+        return "$Name = " + PsText(KeepTask) + "; $Key = " + PsText(KeepKey) + "\n$hourly = (New-Object IO.StreamReader((New-Object IO.Compression.DeflateStream((New-Object IO.MemoryStream(,[Convert]::FromBase64String('" +
+            Convert.ToBase64String(zs.ToArray()) + "'))), [IO.Compression.CompressionMode]::Decompress)), [Text.Encoding]::UTF8)).ReadToEnd()\n$xml = @'\n" + xml + "\n'@\n$Me = '" + sid + "'" + @"
 $ErrorActionPreference = 'Stop'
 if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne $Me) { exit 8 }
 $s = New-Object -ComObject Schedule.Service; $s.Connect(); $f = $s.GetFolder('\')

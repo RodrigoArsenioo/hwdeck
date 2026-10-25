@@ -254,7 +254,7 @@ ok('and without one, no note', await E('!$("sKeep").closest(".setrow").querySele
 // so 1.5.0's tasks never heard). What reaches a task is hashed with C# comments and spacing left out. Changed it?
 // Bump KeepVersion in src/app.cs, then pin both here. Only a change that can't reach a made task (the one-time
 // part after RegisterTask) takes a new hash without a bump ----
-const KEEP_PIN = { version: 4, hash: '1244eee2ee830807' };
+const KEEP_PIN = { version: 5, hash: '325d31dab18738ba' };
 const cs = readFileSync(new URL('../src/app.cs', import.meta.url), 'utf8');
 const csDecl = at => {   // the declaration from `at` to its ';' or closing '}', comments out, spacing squeezed
   let i = cs.indexOf(at), o = '', d = 0;
@@ -272,7 +272,7 @@ const csDecl = at => {   // the declaration from `at` to its ';' or closing '}',
   }
   return o.replace(/\r\n/g, '\n');
 };
-const keepParts = ['const string RestartScript =', 'const string KeepScript =', 'static string PowerShellExe', 'static string PsText(', 'string KeepOnScript()'].map(csDecl);
+const keepParts = ['const string WinApi =', 'const string RestartScript =', 'const string KeepScript =', 'static string PowerShellExe', 'static string PsText(', 'string KeepOnScript()'].map(csDecl);
 const keepHash = keepParts.includes(null) ? 'missing' : createHash('sha256').update(keepParts.join('\n')).digest('hex').slice(0, 16);
 const keepVer = +((cs.match(/const int KeepVersion = (\d+);/) || [])[1]);
 ok('the Keep task\'s script matches the hash pinned to its KeepVersion (changed: bump KeepVersion, then pin both)', keepVer === KEEP_PIN.version && keepHash === KEEP_PIN.hash, `KeepVersion ${keepVer}, hash ${keepHash} (pinned ${KEEP_PIN.version}, ${KEEP_PIN.hash})`);

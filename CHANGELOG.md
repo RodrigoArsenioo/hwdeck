@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.8 (2026-10-25)
+
+- A restart of HWiNFO (Restart HWiNFO, or Keep HWiNFO sharing's task) no longer bothers you: HWiNFO comes back in the tray and its window never opens. It could come back as a window on the taskbar, or open, and take the focus. The restart now sets HWiNFO to start minimized, Sensors-only and without its welcome screen, with its close button minimizing to the tray. If HWiNFO takes the focus as it starts, it goes back to the window you were in. Keep HWiNFO sharing also waits until you haven't touched the keyboard or mouse for 2 minutes (until HWiNFO has run 11 h 40 min at most, as for a game). Turn it off and on once to update its task.
+
 ## 1.5.7 (2026-10-25)
 
 - Keep HWiNFO sharing: a task turned on with 1.5.0 kept that version's script, which counted HWiNFO's run time in local time, so the night the clocks go back it could restart HWiNFO an hour late, after the free version's 12 hours. Settings now says to turn it off and on once, which updates it.
