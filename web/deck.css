@@ -159,7 +159,7 @@ html[data-motion="off"] .viewwrap { transition: none; }
 .od { position: relative; display: inline-block; overflow: clip; font-variant-numeric: tabular-nums; }
 .od .odr { position: absolute; left: 0; right: 0; top: 0; white-space: pre; text-align: center; visibility: hidden; }   /* rolled by the page's motion clock */
 .od.roll .odh { visibility: hidden; } .od.roll .odr { visibility: visible; }
-.spw { display: inline-flex; flex: none; font-style: normal; }
+.spw, .lbl i.spw { display: inline-flex; flex: none; font-style: normal; }   /* (not .lbl i's block: its line box sat the fan 1px off the turn's centre) */
 .yellow { color: var(--yellow); } .red { color: var(--red); } .grey { color: #555; }
 .val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; transition: color 350ms; }
 .val small { color: #666; font-weight: 400; font-size: 0.88rem; margin-left: 0.15rem; }
