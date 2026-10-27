@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.10 (2026-10-27)
+
+- The window keeps its size and place when that place is on a screen that isn't there as HW Deck starts (a TV that is off, a monitor unplugged). It opened at its default size, and the next save put that size over yours. It now opens at your size on the screen you're on, keeps your place, and goes back there once that screen is on again, unless you moved it in the meantime. The same goes for a screen that goes away while HW Deck runs.
+
 ## 1.5.9 (2026-10-26)
 
 - The spinning fan icons in Overview's rows turned around a point just below their middle, so they wobbled. They now turn in place.

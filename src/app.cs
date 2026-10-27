@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.5.9.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.5.9.0")]
+[assembly: System.Reflection.AssemblyVersion("1.5.10.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.5.10.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.5.9";
+    public const string Version = "1.5.10";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -2527,10 +2527,14 @@ partial class DeckForm : Form
         minTrack = new Size(Math.Min((int)(720 * k), wa.Width / 2), Math.Min((int)(480 * k), wa.Height / 2));
         string icoPath = Path.Combine(appDir, "app.ico");
         try { Icon = File.Exists(icoPath) ? new Icon(icoPath) : Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+        // (tests, with their own --data: HWDECK_SCREEN_GONE=a-b, seconds after the start when only the main screen counts as there)
+        string[] gone = customData ? (Environment.GetEnvironmentVariable("HWDECK_SCREEN_GONE") ?? "").Split('-') : new string[0];
+        if (gone.Length != 2 || !int.TryParse(gone[0], out goneFrom) || !int.TryParse(gone[1], out goneTo)) goneFrom = -1; else goneAt = DateTime.UtcNow;
         RestoreWin();
-        ResizeBegin += delegate { moving = true; };
-        ResizeEnd += delegate { moving = false; if (fitAfterMove) { fitAfterMove = false; FitToScreen(); } SaveWin(); };
-        Resize += delegate { if (WindowState != FormWindowState.Minimized) { restoreMax = WindowState == FormWindowState.Maximized; PostMax(); } };
+        ResizeBegin += delegate { moving = true; movedFrom = Bounds; };
+        ResizeEnd += delegate { moving = false; if (fitAfterMove) { fitAfterMove = false; FitToScreen(); } SaveWin(Bounds != movedFrom); };   // (a click on the title bar moves nothing)
+        Resize += delegate { NoteNormal(); if (WindowState != FormWindowState.Minimized) { restoreMax = WindowState == FormWindowState.Maximized; PostMax(); } };
+        Move += delegate { NoteNormal(); };
         Shown += delegate { FitToScreen(); };
 
         wv = new WebView2();
@@ -3355,6 +3359,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             gameFront = games.InFront && (games.GamePid == 0 || Procs.Foreground() == games.GamePid);
             if (src.Frames != null) src.Frames.Pid = gameFront ? games.GamePid : 0;   // (out of front: no numbers, no 0 fps warnings)
             if (MaybeGpuRestart()) return;   // (this copy is closing)
+            Try(WinBack);
             src.Second(games.Game != null && now - games.Seen <= 6);
             hist.Sample(src, Bottleneck.ShareKeys, src.Bneck.Shares);
             ExtSecond(now);
@@ -4063,9 +4068,9 @@ exit 0";
                 if (GetWindowPlacement(Handle, ref wp)) { wp.flags |= 2 /*WPF_RESTORETOMAXIMIZED*/; wp.showCmd = 7; SetWindowPlacement(Handle, ref wp); }
                 ShowWindow(Handle, 4 /*SW_SHOWNOACTIVATE*/);
             }
-            SaveWin();
+            SaveWin(true);
         }
-        else if (a == "max") { KeepFocus(() => WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized); SaveWin(); }
+        else if (a == "max") { KeepFocus(() => WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized); SaveWin(true); }
         else if (a == "close") HideToTray();
         else if ((a == "drag" || a != null && a.StartsWith("resize:")) && NoFocus) { }   // (only a real mouse moves a window: in a test's copy they'd activate it)
         else if (a == "drag")
@@ -4186,6 +4191,7 @@ exit 0";
     // monitor) comes back inside it, never under the taskbar
     // (a monitor change in the middle of a drag waits for the drag to end: the window still straddles both screens)
     bool moving, fitAfterMove;
+    Rectangle movedFrom;
     void FitToScreen()
     {
         try
@@ -4205,13 +4211,25 @@ exit 0";
     }
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
     string WinPath { get { return P("window.json"); } }
-    void SaveWin()
+    // the saved place on a screen that isn't there (a TV that is off, a monitor unplugged): the window shows elsewhere
+    // meanwhile, window.json keeps the place, and the window goes back once that screen is (WinBack); moving or resizing
+    // it yourself (mine) makes where it is the saved place
+    Rectangle winSaved, winAway, normalAt;   // normalAt: where it was last neither maximized nor minimized (RestoreBounds misses moves made outside WinForms)
+    bool winSavedMax, winAwayMax, winHome = true;   // winHome: at the last look the window was on its saved place
+    void NoteNormal() { if (IsHandleCreated && !IsZoomed(Handle) && !IsIconic(Handle)) normalAt = Bounds; }   // (Windows' word: WindowState lags)
+    void SaveWin(bool mine = false)
     {
         try
         {
-            var b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            if (mine) winAway = Rectangle.Empty;
+            else { WinGone(); if (!winAway.IsEmpty) return; }   // (a save in the second its screen went: not the place Windows moved it to)
+            var b = WindowState == FormWindowState.Normal ? Bounds : !normalAt.IsEmpty ? normalAt : RestoreBounds;
             bool max = WindowState == FormWindowState.Maximized || (WindowState == FormWindowState.Minimized && restoreMax);   // minimized from maximized comes back maximized
-            Disk.Swap(WinPath, json.Serialize(new Dictionary<string, object> { { "x", b.X }, { "y", b.Y }, { "w", b.Width }, { "h", b.Height }, { "max", max } }));   // (a cut write never empties it)
+            var d = new Dictionary<string, object> { { "x", b.X }, { "y", b.Y }, { "w", b.Width }, { "h", b.Height }, { "max", max } };
+            uint dpi = IsHandleCreated ? GetDpiForWindow(Handle) : 0;
+            if (dpi > 0) d["dpi"] = (int)dpi;   // (the size is in that screen's pixels: shown on another scale, it is converted)
+            Disk.Swap(WinPath, json.Serialize(d));   // (a cut write never empties it)
+            winSaved = b; winSavedMax = max;
         }
         catch { }
     }
@@ -4222,13 +4240,91 @@ exit 0";
             if (!File.Exists(WinPath)) return;
             var d = json.Deserialize<Dictionary<string, object>>(File.ReadAllText(WinPath));
             var r = new Rectangle(Convert.ToInt32(d["x"]), Convert.ToInt32(d["y"]), Convert.ToInt32(d["w"]), Convert.ToInt32(d["h"]));
-            if (!Screen.AllScreens.Any(sc => sc.WorkingArea.IntersectsWith(r))) return;   // that monitor is gone
+            bool max = true.Equals(d["max"]);
+            winSaved = r; winSavedMax = max;
+            if (!OnAScreen(r))
+            {
+                // its screen isn't there: the saved size, in the middle of the screen under the mouse (in its pixels)
+                winAway = r; winAwayMax = max;
+                var sc = Screen.FromPoint(Cursor.Position);
+                if (!OnAScreen(sc.Bounds)) sc = Screen.PrimaryScreen;
+                var wa = sc.WorkingArea; var c = new RECT { L = wa.X + wa.Width / 2, T = wa.Y + wa.Height / 2, R = wa.X + wa.Width / 2 + 1, B = wa.Y + wa.Height / 2 + 1 };
+                object was; uint dx, dy;
+                double k = d.TryGetValue("dpi", out was) && Convert.ToInt32(was) > 0 && GetDpiForMonitor(MonitorFromRect(ref c, 2 /*NEAREST*/), 0, out dx, out dy) == 0 && dx > 0 ? (double)dx / Convert.ToInt32(was) : 1;
+                int w = Math.Min((int)(r.Width * k), wa.Width), h = Math.Min((int)(r.Height * k), wa.Height);
+                r = new Rectangle(wa.X + (wa.Width - w) / 2, wa.Y + (wa.Height - h) / 2, w, h);
+            }
             minTrack = Size.Empty;   // HandleCreated sets the one for the monitor it is on
-            StartPosition = FormStartPosition.Manual; Bounds = r;
-            if (true.Equals(d["max"]) && !NoFocus) WindowState = FormWindowState.Maximized;   // (a maximized first show takes the focus)
+            StartPosition = FormStartPosition.Manual; Bounds = r; normalAt = r;
+            if (max && !NoFocus && winAway.IsEmpty) WindowState = FormWindowState.Maximized;   // (a maximized first show takes the focus; away, it maximizes once back there)
         }
         catch { }
     }
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromRect(ref RECT r, uint flags);
+    [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr mon, int type, out uint x, out uint y);
+    int goneFrom = -1, goneTo; DateTime goneAt;
+    // a screen there now, asked of Windows each time (Screen keeps its list from the last display change it heard of)
+    bool OnAScreen(Rectangle r)
+    {
+        var rc = new RECT { L = r.Left, T = r.Top, R = r.Right, B = r.Bottom };
+        IntPtr m = MonitorFromRect(ref rc, 0 /*MONITOR_DEFAULTTONULL*/);
+        if (m == IntPtr.Zero) return false;
+        if (goneFrom < 0) return true;
+        double t = (DateTime.UtcNow - goneAt).TotalSeconds;
+        var p = new RECT { L = 0, T = 0, R = 1, B = 1 };
+        return t < goneFrom || t >= goneTo || m == MonitorFromRect(ref p, 1 /*MONITOR_DEFAULTTOPRIMARY*/);
+    }
+    // the saved place's screen gone while the window was on it (Windows moves it elsewhere): that place is kept. A
+    // window you moved off it some other way (keys) isn't brought back
+    void WinGone()
+    {
+        if (!winAway.IsEmpty || winSaved.IsEmpty) return;
+        if (OnAScreen(winSaved)) { winHome = (WindowState == FormWindowState.Normal ? Bounds : normalAt).IntersectsWith(winSaved); return; }
+        if (winHome) { winAway = winSaved; winAwayMax = winSavedMax; }
+    }
+    // once a second, and as it opens from the tray: the saved place's screen back, the window goes there, never taking
+    // the focus (a game may be in front)
+    void WinBack()
+    {
+        if (winAway.IsEmpty) { WinGone(); return; }
+        if (moving || !IsHandleCreated || !OnAScreen(winAway)) return;
+        var r = winAway; bool max = winAwayMax;
+        if (!Visible)
+        {
+            if (WindowState != FormWindowState.Normal) return;   // (in the tray maximized or minimized: once it shows)
+            winAway = Rectangle.Empty; MoveTo(r);
+            if (max) WindowState = FormWindowState.Maximized;   // (hidden: it opens that way)
+        }
+        else if (!max && WindowState == FormWindowState.Normal) { winAway = Rectangle.Empty; MoveTo(r); }
+        else if (max && IsZoomed(Handle) && Screen.FromHandle(Handle).Bounds == Screen.FromRectangle(r).Bounds) { winAway = Rectangle.Empty; normalAt = r; }   // (back there already: Windows puts windows back too)
+        else if (GetForegroundWindow() == Handle && !IsIconic(Handle))
+        {
+            winAway = Rectangle.Empty;   // (in front already: no focus to take)
+            WindowState = FormWindowState.Normal; MoveTo(r);
+            if (max) WindowState = FormWindowState.Maximized;
+        }
+        else
+        {
+            // maximized, or to be: the place set while minimized without activation, then back (as a test's copy maximizes)
+            winAway = Rectangle.Empty; normalAt = r;
+            bool wasMin = WindowState == FormWindowState.Minimized;
+            if (!wasMin) ShowWindow(Handle, 7 /*SW_SHOWMINNOACTIVE*/);
+            var wp = new WINDOWPLACEMENT { length = Marshal.SizeOf(typeof(WINDOWPLACEMENT)) };
+            if (GetWindowPlacement(Handle, ref wp))
+            {
+                // (the restored place is in workspace coordinates: off by where that screen's work area starts)
+                var sc = Screen.FromRectangle(r); int ox = sc.WorkingArea.X - sc.Bounds.X, oy = sc.WorkingArea.Y - sc.Bounds.Y;
+                wp.normal = new RECT { L = r.Left - ox, T = r.Top - oy, R = r.Right - ox, B = r.Bottom - oy };
+                wp.flags = max ? wp.flags | 2 /*WPF_RESTORETOMAXIMIZED*/ : wp.flags & ~2; wp.showCmd = 7;
+                SetWindowPlacement(Handle, ref wp);
+            }
+            if (!wasMin) ShowWindow(Handle, 4 /*SW_SHOWNOACTIVATE*/);
+        }
+        SaveWin();
+    }
+    // (twice: the first move to a screen of another scale comes back at Windows' size for it, see WM_DPICHANGED; then
+    // inside that screen, which may have come back at another size)
+    void MoveTo(Rectangle r) { for (int i = 0; i < 2; i++) SetWindowPos(Handle, IntPtr.Zero, r.X, r.Y, r.Width, r.Height, 0x0004 /*NOZORDER*/ | 0x0010 /*NOACTIVATE*/); FitToScreen(); }
 
     // made-up data (tests, demos), or HWDECK_NOFOCUS=1 (a test copy on real data): opens without taking the focus from
     // whatever you are working in
@@ -4264,6 +4360,7 @@ exit 0";
     {
         if (!IsHandleCreated) { showAsked = true; return; }
         showAsked = false;
+        Try(WinBack);   // (its saved place's screen back while it was in the tray: it opens there)
         Try(() => wv.Visible = true);
         // (a copy that never takes the focus comes back without being activated: a restore through WindowState activates,
         // SW_SHOWNOACTIVATE brings a minimized window back as it was, maximized or not)
