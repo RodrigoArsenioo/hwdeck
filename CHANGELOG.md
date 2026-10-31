@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.11 (2026-10-31)
+
+- The 12V-2x6 connector's pin bars, and the pins in its popup, turned yellow at 9.2 A and red at 9.5 A whatever lines you gave the cell. They now follow the cell's own lines, like the cell itself and the warning history.
+
 ## 1.5.10 (2026-10-27)
 
 - The window keeps its size and place when that place is on a screen that isn't there as HW Deck starts (a TV that is off, a monitor unplugged). It opened at its default size, and the next save put that size over yours. It now opens at your size on the screen you're on, keeps your place, and goes back there once that screen is on again, unless you moved it in the meantime. The same goes for a screen that goes away while HW Deck runs.

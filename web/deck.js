@@ -26,8 +26,8 @@ const xBody = (cid, r, where) => { const xk = xkOf(r); return xk && xk.body ? '<
 // the body (the pins' bars, a strip) it opens the cell as anywhere on it
 const inCtl = t => !!(t && t.closest && t.closest('[data-x] button, [data-x] input, [data-x] select, [data-x] textarea, [data-x] a, [data-x] [role=button]'));
 // HW Deck's own 12V-2x6 connector (a GPU that reports its pins): its most loaded pin as the value, with lines like any
-// cell (9.2 / 9.5 A to start with), the pins as bars, the pin table in its popup, and yellow when a pin carries 1.5x its
-// share for 3 s (the host keeps that in the warning log too)
+// cell (9.2 / 9.5 A to start with), the pins as bars and the pin table in its popup coloured by those lines, and yellow
+// when a pin carries 1.5x its share for 3 s (the host keeps that in the warning log too)
 const CONN = 'hwdeck.0/12v';
 // the pin rule's hold and episode, in the host's seconds like the lines': lopsided for 3 s turns it, and an episode goes
 // on through a calm second or two (it ends on the 3rd), as the warning log has it
@@ -45,11 +45,13 @@ function stepPins() {
 const c12Ep = { on: false, calm: 0, words: '' };
 const pinVals = i => (feed.c12keys && feed.c12keys[i] || []).map(k => { const r = BYKEY.get(k); return r && r.v != null ? r.v : null; });
 const CONN_LINES = { mode: 'yr', dir: 'above', y: 9.2, r: 9.5, hold: 0 };
+// a pin's colour by its cell's own lines, as the cell's: 'r' past red, 'y' past yellow, '' under them or with no lines
+const pinLvl = (v, cid) => { const c = S.L.cells[cid], gl = gateLines(c && c.gates); return v == null || gl.below ? '' : gl.r !== undefined && v >= gl.r ? 'r' : gl.y !== undefined && v >= gl.y ? 'y' : ''; };
 EXT.kinds['12v'] = {
   body: () => '<span class="xpins">' + '<i><b></b></i>'.repeat(Math.max(1, feed.c12keys ? feed.c12keys[0].length : 6)) + '</span>',
-  update(root) {
+  update(root, rd, e, cid) {
     const a = pinVals(0);
-    root.querySelectorAll('.xb .xpins b').forEach((b, i) => { const v = a[i]; b.style.height = (v == null ? 0 : Math.min(100, v / 9.5 * 100)) + '%'; b.className = v >= 9.5 ? 'r' : v >= 9.2 ? 'y' : ''; });
+    root.querySelectorAll('.xb .xpins b').forEach((b, i) => { const v = a[i]; b.style.height = (v == null ? 0 : Math.min(100, v / 9.5 * 100)) + '%'; b.className = pinLvl(v, cid); });
   },
   after(out) {
     if (feed.status !== 'ok') return;   // (a stalled feed judges nothing: the cell stays grey)
@@ -65,7 +67,7 @@ EXT.kinds['12v'] = {
     for (let i = 0; i < a.length; i++) {
       const v = a[i];
       h += '<div class="mpin"><span class="lbl">pin ' + (i + 1) + '</span><span class="trk"><span style="width:' + (v == null ? 0 : Math.min(100, v / 9.5 * 100)) + '%;background:' +
-        (v >= 9.5 ? COLORS.red : v >= 9.2 ? COLORS.yellow : '#6f6f6f') + '"></span></span><span class="num">' + (v == null ? '--' : v.toFixed(2)) + ' A</span><span class="num">' + (w[i] == null ? '--' : w[i].toFixed(1)) + ' W</span></div>';
+        ({ r: COLORS.red, y: COLORS.yellow }[pinLvl(v, cid)] || '#6f6f6f') + '"></span></span><span class="num">' + (v == null ? '--' : v.toFixed(2)) + ' A</span><span class="num">' + (w[i] == null ? '--' : w[i].toFixed(1)) + ' W</span></div>';
     }
     const el = box.querySelector('.mpinwrap'); if (el._h !== h) { el.innerHTML = h; el._h = h; }
   }

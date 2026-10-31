@@ -1,6 +1,6 @@
 // The 12V-2x6 connector: HW Deck's own reading for a GPU that reports its pins (made-up ones here: start with
-// HWDECK_FAKEPINS=1). In Storage under HW Deck, a cell that starts with its lines, the pins as bars and in its popup,
-// yellow and red from its most loaded pin, yellow for a pin carrying 1.5x its share for 3 s, both in the warning
+// HWDECK_FAKEPINS=1). In Storage under HW Deck, a cell that starts with its lines, the pins as bars and in its popup
+// (coloured by the cell's lines), yellow and red from its most loaded pin, yellow for a pin carrying 1.5x its share for 3 s, both in the warning
 // history. Start it on an EMPTY data folder:
 //   set HWDECK_FAKEPINS=1 & set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9233
 //   HWDeck.exe --fake 300 --data test\data-12v
@@ -39,6 +39,22 @@ await pin([3, 3, 9.6, 3, 3, 3]);
 ok('at 9.6 A: red', await until(`evalCell("${cid}", S.L.cells["${cid}"], true, true).lvl === 2`, 5000));
 await pin([3, 3, 3, 3, 3, 3]); await p.sleep(4500);
 ok('even again: back to normal', await ev(`evalCell("${cid}", S.L.cells["${cid}"], true, true).lvl === 0`));
+
+// the pins' bars and its popup's rows are coloured by the cell's own lines, not by a fixed 9.2 / 9.5 A
+{
+  const bar = `${el}.querySelectorAll(".xb .xpins b")[2].className`, row = `getComputedStyle(document.querySelectorAll("#mextra .mpin .trk > span")[2]).backgroundColor`;
+  await pin([3, 3, 9.3, 3, 3, 3]);
+  ok('pin 3 at 9.3 A: its bar yellow, past the 9.2 line', await until(`${bar} === "y"`, 4000), await ev(bar));
+  await ev(`mutate(() => { Object.assign(S.L.cells["${cid}"].gates, { mode: 'y', y: 9.6 }); })`);
+  ok('lines moved to yellow at 9.6 only: the same 9.3 A bar is plain', await until(`${bar} === ""`, 4000), await ev(bar));
+  await pin([3, 3, 9.7, 3, 3, 3]);
+  ok('at 9.7 A: yellow, not red (no red line)', await until(`${bar} === "y"`, 4000), await ev(bar));
+  await ev(`openDetail("${cid}")`); await p.sleep(1200);
+  ok('its popup row too: yellow', await ev(`${row} === "rgb(230, 200, 74)"`), await ev(row));
+  await ev('closeDetail()');
+  await ev(`mutate(() => { Object.assign(S.L.cells["${cid}"].gates, { mode: 'yr', y: 9.2, r: 9.5 }); })`);
+  await pin([3, 3, 3, 3, 3, 3]); await p.sleep(4500);
+}
 
 const before = log().length;   // (what the uneven pins log from here on)
 await pin([6, 3, 3, 3, 3, 3]);   // 21 A in all, pin 1 at 1.7x its share
