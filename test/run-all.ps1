@@ -1,4 +1,4 @@
-﻿# Runs every check on made-up data: the end-to-end test, a clean restart, the restart test, the scale test, the
+# Runs every check on made-up data: the end-to-end test, a clean restart, the restart test, the scale test, the
 # release checks (a prepared data folder), an unreadable working view, a restart that has to wait, sleep and the
 # end of a Windows session, a held history file, the 12V-2x6 connector, the bottleneck with a made-up game, the game sessions popup and report,
 # a build with extras, the layouts, tile sizes, lines on both sides, a game session's numbers, the tile looks, and a window
@@ -26,9 +26,10 @@ function Move-Behind($p) {
   for ($i = 0; $i -lt 20 -and $p.MainWindowHandle -eq 0; $i++) { Start-Sleep -Milliseconds 250; $p.Refresh() }
   if ($p.MainWindowHandle -ne 0) { [void][HWDeckTest.Win]::SetWindowPos($p.MainWindowHandle, [IntPtr]1, $wa.X + 40, $wa.Y + 40, 0, 0, 0x11) }
 }
-function Start-Deck([string]$data, [int]$port, [int]$fake, [string]$exe = "$d\HWDeck.exe") {
+$env:HWDECK_NOGAMES = '1'   # (the test copies see only their made-up games, not the ones running on this PC)
+function Start-Deck([string]$data, [int]$port, [int]$fake, [string]$exe = "$d\HWDeck.exe", [switch]$starter) {
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port $awake"
-  $p = Start-Process $exe -ArgumentList '--fake', $fake, '--data', "$d\test\$data" -WorkingDirectory $d -PassThru
+  $p = Start-Process $exe -ArgumentList (@('--fake', $fake, '--data', "$d\test\$data") + $(if ($starter) { @() } else { @('--no-starter') })) -WorkingDirectory $d -PassThru
   Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
   Move-Behind $p
   Start-Sleep -Seconds 5
@@ -89,7 +90,7 @@ Quit-Deck $p 9233
 if (Test-Path "$d\test\data-after") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-after" }
 $p = Start-Deck 'data-after' 9233 50
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9234 $awake"
-$q = Start-Process "$d\HWDeck.exe" -ArgumentList '--after', 999999, '--fake', 50, '--data', "$d\test\data-after" -WorkingDirectory $d -PassThru
+$q = Start-Process "$d\HWDeck.exe" -ArgumentList '--after', 999999, '--fake', 50, '--data', "$d\test\data-after", '--no-starter' -WorkingDirectory $d -PassThru
 Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 Start-Sleep -Seconds 3
 $waited = -not $q.HasExited
@@ -166,14 +167,23 @@ Remove-Item Env:HWDECK_FAKEZERO
 Run 'after 1.4.0' test/e2e-14x.mjs 9240 test/data-14x
 Quit-Deck $p 9240
 
+# Starter (port 9241): a new user's first layout from this PC's sensors, the note after an update, Saves' Starter; an EMPTY
+# folder, the made-up pins, and WITHOUT --no-starter
+if (Test-Path "$d\test\data-st") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-st" }
+$env:HWDECK_FAKEPINS = '1'
+$p = Start-Deck 'data-st' 9241 300 -starter
+Remove-Item Env:HWDECK_FAKEPINS
+Run 'starter' test/e2e-starter.mjs 9241 test/data-st
+Quit-Deck $p 9241
+
 # layouts (port 9238): rows, columns and stacks, the looks, the handles, the drawers, the title bar; a fresh folder
 if (Test-Path "$d\test\data-lay") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-lay" }
 $p = Start-Deck 'data-lay' 9238 300
 Run 'layouts' test/e2e-layout.mjs 9238 test/data-lay
 Quit-Deck $p 9238
 
-# tile sizes, lines on both sides, a game session's own numbers (port 9238 again, a fresh copy each)
-foreach ($t in @(@('tile sizes', 'test/e2e-sizes.mjs', 'data-sz'), @('lines on both sides', 'test/e2e-lines2.mjs', 'data-l2'), @('game session numbers', 'test/e2e-gamestats.mjs', 'data-gs'))) {
+# tile sizes, lines on both sides, a game session's own numbers, the looks (port 9238 again, a fresh copy each)
+foreach ($t in @(@('tile sizes', 'test/e2e-sizes.mjs', 'data-sz'), @('lines on both sides', 'test/e2e-lines2.mjs', 'data-l2'), @('game session numbers', 'test/e2e-gamestats.mjs', 'data-gs'), @('themes', 'test/e2e-themes.mjs', 'data-th'), @('bins', 'test/e2e-bins.mjs', 'data-bins'))) {
   if (Test-Path "$d\test\$($t[2])") { Remove-Item -Recurse -Force -LiteralPath "$d\test\$($t[2])" }
   $p = Start-Deck $t[2] 9238 300
   Run $t[0] $t[1] 9238 "test/$($t[2])"

@@ -18,11 +18,11 @@ html { font-size: 13px; }
 html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--fg); }
 body { font-family: var(--f-body); line-height: 1.4; }
 button { font-family: inherit; }
-:focus-visible { outline: 2px solid var(--edit); outline-offset: 2px; }
+:focus-visible { outline: none; }   /* (no rings from the keyboard: Tab doesn't walk the buttons either, his call 11-02; fields keep their :focus border) */
 .app { height: 100%; display: flex; flex-direction: column; position: relative; font-size: 14px; }
 
 /* ---------- title bar: the caption (drag, double-click to maximize), one row ---------- */
-.tbar { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 18px; app-region: drag; -webkit-app-region: drag; user-select: none; font-size: 15px; }
+.tbar { flex: none; position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 18px; app-region: drag; -webkit-app-region: drag; user-select: none; font-size: 15px; }
 .tbar button, .tbar nav { app-region: no-drag; -webkit-app-region: no-drag; }
 .tbar .name { font-weight: 650; color: var(--hi); letter-spacing: 0.04em; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
 .tclock { font-size: 14px; color: #5c5c5c; font-variant-numeric: tabular-nums; margin-left: -1px; white-space: nowrap; }
@@ -32,11 +32,16 @@ button { font-family: inherit; }
 :root[data-motion="minimal"] .ib.spin svg, :root[data-motion="off"] .ib.spin svg { animation: none; } .ib.spin { color: #9a9a9a; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; flex: none; }
 .dot.ok { background: var(--ok); } .dot.bad { background: var(--red); } .dot.fake { background: var(--edit); }
+/* (the live dot's breathing, prettify 11-02, is gone: his call. breathe stays for the recording dot) */
+@keyframes breathe { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 0%, transparent); } }
+/* (prettify 11-02: a button gives a little as it is pressed) */
+.btn:active:not(:disabled), .ib:active:not(:disabled), nav#screens button:active, .seg button:active, .rng button:active, .chip:active, .tog2:active { scale: 0.96; }
+.btn, .ib, .chip, .seg button { transition: scale 90ms ease-out; }
 .tbar .grow { flex: 1; }
-nav#screens { position: relative; display: inline-flex; background: #151515; border: 1px solid #242424; border-radius: 9px; padding: 2px; margin-left: 10px; }
+nav#screens { position: relative; display: inline-flex; background: var(--nav, #151515); border: 1px solid var(--nav-line, #242424); border-radius: 9px; padding: 2px; margin-left: 10px; }
 nav#screens button { position: relative; z-index: 1; background: none; border: 0; color: #8c8c8c; font-size: 13.5px; padding: 5px 14px; border-radius: 7px; cursor: pointer; transition: color 200ms; }
-nav#screens button:hover { color: #e0e0e0; } nav#screens button.active { color: #fff; }
-nav#screens .ind { position: absolute; top: 2px; bottom: 2px; left: 0; width: 0; border-radius: 7px; background: #2b2b2b;
+nav#screens button:hover { color: #e0e0e0; } nav#screens button.active { color: var(--pill-fg, #fff); }
+nav#screens .ind { position: absolute; top: 2px; bottom: 2px; left: 0; width: 0; border-radius: 7px; background: var(--pill, #2b2b2b);
                    transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 nav#screens .ind.still { transition: none; }
 .ib { position: relative; background: none; border: 0; color: #7a7a7a; cursor: pointer; padding: 7px; border-radius: 7px; display: inline-flex; align-items: center; }
@@ -48,9 +53,29 @@ nav#screens .ind.still { transition: none; }
 .ib .bdot.on { display: block; }
 .ib .bdot.live { background: var(--ok); }
 .ib .bdot.upd { background: var(--edit); }
-.edtools { display: inline-flex; gap: 2px; padding-right: 6px; margin-right: 2px; border-right: 1px solid var(--line); }
-.app:not(.editing) .edtools { display: none; }
-.winbtns { display: flex; gap: 2px; margin-left: 4px; }
+/* the title bar's right side (11-02, his pick F): undo and redo quiet by the icons, then Edit, Save, the rest; while
+   editing, a strip of its own (Editing, Category, Storage, Selected, undo, redo, Done), centred between the reset button
+   and Save by a spacer on each side, and Edit, undo and redo there instead */
+.histtools { display: inline-flex; gap: 2px; margin-right: 12px; }
+.app.editing .histtools, .app.editing #editBtn { display: none; }
+.editbar { display: none; flex: none; align-items: center; gap: 2px; background: #1a1a1a; border: 1px solid #2e2e2e; border-radius: 11px; padding: 3px 4px 3px 12px;
+           box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5); app-region: no-drag; -webkit-app-region: no-drag; }
+.app.editing .editbar { display: inline-flex; }
+/* (it pops in from setEdit, as you go into edit mode only: 11-02, the motion audit) */
+.eblab { margin-right: 8px; letter-spacing: 0.08em; text-transform: uppercase; font-size: 10.5px; font-weight: 600; color: #8a8a8a; }
+.ebsep { width: 1px; height: 16px; background: #2e2e2e; margin: 0 4px; }
+.editbar .ib { padding: 5px 7px; }
+.ebdone { background: #e6e6e6; color: #111; border: 0; border-radius: 8px; font: inherit; font-size: 12px; font-weight: 600; padding: 5px 12px; margin-left: 6px; cursor: pointer; transition: background 150ms; } .ebdone:hover { background: #fff; }
+.ebb { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; color: #a8a8a8; font: inherit; font-size: 12px; padding: 5px 9px 5px 7px; border-radius: 8px; cursor: pointer; transition: background 150ms, color 150ms; }
+.ebb svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.ebb:hover { background: #262626; color: #fff; } .ebb.on { background: #2c2c2c; color: #fff; }   /* (a drawer open: lit) */
+.app:not(.editing) .tbar .grow + .editbar + .grow { display: none; }   /* (out of edit mode one spacer is enough) */
+/* (narrow windows while editing, 11-02: the strip's words go, its buttons keep their icons and tips; narrower, the title
+   goes and the view tabs tighten, so the window's own buttons stay on screen) */
+@media (max-width: 1240px) { .app.editing .eblab { display: none; } .app.editing .ebb { font-size: 0; gap: 0; padding: 5px 7px; } .app.editing .editbar { padding-left: 4px; } }
+@media (max-width: 960px) { .app.editing .tbar .name { display: none; } .app.editing nav#screens button { padding: 5px 9px; } .app.editing .tclock { display: none; } }
+@media (max-width: 800px) { .app.editing #rstBtn, .app.editing .ebsep { display: none; } .app.editing .tbar { gap: 4px; } .app.editing nav#screens button { padding: 5px 7px; } }
+.winbtns { display: flex; gap: 2px; margin-left: 4px; flex: none; }
 .winbtns button { background: none; border: 0; color: #777; cursor: pointer; padding: 7px 11px; border-radius: 7px; }
 .winbtns button:hover { background: #262626; color: #fff; }
 .winbtns button#wclose:hover { background: #6b2020; color: #fff; }
@@ -78,22 +103,17 @@ nav#screens .ind.still { transition: none; }
 .storage { left: 0; width: 300px; transform: translateX(-102%); box-shadow: 16px 0 40px rgba(0,0,0,0.55); }
 .insp { right: 0; width: 310px; transform: translateX(102%); box-shadow: -16px 0 40px rgba(0,0,0,0.55); }
 .insp.left { right: auto; left: 0; transform: translateX(-102%); z-index: 31; border-left: 0; border-right: 1px solid var(--line); box-shadow: 16px 0 40px rgba(0,0,0,0.55); }
+.storage.right { left: auto; right: 0; transform: translateX(102%); border-right: 0; border-left: 1px solid var(--line); box-shadow: -16px 0 40px rgba(0,0,0,0.55); }   /* (moved to the other side: 11-02) */
 .storage.open, .insp.open { transform: none; visibility: visible; transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s; }
-/* the drawers' tabs: a slim pill in the window's side margin (clear of the view), the name shows on hover */
-.dtab { position: absolute; top: 50%; z-index: 29; width: 10px; height: 64px; margin-top: -32px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
-        background: #202020; border: 0; border-radius: 999px; color: #6a6a6a; cursor: pointer; padding: 0; font: inherit; font-size: 11px; letter-spacing: 0.06em;
-        transition: width 160ms, height 160ms, margin 160ms, color 150ms, background 150ms, opacity 150ms, box-shadow 150ms; }
-.dtab::before { content: ''; position: absolute; inset: -16px -6px; }   /* easier to hit than it looks */
-.dtab span { display: none; }
-.dtab:hover, .dtab:focus-visible { width: 24px; height: 118px; margin-top: -59px; border-radius: 12px; background: #1d1d1d; box-shadow: 0 0 0 1px #2c2c2c, 0 6px 18px rgba(0,0,0,0.45); }
-.dtab:hover span, .dtab:focus-visible span { display: inline; }
-.dtab span { writing-mode: vertical-rl; }
-.dtab svg { width: 9px; height: 9px; stroke: currentColor; fill: none; stroke-width: 2.2; flex: none; }
-.dtab:hover svg, .dtab:focus-visible svg { width: 12px; height: 12px; stroke-width: 2; }
-.dtab:hover { color: var(--hi); background: #1d1d1d; }
-.dtab.on { opacity: 0; pointer-events: none; }
-#tabL { left: 3px; } #tabL span { transform: rotate(180deg); }
-#tabR { right: calc(3px + var(--sbw, 0px)); }   /* left of the view's scrollbar */
+.app.boot .storage, .app.boot .insp { transition: none; }   /* (a cold start: pinned ones are just there) */
+/* (edit mode turned on with a drawer pinned: it slides in from its edge like one opened from the strip, 11-02; a cold
+   start stays still, and Off has no transitions) */
+@starting-style {
+  .app.editing:not(.boot) .storage.open, .app.editing:not(.boot) .insp.left.open { transform: translateX(-102%); }
+  .app.editing:not(.boot) .insp.open, .app.editing:not(.boot) .storage.right.open { transform: translateX(102%); }
+}
+/* the drawers' side tabs are gone (11-02, his "look bad and not more intuitive"): the editing strip opens the drawers */
+.dtab { display: none !important; }
 .pane-h .pin { padding: 4px; } .pane-h .pin svg { width: 13px; height: 13px; }
 .pane-h .pin.on { color: #c9dafa; background: #1b2436; }
 .pane-h { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; }
@@ -134,7 +154,7 @@ nav#screens .ind.still { transition: none; }
 .vrow .inv { width: 22px; display: inline-flex; justify-content: center; color: var(--ok); flex: none; }
 /* hide from Storage: shows on the row under the pointer; in the Hidden list, the eye brings it back */
 .vrow .hid { width: 22px; height: 22px; border: 0; background: none; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; flex: none; cursor: pointer; padding: 0; border-radius: 6px; opacity: 0; transition: opacity 120ms; }
-.vrow:hover .hid, .vrow .hid.on, .vrow .hid:focus-visible { opacity: 1; } .vrow .hid:hover { color: var(--hi); background: var(--raise); }
+.vrow:hover .hid, .vrow .hid.on { opacity: 1; } .vrow .hid:hover { color: var(--hi); background: var(--raise); }
 .vrow .hid svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; }
 .chip.hidchip { border-style: dashed; }
 .vrow .inv svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2.4; }
@@ -218,7 +238,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .blk { display: flex; flex-direction: column; min-width: 0; }
 .blk.wide { grid-column: 1 / -1; }
 .blk h2 { font-size: max(0.85rem, 10.5px); font-weight: 600; color: #747474; text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: calc(0.54rem * (0.5 + 0.5 * var(--sp, 1))); display: flex; align-items: center; gap: 0.5rem; min-height: 1.6rem; }
-.blk h2::after { content: ''; flex: 1; height: 1px; background: #222; order: 5; }
+.blk h2::after { content: ''; flex: 1; height: 1px; background: var(--rule, #222); order: 5; }
 .blk h2 .acts { order: 6; margin-left: 0; }
 .blk h2 .cn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .blk { container-type: inline-size; }
@@ -226,11 +246,15 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .dcat.collapsed .dch .cnt { display: inline; }
 .tg { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: calc(0.62rem * var(--sp, 1)); }
 .tg.kset { grid-template-columns: repeat(var(--k), minmax(0, 1fr)); }   /* tiles per row worked out for the room (no empty tracks) */
-.tile { background: #151515; border: 1px solid #242424; border-radius: 0.77rem; padding: calc(0.77rem * (0.75 + 0.25 * var(--sp, 1))) calc(0.92rem * (0.75 + 0.25 * var(--sp, 1))) calc(0.69rem * (0.75 + 0.25 * var(--sp, 1))); min-width: 0; display: flex; flex-direction: column; min-height: 8.6rem;
+.tile { background: var(--tile, #151515); border: 1px solid var(--tile-line, #242424); border-radius: var(--tile-r, 0.77rem); box-shadow: var(--tile-sh, none); padding: calc(0.77rem * (0.75 + 0.25 * var(--sp, 1))) calc(0.92rem * (0.75 + 0.25 * var(--sp, 1))) calc(0.69rem * (0.75 + 0.25 * var(--sp, 1))); min-width: 0; display: flex; flex-direction: column; min-height: 8.6rem;
         cursor: pointer; transition: border-color 160ms, transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 160ms, background 300ms; }
 .app:not(.editing) .tile:hover { border-color: #3a3a3a; transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
 .tile.pred { border-style: dashed; }
 .tile.yellow { border-color: #5c4f1d; } .tile.red { border-color: #6b2020; background-color: #1c1113; }
+/* (prettify 11-02: just turned yellow or red: one ring that widens and fades) */
+.tile.flare::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; animation: flare 900ms cubic-bezier(0.2, 0.8, 0.2, 1); }   /* (on its own layer: the glow's own animation holds the tile's box-shadow) */
+.tile.yellow.flare { --fc: var(--yellow); } .tile.red.flare { --fc: var(--red); }
+@keyframes flare { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--fc, #888) 55%, transparent); } 100% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--fc, #888) 0%, transparent); } }
 .tile.warm { border-color: var(--wb); }
 .tn { flex: none; display: flex; align-items: center; gap: 0.46rem; font-size: 0.96rem; color: #8a8a8a; white-space: nowrap; overflow: hidden; }
 .tn > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -243,7 +267,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 
 /* ---------- Overview: a card per category, its first cell large, the rest as rows with a 15 min graph ---------- */
 .ov { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 27rem), 1fr)); gap: calc(0.92rem * var(--sp, 1)); align-items: start; }
-.card { background: #151515; border: 1px solid #232323; border-radius: 0.92rem; padding: calc(0.92rem * (0.7 + 0.3 * var(--sp, 1))) calc(1.23rem * (0.7 + 0.3 * var(--sp, 1))) calc(0.77rem * (0.7 + 0.3 * var(--sp, 1))); display: flex; flex-direction: column; min-width: 0; transition: border-color 300ms; }
+.card { background: var(--tile, #151515); border: 1px solid var(--card-line, #232323); border-radius: var(--card-r, 0.92rem); box-shadow: var(--tile-sh, none); padding: calc(0.92rem * (0.7 + 0.3 * var(--sp, 1))) calc(1.23rem * (0.7 + 0.3 * var(--sp, 1))) calc(0.77rem * (0.7 + 0.3 * var(--sp, 1))); display: flex; flex-direction: column; min-width: 0; transition: border-color 300ms; }
 .card.warn-y { border-color: #5c4f1d; } .card.warn-r { border-color: #6b2020; }
 .ch { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.62rem; min-height: 1.8rem; }
 .ch > svg { width: 1.15rem; height: 1.15rem; stroke: #6a6a6a; stroke-width: 1.7; }
@@ -283,7 +307,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
   .gt th:nth-child(6), .gt th:nth-child(7), .gt td.glines, .gt td.ginfo { display: none; }
   .gt col.c6, .gt col.c7 { width: 0; } .gt col.c1 { width: 34%; } .gt col.c2 { width: 24%; } .gt col.c3, .gt col.c4, .gt col.c5 { width: 14%; }
 }
-.gtable { background: #151515; border: 1px solid #232323; border-radius: 0.92rem; padding: 0.15rem 0.62rem 0.62rem; min-width: 0; }
+.gtable { background: var(--tile, #151515); border: 1px solid var(--card-line, #232323); border-radius: var(--card-r, 0.92rem); box-shadow: var(--tile-sh, none); padding: 0.15rem 0.62rem 0.62rem; min-width: 0; }
 table.gt { width: 100%; border-collapse: collapse; font-size: 0.96rem; table-layout: fixed; }
 .gt th { color: #767676; font-weight: 500; font-size: 0.85rem; text-align: center; padding: 0.69rem 0.3rem 0.62rem; border-bottom: 1px solid #242424; white-space: nowrap; }
 .gt th.l { text-align: left; }
@@ -341,10 +365,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .lrow.fold { grid-template-columns: minmax(0, 1fr); row-gap: var(--rg); }   /* too narrow: one under the other */
 .lcol { display: flex; flex-direction: column; gap: var(--rg); min-width: 0; border-radius: 0.9rem; }
 .lcol > .dcat { flex: none; }
-/* edit mode: the room under a column's categories shows as a soft slot, a gap below them (layout unchanged: it
-   starts where the categories end, its first gap clipped away; nothing moved, so the view scrolls no further) */
-.app.editing .lrow:not(.fold) > .lcol.slot::after { content: ''; flex: 1 1 0; min-height: 0; margin-top: calc(-1 * var(--rg));
-  background: rgba(255, 255, 255, 0.022); clip-path: inset(var(--rg) 0 0 0 round 0.9rem); pointer-events: none; }
+/* (edit mode used to draw a column's empty room as a faint block: it read as a stray bar, his call 11-02: gone) */
 /* Fill: a growing row's tiles are taller by --gr each (a graph no taller than 60% of its width unless the tile is tall) */
 .lrow.grow .tg.pk:not(.shorts) { --grx: var(--gr, 0px); }
 .lrow.grow .tg.pk > .tile:not(.hx) canvas { max-height: min(60cqw, 100%); }
@@ -434,7 +455,6 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .dcat.csel { outline: 1.5px solid var(--edit); outline-offset: 2px; border-radius: 0.9rem; }   /* close in: the view's 4 px top padding must hold it */
 .card.dcat.csel { outline-offset: 1px; }
 .gt tbody.csel tr.ghdr td { color: #c9dafa; } .gt tbody.csel td { background: rgba(127, 166, 232, 0.05); }
-.dch[tabindex]:focus-visible { outline: 2px solid var(--edit); outline-offset: 2px; border-radius: 6px; }
 .ldiv { position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: col-resize; z-index: 6; display: flex; justify-content: center; touch-action: none; }
 .ldiv::after { content: ''; width: 2px; border-radius: 1px; background: transparent; transition: background 120ms; }
 .ldiv:hover::after, .ldiv.on::after { background: var(--edit); box-shadow: 0 0 0 3px var(--edit-soft); }
@@ -460,7 +480,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .app.editing .tile:not(.sel):hover .corner { display: flex; opacity: 0.55; }   /* any tile can be sized from its corner */
 .tg.pk > .tile.pw .corner, .tg.pk > .tile.ph .corner { width: 11px; height: 11px; right: 1px; bottom: 1px; }   /* small tiles: a smaller corner */
 .tg.pk > .tile.pw .corner svg, .tg.pk > .tile.ph .corner svg { width: 9px; height: 9px; }
-.tile .corner { background: #151515; box-shadow: 0 0 0 2px #151515; }
+.tile .corner { background: var(--tile-solid, #151515); box-shadow: 0 0 0 2px var(--tile-solid, #151515); }
 .tile .corner:hover { background: #1b2436; }
 .tile .corner svg { width: 12px; height: 12px; stroke: var(--edit); fill: none; stroke-width: 2; stroke-linecap: round; }
 .dropmark.box { background: transparent; border: 2px solid var(--edit); border-radius: 0.9rem; }
@@ -524,7 +544,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 8px; padding: 2px; background: var(--panel); width: 100%; }
 .seg button { flex: 1; background: none; border: 0; color: var(--muted); font-size: 12.5px; padding: 4px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
-.seg button.on { background: #262626; color: var(--hi); }
+.seg button.on { background: var(--seg-on, #262626); color: var(--pill-fg, var(--hi)); }
 .seg.qs button { padding: 4px 0; min-width: 0; font-size: 11.5px; font-variant-numeric: tabular-nums; }   /* quarter-step sizes: eight to a row */
 .seg button.on[data-v="y"] { box-shadow: inset 0 -2px 0 var(--yellow); }
 .seg button.on[data-v="yr"] { box-shadow: inset 0 -2px 0 var(--red); }
@@ -565,7 +585,10 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 /* a popup taller than the window scrolls inside its card, with a thin scrollbar so it's clear it does */
 .mcard { scrollbar-width: thin; scrollbar-color: #343434 transparent; overscroll-behavior: contain; }
 .modal.open .mcard { transform: none; transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1); will-change: transform, opacity; }
-#gmodal .mcard { width: min(1000px, 94vw); padding: 22px 26px 22px; }
+:is(#gmodal, #wmodal) .mcard { width: min(1000px, 94vw); padding: 22px 26px 22px; }
+/* (Sessions grows as its bar and rows open: its top stays where a full one's is, so nothing jumps under the pointer and
+   quick clicks land on the same thing) */
+:is(#gmodal, #wmodal) { align-items: flex-start; padding-top: 6vh; }
 .mhead { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
 .mhead > svg, #micon svg { width: 18px; height: 18px; stroke: #7a7a7a; fill: none; stroke-width: 1.6; flex: none; }
 #micon { display: inline-flex; }
@@ -589,10 +612,11 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 #mtip em { font-style: normal; color: #7a7a7a; margin-left: 7px; }
 .mstats { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 10px; font-size: 13px; color: #a8a8a8; font-variant-numeric: tabular-nums; }
 .mstats em { font-style: normal; color: #737373; margin-right: 5px; font-size: 12px; }
-.rng { display: inline-flex; position: relative; background: #1a1a1a; border: 1px solid #262626; border-radius: 8px; padding: 2px; text-transform: none; letter-spacing: 0; font-weight: 500; }
-.rng button { position: relative; z-index: 1; background: none; border: 0; color: #777; font: inherit; font-size: 11.5px; padding: 3px 10px; border-radius: 6px; cursor: pointer; transition: color 180ms; }
-.rng button:hover { color: #bbb; } .rng button.on { color: #eee; }
-.rng .ri { position: absolute; top: 2px; bottom: 2px; left: 0; width: 0; border-radius: 6px; background: #2b2b2b; transition: transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1), width 280ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+/* (prettify 11-02: the view tabs' look, as the Sessions periods have) */
+.rng { display: inline-flex; position: relative; background: #151515; border: 1px solid #242424; border-radius: 9px; padding: 2px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.rng button { position: relative; z-index: 1; background: none; border: 0; color: #8c8c8c; font: inherit; font-size: 12.5px; padding: 4px 12px; border-radius: 7px; cursor: pointer; transition: color 200ms; }
+.rng button:hover { color: #e0e0e0; } .rng button.on { color: var(--pill-fg, #fff); }
+.rng .ri { position: absolute; top: 2px; bottom: 2px; left: 0; width: 0; border-radius: 7px; background: var(--pill, #2b2b2b); transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .rng .ri.still { transition: none; }
 .wday { font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.09em; margin: 14px 0 4px; }
 .wrow { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1e1e1e; font-size: 13px; }
@@ -618,110 +642,167 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 
 /* game sessions, layout A (the tailored dashboard's): a week strip, columns that line up down the list, a session
    opens into avg / max bars against its lines and a minute by minute timeline */
-#gmodal .gx-sum { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 14px 12px; background: #181818; border-radius: 10px; margin: 8px 0 20px; }
-#gmodal .gx-sumtxt { display: flex; gap: 36px; min-width: 0; }
-#gmodal .gx-stat { display: grid; gap: 5px; min-width: 0; }
-#gmodal .gx-stat em { font-style: normal; font-size: 11px; color: #6f6f6f; }
-#gmodal .gx-stat b { font-size: 15px; font-weight: 600; color: #e8e8e8; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#gmodal .gx-stat b small { font-size: 12px; font-weight: 400; color: #8a8a8a; margin-left: 4px; }
-#gmodal .gx-week { display: flex; gap: 7px; align-items: flex-end; flex: none; }
-#gmodal .gx-wd { display: grid; justify-items: center; gap: 4px; }
-#gmodal .gx-wd i { display: block; width: 8px; background: #6f6f6f; border-radius: 2px; }
-#gmodal .gx-wd i.z { background: #2e2e2e; }
-#gmodal .gx-wd em { font-style: normal; font-size: 9.5px; color: #555; line-height: 1; }
-#gmodal .gx-wd.today em { color: #9a9a9a; }
-#gmodal .gx-cols, #gmodal .gx-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) 90px 46px 56px 152px 132px; gap: 0 20px; align-items: center; padding: 0 12px; }
-#gmodal .gx-cols { font-size: 10.5px; color: #555; text-transform: uppercase; letter-spacing: 0.09em; padding-bottom: 9px; border-bottom: 1px solid #1e1e1e; }
-#gmodal .gx-r { text-align: right; }
-#gmodal .gx-cols > :nth-child(6), #gmodal .gx-row > :nth-child(6) { padding-left: 16px; }
-#gmodal .gx-day { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.09em; margin: 34px 12px 8px; }
-#gmodal .gx-cols + .gx-day { margin-top: 22px; }
-#gmodal .gx-day span { color: #474747; margin-left: 8px; }
-#gmodal .gx-day .gx-tot { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-sum { background: #171717; border: 1px solid #1f1f1f; border-radius: 10px; margin: 8px 0 20px; transition: background 200ms, border-color 200ms; }   /* (a session's box) */
+:is(#gmodal, #wmodal) .gx-srow { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 14px 12px; border-radius: 9px; cursor: pointer; }
+:is(#gmodal, #wmodal) .gx-sumtxt { display: flex; gap: 36px; min-width: 0; }
+:is(#gmodal, #wmodal) .gx-stat { display: grid; gap: 5px; min-width: 0; }
+:is(#gmodal, #wmodal) .gx-stat em { font-style: normal; font-size: 11px; color: #6f6f6f; }
+:is(#gmodal, #wmodal) .gx-stat b { font-size: 15px; font-weight: 600; color: #e8e8e8; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(#gmodal, #wmodal) .gx-stat b small { font-size: 12px; font-weight: 400; color: #8a8a8a; margin-left: 4px; }
+:is(#gmodal, #wmodal) .gx-week { display: flex; gap: 7px; align-items: flex-end; flex: none; }
+:is(#gmodal, #wmodal) .gx-wd { display: grid; justify-items: center; gap: 4px; }
+:is(#gmodal, #wmodal) .gx-wd i { display: block; width: 8px; background: #6f6f6f; border-radius: 2px; }
+:is(#gmodal, #wmodal) .gx-wd i.z { background: #2e2e2e; }
+:is(#gmodal, #wmodal) .gx-wd em { font-style: normal; font-size: 9.5px; color: #555; line-height: 1; }
+:is(#gmodal, #wmodal) .gx-wd.today em { color: #9a9a9a; }
+/* the summary bar: its row (the week) opens what's under it like a session's row: a period, one game, their chart,
+   each game's share. Its row never changes when it opens; the details unfold under it (300 ms, a session's curve) */
+:is(#gmodal, #wmodal) .gx-sum:not(.open):hover { background: #1c1c1c; border-color: #2a2a2a; }   /* (a session's hover: shut only) */
+:is(#gmodal, #wmodal) .gx-sum.open { background: #191919; border-color: #282828; }
+:is(#gmodal, #wmodal) .gx-srow .gx-week { margin-left: auto; }
+:is(#gmodal, #wmodal) .gx-srow > .gx-chev { flex: none; align-self: center; margin: 0 2px; }   /* (on the left like a session's, the numbers where a session's name starts) */
+:is(#gmodal, #wmodal) .gx-sdet { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+:is(#gmodal, #wmodal) .gx-sum.open .gx-sdet { grid-template-rows: 1fr; }
+:is(#gmodal, #wmodal) .gx-sdet > div { overflow: hidden; min-height: 0; }
+:is(#gmodal, #wmodal) .gx-sum.open .gx-sdet:has(.gx-menu) > div { overflow: visible; }   /* (its game or cell list open: not cut off) */
+:is(#gmodal, #wmodal) .gx-sdin { padding: 0 12px 15px 46px; cursor: default; }   /* (a session's details: in line with the numbers above) */
+:is(#gmodal, #wmodal) .gx-xh { display: flex; align-items: stretch; justify-content: space-between; gap: 10px; margin: 2px 0 6px; }   /* (the game list on the left, the periods on the right) */
+:is(#gmodal, #wmodal) .gx-ddw { position: relative; flex: none; display: flex; }   /* (the game list as tall as the periods beside it) */
+/* (the game list and the periods: the view tabs' look (Tiles / Overview / Grid), their greys, size and glide) */
+:is(#gmodal, #wmodal) .gx-dd { display: inline-flex; align-items: center; gap: 9px; min-height: 32px; max-width: 230px; background: #151515; border: 1px solid #242424; border-radius: 9px; color: #8c8c8c; font: inherit; font-size: 13.5px; padding: 0 12px 0 14px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 200ms; }
+:is(#gmodal, #wmodal) .gx-dd .gx-chev { flex: none; transform: rotate(90deg); }
+:is(#gmodal, #wmodal) .gx-dd:hover, :is(#gmodal, #wmodal) .gx-dd.on { color: #e0e0e0; }
+:is(#gmodal, #wmodal) .gx-per { flex: none; position: relative; width: auto; background: #151515; border: 1px solid #242424; border-radius: 9px; padding: 2px; }
+:is(#gmodal, #wmodal) .gx-per .ind { position: absolute; top: 2px; bottom: 2px; left: 2px; width: 0; border-radius: 7px; background: var(--pill, #2b2b2b);
+                       transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+:is(#gmodal, #wmodal) .gx-per .ind.still { transition: none; }
+:is(#gmodal, #wmodal) .gx-per button { position: relative; z-index: 1; background: none; color: #8c8c8c; font-size: 13.5px; padding: 5px 14px; border-radius: 7px; transition: color 200ms; }
+:is(#gmodal, #wmodal) .gx-per button:hover { color: #e0e0e0; } :is(#gmodal, #wmodal) .gx-per button.on { background: none; color: var(--pill-fg, #fff); }
+:is(#gmodal, #wmodal) .gx-menu { top: 36px; left: 0; min-width: 240px;   /* (under the game list, opening to the right: it sits on the left) */ max-height: 330px; overflow-y: auto; }
+:is(#gmodal, #wmodal) .gx-menu button { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; white-space: nowrap; }
+:is(#gmodal, #wmodal) .gx-menu button small { color: #6f6f6f; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-menu button.on { background: #262626; color: #fff; }
+:is(#gmodal, #wmodal) .gx-msep { height: 1px; background: #2a2a2a; margin: 4px 6px; }
+/* its chart: hours a day as a line (a session's fps chart's look), hours on the left, the average on the right */
+:is(#gmodal, #wmodal) .gx-lc { margin-top: 20px; }
+:is(#gmodal, #wmodal) .gx-lcg { display: grid; grid-template-columns: 30px minmax(0, 1fr) 64px; gap: 10px; }   /* (the plot centred in its box: 46 + 30 + 10 on the left, 10 + 64 + 12 on the right) */
+:is(#gmodal, #wmodal) .gx-lcy { position: relative; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-lcy span { position: absolute; right: 0; transform: translateY(-50%); }
+:is(#gmodal, #wmodal) .gx-lcp { position: relative; cursor: crosshair; }
+:is(#gmodal, #wmodal) .gx-lcp svg { display: block; width: 100%; overflow: visible; }
+:is(#gmodal, #wmodal) .gx-lcp line.g { stroke: #232323; stroke-width: 1; vector-effect: non-scaling-stroke; }
+:is(#gmodal, #wmodal) .gx-lcp line.av { stroke: #4a4a4a; stroke-width: 1; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+:is(#gmodal, #wmodal) .gx-lcp polyline { fill: none; stroke: #e0e0e0; stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+:is(#gmodal, #wmodal) .gx-lcp polygon { fill: rgba(255,255,255,0.045); }
+:is(#gmodal, #wmodal) .gx-lcd { position: absolute; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border-radius: 50%; background: #bdbdbd; }
+:is(#gmodal, #wmodal) .gx-lca { position: absolute; left: calc(100% + 8px); font-size: 10.5px; color: #777; transform: translateY(-50%); white-space: nowrap; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-lcx { position: relative; height: 13px; margin-top: 7px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-lcx span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+:is(#gmodal, #wmodal) .gx-lcx span.e { transform: none; right: 0; }
+:is(#gmodal, #wmodal) .gx-gtab { margin: 18px -6px 0; padding-top: 6px; border-top: 1px solid #242424; }   /* (not .gx-gt: that is the name of the session in progress, 11-02 bug) */
+:is(#gmodal, #wmodal) .gx-gh, :is(#gmodal, #wmodal) .gx-gr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, 190px) 76px 62px 70px 48px 86px; gap: 0 18px; align-items: center; padding: 0 10px; }
+:is(#gmodal, #wmodal) .gx-gh { font-size: 10.5px; color: #555; text-transform: uppercase; letter-spacing: 0.09em; padding-top: 10px; padding-bottom: 8px; }
+:is(#gmodal, #wmodal) .gx-gr { min-height: 40px; font-size: 12.5px; color: #c4c4c4; font-variant-numeric: tabular-nums; border-radius: 8px; cursor: pointer; transition: background 150ms; }
+:is(#gmodal, #wmodal) .gx-gr:hover { background: #1e1e1e; }
+:is(#gmodal, #wmodal) .gx-gr.on { background: #222; box-shadow: inset 0 0 0 1px #2e2e2e; }
+:is(#gmodal, #wmodal) .gx-gnm { color: #d6d6d6; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(#gmodal, #wmodal) .gx-gr.on .gx-gnm { color: #f2f2f2; }
+:is(#gmodal, #wmodal) .gx-gbar { position: relative; height: 5px; border-radius: 3px; background: #262626; overflow: hidden; }
+:is(#gmodal, #wmodal) .gx-gbar span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: #7c7c7c; }
+:is(#gmodal, #wmodal) .gx-gr.on .gx-gbar span { background: #d4d4d4; }
+:is(#gmodal, #wmodal) .gx-ago { color: #6f6f6f; }
+:is(#gmodal, #wmodal) .gx-cols, :is(#gmodal, #wmodal) .gx-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) 90px 46px 56px 172px 112px; gap: 0 20px; align-items: center; padding: 0 12px; }
+:is(#gmodal, #wmodal) .gx-cols { font-size: 10.5px; color: #555; text-transform: uppercase; letter-spacing: 0.09em; padding-bottom: 9px; border-bottom: 1px solid #1e1e1e; }
+:is(#gmodal, #wmodal) .gx-r { text-align: right; }
+:is(#gmodal, #wmodal) .gx-cols > :nth-child(6), :is(#gmodal, #wmodal) .gx-row > :nth-child(6) { padding-left: 16px; }
+:is(#gmodal, #wmodal) .gx-day { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.09em; margin: 26px 0 0; padding: 8px 12px 8px;
+                  position: sticky; top: -22px; z-index: 2; background: #151515; }   /* (-22 px: the card's top padding, so it sits at the card's very edge) */   /* (prettify 11-02: a day's header stays on top while its sessions scroll under it) */
+:is(#gmodal, #wmodal) .gx-cols + .gx-day { margin-top: 22px; }
+:is(#gmodal, #wmodal) .gx-day span { color: #474747; margin-left: 8px; }
+:is(#gmodal, #wmodal) .gx-day .gx-tot { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; font-variant-numeric: tabular-nums; }
 /* every session is its own block with a gap around it (open or not), so rows never run into each other */
-#gmodal .gx-sess { background: #171717; border: 1px solid #1f1f1f; border-radius: 10px; transition: background 200ms, border-color 200ms; }
-#gmodal .gx-sess + .gx-sess { margin-top: 12px; }
-#gmodal .gx-sess.open { background: #191919; border-color: #282828; }
-#gmodal .gx-row { min-height: 58px; padding-top: 11px; padding-bottom: 11px; cursor: pointer; border-radius: 9px; }
-#gmodal .gx-sess:not(.open):hover { background: #1c1c1c; border-color: #2a2a2a; }
-#gmodal .gx-chev { width: 10px; height: 10px; stroke: #5a5a5a; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
-#gmodal .open .gx-chev { transform: rotate(90deg); stroke: #9a9a9a; }
-#gmodal .gx-gm, #gmodal .gx-c { display: grid; gap: 5px; min-width: 0; }
-#gmodal .gx-gn { color: #d6d6d6; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#gmodal .open .gx-gn { color: #ececec; }
-#gmodal .gx-now { margin-left: 8px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: #dcdcdc; background: #262626; border: 1px solid #3a3a3a; vertical-align: 1px; }   /* the session in progress */
-#gmodal .gx-gn.lv { display: flex; align-items: center; }   /* (its name takes the ellipsis, the tag stays whole) */
-#gmodal .gx-gt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-#gmodal .gx-gn.lv .gx-now { flex: none; }
-#gmodal .gx-sub { font-size: 11.5px; color: #6f6f6f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-#gmodal .gx-num { text-align: right; justify-items: end; font-size: 12.5px; color: #c4c4c4; font-variant-numeric: tabular-nums; }
-#gmodal .gx-fps { color: #e8e8e8; font-weight: 600; font-size: 13px; }
-#gmodal .gx-lo { color: #9a9a9a; }
-#gmodal .gx-c > .gx-nbar { margin: 6.5px 0; }
-#gmodal .gx-nbar { position: relative; display: block; height: 5px; border-radius: 3px; overflow: hidden; background: #232323; }
-#gmodal .gx-nbar span { position: absolute; top: 0; bottom: 0; }
-#gmodal .gx-st { justify-items: end; text-align: right; font-size: 12px; }
-#gmodal .gx-st > * { max-width: 100%; }
-#gmodal .gx-st .gx-ok { color: #4a4a4a; }
-#gmodal .gx-st .gx-wv { color: #e6c84a; display: inline-flex; align-items: center; gap: 6px; }
-#gmodal .gx-st .gx-wv::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #e6c84a; }
-#gmodal .gx-st .gx-wv.r { color: #e5484d; } #gmodal .gx-st .gx-wv.r::before { background: #e5484d; }
-#gmodal .gx-det { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
-#gmodal .gx-sess.open .gx-det { grid-template-rows: 1fr; }
-#gmodal .gx-det > div { overflow: hidden; }
-#gmodal .gx-in { padding: 0 12px 15px 46px; }   /* the details line up with the game name */
-#gmodal .gx-key { display: flex; align-items: center; gap: 16px; font-size: 11px; color: #6f6f6f; margin: 0 0 16px; padding-top: 16px; border-top: 1px solid #242424; }
-#gmodal .gx-key span { display: inline-flex; align-items: center; gap: 6px; }
-#gmodal .gx-key .kw { width: 14px; height: 5px; border-radius: 2px; display: inline-block; }
-#gmodal .gx-key .tk { width: 2px; height: 11px; border-radius: 1px; background: #e6c84a; display: inline-block; }
-#gmodal .gx-key .end { margin-left: auto; color: #555; }
-#gmodal .gx-ch { font-size: 10.5px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 4px; }
-#gmodal .gx-tl { margin-top: 20px; padding-top: 16px; padding-bottom: 7px; border-top: 1px solid #242424; }
-#gmodal .gx-tl > .gx-ch { margin-bottom: 3px; }
-#gmodal .gx-tl .gx-ch { display: flex; justify-content: space-between; }
-#gmodal .gx-tl .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; }
-#gmodal .gx-tr { display: grid; grid-template-columns: 64px minmax(0, 1fr) 34px; gap: 18px; align-items: center; }
-#gmodal .gx-tr .l { font-size: 12px; color: #8a8a8a; }
+:is(#gmodal, #wmodal) .gx-sess { background: #171717; border: 1px solid #1f1f1f; border-radius: 10px; transition: background 200ms, border-color 200ms; }
+:is(#gmodal, #wmodal) .gx-sess + .gx-sess { margin-top: 6px; }
+:is(#gmodal, #wmodal) .gx-sess.open { background: #191919; border-color: #282828; }
+:is(#gmodal, #wmodal) .gx-sess.open + .gx-sess, :is(#gmodal, #wmodal) .gx-sess + .gx-sess.open { margin-top: 10px; }
+:is(#gmodal, #wmodal) .gx-row { min-height: 40px; cursor: pointer; border-radius: 9px; }   /* (a session: one line) */
+:is(#gmodal, #wmodal) .gx-sess:not(.open):hover { background: #1c1c1c; border-color: #2a2a2a; }
+:is(#gmodal, #wmodal) .gx-chev { width: 10px; height: 10px; stroke: #5a5a5a; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+:is(#gmodal, #wmodal) .open .gx-chev { transform: rotate(90deg); stroke: #9a9a9a; }
+:is(#gmodal, #wmodal) .gx-gm, :is(#gmodal, #wmodal) .gx-c { display: grid; gap: 5px; min-width: 0; }
+:is(#gmodal, #wmodal) .gx-row .gx-gm { display: flex; align-items: baseline; gap: 12px; white-space: nowrap; }   /* (the name, then when, on one line) */
+:is(#gmodal, #wmodal) .gx-row .gx-gm > .gx-gn { flex: none; max-width: 60%; }
+:is(#gmodal, #wmodal) .gx-row .gx-gm > .gx-sub { min-width: 0; }
+:is(#gmodal, #wmodal) .gx-lb { display: flex; align-items: center; gap: 10px; }
+:is(#gmodal, #wmodal) .gx-c.gx-lb > .gx-nbar { flex: none; width: 56px; margin: 0; height: 4px; }
+:is(#gmodal, #wmodal) .gx-gn { color: #d6d6d6; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(#gmodal, #wmodal) .open .gx-gn { color: #ececec; }
+:is(#gmodal, #wmodal) .gx-now { margin-left: 8px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: #dcdcdc; background: #262626; border: 1px solid #3a3a3a; vertical-align: 1px; }   /* the session in progress */
+:is(#gmodal, #wmodal) .gx-gn.lv { display: flex; align-items: center; }   /* (its name takes the ellipsis, the tag stays whole) */
+:is(#gmodal, #wmodal) .gx-gt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+:is(#gmodal, #wmodal) .gx-gn.lv .gx-now { flex: none; }
+@media (max-width: 900px) { :is(#gmodal, #wmodal) .gx-gn.lv .gx-now { font-size: 0; padding: 0; width: 7px; height: 7px; border: 0; border-radius: 50%; background: var(--ok); vertical-align: 2px; } }   /* (narrow: the name keeps its room, a dot says it is going on) */
+:is(#gmodal, #wmodal) .gx-sub { font-size: 11.5px; color: #6f6f6f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-num { text-align: right; justify-items: end; font-size: 12.5px; color: #c4c4c4; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-fps { color: #e8e8e8; font-weight: 600; font-size: 13px; }
+:is(#gmodal, #wmodal) .gx-lo { color: #9a9a9a; }
+:is(#gmodal, #wmodal) .gx-c > .gx-nbar { margin: 6.5px 0; }
+:is(#gmodal, #wmodal) .gx-nbar { position: relative; display: block; height: 5px; border-radius: 3px; overflow: hidden; background: #232323; }
+:is(#gmodal, #wmodal) .gx-nbar span { position: absolute; top: 0; bottom: 0; }
+:is(#gmodal, #wmodal) .gx-st { justify-items: end; text-align: right; font-size: 12px; }
+:is(#gmodal, #wmodal) .gx-st > * { max-width: 100%; }
+:is(#gmodal, #wmodal) .gx-st .gx-ok { color: #4a4a4a; }
+:is(#gmodal, #wmodal) .gx-st .gx-wv { color: #c4c4c4; }   /* (plain, no dot, no yellow: his ask 11-02) */
+:is(#gmodal, #wmodal) .gx-det { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+:is(#gmodal, #wmodal) .gx-sess.open .gx-det { grid-template-rows: 1fr; }
+:is(#gmodal, #wmodal) .gx-det > div { overflow: hidden; }
+:is(#gmodal, #wmodal) .gx-in { padding: 0 12px 15px 46px; }   /* the details line up with the game name */
+:is(#gmodal, #wmodal) .gx-ch { font-size: 10.5px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 4px; }
+:is(#gmodal, #wmodal) .gx-tl { margin-top: 20px; padding-top: 16px; padding-bottom: 7px; border-top: 1px solid #242424; }
+:is(#gmodal, #wmodal) .gx-tl > .gx-ch { margin-bottom: 3px; }
+:is(#gmodal, #wmodal) .gx-tl .gx-ch { display: flex; justify-content: space-between; }
+:is(#gmodal, #wmodal) .gx-tl .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; }
+:is(#gmodal, #wmodal) .gx-tr { display: grid; grid-template-columns: 64px minmax(0, 1fr) 98px; gap: 18px; align-items: center; }   /* (the plot centred in its box: 46 + 64 + 18 on the left, 18 + 98 + 12 on the right) */
+:is(#gmodal, #wmodal) .gx-tr .l { font-size: 12px; color: #8a8a8a; }
 /* the charts: fps (its 1% low under it, the band between), what limited each minute; a hover guide runs through both */
-#gmodal .gx-hz { position: relative; }
-#gmodal .gx-plot { position: relative; display: block; }
-#gmodal .gx-fpsc, #gmodal .gx-bnc { display: block; width: 100%; overflow: visible; }
-#gmodal .gx-fpsc { height: 140px; }
-#gmodal .gx-bnc { height: 40px; }
-#gmodal .gx-fpsc line { stroke: #262626; stroke-width: 1; vector-effect: non-scaling-stroke; }
-#gmodal .gx-fpsc polygon { fill: rgba(255,255,255,0.04); }
-#gmodal .gx-fpsc polyline { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
-#gmodal .gx-fpsc polyline.fp { stroke: #e0e0e0; } #gmodal .gx-fpsc polyline.lo { stroke: #7c7c7c; stroke-width: 1.3; }
-#gmodal .gx-bnc line { stroke: #2c2c2c; stroke-width: 1; vector-effect: non-scaling-stroke; }
-#gmodal .gx-bnc rect.b-gpu { fill: var(--bn-gpu); } #gmodal .gx-bnc rect.b-cpu { fill: var(--bn-cpu); } #gmodal .gx-bnc rect.b-cap { fill: var(--bn-cap); }
-#gmodal .gx-yax { position: relative; height: 140px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
-#gmodal .gx-yax span { position: absolute; left: 0; transform: translateY(-50%); }
-#gmodal .gx-tr.f { margin-top: 10px; }
-#gmodal .gx-tr.s { margin-top: 12px; }
-#gmodal .gx-gd { position: absolute; top: -4px; bottom: -4px; width: 1px; margin-left: -0.5px; background: rgba(232,232,232,0.3); opacity: 0; pointer-events: none; transition: opacity 120ms; }
-#gmodal .gx-dot { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; opacity: 0; pointer-events: none; transition: opacity 120ms; }
-#gmodal .gx-dot.fp { background: #f2f2f2; box-shadow: 0 0 0 3px rgba(255,255,255,0.12); } #gmodal .gx-dot.lo { background: #9a9a9a; }
-#gmodal .gx-hz.hv .gx-gd, #gmodal .gx-hz.hv .gx-dot { opacity: 1; }
-#gmodal .gx-tip { position: absolute; top: 0; display: grid; gap: 3px; padding: 7px 10px; background: #202020; border: 1px solid #333; border-radius: 7px; font-size: 11.5px; color: #8a8a8a; white-space: nowrap;
+:is(#gmodal, #wmodal) .gx-hz { position: relative; }
+:is(#gmodal, #wmodal) .gx-plot { position: relative; display: block; }
+:is(#gmodal, #wmodal) .gx-fpsc, :is(#gmodal, #wmodal) .gx-bnc { display: block; width: 100%; overflow: visible; }
+:is(#gmodal, #wmodal) .gx-fpsc { height: 140px; }
+:is(#gmodal, #wmodal) .gx-bnc { height: 40px; }
+:is(#gmodal, #wmodal) .gx-fpsc line { stroke: #262626; stroke-width: 1; vector-effect: non-scaling-stroke; }
+:is(#gmodal, #wmodal) .gx-fpsc polygon { fill: rgba(255,255,255,0.04); }
+:is(#gmodal, #wmodal) .gx-fpsc polyline { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+:is(#gmodal, #wmodal) .gx-fpsc polyline.fp { stroke: var(--fc, #e0e0e0); } :is(#gmodal, #wmodal) .gx-fpsc polyline.lo { stroke: #7c7c7c; stroke-width: 1.3; }
+:is(#gmodal, #wmodal) .gx-bnc line { stroke: #2c2c2c; stroke-width: 1; vector-effect: non-scaling-stroke; }
+:is(#gmodal, #wmodal) .gx-bnc rect.b-gpu { fill: var(--bn-gpu); } :is(#gmodal, #wmodal) .gx-bnc rect.b-cpu { fill: var(--bn-cpu); } :is(#gmodal, #wmodal) .gx-bnc rect.b-cap { fill: var(--bn-cap); }
+:is(#gmodal, #wmodal) .gx-yax { position: relative; height: 140px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-yax span { position: absolute; left: 0; transform: translateY(-50%); }
+:is(#gmodal, #wmodal) .gx-tr.f { margin-top: 10px; }
+:is(#gmodal, #wmodal) .gx-tr.s { margin-top: 12px; }
+:is(#gmodal, #wmodal) .gx-gd { position: absolute; top: -4px; bottom: -4px; width: 1px; margin-left: -0.5px; background: rgba(232,232,232,0.3); opacity: 0; pointer-events: none; transition: opacity 120ms; }
+:is(#gmodal, #wmodal) .gx-dot { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+:is(#gmodal, #wmodal) .gx-dot.fp { background: var(--fc, #f2f2f2); box-shadow: 0 0 0 3px rgba(255,255,255,0.12); } :is(#gmodal, #wmodal) .gx-dot.lo { background: #9a9a9a; }
+:is(#gmodal, #wmodal) .gx-hz.hv .gx-gd, :is(#gmodal, #wmodal) .gx-hz.hv .gx-dot { opacity: 1; }
+:is(#gmodal, #wmodal) .gx-tip { position: absolute; top: 0; display: grid; gap: 3px; padding: 7px 10px; background: #202020; border: 1px solid #333; border-radius: 7px; font-size: 11.5px; color: #8a8a8a; white-space: nowrap;
   font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; transition: opacity 120ms; z-index: 2; }
-#gmodal .gx-hz.hv .gx-tip { opacity: 1; }
-#gmodal .gx-tip b { color: #e8e8e8; font-weight: 600; }
-#gmodal .gx-tip em { font-style: normal; color: #e8e8e8; }
-#gmodal .gx-tip span { display: inline-flex; align-items: center; gap: 6px; }
-#gmodal .gx-tip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-#gmodal .gx-ticks { position: relative; height: 14px; margin-top: 2px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
-#gmodal .gx-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
-#gmodal .gx-ticks span.e0 { transform: none; left: 0; } #gmodal .gx-ticks span.e1 { transform: none; right: 0; }
-#gmodal .gx-leg { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 11.5px; color: #8a8a8a; margin-top: 20px; font-variant-numeric: tabular-nums; }
-#gmodal .gx-leg span { display: inline-flex; align-items: center; gap: 6px; }
-#gmodal .gx-leg b { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-#gmodal .gx-leg b.aw { height: 1px; width: 10px; background: #444; border-radius: 0; }
-#gmodal .gx-leg b.ln { height: 2px; width: 12px; border-radius: 1px; } #gmodal .gx-leg b.ln.fp { background: #e0e0e0; } #gmodal .gx-leg b.ln.lo { background: #7c7c7c; }
-#gmodal .gx-leg i { color: #e8e8e8; font-style: normal; }
+:is(#gmodal, #wmodal) .gx-hz.hv .gx-tip { opacity: 1; }
+:is(#gmodal, #wmodal) .gx-tip b { color: #e8e8e8; font-weight: 600; }
+:is(#gmodal, #wmodal) .gx-tip em { font-style: normal; color: #e8e8e8; }
+:is(#gmodal, #wmodal) .gx-tip span { display: inline-flex; align-items: center; gap: 6px; }
+:is(#gmodal, #wmodal) .gx-tip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+:is(#gmodal, #wmodal) .gx-ticks { position: relative; height: 14px; margin-top: 2px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+:is(#gmodal, #wmodal) .gx-ticks span.e0 { transform: none; left: 0; } :is(#gmodal, #wmodal) .gx-ticks span.e1 { transform: none; right: 0; }
+:is(#gmodal, #wmodal) .gx-leg { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 11.5px; color: #8a8a8a; margin-top: 20px; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-leg span { display: inline-flex; align-items: center; gap: 6px; }
+:is(#gmodal, #wmodal) .gx-leg b { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+:is(#gmodal, #wmodal) .gx-leg b.aw { height: 1px; width: 10px; background: #444; border-radius: 0; }
+:is(#gmodal, #wmodal) .gx-leg b.ln { height: 2px; width: 12px; border-radius: 1px; } :is(#gmodal, #wmodal) .gx-leg b.ln.fp { background: var(--fc, #e0e0e0); } :is(#gmodal, #wmodal) .gx-leg b.ln.lo { background: #7c7c7c; }
+:is(#gmodal, #wmodal) .gx-leg i { color: #e8e8e8; font-style: normal; }
 /* HW Deck: its generic detail (the other cells with lines, an empty session) and its own key swatch */
-#gmodal .gx-key .sw { width: 14px; height: 5px; border-radius: 2px; display: inline-block; }
-#gmodal .gx-nil { font-size: 12px; color: #6f6f6f; padding-top: 12px; border-top: 1px solid #222; }
-#gmodal .gx-in > .gx-tl:first-child { margin-top: 2px; }
+:is(#gmodal, #wmodal) .gx-nil { font-size: 12px; color: #6f6f6f; padding-top: 12px; border-top: 1px solid #222; }
+:is(#gmodal, #wmodal) .gx-in > .gx-tl:first-child { margin-top: 2px; }
 .ccard { width: min(420px, 92vw); padding: 18px 20px 16px; }
 .ccard .mdesc { margin: 10px 0 16px; }
 .cbtns { display: flex; justify-content: flex-end; gap: 8px; }
@@ -732,8 +813,13 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .mhead > svg.ci-calm, .modal.calm .mhead > svg.ci-danger { display: none; } .modal.calm .mhead > svg.ci-calm { display: block; }
 
 /* saves */
-.srow2 { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 6px; border-bottom: 1px solid #1e1e1e; border-radius: 8px; }
-.srow2.active { background: #191919; }
+/* (11-02, his "give depth to the rows": each slot a block of its own with a gap, a faint light on its top edge and a
+   small shadow under it; the loaded one a step lighter; the one under the pointer lifts a little) */
+.srow2 { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 10px 10px 8px; margin-bottom: 7px; border: 1px solid #222; border-radius: 10px; background: #161616;
+         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 1px 2px rgba(0, 0, 0, 0.45); transition: background 150ms, border-color 150ms, box-shadow 150ms; }
+.srow2:last-child { margin-bottom: 0; }
+.srow2.active { background: #1b1b1b; border-color: #303030; }
+.srow2:hover { background: #1a1a1a; border-color: #2c2c2c; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 4px 12px rgba(0, 0, 0, 0.45); } .srow2.active:hover { background: #1e1e1e; }
 .srow2 .sn { color: var(--dim); font-variant-numeric: tabular-nums; text-align: center; }
 .srow2 .st { color: #d6d6d6; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .srow2 .st input { background: var(--bg); border: 1px solid var(--edit); color: #fff; font: inherit; border-radius: 5px; padding: 1px 5px; width: 100%; }
@@ -757,9 +843,15 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .setin { background: var(--panel); border: 1px solid var(--line2); color: var(--fg); font: inherit; font-size: 13px; border-radius: 7px; padding: 5px 9px; width: 210px; flex: none; }
 .setin:focus { border-color: var(--edit); outline: none; }
 .seg.seg3 { width: auto; flex: none; } .seg.seg3 button { padding: 4px 11px; }
-.tog2 { width: 34px; height: 19px; border-radius: 999px; background: #2a2a2a; position: relative; border: 0; cursor: pointer; flex: none; transition: background 160ms; }
-.tog2::after { content: ''; position: absolute; top: 2.5px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #9a9a9a; transition: transform 160ms, background 160ms; }
-.tog2.on { background: #2c3d5c; } .tog2.on::after { transform: translateX(14px); background: var(--edit); }
+/* (Settings' segments: the pick's highlight is a pill that slides over to it, like the view tabs'; 11-02, the motion audit) */
+#setbody .seg.pill { position: relative; } #setbody .seg.pill > button { position: relative; z-index: 1; } #setbody .seg.pill > button.on { background: none; }
+#setbody .seg.pill > .ind { position: absolute; top: 2px; bottom: 2px; left: 2px; width: 0; border-radius: 6px; background: var(--seg-on, #262626);
+                            transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+#setbody .seg.pill > .ind.still { transition: none; }
+.setkeep { display: inline-flex; align-items: center; gap: 10px; flex: none; } .setkeep .setin { width: 64px; text-align: right; font-variant-numeric: tabular-nums; }   /* (Keep: the days, or forever) */
+.tog2 { width: 34px; height: 19px; border-radius: 999px; background: #2a2a2a; position: relative; border: 0; cursor: pointer; flex: none; transition: background 220ms; }
+.tog2::after { content: ''; position: absolute; top: 2.5px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #9a9a9a; transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), background 220ms; }   /* (it slides across, simple and smooth: 11-02; the page plays it when it draws a switch again) */
+.tog2.on { background: var(--tog-on, #d0d0d0); } .tog2.on::after { transform: translateX(14px); background: var(--tog-knob, #161616); }   /* (11-02: no blue unless the look's colour is Accent) */
 .keys2 { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 12.5px; color: #9a9a9a; align-items: center; }
 .kbd { font-family: var(--f-mono); font-size: 11px; border: 1px solid var(--line2); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--muted); white-space: nowrap; justify-self: start; }
 
@@ -783,6 +875,23 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
          border-radius: 10px; padding: 8px 12px; display: flex; gap: 12px; align-items: center; font-size: 13px; z-index: 130; pointer-events: none; max-width: calc(100% - 32px);
          visibility: hidden; transition: opacity 180ms, transform 180ms, visibility 0s 180ms; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; visibility: visible; transition: opacity 180ms, transform 180ms, visibility 0s; }
+/* the page's own tooltips (prettify 11-02): the greys, a short fade, under what they name (over it without room) */
+.tip { position: fixed; left: 0; top: 0; z-index: 200; max-width: min(360px, calc(100vw - 16px)); background: #1f1f1f; border: 1px solid #333; color: #d6d6d6; font-size: 12px; line-height: 1.45;
+       padding: 6px 10px; border-radius: 8px; box-shadow: 0 10px 28px rgba(0,0,0,0.5); pointer-events: none; opacity: 0; translate: 0 -3px; transition: opacity 140ms, translate 140ms; white-space: pre-line; overflow-wrap: anywhere; }
+.tip.show { opacity: 1; translate: 0 0; }
+/* a note that stays until it is dismissed (Starter, after an update): bottom right, the toast's greys */
+.notice { position: absolute; right: 18px; bottom: 18px; z-index: 95; width: min(380px, calc(100% - 36px)); background: #1d1d1d; border: 1px solid var(--line2); border-radius: 12px;
+          padding: 12px 12px 12px 16px; box-shadow: 0 18px 44px rgba(0,0,0,0.55); font-size: 13px; color: #a8a8a8; line-height: 1.5;
+          opacity: 0; transform: translateY(14px); pointer-events: none; visibility: hidden; transition: opacity 220ms, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s 220ms; }
+.notice.show { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition: opacity 220ms, transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s; }
+.notice .nt { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.notice .nt b { color: #ececec; font-size: 13.5px; font-weight: 600; }
+.notice .nt .ib { padding: 4px; margin: -4px -2px -4px 0; } .notice .nt .ib svg { width: 14px; height: 14px; }
+.notice .na { display: flex; justify-content: flex-end; margin-top: 10px; }
+/* Saves: Starter above the five slots */
+#sstart .srow2 { margin-bottom: 14px; transition: background 400ms, border-color 150ms, box-shadow 150ms; }   /* (Starter: a block like the slots, a wider gap under it) */
+#sstart .srow2 .sn svg { width: 14px; height: 14px; stroke: #9a9a9a; fill: none; stroke-width: 1.6; stroke-linejoin: round; vertical-align: -2px; }
+#sstart .srow2.hl { background: #222; }
 
 /* animations: Minimal opens views without the wave and doesn't roll the digits, Off has no transitions at all */
 :root[data-motion="minimal"] #view.enter .anim { animation: none; }
@@ -833,42 +942,50 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 #gmodal .gx-split i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; } #gmodal .gx-split b { display: inline; font-size: 11.5px; font-weight: 500; color: #e8e8e8; }
 #gmodal .gx-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px 32px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #242424; }
 #gmodal .gx-grp .gx-ch { display: flex; justify-content: space-between; margin-bottom: 4px; } #gmodal .gx-grp .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; }
-#gmodal .gx-rw { display: grid; grid-template-columns: minmax(80px, 1.2fr) minmax(56px, 0.8fr) 38px 58px; gap: 10px; align-items: center; height: 28px; font-size: 12px; }
+#gmodal .gx-rw { display: grid; grid-template-columns: minmax(80px, 1fr) 46px 64px; gap: 10px; align-items: center; height: 28px; font-size: 12px; }
 #gmodal .gx-rw .n { color: #9a9a9a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #gmodal .gx-rw .a { text-align: right; color: #6f6f6f; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #gmodal .gx-rw .m { text-align: right; color: #e8e8e8; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #gmodal .gx-rw .m u { text-decoration: none; color: #6f6f6f; font-weight: 400; font-size: 11px; margin-left: 2px; }
 #gmodal .gx-rw .m.y { color: var(--yellow); } #gmodal .gx-rw .m.r { color: var(--red); }
 #gmodal .gx-rw.nil .n, #gmodal .gx-rw.nil .m { color: #4a4a4a; }
-#gmodal .gx-mb { position: relative; display: block; height: 5px; background: #232323; border-radius: 3px; }
-#gmodal .gx-mb i { position: absolute; top: 0; bottom: 0; }
-#gmodal .gx-mb .a { left: 0; background: #555; border-radius: 3px 0 0 3px; } #gmodal .gx-mb .a.solo { border-radius: 3px; }
-#gmodal .gx-mb .m { background: #bdbdbd; border-radius: 0 3px 3px 0; } #gmodal .gx-mb .m.solo { border-radius: 3px; }
-#gmodal .gx-mb .m.y { background: var(--yellow); } #gmodal .gx-mb .m.r { background: var(--red); }
-#gmodal .gx-mb .t { top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; }
-#gmodal .gx-mb .ty { background: var(--yellow); } #gmodal .gx-mb .tr { background: var(--red); }
-#gmodal .gx-key .tk.r { background: var(--red); }
-#gmodal .gx-in > .gx-key:last-child { border-top: 0; margin: 12px 0 0; padding-top: 0; }
 #glist.still .gx-det { transition: none; }
-.wclear.gzbtn { margin-right: 8px; } .wclear.gzbtn:hover, .wclear.gzbtn.on { color: #c9dafa; border-color: #3a4f75; }
+/* Sessions' header: real buttons with an icon (11-02); Customize open is lit grey, not blue; Clear warms to red */
+/* a popup's header actions (Sessions, Warning history): plain icons like the close X beside them, no boxes; a soft
+   highlight under the pointer; Clear warms to red (11-02, his "this also looks ugly" about boxed ones) */
+.gxh-b { display: inline-flex; align-items: center; justify-content: center; margin-right: 2px; background: none; border: 0; color: #7a7a7a; font: inherit; padding: 7px; border-radius: 8px; cursor: pointer; transition: background 150ms, color 150ms; }
+.gxh-b:hover { background: #242424; color: #fff; }
+.gxh-b.on { background: #2a2a2a; color: #fff; }
+.gxh-b:disabled { color: #3c3c3c; cursor: default; background: none; }
+.gxh-b svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.gxh-clr:hover { color: #f0a0a3; background: #2a1718; }
+.gxh-b + .mclose { margin-left: 6px; }
 /* your own sessions recording now */
 #wlist .wmore { display: block; margin: 14px auto 4px; }
 #grun { display: grid; gap: 8px; margin: 4px 0 14px; } #grun[hidden] { display: none; }
-#grun .gx-rec { display: flex; align-items: center; gap: 12px; border: 1px solid #3a2a2c; background: #1a1516; border-radius: 10px; padding: 8px 10px 8px 14px; font-size: 12.5px; }
-#grun .rdot { width: 8px; height: 8px; border-radius: 50%; background: #e5484d; flex: none; animation: recblink 1.6s ease-in-out infinite; }
-@keyframes recblink { 50% { opacity: .35; } }
-html[data-motion="minimal"] #grun .rdot, html[data-motion="off"] #grun .rdot { animation: none; }
-#grun .gx-rn { background: none; border: 1px solid transparent; color: #ececec; font: inherit; font-size: 13.5px; border-radius: 6px; padding: 3px 6px; min-width: 0; width: 220px; }
-#grun .gx-rn:hover { border-color: #3a2f30; } #grun .gx-rn:focus { border-color: var(--edit); outline: none; background: #101010; }
-#grun .gx-rs { flex: 1; color: #7a6f70; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-#grun .gx-rt { color: #e8e8e8; font-variant-numeric: tabular-nums; font-size: 13.5px; }
+/* (11-02: a red wash from the left, a REC badge whose dot breathes (Full), its name with a pencil, a large clock) */
+#grun .gx-rec { display: flex; align-items: center; gap: 14px; border: 1px solid #3a2729; border-radius: 12px; padding: 9px 10px 9px 14px; font-size: 12.5px;
+                background: linear-gradient(90deg, rgba(229, 72, 77, 0.12), rgba(229, 72, 77, 0.03) 45%, rgba(229, 72, 77, 0) 80%), #161616; }
+#grun .gx-recb { display: inline-flex; align-items: center; gap: 7px; flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; color: #f2a3a6; background: rgba(229, 72, 77, 0.12); border: 1px solid rgba(229, 72, 77, 0.32); border-radius: 999px; padding: 3px 10px 3px 8px; }
+#grun .rdot { width: 7px; height: 7px; border-radius: 50%; background: #e5484d; color: #e5484d; flex: none; }
+:root[data-motion="full"] #grun .rdot { animation: breathe 2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite; }
+#grun .gx-rnw { display: inline-flex; align-items: center; gap: 4px; min-width: 0; border-radius: 8px; padding: 1px 8px 1px 1px; cursor: text; transition: background 150ms; }
+#grun .gx-rnw:hover { background: rgba(255, 255, 255, 0.04); }
+#grun .gx-rnw svg { width: 13px; height: 13px; stroke: #6a6a6a; fill: none; stroke-width: 1.8; stroke-linejoin: round; flex: none; transition: stroke 150ms; }
+#grun .gx-rnw:hover svg, #grun .gx-rnw:focus-within svg { stroke: #cfcfcf; }
+#grun .gx-rn { background: none; border: 1px solid transparent; color: #f4f4f4; font: inherit; font-size: 14.5px; font-weight: 600; border-radius: 6px; padding: 3px 6px; min-width: 6ch; max-width: 300px; field-sizing: content; transition: border-color 150ms, background 150ms; }
+#grun .gx-rn:focus { border-color: #4a4a4a; outline: none; background: #0f0f0f; }
+#grun .gx-rs { flex: 1; color: #8a7778; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#grun .gx-rt { color: #f4f4f4; font-family: var(--f-num); font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; min-width: 4.5ch; text-align: right; }
+#grun .gx-stop i { width: 9px; height: 9px; border-radius: 2px; background: currentColor; flex: none; }
+#grun .gx-stop:hover { background: #3a1a1d; border-color: #6b2a2d; color: #fff; }
 /* under a session's details: its name (yours) and Delete */
 #gmodal .gx-tln { font-size: 12px; color: #6f6f6f; padding: 18px 0 20px; text-align: center; border: 1px dashed #262626; border-radius: 9px; margin-bottom: 4px; }
-#gmodal .gx-acts { display: flex; align-items: center; gap: 14px; padding-top: 14px; border-top: 1px solid #242424; min-width: 0; } #gmodal .gx-acts .sp { flex: 1; }
+#gmodal .gx-acts { display: flex; align-items: center; gap: 14px; padding-top: 14px; min-width: 0; } #gmodal .gx-acts .sp { flex: 1; }
 #gmodal .gx-nmf { display: flex; align-items: center; gap: 12px; min-width: 0; }
 #gmodal .gx-nmf em { font-style: normal; font-size: 10.5px; font-weight: 600; color: #6a6a6a; text-transform: uppercase; letter-spacing: .09em; }
 #gmodal .gx-nm { background: #121212; border: 1px solid #2a2a2a; color: #e6e6e6; font: inherit; font-size: 13px; border-radius: 8px; padding: 6px 10px; width: 260px; max-width: 100%; min-width: 0; transition: border-color 120ms; }
-#gmodal .gx-nm:hover { border-color: #363636; } #gmodal .gx-nm:focus { border-color: var(--edit); outline: none; background: #101010; }
+#gmodal .gx-nm:hover { border-color: #363636; } #gmodal .gx-nm:focus { border-color: #4a4a4a; outline: none; background: #0f0f0f; }   /* (grey, not blue: 11-02) */
 #gmodal .gx-del { flex: none; padding: 5px 14px; }
 /* Settings: days */
 .setdays { display: inline-flex; align-items: center; gap: 8px; } .setdays .setin { width: 84px; text-align: right; font-variant-numeric: tabular-nums; } .setdays i { font-style: normal; color: var(--muted); font-size: 12.5px; min-width: 30px; }   /* (one width for days and min: the fields line up) */
@@ -877,19 +994,22 @@ html[data-motion="minimal"] #grun .rdot, html[data-motion="off"] #grun .rdot { a
 .setsec > h3 { margin: 0 0 7px 3px; font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em; color: #8c8c8c; }   /* (its own case: HWiNFO stays HWiNFO) */
 .setbox { background: #191919; border: 1px solid #242424; border-radius: 11px; padding: 0 15px; }
 .setbox .setrow { padding: 12px 0; }
-#gcz { border: 1px solid #2c3d5c; background: #141820; border-radius: 12px; padding: 14px 16px 12px; margin: 4px 0 16px; }
-#gcz .gz-head { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #9aa7bd; margin-bottom: 12px; } #gcz .sp { flex: 1; }
-#gcz .gz-done { border-color: #3a4f75; color: #c9dafa; }
+#setmodal .mcard { width: min(900px, 94vw); }   /* (wider, his ask 11-02: the rows as they were, more room for their text) */
+/* Customize: greys only (11-02, his "way too blue"); Done is the light one */
+#gcz { border: 1px solid #2a2a2a; background: #151515; border-radius: 12px; padding: 14px 16px 12px; margin: 4px 0 16px; }
+#gcz .gz-head { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #a8a8a8; margin-bottom: 12px; } #gcz .sp { flex: 1; }
+#gcz .gz-done { background: #e6e6e6; border-color: #e6e6e6; color: #111; font-weight: 600; } #gcz .gz-done:hover { background: #fff; border-color: #fff; color: #000; }
 #gcz .gz { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
-#gcz .gx-ch { display: flex; justify-content: space-between; font-size: 10.5px; font-weight: 600; color: #6a7488; text-transform: uppercase; letter-spacing: .09em; margin-bottom: 8px; }
+#gcz .gx-ch { display: flex; justify-content: space-between; font-size: 10.5px; font-weight: 600; color: #6f6f6f; text-transform: uppercase; letter-spacing: .09em; margin-bottom: 8px; }
 #gcz .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; }
 #gcz .gz-s, #gcz .gz-c { display: flex; align-items: center; gap: 10px; background: #171717; border: 1px solid #262626; border-radius: 9px; padding: 6px 8px 6px 10px; margin-bottom: 6px; font-size: 12.5px; cursor: default; }
-#gcz .gz-s.on { border-color: #3a4f75; background: #18202e; } #gcz .gz-s.off .nm, #gcz .gz-s.off .gz-name { color: #555; }
-#gcz .gz-s.drag, #gcz .gz-c.drag { opacity: .55; } #gcz .drop { box-shadow: 0 -2px 0 var(--edit); } #gcz .dropend > :last-of-type { box-shadow: 0 2px 0 var(--edit); }
+#gcz .gz-s.on { border-color: #444; background: #202020; } #gcz .gz-s.off .nm, #gcz .gz-s.off .gz-name { color: #555; }
+#gcz .gz-s.drag, #gcz .gz-c.drag { opacity: .55; } #gcz .drop { box-shadow: 0 -2px 0 #9a9a9a; } #gcz .dropend > :last-of-type { box-shadow: 0 2px 0 #9a9a9a; }
 #gcz .grip { width: 10px; height: 16px; flex: none; cursor: grab; touch-action: none; background: radial-gradient(circle, #6a6a6a 1.2px, transparent 1.4px) 0 0 / 5px 5px; }
 #gcz .nm { color: #e0e0e0; min-width: 0; padding: 4px 0; } #gcz .gz-s .nm { cursor: default; }
 #gcz .gz-name { background: none; border: 1px solid transparent; color: #e0e0e0; font: inherit; border-radius: 6px; padding: 3px 6px; margin-left: -6px; min-width: 0; width: 46%; }
-#gcz .gz-name:hover { border-color: #2c2c2c; } #gcz .gz-name:focus { border-color: var(--edit); outline: none; background: #101010; }
+#gcz .gz-name:hover { border-color: #2c2c2c; } #gcz .gz-name:focus { border-color: #4a4a4a; outline: none; background: #0f0f0f; }
+#gcz .linkbtn { color: #a8a8a8; } #gcz .linkbtn:hover { color: #fff; text-decoration: none; }
 #gcz .x { flex: 1; text-align: right; font-size: 11.5px; color: #6f6f6f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 #gcz .gz-ph { width: 26px; flex: none; }
 /* the readings to add: Storage's search, chips and list, in a box of their own */
@@ -900,3 +1020,119 @@ html[data-motion="minimal"] #grun .rdot, html[data-motion="off"] #grun .rdot { a
 #gcz .vrow .add:disabled { opacity: .3; cursor: default; } #gcz .vrow .inv { background: none; border: 0; cursor: pointer; padding: 0; height: 22px; align-items: center; }
 #gcz .gz-note { font-size: 11.5px; color: #6f6f6f; margin-top: 8px; line-height: 1.5; }
 @media (max-width: 760px) { #gmodal .gx-s5 { grid-template-columns: 1fr 1fr; } #gmodal .gx-s5 > div { border-left: 0; border-top: 1px solid #242424; } #gcz .gz { grid-template-columns: 1fr; } #gcz .gz-list { height: 280px; } }
+
+/* ---------- the look (Settings > Look, 11-02): a look only sets tokens; the rules above read them ----------
+   Cards: Standard (the rules' own greys), OLED (true black behind, darker cards), Outline (lines only), Soft (no lines,
+   a lighter grey lifted by a shadow, rounder). Colour: Mono (greys), Accent (one blue on what you pick), Spectrum (each
+   category its part's colour, set by the page as --cc on it, on its name and icons; its graphs take it in deck.js).
+   :where() keeps a look's rules at the plain rules' weight: a warning, a hover, a selected category still win */
+:root[data-cards="oled"] { --bg: #000; --side: #050505; --tile: transparent; --tile-solid: #000; --tile-line: #262626; --card-line: #262626; --rule: #1a1a1a; --nav: transparent; --nav-line: #262626; }   /* (true black, lines only: his pick 11-02) */
+:root[data-cards="soft"] { --bg: #101010; --tile: #1a1a1a; --tile-solid: #1a1a1a; --tile-line: transparent; --card-line: transparent; --tile-r: 1.05rem; --card-r: 1.2rem; --rule: transparent; --nav: #1a1a1a; --nav-line: transparent;
+                           --tile-sh: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 6px 18px rgba(0, 0, 0, 0.35); }
+:root[data-tint="accent"], :root[data-tint="spectrum"] { --pill: color-mix(in srgb, var(--acc, #7fa6e8) 22%, transparent); --seg-on: color-mix(in srgb, var(--acc, #7fa6e8) 22%, transparent); --pill-fg: color-mix(in srgb, var(--acc, #7fa6e8) 25%, #fff);
+                           --tog-on: color-mix(in srgb, var(--acc, #7fa6e8) 42%, #1c1c1c); --tog-knob: var(--acc, #7fa6e8); }
+:where(:root[data-tint="spectrum"]) .blk h2 { color: var(--cc, #747474); }
+:where(:root[data-tint="spectrum"]) .ch .cn { color: var(--cc, #bdbdbd); }
+:where(:root[data-tint="spectrum"]) .ch > svg { stroke: var(--cc, #6a6a6a); }
+:where(:root[data-tint="spectrum"]) .gt tr.ghdr td { color: var(--cc, #6f6f6f); }
+:where(:root[data-tint="spectrum"]) :is(.tn, .gname, .nm) svg { stroke: var(--cc, #5a5a5a); }
+/* the Look's colours (Settings, 11-02): folded to a row of dots until opened (it glides open like a session); palettes
+   as small cards; a chip per colour, its name in grey (his call: no colour on the names), that opens a grid of tones, a
+   hex field, the full picker and Auto. The names and words stay quiet so the colours do the talking */
+.setbox .lk-head { cursor: pointer; }
+.lk-prev { display: inline-flex; align-items: center; padding-left: 4px; }
+.lk-prev i { width: 13px; height: 13px; border-radius: 50%; background: var(--c); margin-left: -4px; box-shadow: 0 0 0 2px #191919; }
+.lk-chev { width: 11px; height: 11px; margin-left: 12px; stroke: #7a7a7a; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform 250ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.lk-head.open .lk-chev { transform: rotate(90deg); stroke: #cfcfcf; }
+.lk-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.lk-body.open { grid-template-rows: 1fr; } .lk-body > div { overflow: hidden; min-height: 0; }
+.lk-in { padding: 2px 0 12px; }
+.lk-pres { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 8px; }
+.lk-pres button { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #151515; border: 1px solid #252525; border-radius: 9px; padding: 8px 10px 8px 12px; color: #a8a8a8; font: inherit; font-size: 12px; cursor: pointer; transition: border-color 150ms, background 150ms, color 150ms; }
+.lk-pres button:hover { border-color: #3a3a3a; color: #fff; } .lk-pres button.on { border-color: #555; background: #1f1f1f; color: #fff; }
+.lk-dots { display: inline-flex; padding-left: 3px; } .lk-dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); margin-left: -3px; box-shadow: 0 0 0 1.5px #151515; }
+.lk-pres button.on .lk-dots i, .lk-pres button:hover .lk-dots i { box-shadow: 0 0 0 1.5px #1f1f1f; }
+.lk-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid #212121; }
+.lk-name { color: #cfcfcf; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.lk-tag { color: #5c5c5c; font-size: 11.5px; white-space: nowrap; } .lk-row .sp { flex: 1; }
+.lk-chip { display: inline-flex; align-items: center; gap: 8px; flex: none; background: #151515; border: 1px solid #2a2a2a; border-radius: 999px; padding: 3px 11px 3px 4px; color: #9a9a9a; font: inherit; font-size: 11.5px; font-variant-numeric: tabular-nums; cursor: pointer; transition: border-color 150ms, color 150ms; }
+.lk-chip i { width: 16px; height: 16px; border-radius: 50%; background: var(--c); }
+.lk-chip:hover, .lk-chip.on { border-color: #4a4a4a; color: #fff; }
+.lk-pop { width: 316px; margin: 2px 0 10px auto; background: #151515; border: 1px solid #2c2c2c; border-radius: 12px; padding: 12px; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45); }
+.lk-g { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
+.lk-g button { aspect-ratio: 1; border-radius: 50%; border: 0; padding: 0; background: var(--c); cursor: pointer; transition: transform 120ms, box-shadow 120ms; }
+.lk-g button:hover { transform: scale(1.12); } .lk-g button.on { box-shadow: 0 0 0 2px #151515, 0 0 0 3.5px #e6e6e6; }
+.lk-f { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.lk-hex { flex: 1; min-width: 0; background: #101010; border: 1px solid #2a2a2a; border-radius: 7px; color: #ddd; font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; padding: 5px 8px; transition: border-color 150ms; }
+.lk-hex:focus { border-color: #4a4a4a; outline: none; }
+.lk-any { position: relative; flex: none; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; background: conic-gradient(#d98aa8, #c9b28e, #9cc08a, #4fb8ad, #6cc8d8, #7fa6e8, #a99bdc, #d98aa8); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1); }
+.lk-any input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; }
+.lk-auto { display: inline-flex; align-items: center; gap: 6px; background: none; border: 1px solid #2c2c2c; color: #9a9a9a; font: inherit; font-size: 11.5px; border-radius: 999px; padding: 3px 11px; cursor: pointer; transition: color 120ms, border-color 120ms, background 120ms; }
+.lk-auto:hover { color: #fff; border-color: #444; } .lk-auto.on { color: #fff; border-color: #555; background: #222; }
+/* (a pick, then the pointer still: Settings goes see-through so the change shows on the view behind it) */
+#setmodal.open { transition: opacity 280ms cubic-bezier(0.16, 1, 0.3, 1), visibility 0s, background-color 240ms, backdrop-filter 240ms; }
+#setmodal.open .mcard { transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1), opacity 240ms ease-out; }
+#setmodal.peek { background-color: transparent; backdrop-filter: none; }
+#setmodal.peek .mcard { opacity: 0.06; }
+/* ---------- the Warning history in the Sessions popup's design (11-02): the Sessions rules above take #wmodal too;
+   these are its own bits ---------- */
+/* (its columns: warning, peak, lasted, times, its lines, level; the cells' table: cell, share, times, red, worst, last) */
+#wmodal .gx-cols, #wmodal .gx-row { grid-template-columns: 14px minmax(0, 1fr) 100px 70px 50px 200px 76px; }
+@media (max-width: 900px) { #gmodal .gx-cols, #gmodal .gx-row { grid-template-columns: 14px minmax(0, 1fr) 70px 40px 48px 130px 70px; gap: 0 12px; } }
+@media (max-width: 900px) { #wmodal .gx-cols, #wmodal .gx-row { grid-template-columns: 14px minmax(0, 1fr) 84px 56px 40px 120px 64px; gap: 0 12px; } }
+#wmodal .gx-gh, #wmodal .gx-gr { grid-template-columns: minmax(0, 1fr) minmax(80px, 220px) 56px 46px 104px 86px; }
+#wlist.still .gx-det { transition: none; }
+/* the week strip: each day's bar split, yellow under red */
+#wmodal .wx-wk .gx-wd i { display: flex; flex-direction: column-reverse; overflow: hidden; background: #2e2e2e; }
+#wmodal .wx-wk .gx-wd i b { display: block; flex: 1 1 0; background: #b39b3c; }
+#wmodal .wx-wk .gx-wd i b.r, #wmodal .wx-b b.r { background: #b4474b; }
+/* the open bar's chart: a bar a day (a week past 120 days), yellow under red, the average dashed */
+#wmodal .wx-plot { position: relative; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); grid-template-rows: 100%; align-items: end; border-bottom: 1px solid #262626; }
+#wmodal .wx-b { justify-self: center; width: min(62%, 44px); min-height: 2px; display: flex; flex-direction: column-reverse; border-radius: 3px 3px 0 0; overflow: hidden; }
+#wmodal .wx-b b { display: block; flex: 1 1 0; background: #b39b3c; }
+#wmodal .wx-b.z { height: 2px; background: #262626; border-radius: 1px; }
+#wmodal .wx-av { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed #4a4a4a; pointer-events: none; }
+/* a row: its peak in its level's colour, how many times, the lines it crossed, its level as a dot and a word */
+#wmodal .wx-pk { font-weight: 600; font-size: 13px; color: #e8e8e8; white-space: nowrap; }
+#wmodal .wx-pk.y { color: var(--yellow); } #wmodal .wx-pk.r { color: var(--red); }
+#wmodal .wx-x { color: #9a9a9a; }
+#wmodal .wx-ln { font-size: 11.5px; color: #7a7a7a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#wmodal .wx-lv { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #c4c4c4; }
+#wmodal .wx-lv i { width: 7px; height: 7px; border-radius: 50%; background: var(--yellow); flex: none; } #wmodal .wx-lv.r i { background: var(--red); }
+/* opened: the reading around it (its lines dashed, the time over them shaded), then each crossing */
+#wmodal .wx-ch { margin: 2px 0 14px; }
+#wmodal .wx-ch .gx-ch { display: flex; justify-content: space-between; } #wmodal .wx-ch .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; }
+/* a warning's chart: the session chart's pieces (gx-tl, gx-hz, gx-fpsc ...) plus its lines dashed, the time over them
+   shaded, and their legend and read-out marks (11-02) */
+#wmodal .gx-fpsc line.wy, #wmodal .gx-fpsc line.wr { stroke-dasharray: 5 4; } #wmodal .gx-fpsc line.wy { stroke: #b39b3c; } #wmodal .gx-fpsc line.wr { stroke: #b4474b; }
+#wmodal .gx-fpsc rect.wy { fill: rgba(230, 200, 74, 0.08); } #wmodal .gx-fpsc rect.wr { fill: rgba(229, 72, 77, 0.1); }
+#wmodal .gx-leg b.wl { height: 0; width: 12px; border-top: 1.5px dashed; border-radius: 0; } #wmodal .gx-leg b.wl.y { border-color: #b39b3c; } #wmodal .gx-leg b.wl.r { border-color: #b4474b; }
+#wmodal .gx-leg b.wsh { background: rgba(230, 200, 74, 0.22); }
+#wmodal .gx-tip i.wy { background: var(--yellow); } #wmodal .gx-tip i.wr { background: var(--red); }
+#wmodal .wx-tl .gx-leg { margin-top: 12px; }
+#wmodal .wx-ep { display: grid; grid-template-columns: 56px 84px auto minmax(0, 1fr);   /* (its value whole: 11-02, "at 1181 RPM ..." was cut) */ gap: 14px; align-items: center; padding: 7px 0; border-top: 1px solid #222; font-size: 12.5px; color: #c4c4c4; font-variant-numeric: tabular-nums; }
+#wmodal .wx-eps > .wx-ep:first-child { border-top: 0; }
+#wmodal .wx-ep .t { color: #8a8a8a; }
+#wmodal .wx-ep .v { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#wmodal .wx-ep .o { color: #8a8a8a; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* picking rows (Sessions, Warning history, their bins): a box where the chevron was, the picked ones lit; the bar at the
+   bottom of the popup with what to do (11-02) */
+:is(#gmodal, #wmodal) .picking .gx-row { position: relative; }
+:is(#gmodal, #wmodal) .picking .gx-row > .gx-chev { visibility: hidden; }
+:is(#gmodal, #wmodal) .picking .gx-sess .gx-row::before { content: ''; position: absolute; left: 11px; top: 50%; width: 15px; height: 15px; margin-top: -7.5px; border: 1.5px solid #4a4a4a; border-radius: 4px; box-sizing: border-box; transition: background 120ms, border-color 120ms; }
+:is(#gmodal, #wmodal) .picking .gx-sess:not(.open):hover { background: #1c1c1c; border-color: #2c2c2c; }
+:is(#gmodal, #wmodal) .picking .gx-sess.pk { background: #1e1e1e; border-color: #444; }
+:is(#gmodal, #wmodal) .picking .gx-sess.pk .gx-row::before { border-color: #e6e6e6; background: #e6e6e6 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.3 2.3 4.7-5' fill='none' stroke='%23111' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 11px no-repeat; }
+:is(#gmodal, #wmodal) .picking .gx-sess.nopk { opacity: 0.45; } :is(#gmodal, #wmodal) .picking .gx-sess.nopk .gx-row { cursor: default; } :is(#gmodal, #wmodal) .picking .gx-sess.nopk .gx-row::before { display: none; }
+.gb-bar { position: sticky; bottom: -14px; z-index: 5; display: flex; align-items: center; gap: 8px; margin: 16px -6px -6px; padding: 10px 12px 10px 16px; background: #1c1c1c; border: 1px solid #2e2e2e; border-radius: 12px; box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.55); font-size: 12.5px; color: #9a9a9a; }
+.gb-bar[hidden] { display: none; } .gb-bar .sp { flex: 1; }
+.gb-bar .btn.pk-q { background: none; border-color: #2c2c2c; color: #a8a8a8; } .gb-bar .btn.pk-q:hover { color: #fff; border-color: #444; background: #232323; }   /* (not .ghost: that is the drag ghost's class, fixed in place) */ .gb-bar b { color: #f2f2f2; font-weight: 600; }
+.gb-bar .btn.pk-go { background: #e6e6e6; border-color: #e6e6e6; color: #111; font-weight: 600; } .gb-bar .btn.pk-go:hover { background: #fff; } .gb-bar .btn.warn:disabled, .gb-bar .btn.warn:disabled:hover { color: #5a5a5a; border-color: #2a2a2a; background: #181818; }
+.gb-bar .btn.pk-go:disabled { background: #2a2a2a; border-color: #2a2a2a; color: #666; }
+/* (the bar rises in from pkBar, as it shows only: 11-02, the motion audit) */
+.pkwait { pointer-events: none; }   /* (the list waiting for the bin's rows: no click lands on the old ones) */
+#gmodal.binning #gsum, #gmodal.binning #grun, #gmodal.binning #gcz, #wmodal.binning #wsum { display: none; }   /* (the bin on show: its rows only) */
+/* Spectrum in the popups (11-02): a reading's and a warning's dot in their category's colour (the chart lines take it
+   through --fc, the cell popup and the hover preview draw theirs in it) */
+:where(:root[data-tint="spectrum"]) :is(#gmodal, #wmodal) .gx-rw[style*="--cc"] .n::before,
+:where(:root[data-tint="spectrum"]) #wmodal .gx-sess[style*="--cc"] .gx-gn::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--cc); margin-right: 8px; vertical-align: 1px; }

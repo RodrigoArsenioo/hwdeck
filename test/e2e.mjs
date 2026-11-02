@@ -122,7 +122,7 @@ ok('past red it turns red', await until(`document.querySelector('#view .dc[data-
 await p.sleep(2500);
 ok('the host logged it in alerts.log (even with no popup open)', /RED\s+.+: [\d.]+/.test(readFileSync(join(data, 'alerts.log'), 'utf8')));
 await click('#logBtn');
-ok('the warning log shows it', await until('document.querySelectorAll("#wlist .wrow").length > 0', 4000), await E('$("wsum").textContent'));
+ok('the warning log shows it', await until('document.querySelectorAll("#wlist .gx-sess").length > 0', 4000), await E('$("wsum").textContent'));
 await E('$("wmodal").classList.remove("open")');
 
 // ---- fan curve, predicted fan ----
@@ -165,7 +165,7 @@ await E(`document.querySelector('#mrng button[data-r="7d"]').click()`);
 ok('7 days comes from the host', await until('bigHist && bigHist.range === "7d" && bigHist.avg.length === 1008', 3000));
 await p.key('Escape', 'Escape', 27); await p.sleep(200);
 ok('Esc closes it', await E('!$("modal").classList.contains("open")'));
-await click('#editBtn');
+await click('#editDone');
 ok('pencil off: Storage and the settings go, the view fits itself', await E('!S.edit && getComputedStyle(document.querySelector(".storage")).display === "none" && parseFloat(document.documentElement.style.fontSize) > 9'));
 await p.sleep(700);   // (the view settles first: a cell redrawn under a still pointer gets no hover until it moves)
 c = await p.center('#view .dc'); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y }); await p.sleep(800);

@@ -54,7 +54,9 @@ try {
   ok('the bottleneck over an hour: each call\'s share and the game time', await until('/gpu\\d+%cpu\\d+%capped\\d+%game time\\d+m/.test($("mextra").querySelector(".mstats").textContent)', 3000), await E('$("mextra").textContent'));
   await E('closeDetail(); $("gamesBtn").click()');
   ok('game sessions from the last days, one with a warning', await until('document.querySelectorAll("#glist .gx-sess").length >= 3 && /1 warning/.test($("glist").textContent)', 3000), await E('document.querySelectorAll("#glist .gx-sess").length'));
-  ok('the game in progress on top, now playing, open as the newest', await until('!feed.game || (() => { const r = document.querySelector("#glist .gx-sess"); return !!r && r.classList.contains("live") && r.classList.contains("open") && /now playing/.test(r.textContent) && /to now/.test(r.textContent); })()', 4000),
+  await E('$("gbinBtn").click()');
+  ok('the bin: empty in the demo, and Back brings the sessions again', await until('/The bin is empty/.test($("glist").textContent)', 3000) && await E('(() => { document.querySelector("#gbar [data-pk=back]").click(); return 1; })()') && await until('document.querySelectorAll("#glist .gx-sess").length >= 3', 3000), await E('$("glist").textContent.slice(0, 80)'));
+  ok('the game in progress on top, now playing, shut like the rest until clicked', await until('!feed.game || (() => { const r = document.querySelector("#glist .gx-sess"); return !!r && r.classList.contains("live") && !r.classList.contains("open") && /now playing/.test(r.textContent) && /to now/.test(r.textContent); })()', 4000),
     await E('[feed.game, (document.querySelector("#glist .gx-sess") || {}).className, ((document.querySelector("#glist .gx-sess") || {}).textContent || "").slice(0, 120)]'));
   ok('runs of the same game close together listed as one session, their breaks kept apart', await E('[...document.querySelectorAll("#glist .gx-sess:not(.live)")].some(r => /\\d+ breaks?/.test(r.textContent))'));
   await E('$("gmodal").classList.remove("open"); $("logBtn").click()');

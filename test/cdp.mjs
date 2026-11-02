@@ -28,9 +28,9 @@ export async function connect(port = 9230, at = 'hwdeck.example') {   // at: wha
     // page errors from here on (call once, before reloading the page if errors at start-up matter)
     async errors() { const list = []; listeners.push(m => { if (m.method === 'Runtime.exceptionThrown') list.push(m.params.exceptionDetails.exception ? m.params.exceptionDetails.exception.description : m.params.exceptionDetails.text); }); await cmd('Runtime.enable'); return list; },
     // the center of the first element matching a selector, in CSS pixels
-    async center(sel) { return evaluate(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }; })()`); },
+    async center(sel) { return evaluate(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); if (!r.width || !r.height) return null; return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }; })()`); },
     // the same for an element picked by a page expression, e.g. [...document.querySelectorAll('.x')][3]
-    async centerOf(expr) { return evaluate(`(() => { const e = (${expr}); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }; })()`); },
+    async centerOf(expr) { return evaluate(`(() => { const e = (${expr}); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); if (!r.width || !r.height) return null; return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }; })()`); },
     async click(x, y) { await mouse('mouseMoved', x, y); await mouse('mousePressed', x, y, 1); await mouse('mouseReleased', x, y, 0); },
     async dblclick(x, y) { await mouse('mousePressed', x, y, 1, 1); await mouse('mouseReleased', x, y, 0, 1); await mouse('mousePressed', x, y, 1, 2); await mouse('mouseReleased', x, y, 0, 2); },
     // a real pointer drag in small steps, so the page sees pointerdown, moves past its 5 px threshold, pointerup

@@ -100,25 +100,23 @@ ok('a reading on its own between two gaps shows as a dot (small graph and popup 
 })()`));
 await E(`renderWarnings(['2026-10-25 01:50:00+01:00  YELLOW  CPU: 88 \\u00b0C', '2026-10-25 01:05:00+00:00  OK      CPU: back to normal (peak 90 \\u00b0C)',
   '2026-10-25 02:00:00+00:00  YELLOW  GPU: 80 \\u00b0C', '2026-10-25 02:00:30+00:00  MARK    app exit'].join('\\n'))`);
-ok('the warning log survives a summer time change and an exit (15 min, not a negative duration)', await E('[...document.querySelectorAll("#wlist .wrow")].some(r => r.textContent.includes("CPU") && /\\b15m\\b/.test(r.textContent)) && !/(^|[ ,])-\\d/.test([...document.querySelectorAll("#wlist .wmeta")].map(x => x.textContent).join(" "))'), await E('$("wlist").textContent'));
+ok('the warning log survives a summer time change and an exit (15 min, not a negative duration)', await E('[...document.querySelectorAll("#wlist .gx-sess")].some(r => r.textContent.includes("CPU") && [...r.querySelectorAll(".gx-num")].some(x => x.textContent === "15m")) && !/(^|[ ,])-\\d/.test([...document.querySelectorAll("#wlist .gx-sess .gx-num")].map(x => x.textContent).join(" "))'), await E('$("wlist").textContent'));
 // a PEAK line gives a warning the next MARK ends its real peak; INFO lines end nothing; a crash-cut warning merges from its start
 await E(`(() => { const d0 = new Date(); d0.setHours(1, 0, 0, 0); const p2 = n => String(n).padStart(2, '0');
   const at = (m, s) => { const d = new Date(d0.getTime() + m * 60000), o = -d.getTimezoneOffset(); return localDay(d) + ' ' + hhmm(d / 1000) + ':00' + (o < 0 ? '-' : '+') + p2(Math.abs(o) / 60 | 0) + ':' + p2(Math.abs(o) % 60) + '  ' + s; };
   renderWarnings([at(0, 'YELLOW  CPU: 80 \\u00b0C'), at(1, 'OK      CPU: back to normal (peak 85 \\u00b0C)'), at(3, 'YELLOW  CPU: 81 \\u00b0C'), at(4, 'RED     CPU: 95 \\u00b0C'), at(5, 'PEAK    CPU: 99 \\u00b0C'), at(5, 'MARK    app exit'),
     at(13, 'YELLOW  VRM: 90 \\u00b0C'), at(14, 'INFO    HWiNFO back, warnings on'), at(16, 'OK      VRM: back to normal (peak 97 \\u00b0C)'),
     at(20, 'YELLOW  SSD: 60 \\u00b0C'), at(200, 'MARK    app start'), at(202, 'YELLOW  SSD: 61 \\u00b0C')].join('\\n')); })()`);
-await E('(() => { document.querySelectorAll("#wlist .wgrp").forEach(r => r.click()); return 1; })()');   // (a row draws its episodes when it opens)
-const wrows = await E('[...document.querySelectorAll("#wlist > .wrow")].map(r => r.textContent)'), wsubs = await E('[...document.querySelectorAll("#wlist .wsub .wrow")].map(r => r.textContent)');
-ok('a warning ended by an exit shows the peak from its PEAK line, not its red line', wrows.some(r => r.includes('CPU') && r.includes('peak 99')) && wsubs.some(r => r.includes('ended with the app') && r.includes('peak 99')), wrows.concat(wsubs).join(' | '));
-ok('"HWiNFO back" (INFO) does not end a warning', wrows.some(r => r.includes('VRM') && r.includes('peak 97') && /\b3m\b/.test(r)), wrows.join(' | '));
-ok('a warning cut by a crash merges from its start and never runs "to" the next start', wrows.filter(r => r.includes('SSD')).length === 2 && wrows.some(r => r.includes('SSD') && r.includes('until the app stopped') && !r.includes(' to ')), wrows.join(' | '));
+await E('(() => { document.querySelectorAll("#wlist .gx-sess .gx-row").forEach(r => r.click()); return 1; })()');   // (a row draws its crossings when it opens)
+const wrows = await E('[...document.querySelectorAll("#wlist .gx-sess > .gx-row")].map(r => [...r.children].map(c => c.textContent).join(" ") + [...r.querySelectorAll("[data-tip]")].map(x => " tip:" + x.dataset.tip).join(""))'), wsubs = await E('[...document.querySelectorAll("#wlist .gx-sess .wx-ep")].map(r => r.textContent)');
+ok('a warning ended by an exit shows the peak from its PEAK line, not its red line', wrows.some(r => r.includes('CPU') && r.includes('99 °C')) && wsubs.some(r => r.includes('ended with the app') && r.includes('peak 99')), wrows.concat(wsubs).join(' | '));
+ok('"HWiNFO back" (INFO) does not end a warning', wrows.some(r => r.includes('VRM') && r.includes('97 °C') && /\b3m\b/.test(r)), wrows.join(' | '));
+ok('a warning cut by a crash merges from its start and never runs "to" the next start', wrows.filter(r => r.includes('SSD')).length === 2 && wrows.some(r => r.includes('SSD') && r.includes('tip:Until the app stopped') && !r.includes(' to ')), wrows.join(' | '));
 await E(`removeCell(Object.keys(S.L.cells).pop())`); await p.sleep(100);
 ok('a toast offers Undo for what it names', await E('!$("toastUndo").hidden'));
 await E(`mutate(() => { S.L.cats[0].name = 'Renamed'; })`); await p.sleep(100);
 ok('after another change its Undo goes', await E('$("toastUndo").hidden'));
-await E(`(() => { const c = S.L.cats[0]; c.collapsed = !c.collapsed; saveState(); syncSaves(); })()`);
-await E(`saveTo(0); S.L.cats[0].collapsed = !S.L.cats[0].collapsed`);
-ok('folding a category is not an unsaved change', await E('!isDirty()'));
+ok('folding categories is gone: a layout saved with one folded opens unfolded', await E('cleanLayout({ v: 1, cats: [{ id: "a", name: "A", collapsed: true, cells: [] }], cells: {} }).cats[0].collapsed === false && !document.querySelector("#view .dcat.collapsed")'));
 
 // ---- animations: Full / Minimal / Off from Settings (Reduced is gone: run-all saved this view with it) ----
 ok('a view saved with Reduced opens in Full', await E('S.motion === "full" && motionMode() === "full"'), await E('S.motion'));
@@ -185,12 +183,12 @@ const stalled = await E(`(() => {
 ok('a stalled feed leaves a gap in the graphs, not its frozen value', stalled.gap, stalled);
 ok('a hold that runs out while the feed is stalled turns nothing (a cell already yellow stays)', stalled.before === 10 && stalled.after === 10, stalled);
 
-// ---- the warning log and game log popups: the host's own answer, and Clear (the old log kept as .bak) ----
+// ---- the warning log and game log popups: the host's own answer, and a move of everything to the bin (the .bak) ----
 const logClick = async sel => { const c = await p.center(sel); if (!c) throw new Error('nothing at ' + sel); await p.click(c.x, c.y); await p.sleep(300); };
 await logClick('#logBtn');
 ok('the warning log button gets the host\'s log, not "loading..."', await until('$("wlist").textContent.includes("Rear fan fan curve")', 5000), await E('$("wlist").textContent.slice(0, 100)'));
-await logClick('#wclear'); await logClick('#cyes');
-ok('Clear empties the warning log and keeps the old one as alerts.log.bak', await until('/Nothing crossed a line/.test($("wlist").textContent)', 5000) && /YELLOW\s+Rear fan fan curve/.test(text(join(data, 'alerts.log.bak'))), await E('$("wlist").textContent.slice(0, 100)'));
+await logClick('#wselBtn'); await logClick('#wbar [data-pk="all"]'); await logClick('#wbar [data-pk="del"]');
+ok('Select, Pick all, Move to the bin: the warning log empties into alerts.log.bak', await until('/Nothing crossed a line/.test($("wlist").textContent)', 5000) && /YELLOW\s+Rear fan fan curve/.test(text(join(data, 'alerts.log.bak'))), await E('$("wlist").textContent.slice(0, 100)'));
 await E('$("wmodal").classList.remove("open")'); await p.sleep(300);
 await logClick('#logBtn');
 ok('opened again, the cleared warning log comes back empty', await until('/Nothing crossed a line/.test($("wlist").textContent)', 5000) && !/Rear fan/.test(text(join(data, 'alerts.log'))), text(join(data, 'alerts.log')).slice(0, 200));
@@ -198,15 +196,17 @@ await E('$("wmodal").classList.remove("open")'); await p.sleep(300);
 await logClick('#gamesBtn');
 ok('the game log button gets the host\'s log: a row in the sessions table', await until('[...document.querySelectorAll("#glist .gx-sess .gx-gn")].map(x => x.textContent).join() === "Test Game" && !!document.querySelector("#glist .gx-cols")', 5000), await E('$("glist").textContent.slice(0, 100)'));
 const tg = await E('document.querySelector("#glist .gx-sess .gx-row").textContent');
-ok('that session (10 min, 8 in front, nothing recorded) reads "--" for fps, 1% low and what limited it', /^Test Game\d\d:\d\d to \d\d:\d\d10m8m in front------none$/.test(tg), tg);
-ok('it opens with the popup and says nothing was recorded (no bars, no timeline)', await E('(() => { const s = document.querySelector("#glist .gx-sess"); return s.classList.contains("open") && !!s.querySelector(".gx-nil") && !s.querySelector(".gx-rr, .gx-tl"); })()'), await E('document.querySelector("#glist .gx-det").textContent'));
+ok('that session (10 min, 8 in front, nothing recorded) reads "--" for fps, 1% low and what limited it', /^Test Game\d\d:\d\d to \d\d:\d\d10m------none$/.test(tg), tg);
+ok('it stays shut when the popup opens', await E('!document.querySelector("#glist .gx-sess").classList.contains("open")'));
 ok('the summary counts it', /last 7 days\s*1\s*session/.test(await E('$("gsum").textContent')), await E('$("gsum").textContent'));
 await logClick('#glist .gx-row');
+ok('a click opens it and says nothing was recorded (no bars, no timeline)', await E('(() => { const s = document.querySelector("#glist .gx-sess"); return s.classList.contains("open") && !!s.querySelector(".gx-nil") && !s.querySelector(".gx-rr, .gx-tl"); })()'), await E('document.querySelector("#glist .gx-det").textContent'));
+await logClick('#glist .gx-row');
 ok('a click on its row shuts it', await E('!document.querySelector("#glist .gx-sess").classList.contains("open")'));
-await logClick('#gclear');
-ok('Clear asks first, naming how many sessions go', await E('$("cmodal").classList.contains("open") && $("cdesc").textContent.includes("(1 session)")'), await E('$("cdesc").textContent'));
-await logClick('#cyes');
-ok('Clear empties the game log and keeps the old one as games.log.bak', await until('/No sessions yet/.test($("glist").textContent) && !document.querySelector("#glist .gx-sess") && $("gsum").textContent === ""', 5000) && /"game":"Test Game"/.test(text(join(data, 'games.log.bak'))), await E('$("glist").textContent.slice(0, 100)'));
+await logClick('#gselBtn'); await logClick('#gbar [data-pk="all"]');
+ok('Pick all picks the one session and says so', await E('$("gbar").textContent.includes("1 picked") && !!document.querySelector("#glist .gx-sess.pk")'), await E('$("gbar").textContent'));
+await logClick('#gbar [data-pk="del"]');
+ok('Move to the bin empties the game log into games.log.bak', await until('/No sessions yet/.test($("glist").textContent) && !document.querySelector("#glist .gx-sess") && $("gsum").textContent === ""', 5000) && /"game":"Test Game"/.test(text(join(data, 'games.log.bak'))), await E('$("glist").textContent.slice(0, 100)'));
 await E('$("gmodal").classList.remove("open")'); await p.sleep(300);
 await logClick('#gamesBtn');
 ok('opened again, the cleared game log comes back empty', await until('/No sessions yet/.test($("glist").textContent) && !document.querySelector("#glist .gx-cols")', 5000) && text(join(data, 'games.log')).trim() === '', text(join(data, 'games.log')).slice(0, 200));
@@ -288,7 +288,7 @@ ok('refused (no game to count in demo data), it goes back off and can be clicked
 await E(`onHost({ t: 'settings', fps: true, fpsState: 'signin', fpsDone: true })`);
 ok('allowed but not signed in again: on, and it says to sign out and back in (yellow)', await E('$("sFps").classList.contains("on") && /Almost: sign out of Windows and back in/.test($("sFps").closest(".setrow").textContent) && !!$("sFps").closest(".setrow").querySelector("small.y")'));
 await E(`onHost({ t: 'settings', fps: true, fpsState: 'on' })`);
-ok('counting: it says so, in grey', await E('/On: HW Deck counts the game\'s own frames/.test($("sFps").closest(".setrow").textContent) && !$("sFps").closest(".setrow").querySelector("small.y")'));
+ok('counting: on, and no line more about it (his 11-02: it made the row three lines)', await E('$("sFps").classList.contains("on") && !/On:|Almost/.test($("sFps").closest(".setrow").textContent) && !$("sFps").closest(".setrow").querySelector("small.y")'));
 await E(`(() => { feed.fps = false; feed.fpsWait = true; renderSettings(); onHost({ t: 'settings', fps: true, fpsState: 'on' }); return 1; })()`);
 ok('turning it off waits for the host\'s answer (a settings message meanwhile changes nothing)', await E('feed.fps === false && $("sFps").disabled'));
 await E(`onHost({ t: 'settings', fps: false, fpsState: 'off', fpsDone: true })`);
@@ -303,7 +303,7 @@ await E(`send({ t: 'win', a: 'min' })`); await p.sleep(800);
 await E(`send({ t: 'win', a: 'close' })`); await p.sleep(1500);
 ok('a window minimized from maximized is saved as maximized', existsSync(wf) && JSON.parse(text(wf)).max === true, text(wf));
 const { spawnSync } = await import('node:child_process'), { resolve } = await import('node:path');
-const again = (...a) => spawnSync(resolve('HWDeck.exe'), [...a, '--fake', '300', '--data', resolve(data)], { timeout: 20000 });
+const again = (...a) => spawnSync(resolve('HWDeck.exe'), [...a, '--fake', '300', '--data', resolve(data), '--no-starter'], { timeout: 20000 });
 const ts1 = await E('nowTs');
 again('-min'); await p.sleep(3000);
 ok('a second start with -min leaves the window in the tray', (await E('nowTs')) === ts1, `${ts1} to ${await E('nowTs')}`);

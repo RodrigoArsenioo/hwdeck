@@ -6,7 +6,7 @@
 (() => {
   'use strict';
   const RELEASES = 'https://github.com/RodrigoArsenioo/hwdeck/releases/latest';
-  const VERSION = '1.5.11';
+  const VERSION = '2.0.0';
   const T0 = Math.floor(Date.now() / 1000);
   const nowS = () => Math.floor(Date.now() / 1000);
   const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
@@ -221,7 +221,7 @@
     },
     views: { overview: { rows: [{ cols: [{ stack: ['gpu'] }, { stack: ['cpu'] }] }, { cols: [{ stack: ['fans'] }, { stack: ['game', 'storage'] }, { stack: ['memory', 'board'] }] }] } }
   };
-  const DEMO_STATE = { v: 1, L: DEMO, active: 0, edit: false, screen: 'overview', pins: [false, false], clock: true, gameCalm: false };   // (no game is really in front in a browser: Full stays Full)
+  const DEMO_STATE = { v: 1, L: DEMO, active: 0, edit: false, screen: 'overview', pins: [false, false], clock: true, gameCalm: false, starter: true };   // (no game is really in front in a browser: Full stays Full; Starter waits in Saves, no note about it)
 
   // ---- this tab's storage: the only place anything is kept ----
   const SK = 'hwdeck-demo:';
@@ -279,14 +279,14 @@
     return out;
   }
   // the sessions: the made-up evenings, the ones you recorded here (own), less the ones you deleted and the older than you keep
-  const days = k => load(k) || 30, sid = x => x.start + '|' + x.end + '|' + x.name;
+  const days = k => { const v = load(k); return Number.isFinite(v) ? v : 30; } /* (0: kept forever) */, sid = x => x.start + '|' + x.end + '|' + x.name;
   const goneSet = new Set(load('gone') || []), clr = load('gamesCleared'), clears = Array.isArray(clr) ? clr : clr ? [1] : [];   // (when you cleared it)
   // a deleted session, by its time range: one a new Same game again would group otherwise stays out all the same
   const goneR = k => { const q = String(k).split('|'); return { start: +q[0], end: +q[1], name: q.slice(2).join('|') }; }, goneList = [...goneSet].map(goneR);
   const gone = x => goneList.some(g => g.name === x.name && x.start < g.end && x.end > g.start);
   const forgot = (a, to) => gone(a) || clears.some(c => c >= a.end && c < to);   // (a: a session that ended; to: its game back)
   const gamesLog = () => {
-    const now = nowS(), cut = now - days('gameDays') * 86400;
+    const now = nowS(), cut = days('gameDays') ? now - days('gameDays') * 86400 : -Infinity;
     const made = sessionsIn(now - 8 * 86400, now).filter(x => !x.live && !gone(x) && !clears.some(c => c >= x.end));
     const all = made.concat((load('own') || []).filter(x => !goneSet.has(sid(x)))).filter(x => x.end >= cut).sort((a, b) => a.start - b.start);
     return all.map(x => JSON.stringify(report(x))).join('\r\n');
@@ -383,6 +383,10 @@
       case 'alerts': post({ t: 'alerts', log: load('alertsCleared') ? '' : alertsLog }); break;
       case 'alerts:clear': keep('alertsCleared', true); post({ t: 'alerts', log: '' }); break;
       case 'games': setTimeout(() => post({ t: 'games', log: gamesLog() }), 0); break;   // (after the gameNow the popup asks for with it, as the app's)
+      // (the bins work in the app; here they are empty and nothing moves: the logs as they were)
+      case 'games:bin': post({ t: 'gamesBin', log: '' }); break;
+      case 'alerts:bin': post({ t: 'alertsBin', log: '' }); break;
+      case 'log:move': post({ t: 'toast', text: IN_APP, ms: 4000, moved: 0 }); if (m.log === 'games') post({ t: 'games', log: gamesLog() }); else post({ t: 'alerts', log: load('alertsCleared') ? '' : alertsLog }); break;
       case 'games:clear': clears.push(nowS()); keep('gamesCleared', clears.slice(-20)); keep('own', []); post({ t: 'games', log: '' }); break;
       case 'rec': {   // your own sessions, recorded from the made-up readings
         const rec = load('rec') || [], at = rec.findIndex(x => x[0] === m.start), t = nowS();
@@ -411,7 +415,7 @@
         break;
       }
       case 'keep': {
-        const d = x => Math.max(1, Math.min(3650, Math.round(+x) || 30));
+        const d = x => { const v = Math.round(+x); return Number.isFinite(v) ? Math.max(0, Math.min(3650, v)) : 30; };   // (0: forever)
         if (m.games != null) keep('gameDays', d(m.games)); if (m.warns != null) keep('warnDays', d(m.warns));
         post(settingsMsg()); post({ t: 'games', log: gamesLog() });
         break;

@@ -100,8 +100,8 @@ const many = [];
 for (let i = 0; i < 40; i++) { const st = now - 3600 * (i + 2); many.push(JSON.stringify({ game: 'Game ' + i, start: st, end: st + 1800, from: st, secs: 1800, front: 1800, fps: 100 + i, low: 80, items: [['GPU temp', '°C', 60, 70, 80, 88, 1, null, 0]], warns: 0 })); }
 writeFileSync(join(data, 'games.log'), many.join('\r\n') + '\r\n');
 await E('$("gamesBtn").click()');
-ok('the sessions popup opens with the newest session built, the others waiting to be opened', await until('document.querySelectorAll("#glist .gx-sess").length === 40', 6000) &&
-  await E('!!document.querySelector("#glist .gx-sess.open .gx-in") && document.querySelectorAll("#glist .gx-lz").length === 39'), await E('document.querySelectorAll("#glist .gx-lz").length'));
+ok('the sessions popup opens with every session shut, all waiting to be opened', await until('document.querySelectorAll("#glist .gx-sess").length === 40', 6000) &&
+  await E('!document.querySelector("#glist .gx-sess.open") && document.querySelectorAll("#glist .gx-lz").length === 40'), await E('document.querySelectorAll("#glist .gx-lz").length'));
 await E('[...document.querySelectorAll("#glist .gx-sess")][5].querySelector(".gx-row").click()'); await p.sleep(300);
 ok('a session builds its details when it opens', await E('(() => { const s = [...document.querySelectorAll("#glist .gx-sess")][5]; return s.classList.contains("open") && !s.querySelector(".gx-lz") && !!s.querySelector(".gx-in .gx-acts"); })()'));
 await E('$("gmodal").classList.remove("open")'); await p.sleep(60);
@@ -120,11 +120,11 @@ ok('a session over 24 h says its chart is the first 24 hours, with the days on i
 const L = [];
 for (let i = 0; i < 700; i++) { const t = new Date(Date.now() - (700 - i) * 60000), p2 = n => ('0' + n).slice(-2), st = t.getFullYear() + '-' + p2(t.getMonth() + 1) + '-' + p2(t.getDate()) + ' ' + p2(t.getHours()) + ':' + p2(t.getMinutes()) + ':' + p2(t.getSeconds()); L.push(st + '  YELLOW  Cell ' + i + ': 1', st.slice(0, 17) + p2((t.getSeconds() + 5) % 60) + '  OK      Cell ' + i + ': back to normal (peak 1)'); }
 await E(`(() => { $('wmodal').classList.add('open'); renderWarnings(${JSON.stringify(L.join('\n'))}); return 1; })()`);
-ok('the warnings popup shows the newest 300 rows and a button for the rest', await E('document.querySelectorAll("#wlist > .wrow").length === 300 && /Show older \\(400 more rows\\)/.test($("wMore").textContent)'), await E('[document.querySelectorAll("#wlist > .wrow").length, $("wMore") && $("wMore").textContent]'));
+ok('the warnings popup shows the newest 300 rows and a button for the rest', await E('document.querySelectorAll("#wlist > .gx-sess").length === 300 && /Show 400 older rows/.test($("wMore").textContent)'), await E('[document.querySelectorAll("#wlist > .gx-sess").length, $("wMore") && $("wMore").textContent]'));
 await E('$("wMore").click()'); await p.sleep(200);
-ok('the button adds 300 more', await E('document.querySelectorAll("#wlist > .wrow").length === 600'));
+ok('the button adds 300 more', await E('document.querySelectorAll("#wlist > .gx-sess").length === 600'));
 ok('a cell named "constructor" gets its warnings like any other', await E(`(() => { const p2 = n => ('0' + n).slice(-2), st = ms => { const t = new Date(ms); return t.getFullYear() + '-' + p2(t.getMonth() + 1) + '-' + p2(t.getDate()) + ' ' + p2(t.getHours()) + ':' + p2(t.getMinutes()) + ':' + p2(t.getSeconds()); };
-  renderWarnings(st(Date.now() - 120000) + '  YELLOW  constructor: 91 \\u00b0C (over its line)\\n' + st(Date.now() - 60000) + '  YELLOW  toString: 92 \\u00b0C (over its line)'); return [...document.querySelectorAll('#wlist .wrow, #wlist .wgrp')].map(r => r.textContent).join('|'); })()`).then(t => /constructor/.test(t) && /toString/.test(t)));
+  renderWarnings(st(Date.now() - 120000) + '  YELLOW  constructor: 91 \\u00b0C (over its line)\\n' + st(Date.now() - 60000) + '  YELLOW  toString: 92 \\u00b0C (over its line)'); return [...document.querySelectorAll('#wlist .gx-sess')].map(r => r.textContent).join('|'); })()`).then(t => /constructor/.test(t) && /toString/.test(t)));
 ok('graphs: a reading that sits at 0 (a drive\'s rate, with or without noise) shows its bursts whole, a far spike over a busy or a steady line is still cut', await E(`(() => { const idle = Array(60).fill(0).concat([3, 1800, 40]), fps = Array.from({ length: 60 }, (x, i) => 140 + (i * 37) % 100).concat([1700]);
   const noisy = Array.from({ length: 60 }, (x, i) => (i % 5) * 0.1).concat([3, 2400, 40]), capped = Array.from({ length: 60 }, (x, i) => 143 + i % 3).concat([403]);
   const fan = Array.from({ length: 60 }, (x, i) => 595 + i % 11).concat([65535]), busy = Array.from({ length: 60 }, (x, i) => 2 + (i % 4) * 0.3).concat([3000, 2800, 3100]);
@@ -137,9 +137,9 @@ ok('graphs: a reading that sits at 0 (a drive\'s rate, with or without noise) sh
   const Lw = [];
   [[0, 950, 900], [120000, 400, 380], [240000, 700, 690]].forEach(([d, at, pk]) => Lw.push(f(base + d) + '  YELLOW  Pump: ' + at + ' RPM (under its line)', f(base + d + 30000) + '  OK      Pump: back to normal (peak ' + pk + ' RPM)'));
   await E(`(() => { renderWarnings(${JSON.stringify(Lw.join('\n'))}); return 1; })()`);
-  ok('a row for a line that warns below shows its lowest peak', await E('/^peak 380 RPM/.test(document.querySelector("#wlist .wgrp .wmeta").textContent)'), await E('document.querySelector("#wlist .wgrp") && document.querySelector("#wlist .wgrp .wmeta").textContent'));
-  ok('its episodes are drawn when it opens, not before', await E('!document.querySelector("#wlist .wsub").firstChild') &&
-    await E('(() => { document.querySelector("#wlist .wgrp").click(); return document.querySelectorAll("#wlist .wsub.open .wrow").length === 3; })()'));
+  ok('a row for a line that warns below shows its lowest peak', await E('document.querySelector("#wlist .gx-sess .wx-pk").textContent === "380 RPM"'), await E('document.querySelector("#wlist .gx-sess .wx-pk") && document.querySelector("#wlist .gx-sess .wx-pk").textContent'));
+  ok('its episodes are drawn when it opens, not before', await E('!document.querySelector("#wlist .gx-sess .gx-in").firstChild') &&
+    await E('(() => { document.querySelector("#wlist .gx-sess .gx-row").click(); return document.querySelectorAll("#wlist .gx-sess.open .wx-ep").length === 3; })()'));
 }
 await E('$("wmodal").classList.remove("open")'); await p.sleep(450);
 ok('closing it lets the list go', await E('!$("wlist").firstChild && wGroups.length === 0'));

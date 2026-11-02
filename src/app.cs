@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.5.11.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.5.11.0")]
+[assembly: System.Reflection.AssemblyVersion("2.0.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("2.0.0.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "1.5.11";
+    public const string Version = "2.0.0";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -1558,6 +1558,8 @@ class Games
     public HashSet<string> Tracked = new HashSet<string>();   // what the layout's report setup asks for besides (L.games: any reading, by key)
     static readonly Regex NotGameExe = new Regex(@"launcher|leagueclient|crash(report|handler|pad|sender)|report|redist|setup|^unins|helper|anticheat|battleye|beservice|prereq|bootstrap|boot(64)?$|updater|overlay|dxsetup|cefprocess|webhelper|qtwebengine|browser|diagnose|installer|config(64)?$|blizzarderror|capturepro|^upc$|^battle\.net|^eadesktop$|^eabackgroundservice$|^galaxyclient|^riotclient|^playnite|^heroic$|^(msedge|chrome|firefox|opera|brave|vivaldi|discord|steam|hyp|spotify|vlc|kodi|xboxpcapp)$|^plex( ?media ?(player|server)| ?htpc)?$|^lghub(_\w+)?$", RegexOptions.IgnoreCase);
     readonly object lk = new object();
+    // (games.log has one writer at a time: the game timer's appends and drops, an edit, a trim, a move to the bin or back)
+    public readonly object LogLock = new object();
     readonly Dictionary<int, string> paths = new Dictionary<int, string>();
     HashSet<int> hotPids = new HashSet<int>();   // the last look's processes in a game folder
     List<KeyValuePair<string, string>> roots; DateTime rootsAt = DateTime.MinValue;
@@ -2131,6 +2133,11 @@ class Games
             try { DropLine(dropLater[i]); dropLater.RemoveAt(i); LogChanged = true; } catch { }
         }
     }
+    // sessions moved by hand (11-02): into the bin, each forgotten like one deleted; back, a merge may take it again
+    public void Moved(IEnumerable<string> lines, bool toLog)
+    {
+        foreach (var l in lines) { var k = Key(l); if (k == null) continue; if (toLog) forgotten.Remove(k.Item1 + "|" + k.Item2); else Forget(k.Item2, k.Item1); }
+    }
     // a session deleted or the log cleared: what just ended is not taken back by a merge
     public void Forget(long start = 0, string game = null)
     {
@@ -2148,7 +2155,8 @@ class Games
         done = null; doneLine = null; DropDone();
         lock (lk) { doneGame = null; if (Game != null && rep == null && Since == d.Start) Since = Source.Unix(); }   // (its game back already: a new session, not the deleted one's start)
     }
-    void DropLine(string line)
+    void DropLine(string line) { lock (LogLock) DropLine0(line); }
+    void DropLine0(string line)
     {
         if (!File.Exists(logPath)) return;
         var lines = File.ReadAllLines(logPath).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
@@ -2219,7 +2227,8 @@ class Games
     }
     // session lines not in games.log yet (a write that failed is tried again every second and at exit, not dropped)
     readonly List<string> pending = new List<string>();
-    void WritePending()
+    void WritePending() { lock (LogLock) WritePending0(); }
+    void WritePending0()
     {
         // (one line per session, judged by games.log as it is now: a line it already has as long or longer isn't added,
         // an earlier, shorter one of the same session comes out; Write judged it too, maybe while the log couldn't be read)
@@ -2370,7 +2379,8 @@ class Games
     // ---- the log edited in place: a session deleted or renamed, the ones older than you keep dropped. Written whole
     // through a temp file; a line that goes is kept in games.log.bak first, like a Clear. f: 0 keeps a line, 1 drops
     // it, 2 writes it again changed ----
-    public int EditLog(Func<Dictionary<string, object>, int> f, Func<string, bool> maybe = null, bool once = false)
+    public int EditLog(Func<Dictionary<string, object>, int> f, Func<string, bool> maybe = null, bool once = false) { lock (LogLock) return EditLog0(f, maybe, once); }
+    int EditLog0(Func<Dictionary<string, object>, int> f, Func<string, bool> maybe, bool once)
     {
         if (!File.Exists(logPath)) return 0;
         var keep = new List<string>(); var gone = new List<string>(); int n = 0;
@@ -2384,7 +2394,7 @@ class Games
             if (a == 1) { gone.Add(line); n++; } else if (a == 2) { keep.Add(json.Serialize(o)); n++; } else keep.Add(line);
         }
         if (n == 0) return 0;
-        if (gone.Count > 0) { Disk.AppendLines(logPath + ".bak", gone); DeckForm.Shorten(logPath + ".bak", 8 << 20); }   // (first: a failed swap leaves a copy twice, never none)
+        if (gone.Count > 0) { Disk.AppendLines(logPath + ".bak", gone); DeckForm.ShortenBin(logPath + ".bak", DeckForm.Bytes(gone)); }   // (first: a failed swap leaves a copy twice, never none)
         Disk.SwapLines(logPath, keep);
         return n;
     }
@@ -2499,6 +2509,8 @@ partial class DeckForm : Form
         alerts.Conn = src.Conn;
         hist = new History(dataDir);
         games = new Games(dataDir, Log);
+        // (tests: a copy blind to the games running on this PC, so a run while he plays gets only its made-up ones)
+        if (fake && Environment.GetEnvironmentVariable("HWDECK_NOGAMES") == "1") games.Pretend(null, false);
         runName = custom ? Brand.Name + " (" + Path.GetFileName(data) + " " + ((uint)data.ToLowerInvariant().Aggregate(2166136261u, (h, ch) => (h ^ ch) * 16777619u)).ToString("x8") + ")" : Brand.Name;
         settings = ReadSettings();
         games.MergeWithin = MergeMins() * 60;
@@ -2556,6 +2568,7 @@ partial class DeckForm : Form
                 uint dpi = GetDpiForWindow(Handle);
                 var wa2 = Screen.FromHandle(Handle).WorkingArea;
                 if (dpi > 0) minTrack = new Size(Math.Min((int)(720 * dpi / 96), wa2.Width / 2), Math.Min((int)(480 * dpi / 96), wa2.Height / 2));
+                if (!winAsked.IsEmpty && WindowState == FormWindowState.Normal && Bounds != winAsked) Log("window opened " + WinTxt(Bounds, false) + " at " + dpi + " dpi, not where window.json put it");
             }
             catch { }
             BeginInvoke((Action)FitToScreen);
@@ -2771,10 +2784,40 @@ partial class DeckForm : Form
                     }
                     break;
                 case "alerts": SendLog("alerts.log", "alerts"); break;
-                case "alerts:clear": Wipe("alerts.log"); SendCleared("alerts"); break;
+                case "alerts:clear": Wipe("alerts.log"); SendCleared("alerts"); SendSettings(); break;
                 case "games": SendLog("games.log", "games"); break;
+                // the bins (11-02): what Delete, Keep or a move set aside, for its popup's Bin view; and lines moved,
+                // exactly as they are, from a log into its bin or back (put in among the log's lines by time, once each)
+                case "games:bin": SendLog("games.log.bak", "gamesBin"); break;
+                case "alerts:bin": SendLog("alerts.log.bak", "alertsBin"); break;
+                case "log:move":
+                    {
+                        string which = m.ContainsKey("log") ? m["log"] as string : null, name = which == "games" ? "games.log" : which == "alerts" ? "alerts.log" : null;
+                        var arr = m.ContainsKey("lines") ? m["lines"] as System.Collections.ArrayList : null;
+                        bool toLog = m.ContainsKey("to") && "log".Equals(m["to"]);
+                        if (name == null || arr == null) break;
+                        var lines = arr.Cast<object>().Select(o => o as string).Where(l => !string.IsNullOrEmpty(l)).ToList();
+                        var old = toLog ? OlderThanKept(which) : null; int held = 0, n = 0; string fail = null;
+                        if (old != null) { held = Count(name, lines.Where(l => old(l))); lines = lines.Where(l => !old(l)).ToList(); }
+                        try
+                        {
+                            List<string> did; n = MoveLines(name, lines, toLog, out did);
+                            // (the page's count when all it asked for moved: a crossing an exit ended and the red after it are two
+                            // there, the marks between them staying in the log)
+                            long asked = m.ContainsKey("n") ? Games.Long(m["n"]) : 0; if (asked > 0 && asked < 100000 && held == 0 && did.Count > 0 && did.Count == lines.Count) n = (int)asked;
+                            if (which == "games" && did.Count > 0) games.Moved(did, toLog);   // (only what moved: a line the page had and the log no longer has is someone else's now)
+                        }
+                        catch (Exception ex) { fail = ex.Message; Log("log:move failed: " + ex.Message); }   // (the page hears it, and gets the logs as they are)
+                        SendLog(name, which); SendLog(name + ".bak", which + "Bin"); SendSettings();
+                        if (fail == null && m.ContainsKey("quiet") && true.Equals(m["quiet"])) break;
+                        var r = Msg("toast"); Func<int, string> what = k => which == "games" ? (k == 1 ? "1 session" : k + " sessions") : (k == 1 ? "1 warning" : k + " warnings");
+                        string kept = held > 0 ? what(held) + " older than the days you keep stayed in the bin" : null;
+                        r["text"] = fail != null ? "Couldn't move it: " + fail : n == 0 ? (kept ?? "Nothing moved: it changed since") : (toLog ? what(n) + " back from the bin" : what(n) + " moved to the bin") + (kept != null ? ", " + kept : "");
+                        r["undo"] = n > 0 && fail == null; r["moved"] = fail != null ? 0 : n; Post(r);   // (moved 0: the page drops the step it kept for it)
+                    }
+                    break;
                 case "gamesLive": gamesLive = true.Equals(m["on"]); if (gamesLive) PostLive(); break;   // the sessions popup opened or closed
-                case "games:clear": Wipe("games.log"); games.Forget(); SendCleared("games"); break;
+                case "games:clear": lock (games.LogLock) Wipe("games.log"); games.Forget(); SendCleared("games"); SendSettings(); break;
                 // a session of your own: start, stop, a new name while it runs
                 case "rec":
                     {
@@ -2798,8 +2841,8 @@ partial class DeckForm : Form
                     break;
                 // how many days the sessions and the warnings are kept
                 case "keep":
-                    if (m.ContainsKey("games")) settings["gameDays"] = Days(m["games"]);
-                    if (m.ContainsKey("warns")) settings["warnDays"] = Days(m["warns"]);
+                    if (m.ContainsKey("games")) SetKeep("game", m["games"]);
+                    if (m.ContainsKey("warns")) SetKeep("warn", m["warns"]);
                     if (settings.ContainsKey("gameDays") && settings.ContainsKey("warnDays")) settings.Remove("daysUnknown");   // (both known again; until then the other log is left whole)
                     SaveSettings(); TrimAlerts(); TrimGames(); SendSettings();
                     SendLog("games.log", "games");
@@ -2932,6 +2975,9 @@ partial class DeckForm : Form
         r["held"] = held;   // (the slots another program holds: a missing or damaged one is empty for good)
         r["state"] = st; r["slots"] = slots; r["fake"] = fake; r["dataDir"] = dataDir; r["version"] = AppInfo.Version; r["pc"] = Environment.MachineName;
         r["nonClient"] = nonClient;
+        r["noStarter"] = OtherArgs.Any(a => a.Equals("--no-starter", StringComparison.OrdinalIgnoreCase));   // (tests: no Starter, no note about it; kept on a restart)
+        r["stateHeld"] = heldFiles.Contains("state");   // (its view comes later: no Starter built over it meanwhile)
+        r["stateBad"] = stateBad != null;   // (a view that couldn't be read and was set aside: not a new user, and its note stays in sight)
         r["ext"] = File.Exists(Path.Combine(appDir, "web", "extras.js")); r["brand"] = Brand.Name; r["updatable"] = Brand.Updates;
         Post(r);
         if (stateBad != null && wasShowing) { var tb = Msg("toast"); tb["text"] = "Your view couldn't be read, so it starts empty. The old file is kept as " + stateBad + " in your files (Settings)."; tb["ms"] = 15000; Post(tb); stateBad = null; }
@@ -2965,6 +3011,7 @@ partial class DeckForm : Form
         r["updates"] = UpdatesOn();
         r["gameDays"] = DaysSet("gameDays") ? KeepDays("gameDays") : (object)null; r["warnDays"] = DaysSet("warnDays") ? KeepDays("warnDays") : (object)null;   // (null: not set, nothing cut)
         r["gameMerge"] = MergeMins();
+        
         string latest = settings.ContainsKey("updLatest") ? settings["updLatest"] as string : null;
         r["latest"] = UpdatesOn() && Newer(latest, AppInfo.Version) ? latest : null;
         r["canUpdate"] = Installed() != null;   // (installed with the msi: its Update button installs the new one)
@@ -3201,9 +3248,97 @@ Start-Process -FilePath $Exe -ArgumentList $a";
     {
         string p = P(name);
         if (!File.Exists(p)) return;
+        long had = new FileInfo(p).Length;
         File.AppendAllText(p + ".bak", File.ReadAllText(p));
         File.WriteAllText(p, "");
-        Shorten(p + ".bak", 8 << 20);
+        ShortenBin(p + ".bak", had);
+    }
+    // how many some lines hold: sessions, or warnings as crossings, read as the page's list reads them (one opens at a
+    // yellow or red of a cell with none open; its end, or a mark, closes it), not lines: a crossing that went red is one
+    static readonly Regex LvlRe = new Regex(@"^\S+ \S+\s+(YELLOW|RED|OK|MARK|PEAK)\s+(.+)$");
+    static int Count(string name, IEnumerable<string> ls)
+    {
+        if (name == "games.log") return ls.Count(l => l.StartsWith("{"));
+        int n = 0; var open = new HashSet<string>();
+        foreach (var l in ls)
+        {
+            var m = LvlRe.Match(l); if (!m.Success) continue;
+            string lv = m.Groups[1].Value, rest = m.Groups[2].Value;
+            if (lv == "MARK") { open.Clear(); continue; }
+            if (lv == "OK") { int b = rest.IndexOf(": back to normal", StringComparison.Ordinal); open.Remove(b > 0 ? rest.Substring(0, b) : rest); continue; }
+            if (lv == "PEAK") continue;   // (a peak so far: no crossing of its own)
+            int c = rest.LastIndexOf(": ", StringComparison.Ordinal); string nm = c > 0 ? rest.Substring(0, c) : rest;
+            if (open.Add(nm)) n++;   // (a yellow or red of one already open is part of it: 1.0.x logged a step down from red as a yellow)
+        }
+        return n;
+    }
+    // a bin keeps what it was just given, and up to 32 MB of what came before
+    internal static long Bytes(IEnumerable<string> ls) { return ls.Sum(l => (long)Encoding.UTF8.GetByteCount(l) + 2); }
+    internal static void ShortenBin(string p, long added) { Shorten(p, added + (32L << 20)); }
+    static readonly Regex LineAt = new Regex(@"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)([+-]\d\d:\d\d)?"), StartAt = new Regex("\"start\":(\\d+)");
+    static long LineTime(string l)
+    {
+        var m = StartAt.Match(l); if (m.Success) { long v; if (long.TryParse(m.Groups[1].Value, out v)) return v; }   // (a session: its start)
+        var t = LineAt.Match(l);
+        if (t.Success) { DateTimeOffset d; if (DateTimeOffset.TryParse(t.Groups[1].Value + (t.Groups[2].Success ? t.Groups[2].Value : ""), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out d)) return d.ToUnixTimeSeconds(); }
+        return 0;
+    }
+    // a line the days you keep would set aside again at once: a session that ended before the cut, a warning on a day
+    // before it (null: kept forever, or no days set)
+    Func<string, bool> OlderThanKept(string which)
+    {
+        string k = which == "games" ? "gameDays" : "warnDays";
+        if (!DaysSet(k) || KeepDays(k) == 0) return null;
+        if (which == "games") { long cut = Source.Unix() - KeepDays(k) * 86400L; return l => { var m = EndRe.Match(l); long e; return m.Success && long.TryParse(m.Groups[1].Value, out e) && e < cut; }; }
+        string c = DateTime.Now.AddDays(-(KeepDays(k) + 1)).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        return l => l.Length >= 10 && char.IsDigit(l[0]) && string.CompareOrdinal(l.Substring(0, 10), c) < 0;
+    }
+    // lines moved, exactly as they are, from a log to its bin (bin first, once: a failed swap leaves a copy twice, never
+    // none, and a move tried again doesn't add it twice) or from its bin back into it, put in among the log's lines by
+    // time, once each; written flushed (a power cut leaves the old file or the new one). How many: sessions, or crossings
+    int MoveLines(string name, List<string> lines, bool toLog, out List<string> moved)
+    {
+        lock (name == "games.log" ? games.LogLock : alertsLock)
+        {
+            string p = P(name), b = p + ".bak", src = toLog ? b : p;
+            var want = new HashSet<string>(lines);
+            var from = File.Exists(src) ? File.ReadAllLines(src, Encoding.UTF8) : new string[0];
+            moved = from.Where(l => want.Contains(l)).ToList();
+            if (moved.Count == 0) return 0;
+            var keep = from.Where(l => !want.Contains(l) && l.Trim().Length > 0).ToList();
+            if (toLog)
+            {
+                var cur = File.Exists(p) ? File.ReadAllLines(p, Encoding.UTF8).Where(l => l.Trim().Length > 0).ToList() : new List<string>();
+                Disk.SwapLines(p, Merge(cur, moved));
+                if (keep.Count > 0) Disk.SwapLines(b, keep); else File.Delete(b);
+            }
+            else
+            {
+                var had = File.Exists(b) ? new HashSet<string>(File.ReadAllLines(b, Encoding.UTF8)) : new HashSet<string>();
+                var add = moved.Where(l => !had.Contains(l)).ToList();
+                if (add.Count > 0) { Disk.AppendLines(b, add); ShortenBin(b, Bytes(add)); }
+                Disk.SwapLines(p, keep);
+            }
+            return Count(name, moved);
+        }
+    }
+    readonly object alertsLock = new object();   // (alerts.log is written on this thread: the lock only matches games.log's)
+    // lines put in among a log's own by time, the log's order kept as it is (one written across a clock change stays as it
+    // was); at the same second, a mark that ends something (an exit, a sleep, HWiNFO stopping) goes after them, so a
+    // crossing's peak comes back before the mark that ended it; an app's start stays before them
+    static List<string> Merge(List<string> cur, List<string> moved)
+    {
+        Func<string, bool> ends = l => l.Contains("  MARK  ") && !l.Contains("MARK    app start");
+        var add = moved.Where(l => l.Trim().Length > 0).Select((l, i) => new { l, i, t = LineTime(l) }).OrderBy(x => x.t).ThenBy(x => x.i).ToList();
+        var have = new HashSet<string>(cur); var outp = new List<string>(cur.Count + add.Count); int k = 0;
+        foreach (var c in cur)
+        {
+            long tc = LineTime(c); bool e = ends(c);
+            while (k < add.Count && (add[k].t < tc || (add[k].t == tc && e))) { if (have.Add(add[k].l)) outp.Add(add[k].l); k++; }
+            outp.Add(c);
+        }
+        for (; k < add.Count; k++) if (have.Add(add[k].l)) outp.Add(add[k].l);
+        return outp;
     }
     // keep the end of a file that only grows
     internal static void Shorten(string p, long max)
@@ -3217,17 +3352,25 @@ Start-Process -FilePath $Exe -ArgumentList $a";
         }
         catch { }
     }
-    // how long the logs keep what they have: 30 days unless Settings says otherwise (1 to 3650)
-    static int Days(object o) { long d = Games.Long(o); return d == long.MinValue ? 30 : (int)Math.Max(1, Math.Min(3650, d)); }
+    // how long the logs keep what they have: forever unless Settings says otherwise (1 to 3650 days; 0: forever)
+    static int Days(object o) { long d = Games.Long(o); return d == long.MinValue ? 30 : (int)Math.Max(0, Math.Min(3650, d)); }
     // the same game started again within this many minutes goes on with its session (Settings: Same game again; 0: never)
     int MergeMins() { object o; long v = settings.TryGetValue("gameMerge", out o) && o != null ? Games.Long(o) : long.MinValue; return v == long.MinValue ? 30 : (int)Math.Max(0, Math.Min(240, v)); }
-    int KeepDays(string k) { return settings.ContainsKey(k) ? Days(settings[k]) : 30; }
+    // forever (0 from the page) is kept as a flag next to 3650 days: a version from before it reads 3650, where 0 would
+    // be 1 day and cut nearly everything
+    int KeepDays(string k) { object f; if (settings.TryGetValue(k.Replace("Days", "Forever"), out f) && f is bool && (bool)f) return 0; return settings.ContainsKey(k) ? Days(settings[k]) : 0; }
+    void SetKeep(string log, object v)
+    {
+        int d = Days(v);
+        settings[log + "Days"] = d == 0 ? 3650 : d;
+        if (d == 0) settings[log + "Forever"] = true; else settings.Remove(log + "Forever");
+    }
     static int Rename(Dictionary<string, object> o, string name) { o["game"] = name; return 2; }
     // the game log: sessions that ended more than the days you keep ago go (into games.log.bak)
     static readonly Regex EndRe = new Regex("\"end\":(\\d+)");
     void TrimGames()
     {
-        if (!DaysSet("gameDays")) return;
+        if (!DaysSet("gameDays") || KeepDays("gameDays") == 0) return;   // (0: kept forever)
         long cut = Source.Unix() - KeepDays("gameDays") * 86400L;
         // (only lines that end before the cut get parsed: the rest stay as they are, and nothing is written when none goes)
         try { games.EditLog(o => { object e; return o.TryGetValue("end", out e) && Games.Long(e) < cut ? 1 : 0; }, line => { var m = EndRe.Match(line); long e; return !m.Success || !long.TryParse(m.Groups[1].Value, out e) || e < cut; }); }
@@ -3239,7 +3382,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
     {
         try
         {
-            if (!DaysSet("warnDays")) return;
+            if (!DaysSet("warnDays") || KeepDays("warnDays") == 0) return;   // (0: kept forever)
             string p = P("alerts.log");
             if (!File.Exists(p)) return;
             string cut = DateTime.Now.AddDays(-(KeepDays("warnDays") + 1)).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
@@ -3250,7 +3393,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             int i = 0; while (i < lines.Length && old(lines[i])) i++;
             if (i > 0)   // (what goes is kept in alerts.log.bak first, like a Clear; then the rest is written whole through a temp file)
             {
-                Disk.AppendLines(p + ".bak", lines.Take(i)); Shorten(p + ".bak", 8 << 20);
+                Disk.AppendLines(p + ".bak", lines.Take(i)); ShortenBin(p + ".bak", Bytes(lines.Take(i)));
                 Disk.SwapLines(p, lines.Skip(i));
             }
         }
@@ -4114,7 +4257,7 @@ exit 0";
         // that after a cancel, so a later WM_CLOSE from Task Manager or taskkill would hide it instead of quitting)
         // a WM_CLOSE gets here only from outside now (Task Manager, taskkill): a quit, so a launch meanwhile starts after it
         if (m.Msg == 0x0010 /*WM_CLOSE*/ && !exiting) exiting = true;
-        if (m.Msg == 0x0112 /*WM_SYSCOMMAND*/ && ((int)m.WParam & 0xFFF0) == 0xF060 /*SC_CLOSE*/ && !exiting) { SaveWin(); HideToTray(); return; }
+        if (m.Msg == 0x0112 /*WM_SYSCOMMAND*/ && ((int)m.WParam & 0xFFF0) == 0xF060 /*SC_CLOSE*/ && !exiting) { SaveWin(false, "the X, to the tray"); HideToTray(); return; }
         // a copy that never takes the focus (a test's) that still gets activated hands it straight back to the window that
         // was in front (otherFront, kept by the Tick)
         if (NoFocus && m.Msg == 0x0006 /*WM_ACTIVATE*/ && ((int)m.WParam & 0xFFFF) != 0 && otherFront != IntPtr.Zero && otherFront != Handle)
@@ -4217,7 +4360,7 @@ exit 0";
     Rectangle winSaved, winAway, normalAt;   // normalAt: where it was last neither maximized nor minimized (RestoreBounds misses moves made outside WinForms)
     bool winSavedMax, winAwayMax, winHome = true;   // winHome: at the last look the window was on its saved place
     void NoteNormal() { if (IsHandleCreated && !IsZoomed(Handle) && !IsIconic(Handle)) normalAt = Bounds; }   // (Windows' word: WindowState lags)
-    void SaveWin(bool mine = false)
+    void SaveWin(bool mine = false, string why = null)
     {
         try
         {
@@ -4229,10 +4372,15 @@ exit 0";
             uint dpi = IsHandleCreated ? GetDpiForWindow(Handle) : 0;
             if (dpi > 0) d["dpi"] = (int)dpi;   // (the size is in that screen's pixels: shown on another scale, it is converted)
             Disk.Swap(WinPath, json.Serialize(d));   // (a cut write never empties it)
+            // (his 11-02 report "it always opens at the same size, never the one I resize it to": each new size goes to
+            // app.log with what saved it, so the step that loses it shows)
+            if (b != winSaved || max != winSavedMax) Log("window saved " + WinTxt(b, max) + (dpi > 0 ? " at " + dpi + " dpi" : "") + (mine ? ", moved or resized" : ", " + (why ?? (exiting ? "quitting" : ending ? "Windows ending the session" : Visible ? "closed or a change" : "to the tray"))));
             winSaved = b; winSavedMax = max;
         }
         catch { }
     }
+    Rectangle winAsked;   // the place window.json gave it, for the log when Windows puts it elsewhere
+    static string WinTxt(Rectangle b, bool max) { return b.Width + "x" + b.Height + " at " + b.X + "," + b.Y + (max ? " maximized" : ""); }
     void RestoreWin()
     {
         try
@@ -4255,7 +4403,8 @@ exit 0";
                 r = new Rectangle(wa.X + (wa.Width - w) / 2, wa.Y + (wa.Height - h) / 2, w, h);
             }
             minTrack = Size.Empty;   // HandleCreated sets the one for the monitor it is on
-            StartPosition = FormStartPosition.Manual; Bounds = r; normalAt = r;
+            StartPosition = FormStartPosition.Manual; Bounds = r; normalAt = r; winAsked = r;
+            Log("window opens " + WinTxt(r, max) + (winAway.IsEmpty ? ", as saved" : ", saved " + WinTxt(winAway, max) + " on a screen that isn't there"));
             if (max && !NoFocus && winAway.IsEmpty) WindowState = FormWindowState.Maximized;   // (a maximized first show takes the focus; away, it maximizes once back there)
         }
         catch { }

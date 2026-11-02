@@ -99,7 +99,7 @@ c = await p.center('#mrng button[data-r="15m"]'); await p.click(c.x, c.y); await
 ok('back to 15 min: the seconds again', await ev('$("mextra").querySelectorAll(".bnp .bnc rect").length >= 3 && !/game time/.test($("mextra").querySelector(".mstats").textContent)'));
 ok('its title says the call', await ev('$("mval").textContent.trim() === "FPS capped" && /most common call of the last 5 seconds/.test($("mdesc").textContent)'), await ev('$("mval").textContent'));
 const desc = await ev('$("mdesc").textContent');
-ok('it says which readings it goes by, found by their names', /goes by GPU Core Load \(dGPU\) and Max CPU\/Thread Usage \(CPU[^)]*\)\.$/.test(desc), desc.split('. ').pop());
+ok('it says which readings it goes by, found by their names', /goes by GPU Core Load on dGPU and Max CPU\/Thread Usage on CPU[^.]*\.$/.test(desc), desc.split('. ').pop());
 await ev('closeDetail()');
 
 // ---- the other views ----

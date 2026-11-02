@@ -16,7 +16,7 @@ const until = async (expr, ms = 8000) => { const t0 = Date.now(); while (Date.no
 const before = readFileSync(join(data, 'hist.bin')), sBefore = readFileSync(join(data, 'settings.json'));
 
 ok('the page starts', await until('READ.length > 0 && feed.got'));
-ok('the held settings: nothing cut by days nobody knows, no update check', await until('(feed.gameDays === 0 && feed.warnDays === 0 || feed.gameDays === 365 && feed.warnDays === 365) && feed.updates === false', 4000), await E('JSON.stringify([feed.gameDays, feed.warnDays, feed.updates])'));
+ok('the held settings: nothing cut by days nobody knows, no update check', await until('(feed.gameDays === null && feed.warnDays === null || feed.gameDays === 365 && feed.warnDays === 365) && feed.updates === false', 4000), await E('JSON.stringify([feed.gameDays, feed.warnDays, feed.updates])'));
 ok('once free, the settings file is read: its days and updates off', await until('feed.gameDays === 365 && feed.warnDays === 365 && feed.updates === false', 9000), await E('JSON.stringify([feed.gameDays, feed.warnDays, feed.updates])'));
 ok('the 40-day-old session is still there (the file says 365 days)', /Old Game/.test(readFileSync(join(data, 'games.log'), 'utf8')));
 ok('it says why in its log', /settings\.json is held by another program/.test(readFileSync(join(data, 'app.log'), 'utf8')));

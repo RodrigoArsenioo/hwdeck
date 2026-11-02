@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.0 (2026-11-02)
+
+- Look, in Settings: the cards (Standard, OLED: true black with the cards drawn as lines, Soft: no lines, a shadow) and the colour (Mono, Accent: one colour on the tabs, periods and switches, Spectrum: a colour for each category on its name, icons and graphs, and the accent). Nine palettes to start from, and any colour of your own for the accent or a category: a grid of tones, a hex, or the full picker. Spectrum's colours carry to the cell popup, the hover preview, game sessions and the warning history. While you pick, Settings turns see-through for a moment so you see the change on the view.
+- Warning history, redone like game sessions: the last 7 days at a glance, a period and a cell to look at, a bar a day split yellow and red, each cell's share, and a row per cell and day that opens to each crossing and a chart of the reading around it.
+- Bins for game sessions and warnings: Select picks rows (or Pick all) to move to the bin, and the bin icon shows what is in it, to bring back. What Keep sets aside goes there too. Undo takes a move back. Keep sessions and Keep warnings can be Forever, now the default.
+- Starter: a first layout built from this PC's sensors for a new user. Someone with a layout of their own gets a note, and Starter stays in Saves to load.
+- The title bar: Save beside Saves, undo and redo always there, and while editing a strip of its own (Category, Storage, Selected, undo, redo, Done). Storage and the cell settings can move to either side; pinned, they stay open.
+- Game sessions: start one of your own with the play button (it asks first), with a recording strip to rename it and stop it. Sessions open shut, and the one you open scrolls to the middle.
+- Every hover text is HW Deck's own tip. Tab no longer walks the buttons, and there are no focus rings.
+- Folding a category is gone. Switches slide. The texts across the app were rewritten.
+- Motion: Storage and the cell settings slide in from the side they open on, and across when they swap sides. Categories and cells glide to their new places after a move, an undo or a redo. Settings' choices slide, rows going to or from a bin slide, and the session you open glides to the middle. Minimal and Off turn it down as before.
+- Narrow windows: editing keeps the window's own buttons on screen, and the session and warning rows keep their names.
+
 ## 1.5.11 (2026-10-31)
 
 - The 12V-2x6 connector's pin bars, and the pins in its popup, turned yellow at 9.2 A and red at 9.5 A whatever lines you gave the cell. They now follow the cell's own lines, like the cell itself and the warning history.

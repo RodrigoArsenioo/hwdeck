@@ -9,6 +9,21 @@
 
 const host = window.chrome && window.chrome.webview ? window.chrome.webview : null;
 const send = m => { if (host) host.postMessage(m); };
+// hover texts: always the page's own tips (see "tooltips" below), never Windows' (11-02: a title Windows got to first,
+// one on a parent, or one on a row drawn again under a still pointer showed its own). So a title never stays a title:
+// el.title reads and writes data-tip, and a title in new html, or set as an attribute, is moved to data-tip before
+// anything can show it (a MutationObserver runs before the next input and the next frame)
+Object.defineProperty(HTMLElement.prototype, 'title', { configurable: true,
+  get() { return this.getAttribute('data-tip') || ''; },
+  set(v) { const s = v == null ? '' : String(v); if (s) this.setAttribute('data-tip', s); else this.removeAttribute('data-tip'); } });
+const untitle = el => { const t = el.getAttribute('title'); el.removeAttribute('title'); if (t) el.setAttribute('data-tip', t); else el.removeAttribute('data-tip'); };
+for (const el of document.querySelectorAll('[title]')) untitle(el);
+new MutationObserver(ms => {
+  for (const m of ms) {
+    if (m.type === 'attributes') { if (m.target.hasAttribute('title')) untitle(m.target); continue; }
+    for (const n of m.addedNodes) if (n.nodeType === 1) { if (n.hasAttribute('title')) untitle(n); if (n.firstElementChild) for (const x of n.querySelectorAll('[title]')) untitle(x); }
+  }
+}).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['title'] });
 // a build's own cell kinds and messages, from its web/extras.js (loaded only when the host says there is one; HW Deck
 // itself has none). EXT.kinds[kind] = { eval(out, r, c): fills the value, words, caption, level (true: that's all, no
 // lines), body(cid, r, where): html in place of the graph (where: tile, hero, row, band, grid), update(root, r, e, cid):
@@ -59,7 +74,7 @@ EXT.kinds['12v'] = {
     if (out.lvl && hot >= 0 && a[hot] != null) out.sub = 'pin ' + (hot + 1) + ' at ' + fmt(a[hot], 1) + ' A';
     else if (c12Ep.on) { out.lvl = Math.max(out.lvl, 1); out.col = out.lvl === 2 ? 'red' : 'yellow'; out.warm = 0; out.sub = c12Ep.words; }
   },
-  desc: () => 'The GPU\'s 12V-2x6 power connector, by its pins: the value is the most loaded one. A pin is rated 9.5 A (a healthy connector at a 600 W limit peaks near 9.1 A). A pin carrying 1.5x its share of the load, from 15 A up, is the early sign of a bad contact: the cell turns yellow and the warning history keeps it.',
+  desc: () => 'The GPU\'s 12V-2x6 power connector, by its pins: the value is the most loaded one. A pin is rated 9.5 A, and a healthy connector at a 600 W limit peaks near 9.1 A. A pin carrying 1.5x its share of the load, from 15 A up, is the early sign of a bad contact: the cell turns yellow and the warning history keeps it.',
   detail(box, cid, r, e, full) {
     if (full || !box.querySelector('.mpinwrap')) box.innerHTML = '<div class="msec">the pins</div><div class="mpinwrap"></div>';
     const a = pinVals(0), w = pinVals(1);
@@ -189,7 +204,7 @@ function bnNow() {
 // what the host goes by: [GPU usage key, Max CPU/Thread Usage key, how many per-thread usages]
 const bnInputs = () => !!feed.bnIn[0] && (!!feed.bnIn[1] || feed.bnIn[2] > 0);
 function bnFrom() {
-  const nm = k => { const r = BYKEY.get(k); return r ? esc(r.label) + ' (' + esc(SENS[r.s].short) + ')' : ''; };
+  const nm = k => { const r = BYKEY.get(k); return r ? esc(r.label) + ' on ' + esc(SENS[r.s].short) : ''; };
   if (!bnInputs()) return 'HWiNFO shares no GPU core load or CPU thread usage on this PC, so there is nothing to go by.';
   return 'It goes by ' + nm(feed.bnIn[0]) + ' and ' + (feed.bnIn[1] ? nm(feed.bnIn[1]) : 'the busiest of ' + feed.bnIn[2] + ' CPU thread usages') + '.';
 }
@@ -349,7 +364,7 @@ function cleanLayout(L) {
     used.add(id);
     const list = [];
     for (const x of Array.isArray(cat.cells) ? cat.cells : []) { const m = typeof x === 'string' ? ids.get(x) : null; if (m && !listed.has(m)) { listed.add(m); list.push(m); } }
-    out.cats.push({ id, name: str(cat.name, 200) && cat.name.trim() ? str(cat.name, 200) : 'Category', collapsed: cat.collapsed === true, cells: list });
+    out.cats.push(Object.assign({ id, name: str(cat.name, 200) && cat.name.trim() ? str(cat.name, 200) : 'Category', collapsed: false, cells: list }, isHex(cat.col) ? { col: cat.col.toLowerCase() } : {}));   // (col: its colour under Spectrum, when you picked one)
   }
   for (const id of Object.keys(out.cells)) if (!listed.has(id)) delete out.cells[id];
   const views = cleanViews(L && L.views, out, ids, catIds);
@@ -502,7 +517,7 @@ function tidyViews(L) {
 }
 const cleanSlot = s => s && typeof s === 'object' && s.layout && Array.isArray(s.layout.cats)
   ? { v: 1, name: typeof s.name === 'string' ? s.name.trim().slice(0, 80) : '', layout: cleanLayout(s.layout) } : null;
-const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined, title: undefined, clock: true };
+const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined, title: undefined, clock: true, look: { cards: 'standard', tint: 'none', acc: '#7fa6e8', pal: 'muted' } };
 // the title bar: your title (this PC's name when there is none), the feed's dot and the time of the last reading
 function renderTitle() {
   setText($('title'), (S.title && S.title.trim()) || feed.pc || feed.brand || 'HW Deck');
@@ -520,6 +535,78 @@ const gameCalmNow = () => S.gameCalm !== false && !!feed.game && !!feed.front;
 const motionMode = () => { const m = motionPicked(); return m === 'full' && gameCalmNow() ? 'minimal' : m; };
 const motionOn = () => motionMode() === 'full';   // the moving parts: spins, rolls, glides, draw-ins
 function applyMotion() { document.documentElement.dataset.motion = motionMode(); }
+// the look, in Settings (11-02): the cards' surface (Standard, OLED: true black with the cards drawn as lines only, Soft:
+// no lines, a shadow) and where colour goes (Mono: greys only, Accent: one colour you pick on what you pick, Spectrum:
+// each category a colour, its part's or yours, on its graphs, icons and name). The greys stay neutral either way;
+// warnings stay yellow and red. deck.css keeps the tokens (--tile, --pill, --acc, ...), the page only says which look is on
+const THEMES = { cards: ['standard', 'oled', 'soft'], tint: ['none', 'accent', 'spectrum'] };
+const ACC0 = '#7fa6e8', isHex = c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
+// (Outline, the first afternoon of 11-02, is OLED now)
+const cleanLook = o => ({ cards: o && o.cards === 'outline' ? 'oled' : o && THEMES.cards.includes(o.cards) ? o.cards : 'standard', tint: o && THEMES.tint.includes(o.tint) ? o.tint : 'none', acc: o && isHex(o.acc) ? o.acc.toLowerCase() : ACC0, pal: o && Object.prototype.hasOwnProperty.call(PALETTES, o.pal) ? o.pal : 'muted' });
+const lookPlain = () => S.look.cards === 'standard' && S.look.tint === 'none' && S.look.acc === ACC0 && S.look.pal === 'muted';
+function applyLook() { const d = document.documentElement; d.dataset.cards = S.look.cards; d.dataset.tint = S.look.tint; d.style.setProperty('--acc', S.look.acc); TINT.clear(); }
+// Spectrum: a category takes the colour you gave it (cat.col, saved with the layout), else the colour of the part most
+// of its cells read (more than half of those that tell); a mix, or readings of nothing in particular (the board, the
+// network, your own), stay grey
+// (the palettes: [name, a colour per part, the accent]. 11-02, his "all too similar": each one a family of its own or a
+// set of clearly different hues; Dusk is the one he set by hand on his dashboard, Fire his ask)
+const PALETTES = {
+  muted: ['Muted', { game: '#a99bdc', gpu: '#74c69d', cpu: '#7fa6e8', mem: '#4fb8ad', drive: '#8fa0c8', fan: '#6cc8d8' }, '#7fa6e8'],
+  dusk: ['Dusk', { game: '#8fa0c8', gpu: '#d98aa8', cpu: '#c79ad6', mem: '#a99bdc', drive: '#4fb8ad', fan: '#74c69d' }, '#c79ad6'],
+  fire: ['Fire', { game: '#ff7a5c', gpu: '#ff9f43', cpu: '#ffc15e', mem: '#f6d06f', drive: '#e8735a', fan: '#ff5d73' }, '#ff9f43'],
+  ocean: ['Ocean', { game: '#8c9bff', gpu: '#4cc9f0', cpu: '#4895ef', mem: '#56cfe1', drive: '#6c6fd8', fan: '#64dfdf' }, '#4895ef'],
+  forest: ['Forest', { game: '#b5c95a', gpu: '#52b788', cpu: '#95d5b2', mem: '#40a378', drive: '#b7b7a4', fan: '#74c69d' }, '#52b788'],
+  sunset: ['Sunset', { game: '#a66cff', gpu: '#ff8c42', cpu: '#ff6b8b', mem: '#ffb05c', drive: '#c77dff', fan: '#f45b9a' }, '#ff8c42'],
+  rainbow: ['Rainbow', { game: '#b392f0', gpu: '#85e89d', cpu: '#79b8ff', mem: '#ffab70', drive: '#f97583', fan: '#ffea7f' }, '#79b8ff'],
+  candy: ['Candy', { game: '#cdb4db', gpu: '#b9e4a0', cpu: '#a2d2ff', mem: '#ffc8dd', drive: '#ffafcc', fan: '#bde0fe' }, '#a2d2ff'],
+  neon: ['Neon', { game: '#c77dff', gpu: '#00f5a0', cpu: '#00bbf9', mem: '#fee440', drive: '#f15bb5', fan: '#00f5d4' }, '#00bbf9'],
+};
+function partOf(c) {
+  if (!c) return null;
+  if (c.pred) return 'fan';   // (a fan's speed from its curve)
+  const k = c.key || '';
+  if (k === CONN) return 'gpu';
+  if (k.startsWith('hwdeck.')) return 'game';
+  const r = BYKEY.get(k); if (!r) return null;
+  const s = SENS[r.s] ? SENS[r.s].name : '', l = r.label || '';
+  if (isPM(r) || /^RTSS\b/.test(s) || /\b(framerate|fps|frame ?time)\b/i.test(l)) return 'game';
+  if (r.unit === 'RPM' || /\b(fan|pump)\b/i.test(l)) return 'fan';
+  if (/^[di]?GPU\b/.test(s)) return 'gpu';
+  if (/^CPU\b/.test(s)) return 'cpu';
+  if (/DIMM|^Memory\b|\bSPD\b/i.test(s) || /^System\b/.test(s) && /memory|page file/i.test(l)) return 'mem';
+  if (/^(S\.M\.A\.R\.T\.|Drive\b)/.test(s)) return 'drive';   // ("S.M.A.R.T.: ...": no word edge after its dot)
+  if (/\b(CPU|Tctl|Tdie|CCD)\b/.test(l)) return 'cpu';   // (the board's CPU readings)
+  return null;
+}
+const TINT = new Map();   // category id: its part's colour ('' grey); emptied when the view is drawn again and when the look changes
+const catTint = cat => cat.col || autoTint(cat);
+function autoTint(cat) {
+  if (TINT.has(cat.id)) return TINT.get(cat.id);
+  const n = {}, wait = READ.length === 0; let told = 0;
+  for (const cid of cat.cells) { const c = S.L.cells[cid]; const p = partOf(c); if (p) { n[p] = (n[p] || 0) + 1; told++; } }
+  let top = null; for (const p in n) if (!top || n[p] > n[top]) top = p;
+  const col = top && n[top] * 2 > told ? (PALETTES[S.look.pal] || PALETTES.muted)[1][top] : '';   // (more than half: an even split is a mix)
+  if (!wait) TINT.set(cat.id, col);   // (readings not in yet: asked again next time)
+  return col;
+}
+// Spectrum beyond the view (11-02, his "colours don't carry over to popups, hovers, sessions, warnings"): a cell's colour
+// (its category's), a reading's (the category of the view's cell that reads it), and a colour with some alpha
+const cellTint = cid => { if (S.look.tint !== 'spectrum' || cid == null || !S.L.cells[cid]) return null; const cat = catOf(cid); return cat ? catTint(cat) || null : null; };
+const keyTint = key => { if (S.look.tint !== 'spectrum' || !key) return null; for (const id in S.L.cells) if (S.L.cells[id].key === key) { const t = cellTint(id); if (t) return t; } return null; };
+// (the game's: HW Deck's own fps cell's, else any cell that reads the game, a PresentMon or RTSS fps)
+const gameTint = () => { if (S.look.tint !== 'spectrum') return null; const t = keyTint('hwdeck.0/fps'); if (t) return t; for (const id in S.L.cells) if (partOf(S.L.cells[id]) === 'game') { const c = cellTint(id); if (c) return c; } return null; };
+const hexA = (hx, a) => 'rgba(' + parseInt(hx.slice(1, 3), 16) + ',' + parseInt(hx.slice(3, 5), 16) + ',' + parseInt(hx.slice(5, 7), 16) + ',' + a + ')';
+// each category's colour as --cc on it (the CSS colours its name and icons with it under Spectrum)
+function paintTint() {
+  const on = S.look.tint === 'spectrum';
+  if (!on && !paintTint.was) return;
+  paintTint.was = on;
+  for (const el of document.querySelectorAll('#view .dcat')) {
+    const cat = on ? S.L.cats.find(c => c.id === el.dataset.cat) : null, col = cat ? catTint(cat) : '';
+    if (el._cc !== col) { el._cc = col; if (col) el.style.setProperty('--cc', col); else el.style.removeProperty('--cc'); }
+  }
+}
+applyLook();
 if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', () => { applyMotion(); if (feed.got) redrawView(); });
 // the view drawn again for the motion, but not under a held cell or handle (it would move away under it, or lose the
 // click): when it's let go
@@ -534,22 +621,23 @@ function dropGone() {
   for (const k in holdSince) if (!ruled(S.L.cells[k])) delete holdSince[k];
   if (!Object.values(S.L.cells).some(c => c && c.key === 'hwdeck.0/12v')) { c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; }   // (no connector cell left: its pin episode ends)
 }
-function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, pins: [DR.L.pinned, DR.R.pinned], title: S.title, clock: S.clock, hide: S.hide } }); }, 300); }
+function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, pins: [DR.L.pinned, DR.R.pinned], sides: [DR.L.side, DR.R.side], rPlaced: DR.R.placed || undefined, title: S.title, clock: S.clock, look: lookPlain() ? undefined : S.look, hide: S.hide, starter: S.starterSeen === true || undefined, starterNoted: S.starterNoted === true || undefined } }); }, 300); }
 function saveSlot(i) { send({ t: 'save', file: 'slots/slot' + (i + 1), data: S.slots[i] }); }
 // undo steps hold the layout and which slot it came from, so Clear then Undo is exactly where you were
 let undoStack = [], redoStack = [];
-const snapOf = () => JSON.stringify({ L: S.L, active: S.active });
+const snapOf = () => JSON.stringify({ L: S.L, active: S.active, look: S.look });   // (the look too: a colour, a palette, the cards undo like any change, 11-02)
 // folding a category is how you look at it, not a change: undo keeps the folds as they are
 function restore(json) {
   const o = JSON.parse(json), was = new Map(S.L.cats.map(c => [c.id, c.collapsed]));
   S.L = o.L; S.active = Number.isInteger(o.active) && S.slots[o.active] ? o.active : null;
+  if (o.look) { S.look = cleanLook(o.look); applyLook(); if (setmodal.classList.contains('open')) renderSettings(); }
   for (const c of S.L.cats) if (was.has(c.id)) c.collapsed = was.get(c.id);
 }
 let undoSeq = 0;   // (counts every step: the stack's length stops changing at its cap)
 function pushUndo(before) { undoStack.push(before); undoSeq++; if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
 function snap() { pushUndo(snapOf()); }
 // a change that changes nothing (Alt+arrow at the end of a list) leaves no undo step
-function mutate(fn, msg) { if (nudge) flushNudge(); const before = snapOf(); fn(); tidyViews(S.L); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); afterChange(); if (msg) toast(msg, true); }
+function mutate(fn, msg) { if (nudge) flushNudge(); const before = snapOf(); fn(); tidyViews(S.L); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); flipNext = true; afterChange(); if (msg) toast(msg, true); }
 // every tile measured again (a build's cells got their bodies): once things settle, never under a drag
 const xSeen = new Set(); let rmT = 0;
 function remeasureSoon(ms) { clearTimeout(rmT); rmT = setTimeout(() => { if ((drag && drag.started) || rs) { remeasureSoon(); return; } packMemo.clear(); renderView(false); }, ms == null ? 400 : ms); }
@@ -567,9 +655,11 @@ function bootArm() { if (app.classList.contains('boot') && !document.hidden && !
 document.addEventListener('visibilitychange', bootArm);
 let onLayout = null;   // (the sessions popup: Customize and the open sessions drawn again)
 function afterChange() { tidyViews(S.L); fixSel(); if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); if (onLayout) onLayout(); }
-function undo() { if (nudge) flushNudge(); keyStep.t = 0; if (!undoStack.length) return; retireToastUndo(); redoStack.push(snapOf()); restore(undoStack.pop()); fixSel(); afterChange(); }
-function redo() { if (nudge) flushNudge(); keyStep.t = 0; if (!redoStack.length) return; retireToastUndo(); undoStack.push(snapOf()); restore(redoStack.pop()); fixSel(); afterChange(); }
-function syncUndo() { $('undo').disabled = !undoStack.length; $('redo').disabled = !redoStack.length; }
+// (a step the host does, a Restore in Settings: undone and redone by the host, its log, not the layout: 11-02)
+const hostStep = e => { if (e[2] !== 'h') return null; try { const o = JSON.parse(e); return o.host ? o : null; } catch (x) { return null; } };
+function undo() { if (nudge) flushNudge(); keyStep.t = 0; if (!undoStack.length) return; retireToastUndo(); const e = undoStack.pop(), h = hostStep(e); if (h) { redoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } redoStack.push(snapOf()); restore(e); fixSel(); flipNext = true; afterChange(); }   // (it glides back the way it went)
+function redo() { if (nudge) flushNudge(); keyStep.t = 0; if (!redoStack.length) return; retireToastUndo(); const e = redoStack.pop(), h = hostStep(e); if (h) { undoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); undoSeq++; send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } undoStack.push(snapOf()); restore(e); fixSel(); flipNext = true; afterChange(); }
+function syncUndo() { $('undo').disabled = $('undoE').disabled = !undoStack.length; $('redo').disabled = $('redoE').disabled = !redoStack.length; }   // (the title bar's and the editing strip's)
 function fixSel() { if (sel && !S.L.cells[sel]) sel = null; if (selCat && !S.L.cats.some(c => c.id === selCat)) selCat = null; }
 const layoutSig = L => JSON.stringify(L, (k, v) => k === 'collapsed' ? undefined : v);
 // (the slot as the view would be after the same Yes/No line fix, so that fix alone isn't a change)
@@ -582,6 +672,7 @@ function syncSaves() {
   const d = isDirty();
   $('savesDot').classList.toggle('on', d);
   $('savesBtn').title = 'Saves' + (S.active != null ? ': ' + slotName(S.active) + (d ? ', unsaved changes' : '') : '');
+  $('qsaveBtn').title = (S.active != null ? 'Save to ' + slotName(S.active) : 'Save to a free slot') + ', Ctrl+S';
   if ($('smodal').classList.contains('open')) renderSaves();
 }
 
@@ -670,7 +761,7 @@ function evalCell0(cid, c, peek, quick) {
     return out;
   }
   // the game session so far, as a length (its lines in minutes, like the host's); with no game: --
-  const gt = c.key === GTIME, gtSub = () => feed.game ? feed.game + (feed.front ? '' : ' (in the background)') : 'no game running';
+  const gt = c.key === GTIME, gtSub = () => feed.game ? feed.game + (feed.front ? '' : ', in the background') : 'no game running';
   if (gt && v == null) { if (!peek) calmGone(cid); out.txt = '--'; out.utxt = ''; out.sub = gtSub(); out.col = 'grey'; return out; }
   if (v == null) {
     if (!peek) calmGone(cid);
@@ -753,8 +844,9 @@ function evalCell0(cid, c, peek, quick) {
   if (!peek && out.lvl && raw) { ep.lvl = out.lvl; ep.peak = Math.max(ep.peak, out.lvl); ep.off = !!out.offCurve; ep.sub = out.sub; }   // (a warning second: what its calm seconds show)
   return out;
 }
-const sparkColor = (e, hero) => e.col === 'yellow' ? COLORS.yellow : e.col === 'red' ? COLORS.red : e.col === 'grey' ? '#3a3a3a' : hero ? '#8f8f8f' : '#7c7c7c';
-const graphCol = (e, hero) => { const base = sparkColor(e, hero); return e.warm ? mixHex(base, COLORS.yellow, e.warm * 0.75) : e.warmR ? mixHex(base, COLORS.red, e.warmR * 0.75) : base; };
+// (tc: its category's colour under Spectrum, in place of the grey)
+const sparkColor = (e, hero, tc) => e.col === 'yellow' ? COLORS.yellow : e.col === 'red' ? COLORS.red : e.col === 'grey' ? '#3a3a3a' : tc || (hero ? '#8f8f8f' : '#7c7c7c');
+const graphCol = (e, hero, tc) => { const base = sparkColor(e, hero, tc); return e.warm ? mixHex(base, COLORS.yellow, e.warm * 0.75) : e.warmR ? mixHex(base, COLORS.red, e.warmR * 0.75) : base; };
 
 // ---------- odometer numbers: the digits roll to their new places, forward when it goes up, back when it goes down ----------
 const REEL = '0123456789'.repeat(3).split('').join('\n');   // three turns of digits: rest in the middle one, roll into a neighbour
@@ -918,7 +1010,7 @@ function lerpState(a, b, p) {
 function graphFeed(cv, c, col) {
   const now = performance.now();
   let G = graphs.get(cv);
-  if (!G) { G = { cur: null, from: null, to: null, t0: 0, rev0: cv._enter && motionOn() ? now : 0, last: 0 }; graphs.set(cv, G); cv._enter = false; }
+  if (!G) { G = { cur: null, from: null, to: null, t0: 0, rev0: cv._enter && now - cv._enter < 1000 && motionOn() ? now : 0, last: 0 }; graphs.set(cv, G); cv._enter = 0; }   // (scrolled to later: no sweep then)
   G.col = col;
   const st = graphState(c);
   if (!st) { G.cur = G.from = G.to = null; G.dirty = true; kickGraphs(); return; }
@@ -1012,7 +1104,7 @@ const sensorHere = c => !!c.key && SENS.some(sn => c.key.startsWith(sn.key + '/'
 const missingTxt = c => sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now' : 'not on this PC: ' + (c.match ? c.match.split('|')[0] : c.key);
 const isFanCell = c => c.pred || isFanR(BYKEY.get(c.key));
 function catHead(cat, inner) {
-  return '<span class="grip" title="Drag to move the category: onto another one\'s edge to put them side by side or stack them">' + ICONS.grip + '</span><button class="ib chev" title="Collapse">' + ICONS.chev + '</button>' + (inner || '') +
+  return '<span class="grip" title="Drag to move the category: onto another one\'s edge to put them side by side or stack them">' + ICONS.grip + '</span>' + (inner || '') +   // (no collapse button: categories always show, his call 11-02)
     '<span class="cn" title="Click to select, double-click to rename">' + esc(cat.name) + '</span><span class="cnt">' + cat.cells.length + '</span>' +
     '<span class="acts"><button class="ib ren" title="Rename">' + ICONS.pen + '</button><button class="ib del" title="Remove the category and its cells">' + ICONS.x + '</button></span>' +
     (EXT.head ? xHead(cat) : '');
@@ -1043,7 +1135,7 @@ function tileHtml(cid, lk, pre) {
   const nog = xb == null && (miss || c.graph === false || (short && !isBneck(c)));
   return '<div class="tile dc' + (c.pred ? ' pred' : '') + (short ? ' short' : '') + (miss ? ' missing' : '') + (nog ? ' nog' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + (pre ? pre[1] : '') + anim() + (pre ? ';' + pre[0] : '') + '" data-cid="' + esc(cid) + '" data-k="tile" tabindex="0"' +
     (z.w !== 1 ? ' data-w="' + z.w + '"' : '') + (z.h !== 1 ? ' data-h="' + z.h + '"' : '') + (cellLook(cid, 'tiles').nl ? ' data-nl="1"' : '') + '>' +
-    '<div class="tn">' + iconOf(c, r) + '<span>' + esc(nm) + '</span></div>' +
+    '<div class="tn">' + iconOf(c, r) + '<span data-full="1">' + esc(nm) + '</span></div>' +   // (a name cut short shows whole on hover: see the tips)
     '<div class="tv"><span class="v"></span><small class="u">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small></div><div class="tc"></div>' +
     (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit ? '<span class="corner" title="Drag to size it: it snaps to quarter steps, to the edges of other tiles and to the bottom of the columns beside it. Hold Alt for any size, double-click for a normal tile">' + ICONS.corner + '</span>' : '') + '</div>';
 }
@@ -1125,7 +1217,7 @@ function arrHtml(cls, v, block, auto) {
     for (const c of r.cols) h += '<div class="lcol" data-c="' + c.i + '" data-min="' + colMin(c) + '">' + c.stack.map(s => block(catById(sid(s)), true)).join('') + '</div>';
     if (S.edit && !auto) {   // (Automatic has no handles: a drop makes it your own first)
       for (let k = 0; k < r.cols.length - 1; k++) h += '<span class="ldiv" data-k="' + k + '" title="Drag to change the widths, double-click to let them follow what each column holds"></span>';
-      if (tiles) h += '<span class="lrs" title="Drag down to let its tiles grow into spare room (Fill), up to keep them as they are (Fit)"></span>';
+      if (tiles) h += '<span class="lrs" title="Fill: drag down to let its tiles grow into spare room. Fit: drag up to keep them as they are"></span>';
     }
     h += '</div>';
   }
@@ -1218,15 +1310,16 @@ function buildGrid() {
 }
 function setupHtml() {
   return '<div class="setup" id="view"><h2>HWiNFO isn\'t sharing its sensors yet</h2><span>' + esc(feed.brand || 'HW Deck') + ' shows what HWiNFO measures. Set HWiNFO up once:</span><ol>' +
-    '<li>Install HWiNFO (hwinfo.com) and start it with <b>Sensors-only</b> ticked.</li><li>In its sensors window, click <b>Config</b>, then <b>Main Settings</b>.</li>' +
+    '<li>Install HWiNFO from hwinfo.com and start it with <b>Sensors-only</b> ticked.</li><li>In its sensors window, click <b>Config</b>, then <b>Main Settings</b>.</li>' +
     '<li>On the <b>General / User Interface</b> tab, tick <b>Shared Memory Support</b>, then OK.</li>' +
     '<li>Keep HWiNFO running. The free version stops sharing after 12 hours. Optional: turn on <b>Keep HWiNFO sharing</b> in Settings and ' + esc(feed.brand || 'HW Deck') + ' restarts it for you, so it never runs out.</li></ol>' +
     '<span>This screen goes away by itself once the readings arrive. Already set up, and still nothing?</span>' +
     '<span><button class="btn" id="setupRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></span></div>';
 }
 function emptyHtml() {
-  return '<div class="empty" id="view">' + ICONS.pad + '<b>No cells yet</b><span>' + (S.edit ? 'Drag readings from Storage into here, or press + on a row.<br>Dropping on the box below makes a category.'
-    : 'Turn on Edit layout (the pencil, or E) to add readings.') + '</span></div>';
+  return '<div class="empty" id="view">' + ICONS.pad + '<b>No cells yet</b><span>' + (S.edit ? 'Drag readings from Storage here, or press + on a row.<br>Drop one on the box below to make a category.'
+    : 'Turn on Edit layout with the pencil or E to add readings.') + '</span>' +
+    (!feed.ext && READ.some(r => !r.key.startsWith('hwdeck.')) ? '<span>Or start from a layout built from this PC\'s sensors: <button class="btn" id="starterBtn">Starter layout</button></span>' : '') + '</div>';
 }
 function buildView() {
   // a category rename in progress keeps what was typed (without a second render in the middle of this one)
@@ -1255,7 +1348,7 @@ function buildView() {
     const r = { root: el, cid, kind: el.dataset.k, v: q('.v'), u: q('.u'), vbox: q('.tv, .hv, .val, .gval'), cap: q('.tc, .hc, .lbl i, .ginfo'), canvas: q('canvas'), strip: q('.strip'), lines: q('.glines'), xb: el.querySelector('.xb') };
     if (r.kind === 'grow') r.td = el.children;
     if (c && isFanCell(c)) r.fan = q('.tn svg, .nm svg, .gname svg');
-    if (r.canvas) { r.canvas._enter = enterNext; ro.observe(r.canvas); }
+    if (r.canvas) { r.canvas._enter = enterNext ? performance.now() : 0; ro.observe(r.canvas); }   // (when the view arrived)
     E.set(cid, r);
   }
   CARDS = [...document.querySelectorAll('#view .card')].map(el => ({ el, cat: el.dataset.cat, tag: el.querySelector('.tag') }));
@@ -1287,8 +1380,9 @@ let drawnHidden = false;   // (a view drawn in the tray: measured again when the
 function renderView(enter) {
   if (enter) enterNext = true;
   if (document.hidden) drawnHidden = true;
-  const was = flipNext && !enter ? catRects() : null;   // a layout change: the categories glide from where they were
+  const was = flipNext && !enter && !enterNext ? catRects() : null;   // an edit: the categories and cells glide from where they were
   flipNext = false;
+  TINT.clear();   // (cells may have moved between categories)
   buildView();
   updateView(true, true);
   autofit();
@@ -1305,14 +1399,36 @@ function pxFresh() {
   for (const k of ['pw', 'ph']) { const b = document.querySelector('#insp input[data-sz="' + k + '"]'); if (b && b !== document.activeElement) b.value = px[k]; }
 }
 let flipNext = false;
-function catRects() { const m = new Map(); if (S.screen !== 'grid') for (const el of document.querySelectorAll('#view .dcat')) m.set(el.dataset.cat, el.getBoundingClientRect()); return m; }
+// (a drop: the cell or category glides from where it was let go, not from its old slot, still there under the ghost)
+let flipFrom = null;
+function catRects() {
+  const m = new Map(); m.cells = new Map(); if (S.screen === 'grid') return m;
+  // (a hidden one, an empty category outside edit mode, has no box to glide from: it just comes)
+  for (const el of document.querySelectorAll('#view .dcat')) { const r = el.getBoundingClientRect(); if (r.width || r.height) m.set(el.dataset.cat, r); }
+  for (const el of document.querySelectorAll('#view .dc[data-cid]')) { const r = el.getBoundingClientRect(); if (r.width || r.height) m.cells.set(el.dataset.cid, r); }   // (and the cells: an edit's neighbours glide aside)
+  if (flipFrom && performance.now() - flipFrom.t < 500) (flipFrom.kind === 'cat' ? m : m.cells).set(flipFrom.id, flipFrom.r);
+  flipFrom = null;
+  return m;
+}
 function playFlip(was) {
   const dur = motionOn() ? 280 : 0;
   if (!dur || S.screen === 'grid') return;
+  const moved = new Set();   // (the categories that glide: their cells go with them)
   for (const el of document.querySelectorAll('#view .dcat')) {
     const a = was.get(el.dataset.cat); if (!a) continue;
     const b = el.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
-    if (Math.abs(dx) + Math.abs(dy) > 1) el.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    // (a new width or height: from its old middle, half seen, so its tiles packed anew never show mid-jump; 11-02)
+    if (Math.abs(a.width - b.width) > 8 || Math.abs(a.height - b.height) > 8) { moved.add(el); el.animate([{ transform: 'translate(' + (a.left + a.width / 2 - b.left - b.width / 2) + 'px, ' + (a.top + a.height / 2 - b.top - b.height / 2) + 'px)', opacity: 0.5 }, { transform: 'none', opacity: 1 }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); }
+    else if (Math.abs(dx) + Math.abs(dy) > 1) { moved.add(el); el.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); }
+  }
+  // the cells an edit moved glide from where they were, a new one comes in; not those whose category glides with them
+  if (!was.cells) return;
+  for (const el of document.querySelectorAll('#view .dc[data-cid]')) {
+    const c = el.closest('.dcat'); if (c && moved.has(c)) continue;
+    const a = was.cells.get(el.dataset.cid);
+    if (!a) { el.animate([{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'ease-out' }); continue; }
+    const b = el.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
+    if (Math.abs(dx) + Math.abs(dy) > 1) el.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }], { duration: 240, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
   }
 }
 
@@ -1326,6 +1442,7 @@ function judgeRest(skipDrawn) {
   }
 }
 function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's, judges nothing)
+  paintTint();   // (writes only when a colour changed: readings that just came in, a new view)
   // seen: gets its number this time (all of them after a rebuild); sight: its graph is drawn (only what is on screen)
   const sr = sectionsEl.getBoundingClientRect(), seen = new Map(), sight = new Map();
   for (const [cid, r] of E) { const b = r.root.getBoundingClientRect(), on = b.bottom > sr.top - 60 && b.top < sr.bottom + 60 && b.height > 0; sight.set(cid, on); seen.set(cid, all || on); }
@@ -1344,6 +1461,9 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     if (r.cap) { setText(r.cap, e.sub); r.cap.classList.toggle('y', e.lvl === 1); r.cap.classList.toggle('r', e.lvl === 2); }
     if (r.kind === 'tile') {
       r.root.classList.toggle('yellow', e.lvl === 1); r.root.classList.toggle('red', e.lvl === 2); r.root.classList.toggle('warm', e.warm > 0 || e.warmR > 0);
+      // (prettify 11-02: a tile that just went yellow, or yellow to red, also pulses a ring out, with the glow below; not
+      // as the view is drawn, and only with Full animations. r._lvl moves on below, after the glow)
+      if (r._lvl !== undefined && e.lvl > r._lvl && motionMode() === 'full') { r.root.classList.remove('flare'); void r.root.offsetWidth; r.root.classList.add('flare'); clearTimeout(r._fl); r._fl = setTimeout(() => r.root.classList.remove('flare'), 1000); }
       const wk = e.warm ? 'y' + e.warm : e.warmR ? 'r' + e.warmR : '';   // (the border fades toward yellow before it, toward red past it)
       if (r._w !== wk) { r._w = wk; r.root.style.setProperty('--wb', e.warm ? mixHex('#242424', '#5c4f1d', e.warm * 0.85) : e.warmR ? mixHex('#5c4f1d', '#6b2020', e.warmR * 0.85) : ''); }
     }
@@ -1372,7 +1492,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     const xk = xkOf(rd); if (xk && xk.update) xk.update(r.root, rd, e, cid);
     if (r._lvl !== undefined && e.lvl > r._lvl) glow(r, e.lvl);
     r._lvl = e.lvl;
-    if (r.canvas && sight.get(cid)) graphFeed(r.canvas, c, graphCol(e, r.kind === 'hero'));
+    if (r.canvas && sight.get(cid)) graphFeed(r.canvas, c, graphCol(e, r.kind === 'hero', cat && S.look.tint === 'spectrum' ? catTint(cat) : ''));
     if (r.strip && e.strip && sight.get(cid)) renderStrip(r.strip, e.strip.segs, HLEN);
   }
   for (const k of CARDS) {
@@ -2131,7 +2251,7 @@ function endDrag(cancel) {
   if (refitLater) { refitLater = false; setTimeout(refit, 0); }
   if (viewLater) { viewLater = false; setTimeout(() => renderView(false), 0); }
   dropmark.style.display = 'none'; app.classList.remove('dragging');
-  if (d.ghost) d.ghost.remove();
+  if (d.ghost) { if (!cancel && (d.kind === 'cell' || d.kind === 'cat')) flipFrom = { kind: d.kind, id: d.data, r: d.ghost.getBoundingClientRect(), t: performance.now() }; d.ghost.remove(); }
   syncDrawers();
   $('newcat').classList.remove('over');
   for (const el of document.querySelectorAll('#view .dragging')) el.classList.remove('dragging');
@@ -2330,13 +2450,13 @@ function catTarget(x, y, prev) {
   if (zone === 'left' || zone === 'right') {
     const box = boxes[p.ri] || r, col = (el.closest('.lcol') || el).getBoundingClientRect();
     const bx = zone === 'left' ? col.left - cg / 2 - 1.5 : col.right + cg / 2 - 1.5;
-    if (p.row.cols.filter(others).length >= MAXC[vn]) { mk('full', bx, box.top, 3, box.bottom - box.top); return { zone: 'full', txt: 'This row is full (' + MAXC[vn] + ' side by side)' }; }
+    if (p.row.cols.filter(others).length >= MAXC[vn]) { mk('full', bx, box.top, 3, box.bottom - box.top); return { zone: 'full', txt: 'This row is full: ' + MAXC[vn] + ' side by side' }; }
     mk('', bx, box.top, 3, box.bottom - box.top);
     return { zone, cat: id, txt: 'Beside ' + nm(id) + ', on the ' + zone };
   }
   if (zone === 'above' || zone === 'below') {
     const by = zone === 'above' ? r.top - rg / 2 - 1.5 : r.bottom + rg / 2 - 1.5;
-    if (p.col.stack.filter(s => sid(s) !== src).length >= MAXS[vn]) { mk('full', r.left, by, r.width, 3); return { zone: 'full', txt: 'This column is full (' + MAXS[vn] + ' stacked)' }; }
+    if (p.col.stack.filter(s => sid(s) !== src).length >= MAXS[vn]) { mk('full', r.left, by, r.width, 3); return { zone: 'full', txt: 'This column is full: ' + MAXS[vn] + ' stacked' }; }
     mk('', r.left, by, r.width, 3);
     return { zone, cat: id, txt: 'Stacked ' + (zone === 'above' ? 'over ' : 'under ') + nm(id) };
   }
@@ -2586,7 +2706,7 @@ function fitRow(id) {
   let lo = 0.125, hi = 8;
   for (let i = 0; i < 24; i++) { const m = Math.sqrt(lo * hi); if (end(m) < target) lo = m; else hi = m; }
   const f = Math.abs(end(lo) - target) < Math.abs(end(hi) - target) ? lo : hi, miss = Math.round(Math.abs(end(f) - target)), h = hs(f);
-  mutate(() => tiles.forEach((t, i) => setSize(t.dataset.cid, base[i].w, h[i])), miss > 1 ? 'As close as it gets: ' + miss + ' px off (a tile stays between 0.25 and 2 tiles tall)' : 'Its column now ends level with the tallest beside it');
+  mutate(() => tiles.forEach((t, i) => setSize(t.dataset.cid, base[i].w, h[i])), miss > 1 ? 'As close as it gets: ' + miss + ' px off. A tile stays between 0.25 and 2 tiles tall' : 'Its column now ends level with the tallest beside it');
 }
 function startHandle(ev, el) {
   const v = stored(S.screen);
@@ -2776,7 +2896,11 @@ function setEdit(on) {
   if (drag) { cancelPid = drag.pid; endDrag(true); }
   if (rs) { cancelPid = rs.pid; endHandle(true); }
   editPress = null;
+  const entering = on && !app.classList.contains('editing');
   S.edit = on; app.classList.toggle('editing', on);
+  // (the strip pops in as you go into edit mode, only then: a CSS animation keyed on the motion setting replayed it
+  // whenever a game left the front. 11-02, the motion audit)
+  if (entering && motionMode() !== 'off') $('editbar').animate([{ opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1 }], { duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
   $('editBtn').classList.toggle('on', on);
   preview = null;
   if (!on) { sel = null; selCat = null; endRelink(true); }
@@ -2797,7 +2921,11 @@ $('newcat').onclick = newCategory; $('addCat').onclick = newCategory;
 // select something and go once the pointer has been in them and left (the selection stays: their tab brings them back).
 // While you drag, a drawer stays only as long as the pointer is on it (so the view under it takes the drop) ----------
 const DR = { L: { el: document.querySelector('.storage'), tab: $('tabL'), pin: $('pinL') }, R: { el: document.querySelector('.insp'), tab: $('tabR'), pin: $('pinR') } };
-for (const k of ['L', 'R']) Object.assign(DR[k], { pinned: false, hover: false, t: 0 });
+for (const k of ['L', 'R']) Object.assign(DR[k], { pinned: false, hover: false, t: 0, side: k === 'L' ? 'l' : 'r', placed: false });
+// (side: where you put it with its swap button, kept; 11-02, his "a pinned side bar can move left and right, pinning only
+// keeps it open". The two never sit on the same side: the settings take the side Storage leaves. The settings, pinned or
+// not, open away from what you selected, so they never cover it; only moved by hand (placed) they stay where you put them,
+// until unpinned: his 11-02 "I can't see what I select" when the strip had pinned them)
 function drawerOpen(k) {
   const d = DR[k]; if (!S.edit) return false;
   if (drag && drag.started) return d.hover;
@@ -2813,17 +2941,39 @@ function selOnRight() {
   const r = el.getBoundingClientRect(), v = sectionsEl.getBoundingClientRect();
   return r.right > v.right - DR.R.el.offsetWidth - 20 && r.left + r.width / 2 > v.left + v.width / 2;
 }
+// a drawer that changes sides while open slides across to its new one (11-02, his ask: it jumped across, then faded in);
+// one that opens or shuts comes from its edge as before
+const drawerSide = k => DR[k].el.classList.contains(k === 'L' ? 'right' : 'left');
+function slideDrawers(before) {
+  if (motionMode() === 'off') return;
+  ['L', 'R'].forEach((k, i) => {
+    const b = before[i], el = DR[k].el;
+    if (!b.open || !el.classList.contains('open') || b.side === drawerSide(k)) return;
+    const dx = b.r.left - el.getBoundingClientRect().left;
+    if (Math.abs(dx) > 2) el.animate([{ transform: 'translateX(' + dx + 'px)' }, { transform: 'none' }], { duration: motionOn() ? 340 : 200, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  });
+}
 function syncDrawers() {
+  const before = ['L', 'R'].map(k => { const el = DR[k].el, open = el.classList.contains('open'); return { open, side: drawerSide(k), r: open ? el.getBoundingClientRect() : null }; });
   for (const k of ['L', 'R']) {
     const d = DR[k], key = sel || selCat || '';
     if (k === 'R' && key !== d.key) { d.byPick = !!key; d.pickT = Date.now(); }   // a new selection opens them
     const o = drawerOpen(k), was = d.el.classList.contains('open');
-    if (k === 'R' && o && !d.pinned && !d.hover) d.left = !!key && selOnRight() && !DR.L.el.classList.contains('open');   // re-checked whenever it isn't in use (the selection may have moved or grown)
-    else if (k === 'R' && o && !was && d.hover && !d.byPick) d.left = false;   // opened from its tab: by the tab
-    if (k === 'R') { d.key = key; if (!o) d.left = d.left && was; if (d.pinned) d.left = false; d.el.classList.toggle('left', !!d.left && (o || was)); }   // pinned: always on the right
-    d.el.classList.toggle('open', o); d.tab.classList.toggle('on', o);
+    const lOpen = DR.L.el.classList.contains('open') ? DR.L.side : null;   // (Storage open: its side is taken)
+    const want = k === 'R' && (lOpen ? lOpen === 'r' : d.placed ? d.side === 'l' : !!key && selOnRight());
+    if (k === 'R' && o && (!d.hover || !was || d.placed)) d.left = want;   // re-checked whenever it isn't in use (the selection may have moved or grown), as it opens, and when moved by hand
+    if (k === 'R') { d.key = key; if (!o) d.left = d.left && was; }
+    // (its side changes only while it is out, or as it comes out: moved there first, unseen, it then slides in from that
+    // edge; one going or gone keeps its side, so it leaves the way it came. 11-02, the motion audit)
+    const cls = k === 'L' ? 'right' : 'left', side = k === 'L' ? d.side === 'r' : !!d.left;
+    if (o && d.el.classList.contains(cls) !== side) {
+      if (was) d.el.classList.toggle(cls, side);   // (out already: it slides across, slideDrawers)
+      else { d.el.style.transition = 'none'; d.el.classList.toggle(cls, side); void d.el.offsetWidth; d.el.style.transition = ''; }
+    }
+    d.el.classList.toggle('open', o); d.tab.classList.toggle('on', o); $(k === 'L' ? 'ebStore' : 'ebSel').classList.toggle('on', o);
     d.pin.classList.toggle('on', d.pinned); d.pin.setAttribute('aria-pressed', d.pinned);
   }
+  slideDrawers(before);
 }
 for (const k of ['L', 'R']) {
   const d = DR[k];
@@ -2832,13 +2982,23 @@ for (const k of ['L', 'R']) {
   const leave = e => { if (inside(e)) return; clearTimeout(d.t); d.t = setTimeout(() => { if (d.hover) d.byPick = false; d.hover = false; syncDrawers(); }, drag && drag.started ? 0 : 380); };
   for (const el of [d.el, d.tab]) { el.addEventListener('mouseenter', enter); el.addEventListener('mouseleave', leave); }
   d.tab.addEventListener('click', () => { d.pinned = true; d.hover = true; syncDrawers(); saveState(); });
-  d.pin.addEventListener('click', () => { d.pinned = !d.pinned; syncDrawers(); saveState(); });
+  d.pin.addEventListener('click', () => { d.pinned = !d.pinned; if (!d.pinned) d.placed = false; syncDrawers(); saveState(); });   // (unpinned: back to opening away from the selection)
+  // (to the other side: Storage there already, or the settings pinned there, trade places with it, both sliding across)
+  $('swap' + k).addEventListener('click', () => {
+    const o = DR[k === 'L' ? 'R' : 'L'], cur = k === 'R' ? (d.el.classList.contains('left') ? 'l' : 'r') : d.side, to = cur === 'l' ? 'r' : 'l';   // (the settings: the side they show on)
+    d.side = to; if (o.side === to) o.side = to === 'l' ? 'r' : 'l';
+    d.placed = true; if (k === 'R') d.pinned = true;   // (moved by hand: it stays where it was put)
+    syncDrawers(); saveState();   // (it slides across: syncDrawers)
+  });
   d.el.addEventListener('focusin', syncDrawers);
   // settings opened by a selection and not touched while the pointer keeps working in the view: they slide away
   if (k === 'R') sectionsEl.addEventListener('pointermove', () => { if (d.byPick && !d.hover && !d.pinned && Date.now() - (d.pickT || 0) > 2000 && d.el.classList.contains('open')) { d.byPick = false; syncDrawers(); } });
   d.el.addEventListener('focusout', () => setTimeout(syncDrawers, 0));
 }
-$('undo').onclick = undo; $('redo').onclick = redo;
+$('undo').onclick = $('undoE').onclick = undo; $('redo').onclick = $('redoE').onclick = redo;
+$('editDone').onclick = () => setEdit(false);
+// (the editing strip opens and shuts the drawers, 11-02: the side tabs were easy to miss; open: pinned until shut)
+for (const [b, k] of [['ebStore', 'L'], ['ebSel', 'R']]) $(b).onclick = () => { const d = DR[k]; d.pinned = !d.el.classList.contains('open'); d.hover = false; if (!d.pinned) { d.byPick = false; d.placed = false; } syncDrawers(); saveState(); };
 $('toastUndo').onclick = () => { if (nudge) flushNudge(); if (toastDepth >= 0 && undoSeq === toastDepth) undo(); $('toast').classList.remove('show'); retireToastUndo(); };   // (a nudge still to land is newer: the Undo is stale then)
 // the clean view: a cell opens when a press that started on it is let go, by the cell it was, not by the element (a
 // redraw between press and release, as when a fresh window settles, made the browser drop the click)
@@ -2911,7 +3071,6 @@ sectionsEl.addEventListener('click', ev => {
   if (justDragged) return;
   if (ev.target.closest('#setupRestart')) { restartHwinfo(); return; }
   const catEl = ev.target.closest('.dcat');
-  if (ev.target.closest('.chev') && catEl) { const c = S.L.cats.find(x => x.id === catEl.dataset.cat); c.collapsed = !c.collapsed; saveState(); syncSaves(); renderView(false); return; }
   if (ev.target.closest('.ren') && catEl) { renameCat(catEl); return; }
   if (ev.target.closest('.del') && catEl) {
     if (ev.detail > 1) return;   // (a double-click's second press lands on the next category's x, moved up into its place)
@@ -3000,7 +3159,7 @@ $('vspace').addEventListener('click', e => {
     if (e.target.closest('.addall')) {
       const toks = query.toLowerCase().split(/\s+/).filter(Boolean), iv = inView();
       const keys = READ.filter(r => r.s === s && passes(r, toks, iv) && !iv.has(r.key)).map(r => r.key);
-      if (!keys.length) { toast('Everything there is already in view'); return; }
+      if (!keys.length) { toast('Everything there is already in the view'); return; }
       addKeys(keys, null, null, SENS[s].short + (typeFilter !== 'all' ? ' ' + TYPE_NAME[typeFilter].toLowerCase() : ''));
       return;
     }
@@ -3103,9 +3262,9 @@ function renderInsp() {
       h += '<label class="chk"><input type="checkbox" id="iOther"' + (o ? ' checked' : '') + '> Also bad when ' + osd + '</label>';
       if (o) h += '<div class="two"><label class="fld gate-y"><span>' + side(osd, 'Yellow') + ' ' + esc(unit) + '</span><input id="iOY" type="number" step="any" placeholder="none" value="' + numL(o.y) + '"></label>' +
         '<label class="fld gate-r"><span>' + side(osd, 'Red') + ' ' + esc(unit) + '</span><input id="iOR" type="number" step="any" placeholder="none" value="' + numL(o.r) + '"></label></div>';
-      h += '<label class="fld"><span>Hold before it turns (s)</span><input id="iHold" type="number" min="0" step="1" value="' + num(g.hold) + '"></label>';
+      h += '<label class="fld"><span>Hold before it changes colour, in seconds</span><input id="iHold" type="number" min="0" step="1" value="' + num(g.hold) + '"></label>';
       h += '<label class="fld"><span>Fade in before a line ' + esc(unit) + '</span><input id="iFade" type="number" min="0" step="any" placeholder="auto" value="' + (Number.isFinite(g.fade) ? numL(g.fade) : '') + '"></label>' +
-           '<span class="hint">How far before its yellow (and its red) line the cell starts to take on that colour. Empty: the last 12%. 0: no fade.</span>';
+           '<span class="hint">How far before its yellow line, and its red one, the cell starts to take on that colour. Empty: the last 12%. 0: no fade.</span>';
       h += '<div class="err" id="gErr"></div><div class="scale" id="gScale"></div>';
     } else if (r) {
       const pre = presetFor(r);
@@ -3120,7 +3279,7 @@ function renderInsp() {
     if (cv) {
       const temps = READ.filter(x => x.t === 'temp'), tu = tempUnit(BYKEY.get(cv.src));
       if (cv.src && !BYKEY.has(cv.src)) temps.unshift({ key: cv.src, label: 'missing reading', s: -1 });
-      const optTxt = x => x.label + (SENS[x.s] ? ' (' + SENS[x.s].short + ')' : ''), cur = temps.find(x => x.key === cv.src);
+      const optTxt = x => x.label + (SENS[x.s] ? ' on ' + SENS[x.s].short : ''), cur = temps.find(x => x.key === cv.src);
       h += '<label class="fld"><span>Driven by</span><select id="iSrc" title="' + esc(cur ? optTxt(cur) : '') + '">' + temps.map(x => '<option value="' + esc(x.key) + '"' + (x.key === cv.src ? ' selected' : '') + '>' + esc(optTxt(x)) + '</option>').join('') + '</select></label>';
       h += '<div id="cChart"></div>';
       h += '<div class="ptab" id="cTab"><span class="h">Temp ' + tu + '</span><span class="h">RPM</span><span></span>' +
@@ -3131,9 +3290,9 @@ function renderInsp() {
         const warn = cv.warn !== false;
         h += '<label class="chk"><input type="checkbox" id="cWarn"' + (warn ? ' checked' : '') + '> Warn when it is off the curve</label>';
         h += '<div class="two"><label class="fld"><span>Tolerance &plusmn;%</span><input id="cTol" type="number" min="1" step="1" value="' + cv.tol + '"></label>' +
-          (warn ? '<label class="fld"><span>Hold (s)</span><input id="cHold" type="number" min="0" step="1" value="' + cv.hold + '"></label>' : '') + '</div>';
-        h += '<span class="hint" id="cHint">' + (warn ? 'Tolerance: how far from the curve still counts as on it. Hold: how long it has to stay off before it warns (a fan takes a few seconds to catch up with the temperature).'
-          : 'Off the curve it never turns yellow, goes in the warning log or counts as a game session warning: it only says how far off it is. Tolerance: how far from the curve still counts as on it.') + '</span>';
+          (warn ? '<label class="fld"><span>Hold, in seconds</span><input id="cHold" type="number" min="0" step="1" value="' + cv.hold + '"></label>' : '') + '</div>';
+        h += '<span class="hint" id="cHint">' + (warn ? 'Tolerance: how far from the curve still counts as on it. Hold: how long it has to stay off before it warns, since a fan takes a few seconds to catch up with the temperature.'
+          : 'Off the curve, it only shows how far off it is: it never turns yellow, goes in the warning history or counts as a session warning. Tolerance: how far from the curve still counts as on it.') + '</span>';
       }
       h += '<div class="cstat" id="cStat"></div>';
     }
@@ -3182,17 +3341,17 @@ function seedLines(c, r, again) {
 }
 function presetFor(r) {
   const sn = SENS[r.s] ? SENS[r.s].name : '';
-  if (r.key === CONN) return { txt: 'yellow 9.2, red 9.5 A (above)', g: Object.assign({}, CONN_LINES) };
+  if (r.key === CONN) return { txt: 'yellow 9.2, red 9.5 A, bad when above', g: Object.assign({}, CONN_LINES) };
   if (r.t === 'temp' && /distance to tj ?max/i.test(r.label)) {   // (how far under the throttle point: lower is worse)
     const f = r && isF(r.unit) ? 9 / 5 : 1, y = Math.round(10 * f), red = Math.round(5 * f);
-    return { txt: 'yellow ' + y + ', red ' + red + ' (below)', g: { mode: 'yr', dir: 'below', y, r: red, hold: 3 } };
+    return { txt: 'yellow ' + y + ', red ' + red + ', bad when below', g: { mode: 'yr', dir: 'below', y, r: red, hold: 3 } };
   }
   if (r.t === 'temp') {
     const gpu = /GPU/i.test(sn + r.label), y = cToU(gpu ? 80 : 85, r), red = cToU(gpu ? 90 : 95, r);
-    return { txt: 'yellow ' + y + ', red ' + red + ' (above)', g: { mode: 'yr', dir: 'above', y, r: red, hold: 3 } };
+    return { txt: 'yellow ' + y + ', red ' + red + ', bad when above', g: { mode: 'yr', dir: 'above', y, r: red, hold: 3 } };
   }
-  if (r.unit === 'FPS') return { txt: 'yellow 60, red 30 (below, while a game is in front)', g: { mode: 'yr', dir: 'below', y: 60, r: 30, hold: 2 } };
-  if (r.unit === '%') return { txt: 'yellow 95 (above)', g: { mode: 'y', dir: 'above', y: 95, r: NaN, hold: 10 } };
+  if (r.unit === 'FPS') return { txt: 'yellow 60, red 30, bad when below while a game is in front', g: { mode: 'yr', dir: 'below', y: 60, r: 30, hold: 2 } };
+  if (r.unit === '%') return { txt: 'yellow 95, bad when above', g: { mode: 'y', dir: 'above', y: 95, r: NaN, hold: 10 } };
   return null;
 }
 function tickInsp() {
@@ -3321,7 +3480,7 @@ insp.addEventListener('keydown', e => {
   if (e.target.id !== 'cPasteIn' || e.key !== 'Enter') return;
   const items = e.target.value.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
   const pts = items.map(s => s.split(/\s*[:=]\s*|\s+/)).filter(p => p.length === 2 && p[0] !== '' && p[1] !== '' && p.every(x => isFinite(Number(x)))).map(p => p.map(Number));
-  if (pts.length >= 2) { setCell(c => { c.curve.pts = pts.sort(ptOrd); }, true); renderInsp(); updateView(false, true); toast(plural(pts.length, 'point') + ' set' + (items.length > pts.length ? ', ' + (items.length - pts.length) + ' skipped (write them as temp:rpm)' : '')); }
+  if (pts.length >= 2) { setCell(c => { c.curve.pts = pts.sort(ptOrd); }, true); renderInsp(); updateView(false, true); toast(plural(pts.length, 'point') + ' set' + (items.length > pts.length ? ', ' + (items.length - pts.length) + ' skipped, write them as temp:rpm' : '')); }
   else toast('Write the points as temp:rpm, separated by commas');
 });
 insp.addEventListener('click', e => {
@@ -3440,7 +3599,7 @@ function viewPanel() {
         '<span class="pic" style="grid-template-columns:' + gc + ';grid-template-rows:' + gr + '">' + areas.map(a => '<i style="grid-area:' + a + '"></i>').join('') + '</span>' + (k === 'copy' ? 'Copy from ' + VNAME[ov] : t) + '</button>').join('') + '</div>' +
         '<span class="hint">Rest the pointer on one to see it with your categories, click to use it. Undo brings yours back.</span></div>';
       h += '<div class="fgrp">' + (vn === 'tiles' ? segL('Height', 'fill', [['fit', 'All fit'], ['fill', 'Fill the window']], !own || !v.rows.some(r => r.h) ? 'fit' : v.rows.every(r => r.h) ? 'fill' : '') +
-        '<span class="hint">Fill the window: room left under the tiles makes them taller (bigger graphs), up to twice their size.</span>' : '') +
+        '<span class="hint">Fill the window: room left under the tiles makes them taller and their graphs bigger, up to twice their size.</span>' : '') +
         segL('Spacing', 'gap', [['tight', 'Tight'], ['', 'Normal'], ['roomy', 'Roomy']], v && v.gap || '') + '<span class="hint">The gaps between categories and between their ' + (vn === 'tiles' ? 'tiles' : 'rows') + '.</span></div>';
     } else {
       const n = own ? v.rows[0].cols.length : document.querySelectorAll('#view .gtable').length;
@@ -3448,25 +3607,25 @@ function viewPanel() {
     }
     if (own) h += '<div class="fgrp"><span class="lab">Outline</span>' + outlineHtml(v.rows) + '<span class="hint">Click a box to select that category.</span></div>';
   }
-  h += '<div class="fgrp"><div class="none"><span>Select a cell to set its name, decimals, lines and fan curve, or a category (click its name) to set where it goes and how it looks. Double-click a cell for its graphs (outside edit mode, one click).</span>' +
+  h += '<div class="fgrp"><div class="none"><span>Select a cell to set its name, decimals, lines and fan curve, or click a category\'s name to set where it goes and how it looks. Double-click a cell for its graphs, or click it once outside edit mode.</span>' +
     '<span>' + nb(S.L.cats.length, 'category', 'categories') + ', ' + nb(cells.length, 'cell', 'cells') + ', ' + nb(cells.filter(x => gatesOn(x.gates)).length, 'with lines', 'with lines') + ', ' + nb(cells.filter(x => x.curve).length, 'on a fan curve', 'on a fan curve') + '.</span>' +
-    '<span>Tip: pick a type in Storage (Temp, Fan...), then <b>+ all</b> on a sensor to add all of those readings as one category.</span>' +
+    '<span>Tip: pick a type in Storage, like Temp or Fan, then <b>+ all</b> on a sensor to add all of those readings as one category.</span>' +
     (own ? '<span><button class="linkbtn" data-lay="auto">Back to automatic</button></span>' : '') + '</div></div>';
   return h;
 }
 function catPanel(cat) {
   const vn = S.screen, V = VNAME[vn], lk = catLook(cat.id), v = stored(vn), own = !!(v && v.rows), ids = cellsOf(cat);
-  const leadOpts = '<option value="">' + (ids.length ? 'The first one (' + esc(nameIn(ids[0])) + ')' : 'The first one') + '</option>' +
+  const leadOpts = '<option value="">' + (ids.length ? 'The first one, ' + esc(nameIn(ids[0])) : 'The first one') + '</option>' +
     ids.slice(1).map(id => '<option value="' + esc(id) + '"' + (lk.lead === id ? ' selected' : '') + '>' + esc(nameIn(id)) + '</option>').join('');
   let h = '<label class="fld"><span>Name</span><input id="lName" value="' + esc(cat.name) + '"></label><div class="fgrp"><span class="sub">In ' + V + '</span>';
   if (vn !== 'grid') {
     const rows = rowsNow(vn), p = posIn(rows, cat.id), alone = !p || p.row.cols.length < 2;
-    h += '<span class="row3">' + (own && p ? 'Row ' + (p.ri + 1) + ' of ' + rows.length + (alone ? ', alone in its row (full width)' : ', column ' + (p.ci + 1) + ' of ' + p.row.cols.length) + (p.col.stack.length > 1 ? ', stacked ' + (p.k + 1) + ' of ' + p.col.stack.length : '')
+    h += '<span class="row3">' + (own && p ? 'Row ' + (p.ri + 1) + ' of ' + rows.length + (alone ? ', alone in its row at full width' : ', column ' + (p.ci + 1) + ' of ' + p.row.cols.length) + (p.col.stack.length > 1 ? ', stacked ' + (p.k + 1) + ' of ' + p.col.stack.length : '')
       : 'Placed automatically. Changing where it goes or how wide it is gives ' + V + ' your own arrangement, starting from what you see.') + '</span>';
     const mine = !alone && p.row.cols.every(c => c.w), b = mine ? p.row.cols.map(c => c.w) : [1], tw = alone ? '' : mine ? Math.round(b[p.ci] / b.reduce((x, y) => x + y, 0) * 1200) / 100 : 'auto';
     h += segL('Width in row', 'width', [['auto', 'Auto', alone], [3, '1/4', alone], [4, '1/3', alone], [6, '1/2', alone], [8, '2/3', alone], [9, '3/4', alone]], tw);
     h += '<span class="hint">' + (alone ? 'Alone in its row, so it takes the whole width. Put another category beside it to share the row.'
-      : tw === 'auto' ? 'Auto: the widths follow what each column holds, so the columns end about together.' : 'Yours. Auto (or a double-click on the line between columns) lets them follow the content again.') + '</span>';
+      : tw === 'auto' ? 'Auto: the widths follow what each column holds, so the columns end about together.' : 'Yours. Auto, or a double-click on the line between columns, lets them follow the content again.') + '</span>';
     if (vn === 'tiles') h += segL('Row height', 'rowh', [[0, 'Fit'], [1, 'Fill']], own && p && p.row.h ? 1 : 0) + '<span class="hint">Fill: when the view leaves room below, this row\'s tiles grow taller to use it.</span>';
     const mo = moveOptions(cat.id), mb = [['row', 'Own row', 'R'], ['beside', 'Beside the row above', 'B'], ['stack', 'Stack under the left one', 'S'], ['unstack', 'Unstack', 'U']].filter(m => mo[m[0]]);
     if (mb.length) h += '<div class="fld"><span>Move</span><div class="btnrow">' + mb.map(m => '<button class="btn" data-lay="move" data-v="' + m[0] + '">' + m[1] + '<span class="kb">' + m[2] + '</span></button>').join('') + '</div></div>';
@@ -3512,12 +3671,12 @@ function cellLayHtml(cid, c) {
   if (vn === 'tiles') {
     const z = cellSize(cid), G = tileGeo(tileEl(cid)), px = G ? [Math.round(pxW(G, z.w)), Math.round(G.at(Math.min(z.w, G.k), z.h).th)] : null, num = (k, v, min, max, step, u) => '<label><input type="number" data-sz="' + k + '" value="' + v + '"' +
       (min != null ? ' min="' + min + '" max="' + max + '"' : ' title="At this window size"') + ' step="' + step + '"><i>' + u + '</i></label>';
-    h += '<div class="fld"><span>Size (a normal tile is 1 x 1)</span><div class="szin">' + num('w', z.w, 0.25, 2, 'any', 'wide') + num('h', z.h, 0.25, 2, 'any', 'tall') + '</div>' +
+    h += '<div class="fld"><span>Size: a normal tile is 1 x 1</span><div class="szin">' + num('w', z.w, 0.25, 2, 'any', 'wide') + num('h', z.h, 0.25, 2, 'any', 'tall') + '</div>' +
       (px ? '<div class="szin">' + num('pw', px[0], null, null, 1, 'px') + num('ph', px[1], null, null, 1, 'px') + '</div>' : '') + '</div>' +
       qsizes('Width', 'cw', z.w, lk.per) + qsizes('Height', 'ch', z.h) +
       '<label class="chk"><input type="checkbox" data-lay="nl"' + (cl.nl ? ' checked' : '') + '> Starts a new row</label>' +
-      '<span class="hint">It and the tiles after it go under the ones before it, so a row ends early (say, four tiles of 0.75, then the next ones together on their own row).</span>' +
-      '<span class="hint">Or drag its corner: it snaps to quarter steps and to other tiles; hold Alt for any size. Ctrl+arrows: 1 px; with Shift: a quarter step.' +
+      '<span class="hint">This tile and the ones after it start a new row, so the row before ends early: say, four tiles of 0.75, then the rest together on their own row.</span>' +
+      '<span class="hint">Or drag its corner: it snaps to quarter steps and to other tiles. Hold Alt for any size. Ctrl+arrows: 1 px, or a quarter step with Shift.' +
       (lk.per === 1 ? ' One tile per row: it can\'t be wider than the row.' : '') + '</span>';
   } else if (cat) {
     const first = idsIn(cat)[0] === cid, big = vn === 'overview' && lk.style !== 'list' && lk.style !== 'band';
@@ -3667,7 +3826,8 @@ function swapCats(a, b) { dropCat({ target: { zone: 'swap', cat: b }, data: a, a
 // ---------- the cell popup: 15 min live, 1 h to 7 days from the host, HWiNFO's own min / max / average ----------
 const modal = $('modal'), mrng = $('mrng'), mgraph = $('mgraph'), mgsec = $('mgraphsec');
 let openedAt = 0, modalCid = null, bigRange = '15m', bigHist = null, histAsked = 0, bigMap = null, bigRev0 = 0, lastBig = null, modalGateInView = false;
-function bigRev() { if (!bigRev0) return 1; const p = (performance.now() - bigRev0) / 700; return p >= 1 ? 1 : easeOut(Math.max(0, p)); }
+let bigRevMs = 700;   // (the big graph's draw-in: 700 ms as the popup opens, 450 for a range picked in it)
+function bigRev() { if (!bigRev0) return 1; const p = (performance.now() - bigRev0) / bigRevMs; return p >= 1 ? 1 : easeOut(Math.max(0, p)); }
 function bigLoop() { requestAnimationFrame(() => { if (!modalCid || !lastBig) return; drawBigGraph.apply(null, lastBig); if (bigRev() < 1) bigLoop(); else bigRev0 = 0; }); }
 function placeRng(still) {
   const b = mrng.querySelector('button[data-r="' + bigRange + '"]'), ri = mrng.querySelector('.ri');
@@ -3686,7 +3846,10 @@ mrng.addEventListener('click', e => {
   const b = e.target.closest('button[data-r]');
   if (!b || b.dataset.r === bigRange) return;
   setRange(b.dataset.r, false);
-  bigRev0 = motionOn() ? performance.now() : 0;
+  // (one draw-in for one pick, 11-02 motion audit: now when its data is here, else when the host's answer comes, the line
+  // before dimmed meanwhile; it drew in twice, the first time on a plot still waiting)
+  const ready = bigRange === '15m' || histReady();
+  bigRevMs = 450; bigRev0 = ready && motionOn() ? performance.now() : 0;
   if (modalCid) { refreshModal(); bigLoop(); }
 });
 const histReady = () => { const c = S.L.cells[modalCid]; return c && bigHist && bigHist.key === histKey(c) && bigHist.range === bigRange; };
@@ -3702,7 +3865,7 @@ function openDetail(cid) {
   const mv = $('mval'); if (mv._n) mv._n._ot = undefined;
   setRange('15m', true);
   refreshModal(true);
-  bigRev0 = motionOn() ? performance.now() : 0; bigLoop();
+  bigRevMs = 700; bigRev0 = motionOn() ? performance.now() : 0; bigLoop();
 }
 function closeDetail() { modalCid = null; bigHist = null; modal.classList.remove('open'); pauseSpin(document.querySelector('#micon svg')); }
 function refreshModal(full) {
@@ -3718,13 +3881,13 @@ function refreshModal(full) {
   odo(mv._n, e.txt != null ? e.txt : fmtV(e.v, dec, r)); setText(mv._u, e.txt != null ? (e.utxt ? ' ' + e.utxt : '') : e.v == null ? '' : ' ' + unit);
   const g = c.gates, gk = gbK(r), det = gbDet(gateLines(g), gk);
   if (full) {
-    let d = c.pred ? 'Predicted from ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ' through its curve; there is no fan sensor.'
+    let d = c.pred ? 'Predicted from ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ' through its curve, as there is no fan sensor.'
       : r ? '<span title="' + esc(r.key) + '">' + esc(SENS[r.s].name) + ', ' + esc(r.label) + '.</span>' : sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now.' : 'This reading is not on this PC.';
-    if (gatesOn(g)) d += ' Lines: yellow ' + lnTxt(det.y, dec, r, det.below) + (det.r !== undefined ? ', red ' + lnTxt(det.r, dec, r, det.below) : '') + (unit && !isYN(r) ? ' ' + esc(unit) : '') + (g.dir === 'below' ? ' (bad when below)' : '') + (det.y2 !== undefined || det.r2 !== undefined ? ', and on the other side ' + [det.y2 !== undefined ? 'yellow ' + lnTxt(det.y2, dec, r, !det.below) : '', det.r2 !== undefined ? 'red ' + lnTxt(det.r2, dec, r, !det.below) : ''].filter(Boolean).join(', ') + (g.dir === 'below' ? ' (bad when above)' : ' (bad when below)') : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
-    if (c.curve && !c.pred) d += ' Follows a fan curve on ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ', within ' + fmtL(c.curve.tol, 1) + '%' + (c.curve.warn === false ? ' (it doesn\'t warn when off it)' : '') + '.';
+    if (gatesOn(g)) d += ' Lines: yellow ' + lnTxt(det.y, dec, r, det.below) + (det.r !== undefined ? ', red ' + lnTxt(det.r, dec, r, det.below) : '') + (unit && !isYN(r) ? ' ' + esc(unit) : '') + (g.dir === 'below' ? ', bad when below' : '') + (det.y2 !== undefined || det.r2 !== undefined ? ', and on the other side ' + [det.y2 !== undefined ? 'yellow ' + lnTxt(det.y2, dec, r, !det.below) : '', det.r2 !== undefined ? 'red ' + lnTxt(det.r2, dec, r, !det.below) : ''].filter(Boolean).join(', ') + (g.dir === 'below' ? ', bad when above' : ', bad when below') : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
+    if (c.curve && !c.pred) d += ' Follows a fan curve driven by ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ', within ' + fmtL(c.curve.tol, 1) + '%' + (c.curve.warn === false ? ', but it doesn\'t warn when off it' : '') + '.';
     if (e.strip) d = 'What limits your fps while a game runs, worked out once a second from GPU usage and the busiest CPU thread. GPU bound: the GPU at 95% or more, ' +
-      'normal for a game without an fps limit. CPU bound: the GPU under 85% with a CPU thread at 80% or more. FPS capped: neither is the limit, so an fps cap or vsync sets the pace. ' +
-      'The cell shows the most common call of the last 5 seconds. Over an hour or more the bar has a column per minute (10 minutes over 7 days), as tall as the time a game ran in it. ' + bnFrom();
+      'normal for a game without an fps limit. CPU bound: the GPU under 85% with a CPU thread at 80% or more. FPS capped: neither is the limit, so an fps limit or vsync sets the pace. ' +
+      'The cell shows the most common call of the last 5 seconds. At 1 h and longer, the bar has a column per minute, or per 10 minutes at 7 days, as tall as the time a game ran in it. ' + bnFrom();
     if (xk && xk.desc) d = xk.desc(modalCid, r);
     $('mdesc').innerHTML = d;
   }
@@ -3919,21 +4082,21 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
     ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillStyle = g[1]; ctx.globalAlpha = 0.85;
     ctx.fillText(yn ? lnTxt(gv, 0, { unit: 'Yes/No' }, g[0].length > 1 ? !det.below : !!det.below) : dec ? (+gv).toFixed(dec) : String(gv), w - padR - 3 * dpr, gy - 2 * dpr); ctx.globalAlpha = 1;
   }
-  const rv = preview ? preview.rev : bigRev();
+  const rv = preview ? preview.rev : bigRev(), tc = cellTint(preview ? HP.cid : modalCid);   // (Spectrum: the cell's colour)
   ctx.save();
   if (rv < 1) { ctx.beginPath(); ctx.rect(0, 0, padL + (w - padL - padR) * rv, h); ctx.clip(); }
   // runs of values; where nothing was measured the line stops (no straight line across a gap)
   const runs = arr => { const out = []; let cur = null; arr.forEach((v, i) => { if (v === null || v === undefined) { cur = null; return; } if (!cur) out.push(cur = []); cur.push(i); }); return out; };
   const path = (arr, rs) => { ctx.beginPath(); for (const run of rs) run.forEach((i, j) => j ? ctx.lineTo(X(i), Y(arr[i])) : ctx.moveTo(X(i), Y(arr[i]))); };
-  if (maxData) { path(maxData, runs(maxData)); ctx.strokeStyle = 'rgba(201,201,201,0.30)'; ctx.lineWidth = 1.2 * dpr; ctx.lineJoin = 'round'; ctx.stroke(); }
+  if (maxData) { path(maxData, runs(maxData)); ctx.strokeStyle = tc ? hexA(tc, 0.3) : 'rgba(201,201,201,0.30)'; ctx.lineWidth = 1.2 * dpr; ctx.lineJoin = 'round'; ctx.stroke(); }
   const rs = runs(data);
-  path(data, rs); ctx.strokeStyle = '#c9c9c9'; ctx.lineWidth = 1.8 * dpr; ctx.lineJoin = 'round'; ctx.stroke();
-  ctx.fillStyle = '#c9c9c9';   // a value on its own between gaps still shows, as a dot
+  path(data, rs); ctx.strokeStyle = tc || '#c9c9c9'; ctx.lineWidth = 1.8 * dpr; ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.fillStyle = tc || '#c9c9c9';   // a value on its own between gaps still shows, as a dot
   for (const run of rs) if (run.length === 1) { ctx.beginPath(); ctx.arc(X(run[0]), Y(data[run[0]]), 1.5 * dpr, 0, 7); ctx.fill(); }
   if (!maxData) {
     ctx.beginPath();
     for (const run of rs) { run.forEach((i, j) => j ? ctx.lineTo(X(i), Y(data[i])) : ctx.moveTo(X(i), Y(data[i]))); ctx.lineTo(X(run[run.length - 1]), h - padB); ctx.lineTo(X(run[0]), h - padB); ctx.closePath(); }
-    const grad = ctx.createLinearGradient(0, padT, 0, h - padB); grad.addColorStop(0, 'rgba(201,201,201,0.16)'); grad.addColorStop(1, 'rgba(201,201,201,0)');
+    const grad = ctx.createLinearGradient(0, padT, 0, h - padB); grad.addColorStop(0, tc ? hexA(tc, 0.16) : 'rgba(201,201,201,0.16)'); grad.addColorStop(1, tc ? hexA(tc, 0) : 'rgba(201,201,201,0)');
     ctx.fillStyle = grad; ctx.fill();
   }
   ctx.restore();
@@ -4082,21 +4245,23 @@ function showPrev(glide) {
   let x = r.right + gap; if (x + W > innerWidth - 8) x = r.left - W - gap; if (x < 8) x = Math.min(innerWidth - W - 8, Math.max(8, r.left));
   const y = Math.max(8, Math.min(innerHeight - H - 8, r.top + r.height / 2 - H / 2));
   const at = 'translate(' + Math.round(x) + 'px,' + Math.round(y) + 'px)';
-  if (!glide || !HP.shown) { hprev.style.transition = 'none'; hprev.style.transform = at + ' translateY(6px) scale(0.97)'; void hprev.offsetWidth; hprev.style.transition = ''; }
-  hprev.style.transform = at; hprev.classList.add('on'); HP.shown = true; HP.rev0 = performance.now(); drawPrev();
+  const fresh = !glide || !HP.shown;   // (a glide to the next tile: its graph at once, the glide the only motion)
+  if (fresh) { hprev.style.transition = 'none'; hprev.style.transform = at + ' translateY(6px) scale(0.97)'; void hprev.offsetWidth; hprev.style.transition = ''; }
+  hprev.style.transform = at; hprev.classList.add('on'); HP.shown = true; HP.rev0 = fresh ? performance.now() : 0; drawPrev();
 }
 
 // ---------- confirmations, in their own small popup ----------
 const cmodal = $('cmodal');
-let confirmYes = null;
-function askConfirm(title, desc, yes, onYes, calm) {
-  setText($('ctitle'), title); setText($('cdesc'), desc); setText($('cyes'), yes); confirmYes = onYes;
+let confirmYes = null, confirmNo = null;
+// (onNo: run when it is shut any other way than its yes)
+function askConfirm(title, desc, yes, onYes, calm, onNo) {
+  setText($('ctitle'), title); setText($('cdesc'), desc); setText($('cyes'), yes); confirmYes = onYes; confirmNo = onNo || null;
   cmodal.classList.toggle('calm', !!calm);
   cmodal.classList.add('open'); (calm ? $('cyes') : $('cno')).focus();
 }
-function closeConfirm() { confirmYes = null; cmodal.classList.remove('open'); }
+function closeConfirm() { const n = confirmNo; confirmYes = confirmNo = null; cmodal.classList.remove('open'); if (n) n(); }
 $('cno').onclick = closeConfirm;
-$('cyes').onclick = () => { const f = confirmYes; closeConfirm(); if (f) f(); };
+$('cyes').onclick = () => { const f = confirmYes; confirmNo = null; closeConfirm(); if (f) f(); };
 cmodal.addEventListener('mousedown', e => { if (e.target === cmodal) closeConfirm(); });
 for (const b of document.querySelectorAll('[data-close]')) b.onclick = () => $(b.dataset.close).classList.remove('open');
 for (const id of ['wmodal', 'gmodal', 'smodal', 'setmodal']) $(id).addEventListener('mousedown', e => { if (e.target === $(id)) $(id).classList.remove('open'); });
@@ -4108,6 +4273,12 @@ function closeSmenu() { if (smenu) { smenu.remove(); smenu = null; } }
 function renderSaves() {
   closeSmenu();
   const dirty = isDirty();
+  // Starter above the five slots: built from this PC's sensors each time it loads, so it follows new parts
+  const st = starterLayout(), sn = st ? Object.keys(st.cells).length : 0;
+  $('sstart').hidden = !!feed.ext;   // (the fork: its extras build the first layout)
+  $('sstart').innerHTML = '<div class="srow2 starter"><span class="sn"><svg viewBox="0 0 24 24"><path d="M12 3l2.4 5.6L20 9.3l-4.3 4 1.2 5.9L12 16.3 7.1 19.2l1.2-5.9-4.3-4 5.6-.7z"/></svg></span>' +
+    '<div style="min-width:0"><div class="st">Starter</div><div class="sm">' + (st ? 'built from this PC\'s sensors: ' + plural(sn, 'cell') + ', ' + plural(st.cats.length, 'category', 'categories') : 'waits for HWiNFO\'s readings') + '</div></div>' +
+    '<div class="sa"><button class="btn" data-a="starter"' + (st ? '' : ' disabled') + '>Load</button></div></div>';
   $('slist').innerHTML = S.slots.map((s, i) => {
     const n = s && s.layout ? Object.keys(s.layout.cells || {}).length : 0, act = S.active === i;
     const nc = (s && s.layout.cats || []).length;
@@ -4119,16 +4290,17 @@ function renderSaves() {
   }).join('');
 }
 $('savesBtn').onclick = () => { renderSaves(); smodal.classList.add('open'); };
+$('qsaveBtn').onclick = () => { if (nudge) flushNudge(); onSave(); };   // (Ctrl+S's button, beside Saves: 11-02)
 $('slist').addEventListener('click', e => {
   const row = e.target.closest('.srow2'); if (!row) return;
   const i = Number(row.dataset.slot), a = e.target.closest('[data-a]');
   if (!a) return;
   if (a.dataset.a === 'load') {
-    if (isDirty() || (S.active == null && S.L.cats.length)) askConfirm('Load ' + slotName(i) + '?', 'The view you have now has changes that are not in a slot. Loading replaces it (Undo can bring it back).', 'Load', () => loadSlot(i), true);
+    if (isDirty() || (S.active == null && S.L.cats.length)) askConfirm('Load ' + slotName(i) + '?', 'The view you have now has changes that are not in a slot. Loading replaces it, and Undo can bring it back.', 'Load', () => loadSlot(i), true);
     else loadSlot(i);
   }
   if (a.dataset.a === 'save') {
-    if (S.slots[i] && S.active !== i) askConfirm('Overwrite ' + slotName(i) + '?', 'The slot gets the view you have now; what it held is replaced.', 'Overwrite', () => saveTo(i));
+    if (S.slots[i] && S.active !== i) askConfirm('Overwrite ' + slotName(i) + '?', 'The slot gets the view you have now. What it held is replaced.', 'Overwrite', () => saveTo(i));
     else saveTo(i);
   }
   if (a.dataset.a === 'more') {
@@ -4142,7 +4314,7 @@ $('slist').addEventListener('click', e => {
       const b = ev.target.closest('[data-m]'); if (!b) return; closeSmenu();
       if (b.dataset.m === 'rename') renameSlot(i);
       if (b.dataset.m === 'export') send({ t: 'export', name: slotName(i), data: S.slots[i] });
-      if (b.dataset.m === 'import' && heldSlots.has(i)) toast(slotName(i) + ' is open in another program (a sync or a backup tool): try again in a moment');
+      if (b.dataset.m === 'import' && heldSlots.has(i)) toast(slotName(i) + ' is open in another program, like a sync or a backup tool. Try again in a moment');
       else if (b.dataset.m === 'import') { if (s) askConfirm('Import into ' + slotName(i) + '?', 'The layout from the file replaces what the slot holds.', 'Import', () => send({ t: 'import', slot: i })); else send({ t: 'import', slot: i }); }
       if (b.dataset.m === 'empty') askConfirm('Empty ' + slotName(i) + '?', 'The slot forgets its layout. The view you have now stays.', 'Empty slot', () => {
         S.slots[i] = null; if (S.active === i) S.active = null;
@@ -4178,19 +4350,19 @@ function loadSlot(i) {
   toast('Loaded ' + slotName(i) + (n ? ', ' + plural(n, 'cell') + ' re-linked by sensor name' : ''), true);
 }
 function saveTo(i) {
-  if (heldSlots.has(i)) { toast(slotName(i) + ' is open in another program (a sync or a backup tool): save again in a moment'); return; }   // (its file is there, the page just hasn't got it)
+  if (heldSlots.has(i)) { toast(slotName(i) + ' is open in another program, like a sync or a backup tool. Save again in a moment'); return; }   // (its file is there, the page just hasn't got it)
   slotWanted = null;
   const name = S.slots[i] ? S.slots[i].name : 'Slot ' + (i + 1);
   S.slots[i] = { v: 1, name, layout: JSON.parse(JSON.stringify(S.L)) };
   // (the undo steps of the slot it was go with it: an undo can't link the view back to the slot left alone on purpose)
   // (only the newest run of steps linked to it, back to the Load or Clear that started it)
-  const was = S.active, move = st => { for (let k = st.length - 1; k >= 0; k--) { const o = JSON.parse(st[k]); if (o.active !== was) break; o.active = i; st[k] = JSON.stringify(o); } };
+  const was = S.active, move = st => { for (let k = st.length - 1; k >= 0; k--) { const o = JSON.parse(st[k]); if (o.host) continue; if (o.active !== was) break; o.active = i; st[k] = JSON.stringify(o); } };   // (a bin move is no view's: passed over)
   if (was !== i && was != null) { move(undoStack); move(redoStack); }   // (a view linked to no slot: its history isn't that slot's)
   S.active = i; saveSlot(i); saveState(); syncSaves(); toast('Saved to ' + slotName(i));
 }
 function onSave() {
   if (S.active != null) { saveTo(S.active); return; }
-  if (slotWanted != null) { toast(slotName(slotWanted) + ' is open in another program (a sync or a backup tool): save again in a moment'); return; }   // (the view's own slot, held at the start)
+  if (slotWanted != null) { toast(slotName(slotWanted) + ' is open in another program, like a sync or a backup tool. Save again in a moment'); return; }   // (the view's own slot, held at the start)
   const free = S.slots.findIndex((s, k) => !s && !heldSlots.has(k));
   if (free >= 0) saveTo(free); else { renderSaves(); smodal.classList.add('open'); }
 }
@@ -4199,13 +4371,146 @@ $('clearBtn').onclick = () => askConfirm('Clear the view?', 'Back to the first r
   smodal.classList.remove('open'); afterChange(); toast('View cleared', true);
 });
 
+// ---------- Starter: a first layout built from this PC's own sensors ----------
+// Each cell a role, found by HWiNFO's own labels (the likeliest first: they differ by vendor); a role this PC hasn't
+// got makes no cell, a category with none makes no category. What Storage hides (the CPU's own graphics beside a real
+// GPU, readings only ever at 0, what you hid) is never picked. No lines: what is too hot differs from part to part
+// (the 12V-2x6 connector keeps its own, as a cell of it always does). null: no readings yet
+const ST_GPU = /^(dGPU|GPU|iGPU) \[#\d+\]/;
+const stIntegrated = n => /^iGPU\b/.test(n) || /Intel.*(UHD|Iris|HD Graphics|Arc\(TM\) Graphics|Arc Graphics)|Radeon\(TM\) Graphics|Radeon Graphics\b|Radeon \d{3}M\b/i.test(n);
+// a sensor's part name: "CPU [#0]: AMD Ryzen 7 9800X3D: Enhanced" is "Ryzen 7 9800X3D", "GPU [#0]: NVIDIA GeForce RTX 5090" is "GeForce RTX 5090"
+const stPart = n => ((n.split(': ')[1] || '').replace(/\((R|TM)\)/gi, '').replace(/^(NVIDIA|AMD|ATI|Intel)\s+/i, '').replace(/\s+/g, ' ').trim());
+function starterLayout() {
+  if (!READ.some(r => r.key && !r.key.startsWith('hwdeck.'))) return null;
+  const L = emptyLayout(), used = new Set(), sn = r => SENS[r.s] ? SENS[r.s].name : '';
+  // (the game's readings and a GPU's fans sit at 0 until a game runs, a 0 dB fan too: hidden by default as "only ever
+  // 0", they still count; only what you hid yourself doesn't)
+  const ok = r => !!r && !used.has(r.key) && !hidOf(r), live = r => !!r && !used.has(r.key) && hidOf(r) !== 1;
+  const find = (res, inS, okf) => { for (const re of res) { const r = READ.find(x => re.test(x.label) && (!inS || inS(sn(x))) && (okf || ok)(x)); if (r) return r; } return null; };
+  const own = k => { const r = BYKEY.get(k); return live(r) ? r : null; };
+  const add = (cells, r, name) => { if (!r) return; used.add(r.key); const c = newCell(r.key); if (name) c.name = name; const id = nid('a'); L.cells[id] = c; cells.push(id); };
+  const rk = new Map(), cat = (name, cells, r) => { if (!cells.length) return; const o = { id: nid('c'), name, collapsed: false, cells }; rk.set(o, r); L.cats.push(o); };
+  // the graphics card: a real one before the CPU's own graphics (a laptop may only have those)
+  const gpus = [...new Set(READ.map(sn))].filter(n => ST_GPU.test(n)), gn = gpus.find(n => !stIntegrated(n)) || gpus[0];
+  const gtag = gn ? gn.match(ST_GPU)[0] : null, inGpu = n => !!gtag && n.startsWith(gtag);
+  let c = [];
+  if (gtag) {
+    add(c, find([/^GPU Temperature$/], inGpu), 'GPU temperature');
+    add(c, find([/^GPU Hot ?Spot Temperature$/i, /^GPU Junction Temperature$/], inGpu), 'GPU hot spot');
+    add(c, find([/^GPU Memory Junction Temperature$/], inGpu), 'GPU memory');   // (its temperature, as in a session's details)
+    add(c, find([/^GPU Core Load$/, /^GPU Utilization$/, /^GPU D3D Usage$/], inGpu), 'GPU usage');
+    add(c, find([/^GPU Power$/, /^Total Board Power( \(TBP\))?$/, /^GPU ASIC Power$/], inGpu), 'GPU power');
+    add(c, find([/^GPU Memory Allocated$/, /^GPU D3D Memory Dedicated$/, /^GPU Memory Used$/, /^GPU Memory Usage$/], inGpu), 'VRAM used');
+  }
+  add(c, own(CONN), '12V-2x6 pins');   // (the connector's pins, when HWiNFO reports them; a name that fits a tile)
+  cat(gn ? stPart(gn) || 'GPU' : 'GPU', c, 1);
+  // the processor
+  const inCpu = n => /^CPU \[#0\]/.test(n), cn = READ.map(sn).find(inCpu);
+  c = [];
+  add(c, find([/^CPU \(Tctl\/Tdie\)$/, /^CPU Package$/, /^CPU \(Tctl\)$/, /^CPU Die \(average\)$/, /^Core Max$/], inCpu), 'CPU temperature');
+  add(c, find([/^Total CPU Usage$/], inCpu), 'CPU usage');
+  add(c, find([/^CPU Package Power$/, /^CPU PPT$/], inCpu), 'CPU power');
+  add(c, find([/^Max CPU\/Thread Usage$/], inCpu), 'Busiest core');
+  cat(cn ? stPart(cn) || 'CPU' : 'CPU', c, 2);
+  // memory: RAM used and its load, each stick's temperature
+  c = [];
+  add(c, find([/^Physical Memory Used$/]), 'RAM used');
+  add(c, find([/^Physical Memory Load$/]), 'RAM usage');
+  const firstTemp = (n, pref) => (pref && READ.find(x => sn(x) === n && pref.test(x.label) && ok(x))) || READ.find(x => sn(x) === n && x.t === 'temp' && ok(x));
+  let k = 0;
+  for (const n of [...new Set(READ.map(sn))].filter(n => /DIMM/i.test(n))) { if (k >= 4) break; const r = firstTemp(n, /Temperature/); if (r) add(c, r, 'RAM stick ' + (++k)); }
+  cat('Memory', c, 3);
+  // the drives' temperatures, the system drive first
+  c = [];
+  const drives = [...new Set(READ.map(sn))].filter(n => /^(S\.M\.A\.R\.T\.|Drive): /.test(n)), letter = n => (/\[([A-Z]):\]/.exec(n) || [])[1];
+  drives.sort((p, q) => (letter(p) === 'C' ? 0 : 1) - (letter(q) === 'C' ? 0 : 1));
+  // (one drive by its letter once, however many sensors show it; two of the same model without letters both, numbered)
+  const dk = new Set(), dn = new Set();
+  for (const n of drives) {
+    if (dk.size >= 3) break;
+    const key = letter(n) ? 'L' + letter(n) : n; if (dk.has(key)) continue;
+    const r = firstTemp(n, /^Drive Temperature$/); if (!r) continue;
+    const base = 'Drive ' + (letter(n) ? letter(n) + ':' : (n.split(': ')[1] || '').replace(/\s*\([^)]*\)\s*$/, '').trim());
+    let name = base; for (let j = 2; dn.has(name); j++) name = base + ' #' + j;
+    dk.add(key); dn.add(name); add(c, r, name);
+  }
+  cat('Drives', c, 4);
+  // the game: its fps (HW Deck's own count when it is on), its 1% low, what limits it, how long it has run
+  c = [];
+  add(c, own('hwdeck.0/fps') || find([/^Framerate( Presented)?( \(avg\))?$/], null, live), 'FPS');
+  add(c, own('hwdeck.0/fps1') || find([/^Framerate( Presented)? \(1% low\)$/], null, live), '1% low FPS');
+  add(c, own(BNECK)); add(c, own(GTIME));
+  cat('Game', c, 0);
+  // the fans: the graphics card's, then the board's (a pump and the CPU fan first); one that never spins is hidden
+  c = [];
+  const gf = READ.filter(x => x.t === 'fan' && inGpu(sn(x)) && live(x)).slice(0, 2);
+  gf.forEach((r, i) => add(c, r, gf.length > 1 ? 'GPU fan ' + (i + 1) : 'GPU fan'));
+  const board = n => !inGpu(n) && !ST_GPU.test(n) && !/^CPU \[#/.test(n) && !/DIMM|S\.M\.A\.R\.T\.|^Drive: |PresentMon|^HW Deck$/i.test(n);
+  const rank = r => /pump|aio|water|liquid/i.test(r.label) ? 0 : /cpu/i.test(r.label) ? 1 : 2;
+  READ.filter(x => x.t === 'fan' && board(sn(x)) && ok(x)).map((r, i) => ({ r, i })).sort((p, q) => rank(p.r) - rank(q.r) || p.i - q.i).slice(0, 4)
+    .forEach(({ r }) => add(c, r, /fan|pump/i.test(r.label) ? null : r.label + ' fan'));
+  cat('Fans', c, 5);
+  L.cats.sort((p, q) => rk.get(p) - rk.get(q));   // (his order, 11-02: the game, the GPU, the CPU, memory, drives, fans)
+  return L.cats.length ? L : null;
+}
+// Starter in the view: from Saves or the empty view's button, like a slot (it asks first when the view isn't in a
+// slot, and Undo brings the view back)
+function loadStarter() {
+  const L = starterLayout(); if (!L) return;
+  snap(); slotWanted = null;
+  S.L = L; S.active = null; sel = null; endRelink(true);
+  ynFixAll();
+  smodal.classList.remove('open');
+  enterNext = true; afterChange();
+  if (!S.starterSeen) starterSeen();   // (loaded: its note has done its job)
+  toast('Loaded Starter, built from this PC\'s sensors', true);
+}
+function askStarter() {
+  if (isDirty() || (S.active == null && S.L.cats.length)) askConfirm('Load Starter?', 'The view you have now has changes that are not in a slot. Loading replaces it, and Undo can bring it back.', 'Load', loadStarter, true);
+  else loadStarter();
+}
+// a new user (an empty view, Starter not seen): Starter as soon as the readings come, to look at, not to edit. Someone
+// with a layout of their own: a note that stays until it is dismissed (a restart doesn't drop it). Once either
+// happened (S.starterSeen, kept with the view), neither again. Tests start with --no-starter
+function starterCheck() {
+  if (!feed.stateIn || feed.noStarter || feed.ext || S.starterSeen) return;   // (the fork: its extras build the first layout)
+  // (a view of their own, or one that isn't a new user's (emptied, set aside): the note, never Starter over it; once the
+  // note showed, that stays so even after the view is emptied)
+  if (S.L.cats.length || !feed.starterFresh || S.starterNoted) {
+    $('notice').classList.add('show');
+    if (!S.starterNoted) { S.starterNoted = true; saveState(); }
+    return;
+  }
+  const L = starterLayout(); if (!L) return;   // (HWiNFO not sharing yet: when it does)
+  S.L = L; S.active = null; S.starterSeen = true; sel = null;
+  enterNext = true; setEdit(false); subscribe(); syncSaves();
+  toast('Starter: a layout built from this PC\'s sensors. The pencil, or E, edits it', false, 7000);
+}
+function starterSeen() { S.starterSeen = true; $('notice').classList.remove('show'); saveState(); }
+$('noticeClose').onclick = starterSeen;
+$('noticeShow').onclick = () => {
+  starterSeen(); renderSaves(); smodal.classList.add('open');
+  const row = document.querySelector('#sstart .srow2'); if (row) { row.classList.add('hl'); setTimeout(() => row.classList.remove('hl'), 2600); }
+};
+$('sstart').addEventListener('click', e => { if (e.target.closest('[data-a="starter"]')) askStarter(); });
+document.addEventListener('click', e => { if (e.target.closest('#starterBtn')) loadStarter(); });
+
 // ---------- the warning log: merged episodes from alerts.log, last 7 days ----------
 const wmodal = $('wmodal');
 let lastLogCount = 0;
-$('logBtn').onclick = () => { wmodal.classList.add('open'); $('wlist').innerHTML = '<div class="wempty">loading...</div>'; if (host) send({ t: 'alerts' }); else renderWarnings(''); };
-$('wclear').onclick = () => askConfirm('Clear warning history?', 'This wipes the warning log (' + lastLogCount + ' crossings' + (feed.warnDays ? ' in the last ' + feed.warnDays + ' days' : '') + '). A copy goes to alerts.log.bak first.', 'Clear history', () => send({ t: 'alerts:clear' }));
+$('logBtn').onclick = () => { pkMode('w', null, true); wmodal.classList.add('open'); WX.open = false; WX.cell = null; WX.menu = false; wxWait.clear(); $('wsum').innerHTML = ''; $('wlist').innerHTML = '<div class="wempty">loading...</div>'; if (host) send({ t: 'alerts' }); else renderWarnings(''); };
 function fmtDur(ms) { const s = Math.max(0, Math.round(ms / 1000)); if (s < 60) return s + 's'; const m = Math.round(s / 60); return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; }
-function renderWarnings(log) {
+// ---- the warning history in the Sessions popup's design (11-02): a summary bar (the last 7 days, the red ones, the
+// cell that warned most, a week strip split yellow and red) that opens like Sessions' to a period, one cell or all, a
+// bar a day and each cell's share; under it a header per day and a block per row (a cell's crossings close together)
+// that opens to each crossing and, when the page can get it, the reading around them with its lines. While the bar is
+// open the list shows its period and cell; shut, all of the days kept ----
+const WX = { open: false, period: 7, cell: null, menu: false, slide: null };   // (slide: a pick's direction, -1 / 1, while it is drawn)
+let wxEps = [];   // the crossings of the days kept, oldest first
+const wxWait = new Map();   // a row's chart waiting for the host's history: key|range, the charts
+// the log read into crossings, oldest first; each keeps its own lines (its start, red, peaks, back to normal) so a move
+// to the bin or back takes exactly them (an app's start and stop marks are everyone's: they stay)
+function wxParse(log, bin) {
   const open = Object.create(null), eps = [];   // (by name: a cell may be called "constructor")
   for (const line of (log || '').split(/\r?\n/)) {
     // times carry their UTC offset (so a summer-time change doesn't make durations negative); older lines don't
@@ -4214,88 +4519,517 @@ function renderWarnings(log) {
     const m = [m0[0], m0[1], m0[2], m0[4], m0[5]];
     const when = new Date(m[1] + 'T' + m[2] + (m0[3] || '')), rest = m[4].trim();
     // a MARK ends what was open: at its own time (app exit, HWiNFO stopped), or unknown (the next start after a crash)
-    if (m[3] === 'MARK') { const known = !/^app start/.test(rest); for (const k in open) { open[k].end = known ? when : null; open[k].interrupted = true; open[k].cut = rest; delete open[k]; } continue; }
+    // (the bin: a mark of its own, set aside with the crossings it ended, goes back with them; the log's marks, read in
+    // with it, stay where they are)
+    if (m[3] === 'MARK') { const known = !/^app start/.test(rest), mine = bin && !(bin instanceof Set && bin.has(line)); for (const k in open) { open[k].end = known ? when : null; open[k].interrupted = true; open[k].cut = rest; if (mine) open[k].closer = line; delete open[k]; } continue; }
     if (m[3] === 'OK') {
       const name = rest.split(': back to normal')[0], ep = open[name];
-      if (ep) { ep.end = when; const pk = rest.match(/peak ([^)]+)\)/); if (pk) ep.peak = pk[1]; delete open[name]; }
+      if (ep) { ep.end = when; const pk = rest.match(/peak ([^)]+)\)/); if (pk) ep.peak = pk[1]; if (!(bin instanceof Set && bin.has(line))) ep._raw.push(line); delete open[name]; }   // (the bin: the log's end of it ends it there, and stays)
       continue;
     }
     const cut = rest.lastIndexOf(': '), name = cut > 0 ? rest.slice(0, cut) : rest, detail = cut > 0 ? rest.slice(cut + 2) : '';
     // the peak so far of an episode the next MARK ends (logs from 1.0.0 have none)
-    if (m[3] === 'PEAK') { if (open[name]) open[name].peak = detail; continue; }
-    if (open[name]) { if (m[3] === 'RED') { open[name].level = 'RED'; open[name].redDetail = detail; } continue; }
-    const ep = { when, day: m[1], time: m[2].slice(0, 5), level: m[3], name, detail, end: null, peak: null, interrupted: false };
+    if (m[3] === 'PEAK') { if (open[name]) { open[name].peak = detail; open[name]._raw.push(line); } continue; }
+    if (open[name]) { if (m[3] === 'RED') { open[name].level = 'RED'; open[name].redDetail = detail; } open[name]._raw.push(line); continue; }
+    const ep = { when, day: m[1], time: m[2].slice(0, 5), level: m[3], name, detail, end: null, peak: null, interrupted: false, _raw: [line] };
     open[name] = ep; eps.push(ep);
   }
-  const N = feed.warnDays, recent = N ? eps.filter(ep => ep.when.getTime() >= Date.now() - N * 86400000) : eps;   // (no days set: all of it)
-  setText($('wdays'), N ? String(N) : 'all');
+  return eps;
+}
+let wxText = '';
+function renderWarnings(log) {
+  wxText = log || ''; if (PK.w.mode === 'bin') { if (wbText && !PK.w.wait) wbRender(wbText); return; }   // (the bin on show: the list waits for Back; the bin reads the log's marks)
+  const eps = wxParse(log);
+  const N = feed.warnDays, recent = N ? eps.filter(ep => ep.when.getTime() >= Date.now() - N * 86400000) : eps;   // (kept forever, or no days set: all of it)
+  setText($('wdays'), N ? String(N) : 'all'); $('wlast').hidden = !N; $('wall').hidden = !!N;
+  // (all of it: since its first day as the page has it, the newest 12 MB of the log)
+  const w0 = eps.reduce((m, ep) => !m || ep.when < m ? ep.when : m, null);
+  if (!N) setText($('wall'), w0 ? 'since ' + w0.getDate() + ' ' + GX_MON[w0.getMonth()] + (w0.getFullYear() !== new Date().getFullYear() ? ' ' + w0.getFullYear() : '') : 'since the log began');
+  lastLogCount = recent.length;
+  wxEps = recent; wEmptyN = N; wShow = 300;
+  if (WX.cell && !recent.some(ep => ep.name === WX.cell)) WX.cell = null;   // (its crossings all gone: all cells again)
+  wxSum(true);
+  wxList();
+}
+const wxNum = x => { const m = /^(-?[\d.]+)\s*(.*)$/.exec(x || ''); return m ? { v: parseFloat(m[1]), u: m[2].replace(/\s*\(.*$/, '') } : null; };   // (a -12V rail is negative)
+// the worst of some crossings: the lowest for a line that warns below (the host marks those "(under its line)"; an older
+// log is read off an episode whose peak went lower than its crossing), the furthest off for a curve, else the highest
+function wxWorst(eps) {
+  let pk = null;
+  const low = eps.some(ep => /\(under its line\)/.test(ep.detail) || /% under its curve\)/.test(ep.detail) || (!/ fan curve$/.test(ep.name) && wxNum(ep.peak) && wxNum(ep.detail) && wxNum(ep.peak).v < wxNum(ep.detail).v));
+  for (const ep of eps) { const c = wxNum(ep.peak) || wxNum(ep.redDetail) || wxNum(ep.detail); if (c && (!pk || (low ? c.v < pk.v : c.v > pk.v))) pk = c; }
+  return pk;
+}
+// a row: one cell's crossings on one day, each within 10 minutes of the one before
+function wxGroups(eps) {
   const groups = [], lastOf = Object.create(null);
-  for (const ep of recent) {
+  for (const ep of eps) {
     const g = lastOf[ep.name], prevEnd = g ? (g.end || g.last.when) : null;
     if (g && g.day === ep.day && ep.when - prevEnd <= 600000) { g.eps.push(ep); g.last = ep; if (ep.level === 'RED') g.level = 'RED'; g.end = ep.end; g.ongoing = !ep.end && !ep.interrupted; g.cut = ep.interrupted && !ep.end; }
     else { const ng = { name: ep.name, day: ep.day, first: ep, last: ep, eps: [ep], level: ep.level, end: ep.end, ongoing: !ep.end && !ep.interrupted, cut: ep.interrupted && !ep.end }; groups.push(ng); lastOf[ep.name] = ng; }
   }
-  const num = x => { const m = /^(-?[\d.]+)\s*(.*)$/.exec(x || ''); return m ? { v: parseFloat(m[1]), u: m[2].replace(/\s*\(.*$/, '') } : null; };   // (a -12V rail is negative)
-  // a row's peak: the worst of its episodes, the lowest for a line that warns below (the host marks those "(under its
-  // line)"; an older log is read off an episode whose peak went lower than its crossing)
-  for (const g of groups) {
-    let pk = null, dur = 0;
-    const low = g.eps.some(ep => /\(under its line\)/.test(ep.detail) || (!/ fan curve$/.test(ep.name) && num(ep.peak) && num(ep.detail) && num(ep.peak).v < num(ep.detail).v));   // (a curve's peak is the furthest off it, either way)
-    for (const ep of g.eps) { const c = num(ep.peak) || num(ep.redDetail) || num(ep.detail); if (c && (!pk || (low ? c.v < pk.v : c.v > pk.v))) pk = c; if (ep.end) dur += Math.max(0, ep.end - ep.when); }
-    g.peak = pk; g.dur = dur;
-  }
-  lastLogCount = recent.length;
-  const nRed = recent.filter(ep => ep.level === 'RED').length, nYel = recent.length - nRed;
-  $('wsum').innerHTML = groups.length ? '<span>crossings' + (N ? ' in the last ' + N + ' days' : '') + ':</span><span><b style="color:#e5484d">' + nRed + '</b> red</span><span><b style="color:#e6c84a">' + nYel + '</b> yellow</span><span>' + plural(groups.length, 'row') + '</span>' : '';
-  // (the newest 300 rows first, more on asking: a log with thousands of crossings drew them all at once)
-  wGroups = groups.reverse(); wShow = 300; wEmptyN = N;
-  drawWarnList();
+  for (const g of groups) { g.peak = wxWorst(g.eps); g.dur = g.eps.reduce((p, ep) => p + (ep.end ? Math.max(0, ep.end - ep.when) : 0), 0); }
+  return groups;
 }
 // a value in the warning log as words where it is a Yes/No reading (the log keeps "1 Yes/No", so peaks compare)
 const wYN = x => x == null ? x : String(x).replace(/^(-?[\d.]+)\s*Yes\/No\b/, (m, v) => +v >= 0.5 ? 'Yes' : 'No');
 let wGroups = [], wShow = 300, wEmptyN = 30;
-function drawWarnList() {
-  const today = localDay(new Date()), y = new Date(); y.setDate(y.getDate() - 1); const yest = localDay(y);
-  let hh = '', lastDay = null;
-  wGroups.slice(0, wShow).forEach((g, gi) => {
-    if (g.day !== lastDay) { lastDay = g.day; hh += '<div class="wday">' + (g.day === today ? 'today' : g.day === yest ? 'yesterday' : g.day) + '</div>'; }
-    const col = g.level === 'RED' ? '#e5484d' : '#e6c84a';
-    const endT = g.end ? ('0' + g.end.getHours()).slice(-2) + ':' + ('0' + g.end.getMinutes()).slice(-2) : null;
-    const span = g.eps.length > 1 || endT ? g.first.time + (endT && endT !== g.first.time ? ' to ' + endT : '') : g.first.time;
-    const meta = g.ongoing ? 'ongoing' : g.cut ? 'until the app stopped' : (g.peak ? 'peak ' + wYN(g.peak.v + ' ' + g.peak.u) : '') + (g.dur ? (g.peak ? ', ' : '') + fmtDur(g.dur) : '');
-    const many = g.eps.length > 1;
-    hh += '<div class="wrow' + (many ? ' wgrp' : '') + '" data-g="' + gi + '"><span class="wchev">' + (many ? '&#9656;' : '') + '</span><span class="wdot" style="background:' + col + '"></span>' +
-      '<span class="wtime">' + span + '</span><span class="wname">' + esc(g.name) + (many ? '<span class="wcnt">' + g.eps.length + 'x</span>' : '') + '</span><span class="wmeta">' + esc(meta) + '</span></div>';
-    if (many) hh += '<div class="wsub" data-sub="' + gi + '"></div>';   // (its episodes drawn when it opens: a big log had 100,000+ hidden rows)
-  });
-  if (wGroups.length > wShow) hh += '<button class="linkbtn wmore" id="wMore">Show older (' + plural(wGroups.length - wShow, 'more row') + ')</button>';
-  $('wlist').innerHTML = hh || '<div class="wempty ico chk">Nothing crossed a line' + (wEmptyN ? ' in the last ' + wEmptyN + ' days' : '') + '. Quiet machine.</div>';
+// the periods (as far back as Keep warnings keeps: 7, 30 and 90 days under it, then the days kept, or all) and the
+// first moment of the one picked
+function wxPeriods() { const K = feed.warnDays || Infinity, o = [7, 30, 90].filter(q => q < K); o.push(K === Infinity ? 'all' : K); return o; }
+function wxFrom() {
+  const P = WX.period, td = new Date(), f0 = wxEps.length ? wxEps[0].when : td;
+  return P === 'all' ? gxMid(f0.getFullYear(), f0.getMonth(), f0.getDate()) : gxMid(td.getFullYear(), td.getMonth(), td.getDate() - (P - 1));
 }
-function wSubRows(g) {
-  let hh = '';
-  for (const ep of g.eps.slice().reverse()) {
-    const m2 = ep.interrupted ? (/^HWiNFO/.test(ep.cut || '') ? 'HWiNFO stopped sharing' : /^PC going to sleep/.test(ep.cut || '') ? 'PC went to sleep' : 'ended with the app') + (ep.end ? ', ' + fmtDur(ep.end - ep.when) : '') + (ep.peak ? ', peak ' + wYN(ep.peak) : '')
-      : ep.end ? fmtDur(ep.end - ep.when) + (ep.peak ? ', peak ' + wYN(ep.peak) : '') : 'ongoing';
-    hh += '<div class="wrow"><span class="wdot" style="background:' + (ep.level === 'RED' ? '#e5484d' : '#e6c84a') + ';width:6px;height:6px"></span><span class="wtime">' + ep.time + '</span><span class="wname">' + (ep.level === 'RED' ? 'red' : 'yellow') + ' at ' + esc(wYN(ep.redDetail || ep.detail)) + '</span><span class="wmeta">' + esc(m2) + '</span></div>';
+// the crossings the list shows: the open bar's period and cell, or all of them
+function wxShown() { if (!WX.open) return wxEps; const a = wxFrom() * 1000; return wxEps.filter(ep => ep.when.getTime() >= a && (!WX.cell || ep.name === WX.cell)); }
+// the cells in the cell list's order: all of them first, then the ones that warned most (a pick's side goes by it)
+function wxCellOrder() { const n = Object.create(null); for (const ep of wxEps) n[ep.name] = (n[ep.name] || 0) + 1; return [null].concat(Object.keys(n).sort((p, q) => n[q] - n[p])); }
+// the week's numbers and strip (wsum), or the bar opened
+function wxSum(live) {
+  const gs = $('wsum');
+  if (!wxEps.length) { WX.open = false; WX.cell = null; if (gs.firstChild) gs.innerHTML = ''; return; }
+  // the week: today and the 6 days before, each day's crossings split yellow and red (one that went red counts red)
+  const td = new Date(), days = []; for (let i = 6; i >= 0; i--) days.push(new Date(td.getFullYear(), td.getMonth(), td.getDate() - i));
+  const wk7 = wxEps.filter(ep => ep.when >= days[0]), cnt = Object.create(null), red = Object.create(null);   // (by name: a cell may be called "constructor")
+  for (const ep of wk7) { cnt[ep.name] = (cnt[ep.name] || 0) + 1; if (ep.level === 'RED') red[ep.name] = (red[ep.name] || 0) + 1; }
+  const top = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0], topR = Object.keys(red).sort((a, b) => red[b] - red[a])[0], nR = wk7.filter(ep => ep.level === 'RED').length;
+  const per = days.map(d => { const k = localDay(d), on = wk7.filter(ep => localDay(ep.when) === k), r = on.filter(ep => ep.level === 'RED').length; return [on.length - r, r]; });
+  const peak = Math.max(4, ...per.map(p => p[0] + p[1]));
+  const wk = days.map((d, i) => { const [y, r] = per[i], n = y + r; return '<span class="gx-wd' + (i === 6 ? ' today' : '') + '" title="' + (n ? [y ? y + ' yellow' : '', r ? r + ' red' : ''].filter(Boolean).join(', ') : 'nothing') + '"><i' + (n ? '' : ' class="z"') + ' style="height:' + (n ? Math.max(4, Math.round(n / peak * 22)) : 2) + 'px">' +
+    (y ? '<b style="flex:' + y + '"></b>' : '') + (r ? '<b class="r" style="flex:' + r + '"></b>' : '') + '</i><em>' + GX_WD[d.getDay()][0].toUpperCase() + '</em></span>'; }).join('');
+  let box = gs.querySelector(':scope > .gx-sum');
+  if (!box) {
+    gs.innerHTML = '<div class="gx-sum"><div class="gx-srow"></div><div class="gx-sdet"><div><div class="gx-sdin"><div class="gx-xh"></div><div class="gx-xb"></div></div></div></div></div>';
+    box = gs.firstChild;
   }
-  return hh;
+  const row = GX_CHEV + '<div class="gx-sumtxt">' +
+    '<div class="gx-stat"><em>last 7 days</em><b>' + wk7.length + '<small>' + (wk7.length === 1 ? 'warning' : 'warnings') + '</small></b></div>' +
+    '<div class="gx-stat"><em>red</em><b>' + nR + (topR ? '<small>' + esc(topR) + '</small>' : '') + '</b></div>' +
+    (top ? '<div class="gx-stat"><em>most often</em><b>' + esc(top) + '<small>' + plural(cnt[top], 'time') + '</small></b></div>' : '') +
+    '</div><div class="gx-week wx-wk">' + wk + '</div>';
+  // (written only when they changed, and a new log's redraw waits while text in them is picked)
+  const sl = live && getSelection(), held = sl && sl.rangeCount && !sl.isCollapsed && sl.getRangeAt(0).intersectsNode(gs);
+  const rw = box.firstChild;
+  if (rw._h !== row && !held) { rw.innerHTML = row; rw._h = row; }
+  // (a new log waits while the pointer is on what opened or its cell list is open: a list's scroll would go with it)
+  const busy = live && (WX.menu || !!gs.querySelector('.gx-sdet:hover'));
+  if (WX.open && !held && !busy) {
+    const o = wxSumOpen(), hd = box.querySelector('.gx-xh'), bd = box.querySelector('.gx-xb'), det = box.querySelector('.gx-sdet');
+    const slide = WX.slide && box.classList.contains('open') && motionMode() !== 'off' ? WX.slide : 0;   // (a pick in the open bar)
+    if (hd._h !== o.head) {
+      const i0 = hd.querySelector('.gx-per .ind'), was = i0 ? { x: i0.style.transform, w: i0.style.width } : null;
+      hd.innerHTML = o.head; hd._h = o.head;
+      gxPill(hd, slide ? was : null);
+    }
+    if (bd._h !== o.body) {
+      const h0 = slide ? det.offsetHeight : 0;
+      bd.innerHTML = o.body; bd._h = o.body;
+      if (slide) {
+        const e = 'cubic-bezier(0.2, 0.8, 0.2, 1)', h1 = det.offsetHeight;
+        bd.animate([{ transform: 'translateX(' + (slide * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: e });
+        if (Math.abs(h1 - h0) > 1) det.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: 300, easing: e });
+      }
+    }
+  }
+  if (box.classList.contains('open') !== WX.open) { if (WX.open) void box.offsetHeight; box.classList.toggle('open', WX.open); }
 }
+// the bar opened: the cell list and the periods, a bar a day (a week past 120 days) split yellow and red with the
+// average dashed, and each cell's part of the period (a row picks that cell; again: all cells)
+function wxSumOpen() {
+  const ps = wxPeriods(); if (!ps.includes(WX.period)) WX.period = ps.includes(7) ? 7 : ps[0];
+  const P = WX.period, a = wxFrom(), a0 = new Date(a * 1000), td = new Date();
+  const nd = Math.max(1, Math.round((gxMid(td.getFullYear(), td.getMonth(), td.getDate() + 1) - a) / 86400));
+  const inP = wxEps.filter(ep => ep.when.getTime() >= a * 1000), mine = WX.cell ? inP.filter(ep => ep.name === WX.cell) : inP;
+  let menu = '';
+  if (WX.menu) {
+    const n = Object.create(null); for (const ep of wxEps) n[ep.name] = (n[ep.name] || 0) + 1;
+    const cl = Object.keys(n).sort((p, q) => n[q] - n[p]);
+    menu = '<div class="smenu gx-menu"><button data-cell=""' + (WX.cell ? '' : ' class="on"') + '>All cells<small>' + plural(cl.length, 'cell') + '</small></button><div class="gx-msep"></div>' +
+      cl.map(k => '<button data-cell="' + esc(k) + '"' + (k === WX.cell ? ' class="on"' : '') + '>' + esc(k) + '<small>' + plural(n[k], 'time') + '</small></button>').join('') + '</div>';
+  }
+  const head = '<span class="gx-ddw"><button class="gx-dd' + (WX.menu ? ' on' : '') + '" title="Show one cell">' + (WX.cell ? esc(WX.cell) : 'All cells') + GX_CHEV + '</button>' + menu + '</span>' +
+    (ps.length > 1 ? '<span class="seg seg3 gx-per"><i class="ind"></i>' + ps.map(q => '<button data-p="' + q + '"' + (q === P ? ' class="on"' : '') + '>' + (q === 'all' ? 'All' : q + ' days') + '</button>').join('') + '</span>' : '');
+  // the chart: crossings a day (a week past 120 days), yellow under red, the count on the left, the average on the right
+  const keyAt = {}, days = [];
+  for (let i = 0; i < nd; i++) { const d = new Date(a0.getFullYear(), a0.getMonth(), a0.getDate() + i); keyAt[localDay(d)] = i; days.push({ d, y: 0, r: 0 }); }
+  for (const ep of mine) { const i = keyAt[localDay(ep.when)]; if (i !== undefined) days[i][ep.level === 'RED' ? 'r' : 'y']++; }
+  let pts = days.map(o => Object.assign({ w: 0 }, o));
+  if (nd > 120) { pts = []; for (let i = 0; i < nd; i += 7) { const wk = days.slice(i, i + 7); pts.push({ d: wk[0].d, w: wk.length, y: wk.reduce((p, o) => p + o.y, 0), r: wk.reduce((p, o) => p + o.r, 0) }); } }
+  const n = pts.length, H = 120, mx = Math.max(...pts.map(o => o.y + o.r)), ymax = Math.max(2, Math.ceil(mx / 2) * 2), Y = v => +(H - v / ymax * H).toFixed(1), X = i => +((i + 0.5) / n * 100).toFixed(3);
+  const avg = pts.reduce((p, o) => p + o.y + o.r, 0) / n;
+  const lab = o => o.w ? 'week of ' + o.d.getDate() + ' ' + GX_MON[o.d.getMonth()] : GX_WD[o.d.getDay()] + ' ' + o.d.getDate() + ' ' + GX_MON[o.d.getMonth()];
+  const bars = pts.map(o => { const t = o.y + o.r; return '<div class="wx-b' + (t ? '' : ' z') + '"' + (t ? ' style="height:' + (t / ymax * 100).toFixed(2) + '%"' : '') + ' title="' + lab(o) + ': ' + (t ? [o.y ? o.y + ' yellow' : '', o.r ? o.r + ' red' : ''].filter(Boolean).join(', ') : 'nothing') + '">' +
+    (o.y ? '<b style="flex:' + o.y + '"></b>' : '') + (o.r ? '<b class="r" style="flex:' + o.r + '"></b>' : '') + '</div>'; }).join('');
+  let h = '<div class="gx-lc"><div class="gx-lcg"><div class="gx-lcy" style="height:' + H + 'px">' + [0, ymax / 2, ymax].map(v => '<span style="top:' + Y(v) + 'px">' + v + '</span>').join('') + '</div>' +
+    '<div class="wx-plot" style="height:' + H + 'px;--n:' + n + '">' + bars +
+    (avg ? '<i class="wx-av" style="top:' + Y(avg) + 'px"></i><span class="gx-lca" style="top:' + Y(avg) + 'px">avg ' + (Math.round(avg * 10) / 10) + (nd > 120 ? '/wk' : '') + '</span>' : '') + '</div><span></span></div>';
+  const xl = (o, i) => n <= 7 ? GX_WD[o.d.getDay()].slice(0, 3) : o.w ? (o.d.getDate() <= 7 && i < n - 2 ? GX_MON[o.d.getMonth()] : '') : (o.d.getDay() === 1 && i < n - 4 ? o.d.getDate() + ' ' + GX_MON[o.d.getMonth()] : '');
+  h += '<div class="gx-lcg"><span></span><div class="gx-lcx">' + pts.map((o, i) => { const t = xl(o, i); return t ? '<span style="left:' + X(i) + '%">' + t + '</span>' : ''; }).join('') + (n > 7 && !pts[n - 1].w ? '<span class="e">today</span>' : '') + '</div><span></span></div></div>';
+  // each cell's part of the period, most first: its crossings, the red ones, its worst, its last
+  const per = Object.create(null);
+  for (const ep of inP) { const o = per[ep.name] || (per[ep.name] = { eps: [], r: 0, last: ep.when }); o.eps.push(ep); if (ep.level === 'RED') o.r++; if (ep.when > o.last) o.last = ep.when; }
+  const names = Object.keys(per).sort((p, q) => per[q].eps.length - per[p].eps.length), sum = inP.length || 1;
+  const ago = d => { const k = Math.round((gxMid(td.getFullYear(), td.getMonth(), td.getDate()) - gxMid(d.getFullYear(), d.getMonth(), d.getDate())) / 86400); return k <= 0 ? 'today' : k === 1 ? 'yesterday' : k + ' days ago'; };
+  if (names.length) h += '<div class="gx-gtab"><div class="gx-gh"><span>cell</span><span>share of the warnings</span><span class="gx-r">times</span><span class="gx-r">red</span><span class="gx-r">worst</span><span class="gx-r">last</span></div>' +
+    names.map(k => { const o = per[k], pk = wxWorst(o.eps); return '<div class="gx-gr' + (k === WX.cell ? ' on' : '') + '" data-cell="' + esc(k) + '"><span class="gx-gnm">' + esc(k) + '</span><span class="gx-gbar"><span style="width:' + (o.eps.length / sum * 100).toFixed(1) + '%"></span></span>' +
+      '<span class="gx-r">' + o.eps.length + '</span><span class="gx-r">' + (o.r || '--') + '</span><span class="gx-r">' + (pk ? esc(wYN(pk.v + ' ' + pk.u)) : '--') + '</span><span class="gx-r gx-ago">' + ago(o.last) + '</span></div>'; }).join('') + '</div>';
+  return { head, body: h };
+}
+// the bar opened or shut, a period, a cell: the summary drawn again and the list with it; a pick slides in from its
+// side (a later period or cell from the right, an earlier one from the left)
+function wxSet(o) {
+  const c0 = WX.cell, p0 = WX.period, was = WX.open; Object.assign(WX, o); if (!WX.open) { WX.cell = null; WX.menu = false; }
+  if (was && WX.open) {
+    const ps = wxPeriods(), order = wxCellOrder();
+    WX.slide = WX.period !== p0 ? Math.sign(ps.indexOf(WX.period) - ps.indexOf(p0)) || 1 : WX.cell !== c0 ? Math.sign(order.indexOf(WX.cell) - order.indexOf(c0)) || 1 : null;
+  }
+  try {
+    wxSum();
+    if (WX.open !== was || WX.cell !== c0 || (WX.open && WX.period !== p0)) {
+      wShow = 300; wxList();
+      if (WX.slide && motionMode() !== 'off') $('wlist').animate([{ transform: 'translateX(' + (WX.slide * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    }
+  } finally { WX.slide = null; }
+}
+// the list drawn again from the crossings shown (rows that were open stay open)
+function wxList() {
+  const keep = new Set([...$('wlist').querySelectorAll('.gx-sess.open')].map(el => el.dataset.k));
+  wGroups = wxGroups(wxShown()).reverse();   // (newest first)
+  drawWarnList(keep);
+}
+// the cell a row is about, in the view: by the name the log has (a fan's curve adds " fan curve", the 12V-2x6
+// connector's uneven pins " pins"); null when the view has no cell by that name
+let wxCellAt = null;
+function wxCell(name) {
+  // (the cells that warn, with lines or a curve, first; a name two of them share could be either: none. Then any cell,
+  // for one whose lines went since)
+  if (!wxCellAt) {
+    wxCellAt = new Map(); const any = new Map();
+    for (const id in S.L.cells) { const c = S.L.cells[id], n = cellName(c); if (gatesOn(c.gates) || c.curve) wxCellAt.set(n, wxCellAt.has(n) ? null : id); else if (!any.has(n)) any.set(n, id); }
+    for (const [n, id] of any) if (!wxCellAt.has(n)) wxCellAt.set(n, id);
+  }
+  const at = n => wxCellAt.get(n);
+  if (at(name)) return { cid: at(name) };
+  if (/ fan curve$/.test(name) && at(name.slice(0, -10))) return { cid: at(name.slice(0, -10)), curve: true };
+  if (/ pins$/.test(name) && at(name.slice(0, -5))) return { cid: at(name.slice(0, -5)), pins: true };
+  return null;
+}
+// the lines a row crossed: its cell's as they are now, on the side it crossed; else what the log says
+function wxLines(g, w) {
+  if (w && w.curve) return 'its fan curve';
+  if (w && w.pins) return 'a pin over 1.5x its share';
+  const c = w && S.L.cells[w.cid], r = c && c.key ? BYKEY.get(c.key) : null, under = g.eps.some(ep => /\(under its line\)/.test(ep.detail));
+  if (c && gatesOn(c.gates)) {
+    const gl = gateLines(c.gates), main = gl.below === under, y = main ? gl.y : gl.y2, rr = main ? gl.r : gl.r2;   // (the side it crossed: the main lines, or the other side's)
+    const k = gbK(r), dec = decOfCell(c, r), u = unitOf(r), v = x => lnTxt(x * k, dec, r, under) + (u ? ' ' + u : '');
+    const t = [y !== undefined ? 'yellow ' + v(y) : '', rr !== undefined ? 'red ' + v(rr) : ''].filter(Boolean).join(', ');
+    if (t) return (under ? 'under ' : '') + t;
+  }
+  const at = String(g.first.detail || '').replace(/\s*\(.*$/, '');
+  return at ? 'crossed at ' + wYN(at) : '--';
+}
+// a day's header: its name and date, and how many crossings it had (shown or further down)
+function wxDayHd(dk, n, today, yest, unit) {
+  const [yy, mm, dd] = dk.split('-').map(Number), d = new Date(yy, mm - 1, dd);
+  const name = dk === today ? 'today' : dk === yest ? 'yesterday' : Date.now() / 1000 - d.getTime() / 1000 < 6 * 86400 ? GX_WD[d.getDay()] : '';
+  const date = (name && name !== 'today' && name !== 'yesterday' ? '' : GX_WD[d.getDay()].slice(0, 3) + ' ') + d.getDate() + ' ' + GX_MON[d.getMonth()];   // "thursday 8 oct", "yesterday sat 10 oct"
+  return '<div class="gx-day"><div>' + (name ? name + '<span>' + date + '</span>' : date) + '</div><div class="gx-tot">' + plural(n, unit || 'warning') + '</div></div>';
+}
+// a row: the cell, from when to when, its peak in its level's colour, how long it lasted, how many times, the lines it
+// crossed, its level; what opens under it is drawn the first time it opens (a big log had 100,000+ hidden rows)
+function wxRow(g, gi) {
+  const lv = g.level === 'RED' ? 'r' : 'y', w = wxCell(g.name), many = g.eps.length > 1;
+  const hm = d => ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2), endT = g.end ? hm(g.end) : null;
+  const when = g.first.time + (g.ongoing ? ' to now' : endT && endT !== g.first.time ? ' to ' + endT : '');
+  const lasted = g.ongoing ? 'ongoing' : g.dur ? fmtDur(g.dur) : '--', lt = g.cut ? ' title="Until the app stopped"' : '';
+  const tc = w ? cellTint(w.cid) : null;   // (Spectrum: a dot in its cell's colour)
+  return '<div class="gx-sess" data-g="' + gi + '" data-k="' + esc(g.name + '|' + g.first.when.getTime()) + '"' + (tc ? ' style="--cc:' + tc + '"' : '') + '><div class="gx-row">' + GX_CHEV +
+    '<span class="gx-gm"><span class="gx-gn">' + esc(g.name) + '</span><span class="gx-sub">' + when + '</span></span>' +
+    '<span class="gx-c gx-num"><span class="wx-pk ' + lv + '">' + (g.peak ? esc(wYN(g.peak.v + ' ' + g.peak.u)) : '--') + '</span></span>' +
+    '<span class="gx-c gx-num"' + lt + '>' + lasted + '</span><span class="gx-c gx-num wx-x">' + (many ? g.eps.length + 'x' : '1') + '</span>' +
+    '<span class="gx-c"><span class="wx-ln">' + esc(wxLines(g, w)) + '</span></span>' +
+    '<span class="gx-c gx-st"><span class="wx-lv' + (lv === 'r' ? ' r' : '') + '"><i></i>' + (lv === 'r' ? 'red' : 'yellow') + '</span></span></div>' +
+    '<div class="gx-det"><div><div class="gx-in"></div></div></div></div>';
+}
+function drawWarnList(keep) {
+  wxCellAt = null;   // (the view's cells as they are now)
+  const today = localDay(new Date()), y = new Date(); y.setDate(y.getDate() - 1); const yest = localDay(y);
+  const byDay = {}; for (const g of wGroups) byDay[g.day] = (byDay[g.day] || 0) + g.eps.length;
+  let hh = '', lastDay = null;
+  wGroups.slice(0, wShow).forEach((g, gi) => { if (g.day !== lastDay) { lastDay = g.day; hh += wxDayHd(g.day, byDay[g.day], today, yest); } hh += wxRow(g, gi); });
+  if (wGroups.length > wShow) hh += '<button class="linkbtn wmore" id="wMore">Show ' + plural(wGroups.length - wShow, 'older row') + '</button>';
+  const list = $('wlist'), nd = WX.open ? (WX.period === 'all' ? 0 : WX.period) : wEmptyN;
+  list.innerHTML = hh ? '<div class="gx-cols"><span></span><span>warning</span><span class="gx-r">peak</span><span class="gx-r">lasted</span><span class="gx-r">times</span><span>its lines</span><span class="gx-r">level</span></div>' + hh
+                      : '<div class="wempty ico chk">Nothing crossed a line' + (nd ? ' in the last ' + nd + ' days' : '') + (WX.open && WX.cell ? ' for ' + esc(WX.cell) : '') + '. Quiet machine.</div>';
+  if (keep && keep.size) {   // (drawn again: what was open stays open, at once)
+    list.classList.add('still');
+    for (const el of list.querySelectorAll('.gx-sess')) if (keep.has(el.dataset.k)) { wxFill(el, wGroups[+el.dataset.g]); el.classList.add('open'); }
+    void list.offsetHeight; list.classList.remove('still');
+  }
+  pkMark('w');
+}
+// what opens under a row: the reading around it (when its cell is in the view and the history reaches that far), then
+// each crossing: when, its level, what it crossed at, how long, how it ended, its peak
+function wxFill(el, g) {
+  if (!el || !g || el._f) return; el._f = true;
+  const w = wxCell(g.name), c = w && !w.pins ? S.L.cells[w.cid] : null;
+  const how = ep => ep.interrupted ? (/^HWiNFO/.test(ep.cut || '') ? 'HWiNFO stopped sharing' : /^PC going to sleep/.test(ep.cut || '') ? 'PC went to sleep' : 'ended with the app') : ep.end ? 'back to normal' : 'ongoing';
+  const rows = g.eps.map(ep => {
+    const red = ep.level === 'RED', at = String(ep.redDetail || ep.detail || '').replace(/\s*\((over|under) its line\)/, '').replace(/\s*\((\d+% (?:under|over) its curve)\)/, ', $1');
+    const o = [ep.end ? fmtDur(ep.end - ep.when) : '', how(ep), ep.peak ? 'peak ' + wYN(ep.peak) : ''].filter(Boolean).join(', ');
+    return '<div class="wx-ep"><span class="t">' + ep.time + '</span><span class="wx-lv' + (red ? ' r' : '') + '"><i></i>' + (red ? 'red' : 'yellow') + '</span><span class="v">' + (at ? 'at ' + esc(wYN(at)) : '') + '</span><span class="o">' + esc(o) + '</span></div>';
+  }).join('');
+  el.querySelector('.gx-in').innerHTML = (c && c.key && host ? '<div class="wx-ch"></div>' : '') + '<div class="wx-eps">' + rows + '</div>';
+  const ch = el.querySelector('.wx-ch'); if (ch) wxAsk(ch, g, w);
+}
+// its history from the host: the smallest range that reaches back to it (1 h, 6 h, 12 h, 24 h of minutes, 7 days of 10
+// minutes); older than that, no chart
+function wxAsk(ch, g, w) {
+  const c = S.L.cells[w.cid], now = Date.now() / 1000, s = g.first.when.getTime() / 1000;
+  const e = g.end ? g.end.getTime() / 1000 : g.ongoing ? now : g.last.when.getTime() / 1000 + 60;
+  // (around it: at least 10 minutes and 8 of the range's points each side, more for a long one; 11-02, his "the time
+  // window is too short, the graph looks weird": 5 minutes was 5 points of a minute, or half a point of ten)
+  let range = null, a = 0, b = 0;
+  for (const [rg, span, step] of [['1h', 3600, 60], ['6h', 6 * 3600, 60], ['12h', 12 * 3600, 60], ['24h', 86400, 60], ['7d', 7 * 86400, 600]]) {
+    const pad = Math.max(600, (e - s) * 0.5, 8 * step);
+    if (now - (s - pad) <= span) { range = rg; a = s - pad; b = Math.min(now, e + pad); break; }
+  }
+  if (!range) { ch.remove(); return; }
+  const k = c.key + '|' + range, o = { ch, g, w, a, b }, ws = wxWait.get(k);
+  if (ws) ws.push(o); else { wxWait.set(k, [o]); send({ t: 'hist', key: c.key, range }); }
+}
+// the host's history in (onHost's 'hist'): the charts waiting for it drawn; true when only they wanted it (the cell
+// popup asking for the same key and range gets it too)
+function wxTake(m) {
+  const k = m.key + '|' + m.range, ws = wxWait.get(k); if (!ws) return false;
+  wxWait.delete(k);
+  for (const o of ws) if (o.ch.isConnected) wxChart(o, m);
+  const c = modalCid != null ? S.L.cells[modalCid] : null;
+  return !(c && histKey(c) === m.key && bigRange === m.range);
+}
+// a row's chart, the session chart's look (11-02, his "copy the game sessions"): its reading over the minutes around it
+// (1-minute peaks, the averages for a line that warns below; 10-minute ones at 7 days), its lines dashed, the time over
+// them shaded, round steps on the right, clock ticks under it, a legend, and the minute under the pointer read out
+const WXC = {}; let wxN = 0, wxHz = null;
+function wxChart(o, m) {
+  const { ch, g, w, a, b } = o, c = S.L.cells[w.cid];
+  if (!c || !Array.isArray(m.avg) || !Array.isArray(m.max)) { ch.remove(); return; }
+  const r = BYKEY.get(c.key), under = g.eps.some(ep => /\(under its line\)/.test(ep.detail)), src = under ? m.avg : m.max, n = src.length, t0 = m.end - (n - 1) * m.step;
+  const pts = [];
+  for (let i = 0; i < n; i++) { const t = t0 + i * m.step; if (t + m.step <= a || t > b) continue; const v = src[i]; pts.push([t, v == null || !isFinite(v) ? null : +v]); }
+  const vs = pts.filter(p => p[1] !== null); if (vs.length < 2) { ch.remove(); return; }
+  const gl = w.curve || !gatesOn(c.gates) ? {} : gateLines(c.gates), lines = [], side = (y, rr) => { if (y !== undefined) lines.push([y, 'y']); if (rr !== undefined) lines.push([rr, 'r']); };
+  if (gl.below === under) side(gl.y, gl.r); else side(gl.y2, gl.r2);
+  const k = gbK(r), dec = decOfCell(c, r), u = unitOf(r), val = x => lnTxt(x * k, dec, r, under) + (u ? ' ' + u : ''), name = cellName(c);
+  // (round steps, about 4 of them, like the session chart's, from a little under the lowest to a little over the highest)
+  const all = vs.map(p => p[1]).concat(lines.map(l => l[0])), mn = Math.min(...all), mx = Math.max(...all), span = mx - mn || Math.abs(mx) * 0.1 || 1;
+  const raw = span * 1.25 / 4, pw = Math.pow(10, Math.floor(Math.log10(raw))), step = [1, 2, 2.5, 5, 10].map(s => s * pw).find(s => s >= raw);
+  let lo = Math.floor((mn - span * 0.08) / step) * step, top = Math.ceil((mx + span * 0.08) / step) * step;
+  if (mn >= 0) lo = Math.max(0, lo);
+  if (top - lo < 2 * step) { top += step; if (lo - step >= 0 || mn < 0) lo -= step; }
+  const N = pts.length, Wd = N * 10, H = 140, A = pts[0][0], B = A + N * m.step, now = Date.now() / 1000;
+  const X = i => ((i + 0.5) * 10).toFixed(1), XT = t => ((t - A) / (B - A) * Wd).toFixed(1), Y = v => (H - (Math.max(lo, Math.min(top, v)) - lo) / (top - lo) * H).toFixed(1);
+  let grid = '', yl = '';
+  for (let v = lo; v <= top + 1e-9; v += step) { grid += '<line x1="0" x2="' + Wd + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/>'; yl += '<span style="top:' + (+Y(v) / H * 100).toFixed(2) + '%">' + esc(lnTxt(v * k, dec, r, false)) + '</span>'; }
+  let sh = '';
+  for (const ep of g.eps) { const s = Math.max(A, ep.when.getTime() / 1000), e = Math.min(B, ep.end ? ep.end.getTime() / 1000 : ep.interrupted ? s : now); if (e > s) sh += '<rect class="w' + (ep.level === 'RED' ? 'r' : 'y') + '" x="' + XT(s) + '" y="0" width="' + Math.max(2, XT(e) - XT(s)).toFixed(1) + '" height="' + H + '"/>'; }
+  const lns = lines.map(([v, l]) => '<line class="w' + l + '" x1="0" x2="' + Wd + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/>').join('');
+  // (runs of minutes with a value; one on its own between gaps a short dash)
+  let ln = '', run = [];
+  const flush = () => { if (run.length > 1) ln += '<polyline class="fp" points="' + run.map(i => X(i) + ',' + Y(pts[i][1])).join(' ') + '"/>'; else if (run.length === 1) ln += '<polyline class="fp" points="' + (+X(run[0]) - 3) + ',' + Y(pts[run[0]][1]) + ' ' + (+X(run[0]) + 3) + ',' + Y(pts[run[0]][1]) + '"/>'; run = []; };
+  pts.forEach((p, i) => { if (p[1] === null) flush(); else run.push(i); }); flush();
+  // (clock ticks: its ends, and the round minutes between them, as the session chart has them)
+  const spanM = (B - A) / 60, every = spanM > 960 ? 180 : spanM > 480 ? 60 : spanM > 90 ? 30 : spanM > 40 ? 15 : spanM > 15 ? 5 : 1, tz = new Date(A * 1000).getTimezoneOffset() * 60;
+  let tk = '<span class="e0">' + hhmm(A) + '</span>';
+  for (let t = Math.ceil((A - tz) / 60 / every) * every * 60 + tz; t < B; t += every * 60) { const pc = (t - A) / (B - A) * 100; if (pc > 9 && pc < 91 && hhmm(t) !== hhmm(B)) tk += '<span style="left:' + pc.toFixed(2) + '%">' + hhmm(t) + '</span>'; }
+  tk += '<span class="e1">' + hhmm(B) + '</span>';
+  const id = ch._wx || (ch._wx = ++wxN);
+  WXC[id] = { pts, step: m.step, lo, top, lines, under, val, name };
+  const fc = cellTint(w.cid);
+  ch.innerHTML = '<div class="gx-tl wx-tl" data-w="' + id + '"' + (fc ? ' style="--fc:' + fc + '"' : '') + '><div class="gx-ch">' + esc(name) + '<span>' + (m.step === 600 ? '10-minute' : '1-minute') + (under ? ' averages' : ' peaks') + ', the time over its lines shaded</span></div>' +
+    '<div class="gx-hz wx-hz"><div class="gx-tr f"><span class="l">' + esc(u || 'value') + '</span><span class="gx-plot"><svg class="gx-fpsc" viewBox="0 0 ' + Wd + ' ' + H + '" preserveAspectRatio="none">' + grid + sh + lns + ln + '</svg><i class="gx-gd"></i><i class="gx-dot fp"></i></span><span class="gx-yax">' + yl + '</span></div><div class="gx-tip"></div></div>' +
+    '<div class="gx-tr"><span></span><span class="gx-ticks">' + tk + '</span><span></span></div>' +
+    '<div class="gx-tr"><span></span><span class="gx-leg"><span><b class="ln fp"></b>' + esc(name) + '</span>' + lines.map(([v, l]) => '<span><b class="wl ' + l + '"></b>' + (l === 'r' ? 'red' : 'yellow') + ' <i>' + esc(val(v)) + '</i></span>').join('') +
+    (sh ? '<span><b class="wsh"></b>over the line</span>' : '') + '</span><span></span></div></div>';
+}
+// the hover read-out: the minute under the pointer, its guide and dot, its value and whether it was past a line
+function wxHover(hz, e) {
+  if (wxHz && wxHz !== hz) wxHz.classList.remove('hv');
+  wxHz = hz; if (!hz) return;
+  const T = WXC[hz.closest('.wx-tl').dataset.w], plot = hz.querySelector('.gx-plot'); if (!T || !plot) return;
+  const pr = plot.getBoundingClientRect(), f = (e.clientX - pr.left) / Math.max(1, pr.width);
+  if (f < 0 || f > 1) { hz.classList.remove('hv'); return; }
+  const N = T.pts.length, i = Math.max(0, Math.min(N - 1, Math.floor(f * N))), at = ((i + 0.5) / N * 100).toFixed(3) + '%', [t, v] = T.pts[i];
+  hz.querySelector('.gx-gd').style.left = at;
+  const d = hz.querySelector('.gx-dot'); d.style.display = v === null ? 'none' : '';
+  if (v !== null) { d.style.left = at; d.style.top = ((1 - (Math.max(T.lo, Math.min(T.top, v)) - T.lo) / (T.top - T.lo)) * 100).toFixed(2) + '%'; }
+  const past = v === null ? [] : T.lines.filter(([lv]) => T.under ? v <= lv : v >= lv).map(x => x[1]);
+  let h = '<b>' + hhmm(t) + (T.step === 600 ? ' to ' + hhmm(t + 600) : '') + '</b>' + (v === null ? '<span>no reading</span>' : '<span>' + esc(T.name) + ' <em>' + esc(T.val(v)) + '</em></span>');
+  if (past.length) { const red = past.includes('r'); h += '<span><i class="w' + (red ? 'r' : 'y') + '"></i>' + (T.under ? 'under' : 'over') + ' its ' + (red ? 'red' : 'yellow') + ' line</span>'; }
+  const tip = hz.querySelector('.gx-tip');
+  if (tip._h !== h) { tip.innerHTML = h; tip._h = h; }
+  const hr = hz.getBoundingClientRect(), gx = pr.left - hr.left + (i + 0.5) / N * pr.width, tw = tip.offsetWidth;
+  tip.style.left = (gx + 14 + tw > hr.width ? gx - 14 - tw : gx + 14).toFixed(1) + 'px';
+  hz.classList.add('hv');
+}
+$('wlist').addEventListener('pointermove', e => wxHover(e.target.closest && e.target.closest('.wx-hz'), e));
+$('wlist').addEventListener('pointerleave', () => wxHover(null));
+// (quick clicks, one after another, aren't a word picked: no click is lost)
+$('wsum').addEventListener('mousedown', e => { if (e.detail > 1 && e.target.closest('.gx-srow')) e.preventDefault(); });
+$('wlist').addEventListener('mousedown', e => { if (e.detail > 1 && e.target.closest('.gx-row')) e.preventDefault(); });
+$('wsum').addEventListener('click', e => {
+  const t = e.target, pk = gxPicked(e, $('wsum'));
+  // (its row opens and shuts it, like a session's; what opened under it stays open under clicks)
+  if (t.closest('.gx-srow')) { if (!pk) wxSet({ open: !WX.open }); return; }
+  const mb = t.closest('.gx-menu button'); if (mb) { wxSet({ cell: mb.dataset.cell || null, menu: false }); return; }
+  if (t.closest('.gx-dd')) { wxSet({ menu: !WX.menu }); return; }
+  const pb = t.closest('.gx-per button'); if (pb) { wxSet({ period: pb.dataset.p === 'all' ? 'all' : +pb.dataset.p, menu: false }); return; }
+  const gr = t.closest('.gx-gr'); if (gr && !pk) { wxSet({ cell: WX.cell === gr.dataset.cell ? null : gr.dataset.cell, menu: false }); return; }
+  if (WX.menu) wxSet({ menu: false });
+});
+// (the cell list shuts on a click anywhere else; inside the bar its own click does it)
+document.addEventListener('pointerdown', e => { if (WX.menu && !e.target.closest('#wsum')) wxSet({ menu: false }); });
 $('wlist').addEventListener('click', e => {
   if (e.target.closest('#wMore')) {
-    const st = $('wlist').closest('.mcard').scrollTop, open = [...document.querySelectorAll('#wlist .wgrp.open')].map(x => x.dataset.g);
-    wShow += 300; drawWarnList();
-    for (const gi of open) {   // (the groups open before stay open)
-      const row = document.querySelector('#wlist .wgrp[data-g="' + gi + '"]'), sub = document.querySelector('#wlist .wsub[data-sub="' + gi + '"]');
-      if (row && sub && wGroups[+gi]) { row.classList.add('open'); sub.innerHTML = wSubRows(wGroups[+gi]); sub.classList.add('open'); }
-    }
-    $('wlist').closest('.mcard').scrollTop = st; return;
+    const card = $('wlist').closest('.mcard'), st = card.scrollTop, keep = new Set([...$('wlist').querySelectorAll('.gx-sess.open')].map(x => x.dataset.k));   // (the rows open before stay open)
+    wShow += 300; drawWarnList(keep);
+    card.scrollTop = st; return;
   }
-  const r = e.target.closest('.wgrp'); if (!r) return;
-  r.classList.toggle('open');
-  const sub = document.querySelector('.wsub[data-sub="' + r.dataset.g + '"]');
-  if (sub) { if (!sub.firstChild && wGroups[+r.dataset.g]) sub.innerHTML = wSubRows(wGroups[+r.dataset.g]); sub.classList.toggle('open'); }
+  if (e.target.closest('#wbMore')) { const card = $('wlist').closest('.mcard'), st = card.scrollTop; wbShow += 300; wbRender(wbText); card.scrollTop = st; return; }
+  if (PK.w.mode) { const s = e.target.closest('.gx-sess'); if (s) pkToggle('w', s); return; }   // (picking: a click picks)
+  const r = e.target.closest('.gx-row'); if (!r) return;
+  const el = r.parentNode; wxFill(el, wGroups[+el.dataset.g]);
+  el.classList.toggle('open');
+  if (el.classList.contains('open')) centreOpen(el);   // (to the middle, like a session)
 });
 
+// ---- picking rows, and the bins (11-02, his "a bin of sessions and logs, batch selection to restore and delete, delete
+// goes into the bin"): Select puts a box on every row (not the session in progress) and a bar at the bottom: pick all,
+// Cancel, Move to the bin. The bin icon shows what Delete, Keep or a move set aside, the same rows each with its
+// box: pick all, Back, Restore. A move is the rows' exact lines between the log and its bin; undo takes it back ----
+const PK = { g: { mode: null, pick: new Set(), bin: [] }, w: { mode: null, pick: new Set(), bin: [] } };
+const pkEls = k => k === 'g' ? { modal: $('gmodal'), list: $('glist'), bar: $('gbar'), sel: $('gselBtn'), bin: $('gbinBtn') } : { modal: wmodal, list: $('wlist'), bar: $('wbar'), sel: $('wselBtn'), bin: $('wbinBtn') };
+let wbText = '', wbShow = 300;   // (the warnings' bin: its text, how many rows drawn)
+// (a row that can be picked: a session in the log, not the one in progress; a warning that ended; in the bin, one within
+// the days you keep: an older one, back in the log, would be set aside again at once and not shown)
+const pkOld = (k, x) => { const N = k === 'g' ? feed.gameDays : feed.warnDays; if (!N) return false; const cut = Date.now() - N * 86400000; return k === 'g' ? x.end * 1000 < cut : x.first.when.getTime() < cut; };
+const pkCan = (k, x) => !!x && (PK[k].mode === 'bin' ? !pkOld(k, x) : k === 'g' ? !!x._raw && !x.live : !x.ongoing);
+const pkAll = k => k === 'g' ? (PK.g.mode === 'bin' ? PK.g.bin : gxSs) : (PK.w.mode === 'bin' ? PK.w.bin : wGroups);   // (the rows on show)
+const pkItems = k => pkAll(k).filter(x => pkCan(k, x));   // (the ones that can be picked)
+const pkKey = (k, x) => k === 'g' ? x._raw : x.name + '|' + x.first.when.getTime();
+const pkLines = (k, x) => k === 'g' ? (x._raw ? [x._raw] : []) : x.eps.flatMap(ep => (ep._raw || []).concat(ep.closer ? [ep.closer] : []));   // (closer: the bin's mark that ended it)
+const pkItemOf = (k, el) => pkAll(k)[+el.dataset.g];
+const pkWhat = (k, n) => k === 'g' ? plural(n, 'session') : plural(n, 'row');
+// (to the bin and back, 11-02, the motion audit: it blinked. The list stays until the bin's rows come, "loading..." only
+// if they take a while, then they slide in from the right; Back slides the log in from the left, as a period picked
+// does. Only on the switch: never on Show older rows or a list drawn again)
+const pkSlide = (k, dir) => { if (motionMode() !== 'off') pkEls(k).list.animate([{ transform: 'translateX(' + (dir * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); };
+// (the bin's rows came: whether the list was waiting for them, the switch's one slide)
+const pkArrived = k => { const P = PK[k], w = !!P.wait; clearTimeout(P.waitT); P.wait = false; pkEls(k).list.classList.remove('pkwait'); return w; };
+function pkMode(k, mode, quiet) {
+  const P = PK[k], E = pkEls(k), was = P.mode;
+  P.mode = mode; P.pick.clear(); pkArrived(k);
+  E.modal.classList.toggle('binning', mode === 'bin');
+  E.sel.classList.toggle('on', mode === 'sel'); E.bin.classList.toggle('on', mode === 'bin');
+  if (!quiet) {
+    if (mode === 'bin') {
+      if (k === 'w') wbShow = 300;
+      // (the old rows stay, out of reach, until the bin's come)
+      P.wait = true; E.list.classList.add('pkwait'); for (const el of E.list.querySelectorAll('.gx-sess.pk')) el.classList.remove('pk');
+      E.bar.hidden = true; E.bar._h = null;   // (its buttons too: they would act on the bin's rows before they are here; it rises in with them)
+      P.waitT = setTimeout(() => { if (P.wait) E.list.innerHTML = '<div class="wempty">loading...</div>'; }, 150);
+      send({ t: k === 'g' ? 'games:bin' : 'alerts:bin' });
+    }
+    else if (was === 'bin') { if (k === 'g') renderGames(gxText); else renderWarnings(wxText); pkSlide(k, -1); }   // (back: the list as it is now)
+  }
+  if (!P.wait) { pkMark(k); pkBar(k); }   // (waiting: the bin's rows mark them)
+}
+function pkMark(k) {
+  const P = PK[k], E = pkEls(k); E.list.classList.toggle('picking', !!P.mode);
+  if (!P.mode) { for (const el of E.list.querySelectorAll('.gx-sess.pk, .gx-sess.nopk')) { el.classList.remove('pk', 'nopk'); delete el.dataset.tip; } return; }
+  // (picks the list no longer shows go: a period or a game picked meanwhile, a session renamed; the bar follows)
+  const ok = new Set(pkItems(k).map(x => pkKey(k, x))); for (const key of [...P.pick]) if (!ok.has(key)) P.pick.delete(key);
+  const old = P.mode === 'bin' ? 'Older than the ' + (k === 'g' ? feed.gameDays : feed.warnDays) + ' days you keep: keep more days to bring it back' : null;
+  for (const el of E.list.querySelectorAll('.gx-sess')) {
+    const x = pkItemOf(k, el), can = pkCan(k, x); el.classList.toggle('nopk', !can); el.classList.toggle('pk', can && P.pick.has(pkKey(k, x)));
+    if (old && x && !can) el.dataset.tip = old; else if (el.dataset.tip) delete el.dataset.tip;
+  }
+  pkBar(k);
+}
+function pkToggle(k, el) {
+  const x = pkItemOf(k, el); if (!pkCan(k, x)) return;   // (the session in progress, a warning going on, a bin row too old: they stay)
+  const P = PK[k], key = pkKey(k, x);
+  if (P.pick.has(key)) P.pick.delete(key); else P.pick.add(key);
+  el.classList.toggle('pk', P.pick.has(key)); pkBar(k);
+}
+function pkBar(k) {
+  const P = PK[k], E = pkEls(k), n = P.pick.size, all = pkItems(k).length, bin = P.mode === 'bin', tot = bin ? pkAll(k).length : all;
+  const shown = !E.bar.hidden; E.bar.hidden = !P.mode; if (!P.mode) { E.bar._h = null; return; }
+  // (it rises in as it shows, only then: a CSS animation keyed on the motion setting replayed it. 11-02, the motion audit)
+  if (!shown && motionMode() !== 'off') E.bar.animate([{ opacity: 0, translate: '0 8px' }, { opacity: 1, translate: '0 0' }], { duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  // (written only when it changed: a list drawn again under the pointer doesn't take a button from under a click)
+  const h = '<span class="gb-n">' + (bin ? 'The bin: <b>' + pkWhat(k, tot) + '</b>' + (tot > all ? ', ' + (tot - all) + ' older than the days you keep' : '') + (n ? ', ' + n + ' picked' : '') : n ? '<b>' + n + '</b> picked' : 'Pick the ' + (k === 'g' ? 'sessions' : 'rows') + ' to move to the bin') + '</span><span class="sp"></span>' +
+    (all ? '<button class="btn pk-q" data-pk="all">' + (n && n === all ? 'Pick none' : 'Pick all') + '</button>' : '') +
+    '<button class="btn pk-q" data-pk="back">' + (bin ? 'Back' : 'Cancel') + '</button>' +
+    '<button class="btn' + (bin ? ' pk-go' : ' warn') + '" data-pk="' + (bin ? 'restore' : 'del') + '"' + (n ? '' : ' disabled') + '>' + (bin ? 'Restore' : 'Move to the bin') + (n ? ' ' + n : '') + '</button>';
+  if (E.bar._h !== h) { E.bar.innerHTML = h; E.bar._h = h; }
+}
+let pkStep = null;   // (the last move's undo step: the host's answer says whether anything moved)
+function pkAct(k, a) {
+  const P = PK[k], items = pkItems(k);
+  if (a === 'all') { if (P.pick.size && P.pick.size === items.length) P.pick.clear(); else for (const x of items) P.pick.add(pkKey(k, x)); pkMark(k); pkBar(k); return; }
+  if (a === 'back') { pkMode(k, null); return; }
+  const lines = [...new Set(items.filter(x => P.pick.has(pkKey(k, x))).flatMap(x => pkLines(k, x)))]; if (!lines.length) return;   // (once each: a mark can end crossings of several rows)
+  const log = k === 'g' ? 'games' : 'alerts', to = a === 'restore' ? 'log' : 'bak';
+  pkStep = JSON.stringify({ host: { t: 'log:move', log, to: to === 'log' ? 'bak' : 'log', lines, quiet: true }, redo: { t: 'log:move', log, to, lines, quiet: true } });
+  pushUndo(pkStep); syncUndo();
+  send({ t: 'log:move', log, to, lines, n: k === 'g' ? lines.length : items.filter(x => P.pick.has(pkKey(k, x))).reduce((s, g) => s + g.eps.length, 0) });   // (n: how many, as the rows count them)
+  if (a === 'del') pkMode(k, null, true); else { P.pick.clear(); pkBar(k); }   // (the host's new log and bin draw the rows again)
+}
+// the bins on show: sessions', warnings' (the same rows; a crossing the bin has without its end shows no "now")
+function gbRender(text) {
+  if (PK.g.mode !== 'bin' || !$('gmodal').classList.contains('open')) return;   // (shut: it let go of its list)
+  const slide = pkArrived('g');
+  const ss = [];
+  for (const line of (text || '').split(/\r?\n/)) { try { const x = line.trim() ? JSON.parse(line) : null; if (x && typeof x === 'object' && Number.isFinite(x.start) && Number.isFinite(x.end) && x.end >= x.start) { x._raw = line; ss.push(x); } } catch (e) { } }
+  ss.sort((a, b) => b.start - a.start); PK.g.bin = ss;
+  const today = localDay(new Date()), y = new Date(); y.setDate(y.getDate() - 1); const yest = localDay(y), dk = u => localDay(new Date(u * 1000)), per = {};
+  for (const x of ss) per[dk(x.start)] = (per[dk(x.start)] || 0) + 1;
+  let h = '', last = null;
+  ss.forEach((x, i) => { const d = dk(x.start); if (d !== last) { last = d; h += wxDayHd(d, per[d], today, yest, 'session'); } h += gxSessHtml(x, i, false); });
+  $('glist').innerHTML = h ? '<div class="gx-cols"><span></span><span>session</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
+    : '<div class="wempty ico pad">The bin is empty: what Delete, Keep or a move sets aside waits here.</div>';
+  pkMark('g'); pkBar('g'); if (slide) pkSlide('g', 1);
+}
+function wbRender(text) {
+  if (PK.w.mode !== 'bin' || !wmodal.classList.contains('open')) return;   // (shut: it let go of its list)
+  const slide = pkArrived('w');
+  wbText = text || '';
+  // (in time order: the bin gets its lines as they were set aside; with the log's marks, an app's exit or start, HWiNFO
+  // stopping, which stay in the log: a crossing one ended ends there as in the log, and doesn't take in the next one of
+  // its cell. A mark is no crossing's line, so nothing moves with it)
+  const at = l => { const m = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)([+-]\d\d:\d\d)?/.exec(l); return m ? new Date(m[1] + 'T' + m[2] + (m[3] || '')).getTime() || 0 : 0; };
+  const marks = wxText.split(/\r?\n/).filter(l => /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:[+-]\d\d:\d\d)?\s+(MARK|OK)\s/.test(l));   // (and its ends: a crossing Keep cut at midnight has its end in the log)
+  const lines = wbText.split(/\r?\n/).concat(marks).filter(l => l.trim()).map((l, i) => [at(l), i, l]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
+  const groups = wxGroups(wxParse(lines.join('\n'), new Set(marks))).reverse(); for (const g of groups) g.ongoing = false;
+  PK.w.bin = groups;
+  const today = localDay(new Date()), y = new Date(); y.setDate(y.getDate() - 1); const yest = localDay(y), per = {};
+  for (const g of groups) per[g.day] = (per[g.day] || 0) + g.eps.length;
+  wxCellAt = null;
+  let h = '', last = null;
+  groups.slice(0, wbShow).forEach((g, gi) => { if (g.day !== last) { last = g.day; h += wxDayHd(g.day, per[g.day], today, yest); } h += wxRow(g, gi); });
+  if (groups.length > wbShow) h += '<button class="linkbtn wmore" id="wbMore">Show ' + plural(groups.length - wbShow, 'older row') + '</button>';
+  $('wlist').innerHTML = h ? '<div class="gx-cols"><span></span><span>warning</span><span class="gx-r">peak</span><span class="gx-r">lasted</span><span class="gx-r">times</span><span>its lines</span><span class="gx-r">level</span></div>' + h
+    : '<div class="wempty ico pad">The bin is empty: what Keep or a move sets aside waits here.</div>';
+  pkMark('w'); pkBar('w'); if (slide) pkSlide('w', 1);
+}
+for (const k of ['g', 'w']) {
+  const E = pkEls(k);
+  E.sel.onclick = () => pkMode(k, PK[k].mode === 'sel' ? null : 'sel');
+  E.bin.onclick = () => pkMode(k, PK[k].mode === 'bin' ? null : 'bin');
+  E.bar.addEventListener('click', e => { const b = e.target.closest('[data-pk]'); if (b && !b.disabled) pkAct(k, b.dataset.pk); });
+}
 // ---------- game sessions ----------
 const gmodal = $('gmodal');
 // a closed popup lets go of its list (thousands of rows stayed in the page all day) and of Customize (its readings
@@ -4313,7 +5047,7 @@ new MutationObserver(() => {
 }).observe(gmodal, { attributes: true, attributeFilter: ['class'] });
 new MutationObserver(() => { if (!$('wmodal').classList.contains('open')) afterFade($('wmodal'), () => { if ($('wlist').firstChild) { $('wlist').innerHTML = ''; wGroups = []; } }); }).observe($('wmodal'), { attributes: true, attributeFilter: ['class'] });
 let lastGameCount = 0;
-$('gamesBtn').onclick = () => { gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; recKey = null; gxLoaded = false; renderRec(); if (host) { send({ t: 'games' }); gxLive.on = true; send({ t: 'gamesLive', on: true }); } else renderGames(''); };
+$('gamesBtn').onclick = () => { pkMode('g', null, true); gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; recKey = null; gxLoaded = false; renderRec(); if (host) { send({ t: 'games' }); gxLive.on = true; send({ t: 'gamesLive', on: true }); } else renderGames(''); };
 let gxLoaded = false;   // the log is in since the popup opened (Start names the next "Session n" from it)
 // ---- sessions of your own: Start records one (the host follows it like a game's, beside any game), each running one
 // shows on top with its name (change it there), its time so far and Stop ----
@@ -4323,8 +5057,10 @@ function renderRec() {
   const box = $('grun'), rs = feed.rec || [], k = rs.map(x => x[0]).join();
   if (k !== recKey) {   // (drawn again only when one starts or stops: a name being typed stays)
     recKey = k; box.hidden = !rs.length;
-    box.innerHTML = rs.map(x => '<div class="gx-rec" data-start="' + x[0] + '"><span class="rdot"></span><input class="gx-rn" value="' + esc(x[1]) + '" maxlength="60" spellcheck="false" title="Its name: type a new one">' +
-      '<span class="gx-rs">recording since ' + hhmm(x[0]) + '</span><span class="gx-rt"></span><button class="btn" data-rec="stop">Stop</button></div>').join('');
+    // (11-02: a REC badge, its name with a pencil (click to rename), since when, a large clock, Stop)
+    box.innerHTML = rs.map(x => '<div class="gx-rec" data-start="' + x[0] + '"><span class="gx-recb"><span class="rdot"></span>REC</span>' +
+      '<label class="gx-rnw"><input class="gx-rn" value="' + esc(x[1]) + '" maxlength="60" spellcheck="false" title="Its name: click to rename">' + ICONS.pen + '</label>' +
+      '<span class="gx-rs">since ' + hhmm(x[0]) + '</span><span class="gx-rt"></span><button class="btn gx-stop" data-rec="stop"><i></i>Stop</button></div>').join('');
   }
   for (const el of box.children) setText(el.querySelector('.gx-rt'), recClock(Math.max(0, nowTs - +el.dataset.start)));
   $('grec').disabled = rs.length >= 8 || Date.now() < recHold || !gxLoaded;
@@ -4335,7 +5071,14 @@ function recName() {
   for (const nm of gxSs.filter(x => x.custom).map(x => x.game).concat((feed.rec || []).map(x => x[1]))) { const m = /^Session (\d+)$/.exec(nm || ''); if (m) n = Math.max(n, +m[1]); }
   return 'Session ' + (n + 1);
 }
-$('grec').onclick = () => { send({ t: 'rec', act: 'start', name: recName() }); recHold = Date.now() + 2000; $('grec').disabled = true; setTimeout(renderRec, 2050); };   // (back on when the hold ends, not at the next tick)
+// (asked first, 11-02: a click by mistake would record until Stop)
+$('grec').onclick = () => {
+  const nm = recName();
+  askConfirm('Start a session?', 'It records how this PC runs until you press Stop, the way a game\'s session does: fps when a game is in front, temperatures, power, what limits it. It starts as "' + nm + '": rename it any time.', 'Start recording', () => {
+    if (PK.g.mode === 'bin') pkMode('g', null);   // (its strip shows in the list, not over the bin)
+    send({ t: 'rec', act: 'start', name: recName() }); recHold = Date.now() + 2000; $('grec').disabled = true; setTimeout(renderRec, 2050);   // (back on when the hold ends, not at the next tick)
+  }, true);
+};
 $('grun').addEventListener('click', e => { const b = e.target.closest('[data-rec="stop"]'); if (!b) return; b.disabled = true; send({ t: 'rec', act: 'stop', start: +b.closest('.gx-rec').dataset.start }); });
 $('grun').addEventListener('change', e => {
   if (!e.target.matches('.gx-rn')) return;
@@ -4344,7 +5087,6 @@ $('grun').addEventListener('change', e => {
   else { const r = (feed.rec || []).find(x => x[0] === start); if (r) e.target.value = r[1]; }   // (left empty: its name back)
 });
 $('grun').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.gx-rn')) e.target.blur(); });
-$('gclear').onclick = () => askConfirm('Clear all sessions?', 'This wipes the session log (' + lastGameCount + (lastGameCount === 1 ? ' session' : ' sessions') + '). A copy goes to games.log.bak first.', 'Clear sessions', () => send({ t: 'games:clear' }));
 // layout A, the tailored dashboard's popup: a week strip, columns that line up down the list, a session opens into
 // avg / max bars against its lines and a minute by minute timeline
 const GX_CHEV = '<svg class="gx-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg>';
@@ -4369,21 +5111,13 @@ function gxNbar(sp) {
   for (const [k, v] of [['gpu', sp.g], ['cpu', sp.c], ['cap', sp.f]]) { if (v && sp.n) h += '<span class="b-' + k + '" style="left:' + (x / sp.n * 100).toFixed(2) + '%;width:' + (v / sp.n * 100).toFixed(2) + '%"></span>'; x += v; }
   return h + '</span>';
 }
-// a reading's row: avg and max as a bar, its yellow and red lines as ticks (the bar runs a little past the red line,
-// so a max beyond it shows), the max coloured by the lines it passed. Lines that warn below are only ticks
+// a reading's row: its average and its max, the max coloured by the lines it passed (no bar since 11-02, his ask)
 function gxRow(label, lo, hi, avg, max, y, r, unit, dec, peakOnly, below, sc, yn) {
-  const A = gxN(avg), M = gxN(max), P = v => Math.max(0, Math.min(100, (v - lo) / Math.max(1e-9, hi - lo) * 100));
+  const A = gxN(avg), M = gxN(max);
   const lvl = below || M === null ? 0 : gxN(r) !== null && M >= r ? 2 : gxN(y) !== null && M >= y ? 1 : 0, lc = lvl === 2 ? ' r' : lvl === 1 ? ' y' : '';
-  let b = '<span class="gx-mb">';
-  if (M !== null && !peakOnly && A !== null) b += '<i class="a" style="width:' + P(A).toFixed(1) + '%"></i><i class="m' + lc + '" style="left:' + P(A).toFixed(1) + '%;width:' + Math.max(0, P(M) - P(A)).toFixed(1) + '%"></i>';
-  else if (M !== null) b += '<i class="m solo' + lc + '" style="left:0;width:' + P(M).toFixed(1) + '%"></i>';
-  else if (A !== null && !peakOnly) b += '<i class="a solo" style="width:' + P(A).toFixed(1) + '%"></i>';
-  if (gxN(y) !== null && y > lo && y < hi) b += '<i class="t ty" style="left:' + P(y).toFixed(1) + '%"></i>';
-  if (gxN(r) !== null && r > lo && r < hi) b += '<i class="t tr" style="left:' + P(r).toFixed(1) + '%"></i>';
-  b += '</span>';
   // (yn: a Yes/No reading, its average a share of Yes and its peak Yes or No)
   const av = peakOnly ? (sc ? 'of ' + sc : 'peak') : yn ? (A === null ? '--' : Math.round(A * 100) + '% yes') : gxF(A, dec);
-  return '<div class="gx-rw"><span class="n" title="' + label + '">' + label + '</span>' + b + '<span class="a">' + av + '</span><span class="m' + lc + '">' + (yn ? (M === null ? '--' : M >= 0.5 ? 'Yes' : 'No') : gxF(M, dec) + '<u>' + unit + '</u>') + '</span></div>';
+  return '<div class="gx-rw"><span class="n" title="' + label + '">' + label + '</span><span class="a">' + av + '</span><span class="m' + lc + '">' + (yn ? (M === null ? '--' : M >= 0.5 ? 'Yes' : 'No') : gxF(M, dec) + '<u>' + unit + '</u>') + '</span></div>';
 }
 // the main readings a report finds by their HWiNFO names: their name in the details, where a bar starts, where it ends
 // with no red line (0: from the session's own values), decimals, peak only (memory: its peak against what there is)
@@ -4400,7 +5134,7 @@ function gxItems(x) {
 }
 const gxTop = v => { if (!(v > 0)) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); return [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find(s => s * p >= v) * p; };
 function gxItemRow(it, label, spec) {
-  if (!it) return '<div class="gx-rw nil" title="Not recorded in this session: a reading you add is recorded from the next game on"><span class="n">' + label + '</span><span class="gx-mb"></span><span class="a"></span><span class="m">--</span></div>';
+  if (!it) return '<div class="gx-rw nil" title="Not recorded in this session: a reading you add is recorded from your next session on"><span class="n">' + label + '</span><span class="a"></span><span class="m">--</span></div>';
   let { a, m, y, r, hi, u } = it;
   if (u === 'MB') { [a, m, y, r, hi] = [a, m, y, r, hi].map(v => v === null ? null : v / 1024); u = 'GB'; }   // (memory in GB, like the cells)
   const F = /°F/.test(u), deg = c => F ? Math.round(c * 9 / 5 + 32) : c;
@@ -4410,7 +5144,9 @@ function gxItemRow(it, label, spec) {
   if (y !== null && !it.below && y >= top) top = y + (y - lo) * 0.12;
   if (!(top > lo)) top = lo + 1;
   const peak = !!(spec && spec[4]) || (hi !== null && a === null);
-  return gxRow(label, lo, top, a, m, y, r, esc(u), Math.min(spec ? spec[3] : decFor({ unit: u }), it.p != null ? it.p : 1), peak, it.below, hi !== null ? fmt(hi, u === 'GB' ? 0 : decFor({ unit: u })) : '', u === 'Yes/No');
+  const h = gxRow(label, lo, top, a, m, y, r, esc(u), Math.min(spec ? spec[3] : decFor({ unit: u }), it.p != null ? it.p : 1), peak, it.below, hi !== null ? fmt(hi, u === 'GB' ? 0 : decFor({ unit: u })) : '', u === 'Yes/No');
+  const tc = keyTint(it.key);   // (Spectrum: a dot in its category's colour)
+  return tc ? h.replace('<div class="gx-rw">', '<div class="gx-rw" style="--cc:' + tc + '">') : h;
 }
 // minute by minute: fps and its 1% low, and what limited it as each minute's share of the time in front (gpu, cpu,
 // capped); gaps are minutes the game wasn't in front. Sessions before 1.3.0 only kept the call that held most of each
@@ -4437,7 +5173,8 @@ function gxTimeline(x, sp, gi) {
   if (!gxHasTl(D)) return '';
   const T = gxTl[gi] = Object.assign({ start: x.start, custom: !!x.custom, gaps: Array.isArray(x.gaps) ? x.gaps.filter(g => Array.isArray(g) && g.length >= 2) : [] }, D);
   const cut = x.end - x.start > N * 60 + 90;   // (the host keeps 24 hours of minutes)
-  let h = '<div class="gx-tl" data-g="' + gi + '"><div class="gx-ch">over time<span>' + (cut ? 'the first 24 hours, ' : '') + (x.custom ? 'per minute' : 'per minute, gaps are time the game was not in front or closed, or HW Deck was closed') + '</span></div><div class="gx-hz">';
+  const fc = gameTint();   // (Spectrum: the fps line in the game's colour)
+  let h = '<div class="gx-tl" data-g="' + gi + '"' + (fc ? ' style="--fc:' + fc + '"' : '') + '><div class="gx-ch">over time<span>' + (cut ? 'the first 24 hours, ' : '') + (x.custom ? 'per minute' : 'per minute, a gap is time the game was closed or not in front, or HW Deck was closed') + '</span></div><div class="gx-hz">';
   const have = D.fv.filter(v => v !== null);
   if (have.length) {
     // round steps, about 4 of them, from a little under the lowest 1% low to a little over the highest fps
@@ -4551,12 +5288,12 @@ function gxSummary(x, sp, items) {
       : '<div><em>played</em><b>' + durTxt(gxPlay(x)) + '</b><span>' + (away >= 60 ? durTxt(x.front) + ' in front' : 'all of it in front') + '</span></div>') +
     '<div><em>hottest</em><b class="' + hl + '">' + (hot ? gxF(hot.m, 1) + '<small>' + esc(hot.u) + '</small>' : '--') + '</b><span>' + (hot ? esc(hot.main && GX_MAIN[hot.n] ? GX_MAIN[hot.n][0] : hot.n) : '') + '</span></div>' +
     '<div class="w2"><em>limited by</em>' + (sp.n ? gxNbar(sp) + '<span class="gx-split">' + split + '</span>' : '<b>--</b>') + '</div>' +
-    '<div><em>warnings</em><b class="' + (wn ? 'y' : '') + '">' + wn + '</b><span>' + (wl.length ? esc(gxWarn(wl[0])) : wn ? '' : 'none') + '</span></div></div>';
+    '<div><em>warnings</em><b>' + wn + '</b><span>' + (wl.length ? esc(gxWarn(wl[0])) : wn ? '' : 'none') + '</span></div></div>';
 }
 // (lazy: the chart gets a place, drawn when the session first opens)
 function gxDetail(x, sp, gi, lazy, foot) {
   const items = gxItems(x), G = gxLayout(), D = gxMinutes(x);
-  if (!items.length && !gxHasTl(D)) return '<div class="gx-in"><div class="gx-nil">no readings were recorded for this session</div>' + (foot || '') + '</div>';
+  if (!items.length && !gxHasTl(D)) return '<div class="gx-in"><div class="gx-nil">No readings were recorded for this session.</div>' + (foot || '') + '</div>';
   let h = '', grp = '';
   const flush = () => { if (grp) { h += '<div class="gx-groups">' + grp + '</div>'; grp = ''; } };
   const group = (name, rows) => '<div class="gx-grp"><div class="gx-ch">' + esc(name) + '<span>avg &nbsp; max</span></div>' + rows + '</div>';
@@ -4575,8 +5312,6 @@ function gxDetail(x, sp, gi, lazy, foot) {
     }
   }
   flush();
-  if (h.includes('gx-rw')) h += '<div class="gx-key"><span><i class="sw" style="background:#555"></i>average</span><span><i class="sw" style="background:#bdbdbd"></i>max</span><span><i class="tk"></i>yellow line</span><span><i class="tk r"></i>red line</span>' +
-    '<span class="end">a max past a line takes its colour</span></div>';
   return '<div class="gx-in">' + h + (foot || '') + '</div>';
 }
 // the list drawn again (a Customize change), the sessions that were open still open
@@ -4656,8 +5391,8 @@ function renderGz() {
   const info = s => s.kind === 'summary' ? 'fps, played, hottest, limited by, warnings' : s.kind === 'time' ? 'the chart, minute by minute' : plural(s.cells.length, 'reading');
   let h = '<div class="gz-head"><span>Every session\'s details, top to bottom</span><span class="sp"></span><button class="btn" data-gz="reset">Reset to the default</button><button class="btn gz-done" data-gz="done">Done</button></div><div class="gz">';
   h += '<div class="gz-secs" data-list="secs"><div class="gx-ch">categories<span>drag to move</span></div>' + secs.map((s, i) => '<div class="gz-s' + (s.id === GZ.sel ? ' on' : '') + (s.hide ? ' off' : '') + '" data-i="' + i + '" data-id="' + esc(s.id) + '"><span class="grip" title="Drag to move it"></span>' +
-    (s.kind === 'list' ? '<input class="gz-name" data-gz="name" value="' + esc(s.name) + '" maxlength="40" spellcheck="false" title="Its name">' : '<span class="nm">' + esc(gxSecName(s)) + '</span>') +
-    '<span class="x">' + esc(info(s)) + '</span><button class="tog2' + (s.hide ? '' : ' on') + '" data-gz="hide" title="Show it or not"></button>' +
+    (s.kind === 'list' ? '<input class="gz-name" data-gz="name" value="' + esc(s.name) + '" maxlength="40" spellcheck="false" title="Its name: click to rename">' : '<span class="nm">' + esc(gxSecName(s)) + '</span>') +
+    '<span class="x">' + esc(info(s)) + '</span><button class="tog2' + (s.hide ? '' : ' on') + '" data-gz="hide" title="Show or hide it in the details"></button>' +
     (s.kind === 'list' ? '<button class="ib" data-gz="del" title="Remove the category">' + ICONS.x + '</button>' : '<span class="gz-ph"></span>') + '</div>').join('') +
     '<button class="linkbtn" data-gz="addsec">+ New category</button></div>';
   const s = secs.find(x => x.id === GZ.sel);
@@ -4667,17 +5402,19 @@ function renderGz() {
       s.cells.map((c, j) => '<div class="gz-c" data-i="' + j + '"><span class="grip" title="Drag to move it"></span><input class="gz-name" data-gz="cname" value="' + esc(gxCellName(c)) + '" maxlength="40" spellcheck="false" title="Its name in the details">' +
         '<span class="x">' + esc(gxCellFrom(c)) + '</span><button class="ib" data-gz="cdel" title="Take it out">' + ICONS.x + '</button></div>').join('') + '</div>';
     if (s.cells.length >= GX_MAX) h += '<div class="gz-note">A category takes ' + GX_MAX + ' readings at most: take one out, or start a new category.</div>';
-  } else h += '<div class="gz-note">Add a category (on the left) to put readings in.</div>';
+  } else h += '<div class="gz-note">Add a category on the left to put readings in.</div>';
   h += '<div class="gz-note">A reading you add is recorded from your next session on: the sessions before it have no value for it.</div></div>';
   h += '<div class="gz-add"><div class="gx-ch">readings<span>' + (s ? '+ adds to ' + esc(s.name) : '') + '</span></div><div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>' +
     '<input id="gzQ" type="search" placeholder="Search sensors, labels, units" autocomplete="off" spellcheck="false" value="' + esc(GZ.q) + '"></div><div class="chips"></div><div class="vlist gz-list"><div class="vspace"></div></div></div></div>';
   const ae = document.activeElement, f = ae && ae.id === 'gzQ' ? [ae.selectionStart] : null, old = box.querySelector('.gz-list'), st = old ? old.scrollTop : 0;
+  const tw = togSnap(box);
   box.innerHTML = h; box.hidden = false;
+  togSlide(box, tw);
   const vl = box.querySelector('.gz-list'); vl.addEventListener('scroll', gzDraw);
   gzCompute(); gzChips(); gzDraw(); vl.scrollTop = st; gzDraw();
   if (f) { const q = $('gzQ'); if (q) { q.focus(); q.setSelectionRange(f[0], f[0]); } }
 }
-$('gcustom').onclick = () => { GZ.on = !GZ.on; GZ.q = ''; GZ.t = 'all'; renderGz(); };
+$('gcustom').onclick = () => { if (PK.g.mode === 'bin') pkMode('g', null); GZ.on = !GZ.on; GZ.q = ''; GZ.t = 'all'; renderGz(); };
 $('gcz').addEventListener('click', e => {
   const b = e.target.closest('[data-gz]'), row = e.target.closest('.gz-s');
   if (!b) { if (row && !e.target.closest('input') && row.querySelector('.gz-name')) { GZ.sel = row.dataset.id; renderGz(); } return; }
@@ -4690,7 +5427,7 @@ $('gcz').addEventListener('click', e => {
   else if (k === 'reset') { GZ.sel = null; gzApply(() => { delete S.L.games; }); }
   else if (k === 'hide') gzEdit(G => { G.secs[i].hide = !G.secs[i].hide; if (!G.secs[i].hide) delete G.secs[i].hide; });
   else if (k === 'del') gzEdit(G => { G.secs.splice(i, 1); });
-  else if (k === 'addsec' && gxLayout().secs.length >= 16) toast('A report has at most 16 categories');   // (what a file keeps)
+  else if (k === 'addsec' && gxLayout().secs.length >= 16) toast('A session\'s details take 16 categories at most');   // (what a file keeps)
   else if (k === 'addsec') { const id = nid('g'); GZ.sel = id; gzEdit(G => { G.secs.push({ id, kind: 'list', name: 'New category', cells: [] }); }); const n = document.querySelector('#gcz .gz-s.on .gz-name'); if (n) { n.focus(); n.select(); } }
   else if (k === 'add' && rk) gzEdit(G => { const s = G.secs.find(x => x.id === GZ.sel); if (s && s.cells.length < GX_MAX && !s.cells.some(c => c.key === rk)) s.cells.push({ key: rk }); });
   else if (k === 'out' && rk) gzEdit(G => { const s = G.secs.find(x => x.id === GZ.sel), j = s ? s.cells.findIndex(c => c.key === rk) : -1; if (j >= 0) s.cells.splice(j, 1); });
@@ -4754,32 +5491,196 @@ $('gcz').addEventListener('pointerdown', e => {
 // a session's breaks (the game closed and started again within Settings' Same game again: one session) aren't play
 const gxGap = x => Array.isArray(x.gaps) ? x.gaps.reduce((p, g) => p + (Array.isArray(g) && g.length >= 2 ? Math.max(0, g[1] - g[0]) : 0), 0) : 0;
 const gxPlay = x => Math.max(0, x.end - x.start - gxGap(x));
-// the week's numbers and strip (gsum); returns each day's count and length, for the day headers
+// its play between two moments (b: Infinity for to now), breaks left out: a session over midnight counts on each day
+const gxPlayIn = (x, a, b) => { const o = (s, e) => Math.max(0, Math.min(e, b) - Math.max(s, a)); return Math.max(0, o(x.start, x.end) - (Array.isArray(x.gaps) ? x.gaps.reduce((p, g) => p + (Array.isArray(g) && g.length >= 2 ? o(g[0], g[1]) : 0), 0) : 0)); };
+// a day's start (midnight, or the first hour where a clock change skips it), from its date: the next one is the date + 1,
+// not +24 h (a clock change day is 23 or 25 h)
+const gxMid = (y, m, d) => new Date(y, m, d).getTime() / 1000;
+// each day's count and length, for the day headers: the sessions that started on it, whole
+function gxByDay(ss) {
+  const byDay = {};
+  for (const x of ss) { const k = localDay(new Date(x.start * 1000)), d = byDay[k] || (byDay[k] = { n: 0, t: 0 }); d.n++; d.t += gxPlay(x); }
+  return byDay;
+}
+// the summary bar opened (a click on it): a period, one game or all, their numbers, a bar a day (a week over long
+// spans) and each game's share. The periods go as far back as Keep sessions keeps: 7, 30 and 90 days under it, then the
+// days kept, or "all" when they are kept forever; one alone (5 days kept, or 7): no switch. The list under it shows the
+// picked game's sessions; closing the bar shows them all again
+const GX = { open: false, period: 7, game: null, menu: false, slide: null };   // (slide: a pick's direction, -1 / 1, while it is drawn)
+let gxLc = null;   // the opened bar's chart: its points and scale, for the read-out
+let gxAll = [];   // every session (the list: gxSs, the picked game's)
+function gxPeriods() { const K = feed.gameDays || Infinity, o = [7, 30, 90].filter(q => q < K); o.push(K === Infinity ? 'all' : K); return o; }
+function gxSumOpen(all) {
+  const ps = gxPeriods(); if (!ps.includes(GX.period)) GX.period = ps.includes(7) ? 7 : ps[0];
+  const games = all.filter(x => !x.custom), mine = GX.game ? games.filter(x => x.game === GX.game) : games;   // (games', like the week's)
+  const P = GX.period, td = new Date(), f0 = games.length ? new Date(Math.min(...games.map(x => x.start)) * 1000) : td;
+  const a = P === 'all' ? gxMid(f0.getFullYear(), f0.getMonth(), f0.getDate()) : gxMid(td.getFullYear(), td.getMonth(), td.getDate() - (P - 1));
+  const a0 = new Date(a * 1000), nd = Math.max(1, Math.round((gxMid(td.getFullYear(), td.getMonth(), td.getDate() + 1) - a) / 86400));
+  const rec = mine.filter(x => x.end > a);
+  const days = [];
+  for (let i = 0; i < nd; i++) { const s = gxMid(a0.getFullYear(), a0.getMonth(), a0.getDate() + i), e = gxMid(a0.getFullYear(), a0.getMonth(), a0.getDate() + i + 1); days.push([rec.reduce((p, x) => p + gxPlayIn(x, s, e), 0), new Date(s * 1000)]); }
+  const per = Object.create(null);
+  for (const x of games) { if (x.end <= a) continue; const o = per[x.game] || (per[x.game] = { t: 0, n: 0, fs: 0, fn: 0, last: 0 }); o.t += gxPlayIn(x, a, Infinity); o.n++; if (x.fps > 0) { o.fs += x.fps; o.fn++; } o.last = Math.max(o.last, x.end); }
+  const names = Object.keys(per).sort((p, q) => per[q].t - per[p].t);
+  // the games to pick from: every game in the log, most played first
+  let menu = '';
+  if (GX.menu) {
+    const allG = Object.create(null); for (const x of games) allG[x.game] = (allG[x.game] || 0) + gxPlay(x);
+    const gl = Object.keys(allG).sort((p, q) => allG[q] - allG[p]);
+    menu = '<div class="smenu gx-menu"><button data-game=""' + (GX.game ? '' : ' class="on"') + '>All Games<small>' + gl.length + (gl.length === 1 ? ' game' : ' games') + '</small></button><div class="gx-msep"></div>' +
+      gl.map(k => '<button data-game="' + esc(k) + '"' + (k === GX.game ? ' class="on"' : '') + '>' + esc(k) + '<small>' + durTxt(allG[k]) + '</small></button>').join('') + '</div>';
+  }
+  // (the game list and the periods, a pill that glides to the one picked, like the view tabs; nothing the row above
+  // already says: no title, no totals)
+  const head = '<span class="gx-ddw"><button class="gx-dd' + (GX.menu ? ' on' : '') + '" title="Show one game">' + (GX.game ? esc(GX.game) : 'All Games') + GX_CHEV + '</button>' + menu + '</span>' +
+    (ps.length > 1 ? '<span class="seg seg3 gx-per"><i class="ind"></i>' + ps.map(q => '<button data-p="' + q + '"' + (q === P ? ' class="on"' : '') + '>' + (q === 'all' ? 'All' : q + ' days') + '</button>').join('') + '</span>' : '');
+  let h = '';
+  // the chart: hours played a day (a week past 120 days) as a line, like a session's fps; the average dashed, hours on
+  // the left; the pointer on it reads a day out (gxLcHover). Labels: the days of a week, Mondays, or the months
+  let pts = days.map(([t, d]) => ({ t, d, w: 0 }));
+  if (nd > 120) { pts = []; for (let i = 0; i < nd; i += 7) pts.push({ t: days.slice(i, i + 7).reduce((p, d) => p + d[0], 0), d: days[i][1], w: Math.min(7, nd - i) }); }
+  for (const o of pts) { const s = o.d.getTime() / 1000, e = gxMid(o.d.getFullYear(), o.d.getMonth(), o.d.getDate() + (o.w || 1)); o.n = rec.filter(x => gxPlayIn(x, s, e) > 0).length; }
+  const n = pts.length, H = 120, ymax = Math.max(2, Math.ceil(Math.max(...pts.map(o => o.t)) / 3600 / 2) * 2) * 3600, Y = v => +(H - v / ymax * H).toFixed(1), X = i => +((i + 0.5) / n * 100).toFixed(3);
+  const avg = pts.reduce((p, o) => p + o.t, 0) / n, line = pts.map((o, i) => X(i) + ',' + Y(o.t)).join(' ');
+  gxLc = { pts, n, Y };
+  h += '<div class="gx-lc"><div class="gx-lcg"><div class="gx-lcy" style="height:' + H + 'px">' + [0, ymax / 2, ymax].map(v => '<span style="top:' + Y(v) + 'px">' + (v / 3600) + 'h</span>').join('') + '</div>' +
+    '<div class="gx-lcp gx-hz" style="height:' + H + 'px"><svg viewBox="0 0 100 ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' +
+    [0, ymax / 2, ymax].map(v => '<line class="g" x1="0" x2="100" y1="' + Y(v) + '" y2="' + Y(v) + '"/>').join('') +
+    (avg ? '<line class="av" x1="0" x2="100" y1="' + Y(avg) + '" y2="' + Y(avg) + '"/>' : '') +
+    '<polygon points="' + X(0) + ',' + H + ' ' + line + ' ' + X(n - 1) + ',' + H + '"/><polyline points="' + line + '"/></svg>' +
+    (n <= 7 ? pts.map((o, i) => '<i class="gx-lcd" style="left:' + X(i) + '%;top:' + Y(o.t) + 'px"></i>').join('') : '') +
+    (avg ? '<span class="gx-lca" style="top:' + Y(avg) + 'px">avg ' + durTxt(avg) + (nd > 120 ? '/wk' : '') + '</span>' : '') +
+    '<div class="gx-gd"></div><div class="gx-dot fp"></div><div class="gx-tip"></div></div><span></span></div>';
+  const xl = (o, i) => n <= 7 ? GX_WD[o.d.getDay()].slice(0, 3) : o.w ? (o.d.getDate() <= 7 && i < n - 2 ? GX_MON[o.d.getMonth()] : '') : (o.d.getDay() === 1 && i < n - 4 ? o.d.getDate() + ' ' + GX_MON[o.d.getMonth()] : '');
+  h += '<div class="gx-lcg"><span></span><div class="gx-lcx">' + pts.map((o, i) => { const t = xl(o, i); return t ? '<span style="left:' + X(i) + '%">' + t + '</span>' : ''; }).join('') + (n > 7 && !pts[n - 1].w ? '<span class="e">today</span>' : '') + '</div><span></span></div></div>';
+  // each game's part of the period; a row picks that game (again: all games)
+  const sum = names.reduce((p, k) => p + per[k].t, 0) || 1, ago = u => { const k = Math.round((gxMid(td.getFullYear(), td.getMonth(), td.getDate()) - gxMid(new Date(u * 1000).getFullYear(), new Date(u * 1000).getMonth(), new Date(u * 1000).getDate())) / 86400); return k <= 0 ? 'today' : k === 1 ? 'yesterday' : k + ' days ago'; };
+  if (names.length) h += '<div class="gx-gtab"><div class="gx-gh"><span>game</span><span>share of the time</span><span class="gx-r">played</span><span class="gx-r">sessions</span><span class="gx-r">average</span><span class="gx-r">fps</span><span class="gx-r">last played</span></div>' +
+    names.map(k => { const o = per[k]; return '<div class="gx-gr' + (k === GX.game ? ' on' : '') + '" data-game="' + esc(k) + '" tabindex="0" role="button"><span class="gx-gnm">' + esc(k) + '</span><span class="gx-gbar"><span style="width:' + (o.t / sum * 100).toFixed(1) + '%"></span></span><span class="gx-r">' + durTxt(o.t) + '</span><span class="gx-r">' + o.n + '</span><span class="gx-r">' + durTxt(o.t / o.n) + '</span><span class="gx-r">' + (o.fn ? Math.round(o.fs / o.fn) : '--') + '</span><span class="gx-r gx-ago">' + ago(o.last) + '</span></div>'; }).join('') + '</div>';
+  return { head, body: h };
+}
+// the week's numbers and strip (gsum), or the bar opened
 function gxSum(ss, live) {
   // the week: today and the 6 days before, from the first bar's midnight, as the strip draws them
-  const days = [];
-  for (let i = 6; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); days.push(d); }
-  const now = Date.now() / 1000, week = days[0].getTime() / 1000, recent = ss.filter(x => x.start >= week && !x.custom), per = {};   // (the week's numbers are games')
-  for (const x of recent) per[x.game] = (per[x.game] || 0) + gxPlay(x);
+  const days = [], td = new Date();
+  for (let i = 6; i >= 0; i--) days.push(new Date(td.getFullYear(), td.getMonth(), td.getDate() - i));
+  const now = Date.now() / 1000, week = days[0].getTime() / 1000, recent = ss.filter(x => x.end > week && !x.custom), per = Object.create(null);   // (the week's numbers are games', the part of each played in it)
+  for (const x of recent) per[x.game] = (per[x.game] || 0) + gxPlayIn(x, week, Infinity);
   const top = Object.keys(per).sort((a, b) => per[b] - per[a])[0];
-  const total = recent.reduce((p, x) => p + gxPlay(x), 0);
-  const dayKey = u => localDay(new Date(u * 1000)), byDay = {};
-  for (const x of ss) { const d = byDay[dayKey(x.start)] || (byDay[dayKey(x.start)] = { n: 0, t: 0 }); d.n++; d.t += gxPlay(x); }
+  const total = recent.reduce((p, x) => p + gxPlayIn(x, week, Infinity), 0);
   // the week strip: minutes played on each of the last 7 days, today last
   let wk = '';
-  const dayMins = days.map(d => { const k = localDay(d); return recent.filter(x => dayKey(x.start) === k).reduce((p, x) => p + gxPlay(x) / 60, 0); });
+  const dayMins = days.map(d => { const a = d.getTime() / 1000, e = gxMid(d.getFullYear(), d.getMonth(), d.getDate() + 1); return recent.reduce((p, x) => p + gxPlayIn(x, a, e) / 60, 0); });
   const peak = Math.max(60, ...dayMins);
   days.forEach((d, i) => { const v = dayMins[i]; wk += '<span class="gx-wd' + (i === 6 ? ' today' : '') + '" title="' + (v ? durTxt(v * 60) : 'nothing') + '"><i' + (v ? '' : ' class="z"') + ' style="height:' + (v ? Math.max(3, Math.round(v / peak * 22)) : 2) + 'px"></i><em>' + GX_WD[d.getDay()][0].toUpperCase() + '</em></span>'; });
-  const gs = $('gsum'), gh = ss.some(x => !x.custom) ? '<div class="gx-sum"><div class="gx-sumtxt">' +
+  const has = ss.some(x => !x.custom); if (!has) GX.open = false;
+  const gs = $('gsum');
+  if (!has) { if (gs.firstChild) gs.innerHTML = ''; return; }
+  // the bar: its row (the week, as it always shows) and under it what opens, like a session's details. Both stay in
+  // place: opening, shutting and a pick move them instead of drawing them anew
+  let box = gs.querySelector(':scope > .gx-sum');
+  if (!box) {
+    gs.innerHTML = '<div class="gx-sum"><div class="gx-srow" tabindex="0" role="button"></div><div class="gx-sdet"><div><div class="gx-sdin"><div class="gx-xh"></div><div class="gx-xb"></div></div></div></div></div>';
+    box = gs.firstChild;
+  }
+  const row = GX_CHEV + '<div class="gx-sumtxt">' +
     '<div class="gx-stat"><em>last 7 days</em><b>' + recent.length + '<small>' + (recent.length === 1 ? 'session' : 'sessions') + '</small></b></div>' +
     '<div class="gx-stat"><em>played</em><b>' + (total ? durTxt(total) : '0m') + '</b></div>' +
     (top ? '<div class="gx-stat"><em>most played</em><b>' + esc(top) + '<small>' + durTxt(per[top]) + '</small></b></div>' : '') +
-    '</div><div class="gx-week">' + wk + '</div></div>' : '';
+    '</div><div class="gx-week">' + wk + '</div>';
   // (written only when they changed, and the live row's updates wait while text in them is picked)
   const sl = live && getSelection(), held = sl && sl.rangeCount && !sl.isCollapsed && sl.getRangeAt(0).intersectsNode(gs);
-  if (gs._h !== gh && !held) { gs.innerHTML = gh; gs._h = gh; }
-  return byDay;
+  const rw = box.firstChild;   // (no hover text: his call 11-02)
+  if (rw._h !== row && !held) { rw.innerHTML = row; rw._h = row; }
+  // (a live update waits while the pointer is on what opened, the focus is in the bar or its game list is open: a
+  // read-out, a row in focus or the list's scroll would go with the redraw; the next update after)
+  const busy = live && (GX.menu || gs.contains(document.activeElement) || !!gs.querySelector('.gx-sdet:hover'));
+  if (GX.open && !held && !busy) {
+    const o = gxSumOpen(ss), hd = box.querySelector('.gx-xh'), bd = box.querySelector('.gx-xb'), det = box.querySelector('.gx-sdet');
+    const slide = GX.slide && box.classList.contains('open') && motionMode() !== 'off' ? GX.slide : 0;   // (a pick in the open bar)
+    if (hd._h !== o.head) {
+      // (the period's pill glides from where it was to the one picked)
+      const i0 = hd.querySelector('.gx-per .ind'), was = i0 ? { x: i0.style.transform, w: i0.style.width } : null;
+      hd.innerHTML = o.head; hd._h = o.head;
+      gxPill(hd, slide ? was : null);
+    }
+    if (bd._h !== o.body) {
+      const h0 = slide ? det.offsetHeight : 0;
+      bd.innerHTML = o.body; bd._h = o.body;
+      if (slide) {
+        // (like Tiles to Overview: the new numbers come in from the side of the pick; the bar eases to their height)
+        const e = 'cubic-bezier(0.2, 0.8, 0.2, 1)', h1 = det.offsetHeight;
+        bd.animate([{ transform: 'translateX(' + (slide * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: e });
+        if (Math.abs(h1 - h0) > 1) det.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: 300, easing: e });
+      }
+    }
+  }
+  // (shutting keeps what it showed, so it folds away instead of vanishing; the open state goes on once the details
+  // are in, so they unfold from nothing)
+  if (box.classList.contains('open') !== GX.open) { if (GX.open) void box.offsetHeight; box.classList.toggle('open', GX.open); }
 }
+// the period pill under the picked period: moved at once (a new bar), or from where it was (a pick)
+function gxPill(hd, was) {
+  const ind = hd.querySelector('.gx-per .ind'), b = hd.querySelector('.gx-per button.on'); if (!ind || !b) return;
+  const to = () => { ind.style.transform = 'translateX(' + (b.offsetLeft - 2) + 'px)'; ind.style.width = b.offsetWidth + 'px'; };
+  ind.classList.add('still');
+  if (was && was.w) { ind.style.transform = was.x; ind.style.width = was.w; void ind.offsetWidth; ind.classList.remove('still'); to(); }
+  else { to(); void ind.offsetWidth; ind.classList.remove('still'); }
+}
+// the bar opened or shut, a period, a game: the summary drawn again; a game picked (or dropped) draws the list too,
+// and a pick slides in from its side (a later period or game from the right, an earlier one from the left)
+function gxSet(o) {
+  const g = GX.game, p0 = GX.period, was = GX.open; Object.assign(GX, o); if (!GX.open) { GX.game = null; GX.menu = false; }
+  if (was && GX.open) {
+    const ps = gxPeriods(), order = gxGameOrder();
+    GX.slide = GX.period !== p0 ? Math.sign(ps.indexOf(GX.period) - ps.indexOf(p0)) || 1 : GX.game !== g ? Math.sign(order.indexOf(GX.game) - order.indexOf(g)) || 1 : null;
+  }
+  // (the focus stays on what was picked: the redraw makes new buttons, the keyboard carries on from the same one)
+  const ae = document.activeElement, gs = $('gsum'), q = !ae || !gs.contains(ae) ? null : ae.matches('.gx-per button') ? '.gx-per button[data-p="' + ae.dataset.p + '"]'
+    : ae.matches('.gx-gr') ? '.gx-gr[data-game="' + CSS.escape(ae.dataset.game) + '"]' : ae.matches('.gx-dd, .gx-menu button') ? '.gx-dd' : ae.matches('.gx-srow') ? '.gx-srow' : null;
+  try {
+    if (GX.game !== g) {
+      renderGames(gxText, $('glist').querySelector('.gx-sess') ? gxOpen() : undefined);
+      if (GX.slide && motionMode() !== 'off') $('glist').animate([{ transform: 'translateX(' + (GX.slide * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    } else gxSum(gxAll);
+  } finally { GX.slide = null; }
+  const n = q && gs.querySelector(q); if (n && n !== document.activeElement) n.focus({ preventScroll: true });
+}
+// the games in the game list's order: all of them first, then the most played (a pick's side goes by it)
+function gxGameOrder() { const t = Object.create(null); for (const x of gxAll) if (!x.custom) t[x.game] = (t[x.game] || 0) + gxPlay(x); return [null].concat(Object.keys(t).sort((p, q) => t[q] - t[p])); }
+// (quick clicks, one after another: a word picked by the second one is not text picked, so no click is lost; text
+// dragged over in the bar is, and holds it as it is)
+const gxPicked = (e, el) => { const sl = getSelection(); return e.detail < 2 && sl && sl.rangeCount > 0 && !sl.isCollapsed && sl.getRangeAt(0).intersectsNode(el); };
+$('gsum').addEventListener('mousedown', e => { if (e.detail > 1 && e.target.closest('.gx-srow')) e.preventDefault(); });
+$('glist').addEventListener('mousedown', e => { if (e.detail > 1 && e.target.closest('.gx-row')) e.preventDefault(); });
+$('gsum').addEventListener('click', e => {
+  const t = e.target, pk = gxPicked(e, $('gsum'));
+  // (its row opens and shuts it, like a session's; what opened under it stays open under clicks)
+  if (t.closest('.gx-srow')) { if (!pk) gxSet({ open: !GX.open }); return; }
+  const mb = t.closest('.gx-menu button'); if (mb) { gxSet({ game: mb.dataset.game || null, menu: false }); return; }
+  if (t.closest('.gx-dd')) { gxSet({ menu: !GX.menu }); return; }
+  const pb = t.closest('.gx-per button'); if (pb) { gxSet({ period: pb.dataset.p === 'all' ? 'all' : +pb.dataset.p, menu: false }); return; }
+  const gr = t.closest('.gx-gr'); if (gr && !pk) { gxSet({ game: GX.game === gr.dataset.game ? null : gr.dataset.game, menu: false }); return; }
+  if (GX.menu) gxSet({ menu: false });
+});
+// the chart's read-out: the day (or week) under the pointer, its time and sessions, on the side that has room
+function gxLcHover(pl, e) {
+  const on = $('gsum').querySelector('.gx-lcp.hv');
+  if (!pl || !gxLc || !gxLc.n) { if (on) on.classList.remove('hv'); return; }
+  const L = gxLc, r = pl.getBoundingClientRect(), i = Math.max(0, Math.min(L.n - 1, Math.floor((e.clientX - r.left) / r.width * L.n))), o = L.pts[i], x = (i + 0.5) / L.n * 100;
+  pl.querySelector('.gx-gd').style.left = x + '%';
+  const d = pl.querySelector('.gx-dot'); d.style.left = x + '%'; d.style.top = L.Y(o.t) + 'px';
+  const tip = pl.querySelector('.gx-tip');
+  tip.innerHTML = '<b>' + (o.w ? 'week of ' + o.d.getDate() + ' ' + GX_MON[o.d.getMonth()] : GX_WD[o.d.getDay()] + ' ' + o.d.getDate() + ' ' + GX_MON[o.d.getMonth()]) + '</b><span>' + (o.t ? durTxt(o.t) + ' played, ' + o.n + (o.n === 1 ? ' session' : ' sessions') : 'nothing played') + '</span>';
+  const px = (i + 0.5) / L.n * r.width, w = tip.offsetWidth;
+  tip.style.left = (px + 14 + w > r.width ? px - 14 - w : px + 14) + 'px'; tip.style.top = '-6px';
+  pl.classList.add('hv');
+}
+$('gsum').addEventListener('pointermove', e => gxLcHover(e.target.closest && e.target.closest('.gx-lcp'), e));
+$('gsum').addEventListener('pointerleave', () => gxLcHover(null));
+$('gsum').addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.gx-srow, .gx-gr')) { e.preventDefault(); e.target.click(); } });
+// (the game list shuts on a click anywhere else)
+document.addEventListener('pointerdown', e => { if (GX.menu && !e.target.closest('#gsum')) gxSet({ menu: false }); });   // (inside the bar its own click does it)
 const gxDayTot = same => same.n + (same.n === 1 ? ' session, ' : ' sessions, ') + durS(same.t);
 function renderGames(text, keep) {
   // a session's name being typed stays through the redraw: its value, caret and focus, on the same session's field
@@ -4787,9 +5688,10 @@ function renderGames(text, keep) {
   const nk = nx ? { start: nx.start, game: nx.game, v: nf.value, a: nf.selectionStart, b: nf.selectionEnd, typed: nf.value !== nx.game || !!nf._nmKeep } : null;
   if (nx) nf._nmKeep = 0;   // (the old field goes: nothing saved from it on its way out)
   gxText = text || ''; gxLoaded = true; renderRec();
-  const ss = [];
+  if (PK.g.mode === 'bin') return;   // (the bin on show: the list waits for Back)
+  let ss = [];
   for (const line of (text || '').split(/\r?\n/)) {
-    try { const x = line.trim() ? JSON.parse(line) : null; if (x && typeof x === 'object' && Number.isFinite(x.start) && Number.isFinite(x.end) && x.end >= x.start) ss.push(x); } catch (e) { }
+    try { const x = line.trim() ? JSON.parse(line) : null; if (x && typeof x === 'object' && Number.isFinite(x.start) && Number.isFinite(x.end) && x.end >= x.start) { x._raw = line; ss.push(x); } } catch (e) { }   // (_raw: its line, for a move to the bin)
   }
   // (the session in progress: Now playing. A log line with its start is its earlier part while a merge's old line
   // waits to come out, or the line written at its end, which ends as late or later)
@@ -4797,31 +5699,33 @@ function renderGames(text, keep) {
   const keepCut = feed.gameDays ? Date.now() / 1000 - feed.gameDays * 86400 : -Infinity;   // (no days set after a damaged settings file: nothing is cut)
   for (let i = ss.length - 1; i >= 0; i--) if (ss[i].end < keepCut) ss.splice(i, 1);   // (older than the days kept: going at the next trim)
   ss.sort((a, b) => b.start - a.start);
-  lastGameCount = ss.filter(x => !x.live).length; gxTl.length = 0; gxSs = ss;   // (Clear's count: the log's, not the one in progress)
-  const byDay = gxSum(ss), now = Date.now() / 1000, dayKey = u => localDay(new Date(u * 1000));
+  lastGameCount = ss.filter(x => !x.live).length; gxTl.length = 0; gxAll = ss.slice();   // (Clear's count: the log's, not the one in progress)
+  if (GX.game && !ss.some(x => x.game === GX.game)) GX.game = null;   // (its sessions all gone: all games again)
+  gxSum(ss);
+  if (GX.game) ss = ss.filter(x => x.game === GX.game);   // (the picked game's sessions; the headers count its time)
+  gxSs = ss;
+  const byDay = gxByDay(ss), now = Date.now() / 1000, dayKey = u => localDay(new Date(u * 1000));
   const today = localDay(new Date()), yd = new Date(); yd.setDate(yd.getDate() - 1);
   const yest = localDay(yd);
-  let h = '', lastDay = null;
-  ss.forEach((x, i) => {
-    const dk = dayKey(x.start);
-    if (dk !== lastDay) {
-      lastDay = dk;
-      const d = new Date(x.start * 1000), same = byDay[dk];
-      const name = dk === today ? 'today' : dk === yest ? 'yesterday' : now - x.start < 6 * 86400 ? GX_WD[d.getDay()] : '';
-      const date = (name && name !== 'today' && name !== 'yesterday' ? '' : GX_WD[d.getDay()].slice(0, 3) + ' ') + d.getDate() + ' ' + GX_MON[d.getMonth()];   // "thursday 8 oct", "yesterday sat 10 oct"
-      h += '<div class="gx-day"><div>' + (name ? name + '<span>' + date + '</span>' : date) + '</div><div class="gx-tot">' + gxDayTot(same) + '</div></div>';
-    }
-    h += gxSessHtml(x, i, i === 0 && !Array.isArray(keep));
-  });
+  // a day's header: its sessions and their time (the week strip and the chart count a session past midnight on both days)
+  const dayHd = dk => {
+    const [yy, mm, dd] = dk.split('-').map(Number), d = new Date(yy, mm - 1, dd);
+    const name = dk === today ? 'today' : dk === yest ? 'yesterday' : now - d.getTime() / 1000 < 6 * 86400 ? GX_WD[d.getDay()] : '';
+    const date = (name && name !== 'today' && name !== 'yesterday' ? '' : GX_WD[d.getDay()].slice(0, 3) + ' ') + d.getDate() + ' ' + GX_MON[d.getMonth()];   // "thursday 8 oct", "yesterday sat 10 oct"
+    return '<div class="gx-day" data-day="' + dk + '"><div>' + (name ? name + '<span>' + date + '</span>' : date) + '</div><div class="gx-tot">' + gxDayTot(byDay[dk]) + '</div></div>';
+  };
+  // each day: its header, the sessions that started on it (a session past midnight stays whole under its first day)
+  let h = '', last = null;
+  ss.forEach((x, i) => { const dk = dayKey(x.start); if (dk !== last) { last = dk; h += dayHd(dk); } h += gxSessHtml(x, i, false); });
   const list = $('glist');
   list.innerHTML = h ? '<div class="gx-cols"><span></span><span>session</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
-                     : '<div class="wempty ico pad">No sessions yet. A game shows up here while you play it, and stays once you played it for over a minute; Start session records one of your own.</div>';
-  const first = list.querySelector('.gx-sess');
-  if (Array.isArray(keep)) {   // (drawn again: what was open stays open, at once)
+                     : '<div class="wempty ico pad">No sessions yet. A game shows up here while you play it, and stays once you have played it for over a minute. Start session records one of your own.</div>';
+  if (Array.isArray(keep)) {   // (drawn again: what was open stays open, at once; the popup itself opens with every session shut)
     list.classList.add('still');
-    for (const el of list.querySelectorAll('.gx-sess')) { const x = gxSs[+el.dataset.g]; if (!x || !keep.includes(x.start)) continue; gxFill(el); const z = el.querySelector('.gx-tlz'); if (z) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g); el.classList.add('open'); }
+    for (const el of list.querySelectorAll('.gx-sess')) { const x = gxSs[+el.dataset.g]; if (!x || !keep.includes(x.start)) continue; gxOpenSess(el, x); }
     requestAnimationFrame(() => requestAnimationFrame(() => list.classList.remove('still')));
-  } else if (first) first.classList.add('open');   // the newest session opens with the popup
+  }
+  pkMark('g');
   if (nk) {
     const j = gxSs.findIndex(x => x.start === nk.start && x.game === nk.game), el = j >= 0 && list.querySelector('.gx-nm[data-g="' + j + '"]');
     if (el) {
@@ -4830,17 +5734,21 @@ function renderGames(text, keep) {
     }
   }
 }
-// a session's row and its details (full: built now, else when it opens); the one in progress says so and goes "to now"
+// a session opened: its details built, its timeline drawn
+function gxOpenSess(el, x) { gxFill(el); const z = el.querySelector('.gx-tlz'); if (z && x) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g); el.classList.add('open'); }
+// a session: its line in the list and its details (full: built now, else when it opens); the one in progress goes "to now"
 function gxSessHtml(x, i, full) {
     const sp = gxSplit(x), away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0, nb = Array.isArray(x.gaps) ? x.gaps.length : 0;
     const wn = Math.max(0, +x.warns || 0), wl = Array.isArray(x.wl) ? x.wl.filter(w => Array.isArray(w) && w.length >= 3) : [];
-    const st = wn ? '<span class="gx-wv">' + wn + (wn === 1 ? ' warning' : ' warnings') + '</span>' + (wl.length ? '<span class="gx-sub" title="' + esc(wl.map(gxWarn).join(', ')) + '">' + esc(gxWarn(wl[0])) + '</span>' : '') : '<span class="gx-ok">none</span>';
+    const wt = wl.length ? ' title="' + esc(wl.map(gxWarn).join(', ')) + '"' : '', wv = wn ? '<span class="gx-wv"' + wt + '>' + wn + (wn === 1 ? ' warning' : ' warnings') + '</span>' : '<span class="gx-ok">none</span>';
+    const when = hhmm(x.start) + ' to ' + (x.live ? 'now' : hhmm(x.end)) + (!x.custom && x.from - x.start > 90 ? ', tracked from ' + hhmm(x.from) : '')   /* (a session of your own says nothing more: his call 11-02) */ + (nb ? ', ' + (nb === 1 ? '1 break' : nb + ' breaks') : '');
+    const len = durS(gxPlay(x)), lenT = x.live ? ' title="so far"' : !x.custom && away >= 60 ? ' title="' + durTxt(x.front) + ' in front"' : '';
+    const nm = '<span class="gx-gn' + (x.live ? ' lv"><span class="gx-gt">' + esc(x.game) + '</span><span class="gx-now">now playing</span>' : '">' + esc(x.game)) + '</span>';
+    const lim = sp.n ? gxNbar(sp) + '<span class="gx-sub">' + sp.top[0] + ' ' + sp.top[1] + '%</span>' : '<span class="gx-sub">--</span>';
     return '<div class="gx-sess' + (x.custom ? ' cust' : '') + (x.live ? ' live' : '') + '" data-g="' + i + '"><div class="gx-row" tabindex="0" role="button">' + GX_CHEV +
-         '<span class="gx-gm"><span class="gx-gn' + (x.live ? ' lv"><span class="gx-gt">' + esc(x.game) + '</span><span class="gx-now">now playing</span>' : '">' + esc(x.game)) + '</span><span class="gx-sub">' + hhmm(x.start) + ' to ' + (x.live ? 'now' : hhmm(x.end)) + (x.custom ? ', started by you' : x.from - x.start > 90 ? ', tracked from ' + hhmm(x.from) : '') + (nb ? ', ' + (nb === 1 ? '1 break' : nb + ' breaks') : '') + '</span></span>' +
-         '<span class="gx-c gx-num"><span>' + durS(gxPlay(x)) + '</span>' + (x.live ? '<span class="gx-sub">so far</span>' : x.custom ? '' : away >= 60 ? '<span class="gx-sub">' + durTxt(x.front) + ' in front</span>' : '') + '</span>' +
-         '<span class="gx-c gx-num gx-fps">' + gxF(x.fps) + '</span><span class="gx-c gx-num gx-lo">' + gxF(x.low) + '</span>' +
-         '<span class="gx-c">' + (sp.n ? gxNbar(sp) + '<span class="gx-sub">' + sp.top[0] + ' ' + sp.top[1] + '%</span>' : '<span class="gx-sub">--</span>') + '</span>' +
-         '<span class="gx-c gx-st">' + st + '</span></div>' +
+         '<span class="gx-gm">' + nm + '<span class="gx-sub">' + when + '</span></span>' +
+         '<span class="gx-c gx-num"' + lenT + '>' + len + '</span><span class="gx-c gx-num gx-fps">' + gxF(x.fps) + '</span><span class="gx-c gx-num gx-lo">' + gxF(x.low) + '</span>' +
+         '<span class="gx-c gx-lb">' + lim + '</span><span class="gx-c gx-st">' + wv + '</span></div>' +
          '<div class="gx-det"><div>' + (full ? gxDetail(x, sp, i, false, gxActs(x, i)) : '<div class="gx-lz" data-g="' + i + '"></div>') + '</div></div></div>';
 }
 // the session in progress from the host (every 5 s while the popup is open; null: none): its row drawn again in place,
@@ -4848,9 +5756,12 @@ function gxSessHtml(x, i, full) {
 let gxNow = null;
 function gxLive(s) {
   gxNow = s && typeof s === 'object' && Number.isFinite(s.start) && Number.isFinite(s.end) && s.end >= s.start ? s : null;
-  if (!gmodal.classList.contains('open') || !gxLoaded) return;
+  if (!gmodal.classList.contains('open') || !gxLoaded || PK.g.mode === 'bin') return;
   const list = $('glist'), i = gxSs.findIndex(x => x.live);
   if (!gxNow) return;   // (no game, or it just ended: the log that comes with its end draws the list again)
+  // (another game than the one picked: not in the list, only in the numbers)
+  if (GX.game && gxNow.game !== GX.game) { const j = gxAll.findIndex(x => x.live); if (j >= 0 && gxAll[j].start === gxNow.start) gxAll[j] = gxNow; else renderGames(gxText, gxOpen()); gxSum(gxAll, true); return; }
+  { const j = gxAll.findIndex(x => x.live); if (j >= 0) gxAll[j] = gxNow; }
   if (i < 0 || gxSs[i].start !== gxNow.start || gxSs[i].game !== gxNow.game) { renderGames(gxText, list.querySelector('.gx-sess') ? gxOpen() : undefined); return; }
   const el = list.querySelector('.gx-sess[data-g="' + i + '"]'); if (!el) return;
   // (the pointer on it, or text picked in it: not drawn again under the hover read-out, a click or the selection; the
@@ -4863,17 +5774,19 @@ function gxLive(s) {
   const ne = tmp.firstChild;
   if (open) { const z = ne.querySelector('.gx-tlz'); if (z) z.outerHTML = gxTimeline(gxNow, gxSplit(gxNow), i); list.classList.add('still'); ne.classList.add('open'); requestAnimationFrame(() => requestAnimationFrame(() => list.classList.remove('still'))); }
   el.replaceWith(ne);
-  // (its day's total and the week's numbers follow it)
-  const byDay = gxSum(gxSs, true), d = byDay[localDay(new Date(gxNow.start * 1000))];
-  let hd = ne.previousElementSibling; while (hd && !hd.classList.contains('gx-day')) hd = hd.previousElementSibling;
-  if (hd && d) setText(hd.querySelector('.gx-tot'), gxDayTot(d));
+  if (PK.g.mode) pkMark('g');   // (picking: it stays out)
+  // (its days' totals and the week's numbers follow it; past midnight its new day gets a header: drawn again)
+  gxSum(gxAll, true);
+  const byDay = gxByDay(gxSs), hds = [...list.querySelectorAll('.gx-day')], have = new Set(hds.map(hd => hd.dataset.day));
+  if (Object.keys(byDay).some(k => !have.has(k))) { renderGames(gxText, gxOpen()); return; }
+  for (const hd of hds) { const d = byDay[hd.dataset.day]; if (d) setText(hd.querySelector('.gx-tot'), gxDayTot(d)); }
 }
 let gxSs = [];   // the sessions as listed, for the timelines drawn when they open
 // a session's details, built the first time it opens (all of them up front made a big log slow and heavy)
 function gxFill(sess) { const z = sess && sess.querySelector('.gx-lz'); if (!z) return; const i = +z.dataset.g, x = gxSs[i]; if (x) z.outerHTML = gxDetail(x, gxSplit(x), i, false, gxActs(x, i)); }
 // under a session's details: its name (one of your own) and Delete
-const gxActs = (x, i) => x.live ? '' : '<div class="gx-acts">' + (x.custom ? '<label class="gx-nmf"><em>name</em><input class="gx-nm" data-g="' + i + '" value="' + esc(x.game) + '" maxlength="60" spellcheck="false" title="Its name: type a new one, Enter to keep it"></label>' : '') +
-  '<span class="sp"></span><button class="wclear gx-del" data-g="' + i + '" title="Delete this session (a copy is kept in games.log.bak)">Delete session</button></div>';
+const gxActs = (x, i) => x.live ? '' : '<div class="gx-acts">' + (x.custom ? '<label class="gx-nmf"><em>name</em><input class="gx-nm" data-g="' + i + '" value="' + esc(x.game) + '" maxlength="60" spellcheck="false" title="Its name: type a new one, Enter saves it"></label>' : '') +
+  '<span class="sp"></span><button class="wclear gx-del" data-g="' + i + '" title="Move this session to the bin, where it can be brought back">Delete session</button></div>';
 const gxOpen = () => [...document.querySelectorAll('#glist .gx-sess.open')].map(s => gxSs[+s.dataset.g] && gxSs[+s.dataset.g].start);
 // a custom session's new name: saved when the field changes, or when it is left with a name a redraw put back
 function gxName(el) {
@@ -4888,18 +5801,49 @@ $('glist').addEventListener('keydown', e => {
   else if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.gx-row')) { e.preventDefault(); e.target.click(); }   // (a session opened from the keyboard)
 });
 $('glist').addEventListener('click', e => {
+  if (PK.g.mode) { const s = e.target.closest('.gx-sess'); if (s) pkToggle('g', s); return; }   // (picking: a click picks)
   const d = e.target.closest('.gx-del');
-  if (d) { const x = gxSs[+d.dataset.g]; if (x) askConfirm('Delete this session?', x.game + ', ' + localDay(new Date(x.start * 1000)) + ' ' + hhmm(x.start) + ' to ' + hhmm(x.end) + '. A copy goes to games.log.bak.', 'Delete', () => { const y = gxSs.find(s => s.start === x.start && s.end === x.end) || x; send({ t: 'gedit', act: 'del', start: y.start, end: y.end, game: y.game }); }); return; }
+  if (d) { const x = gxSs[+d.dataset.g]; if (x) askConfirm('Delete this session?', x.game + ', ' + localDay(new Date(x.start * 1000)) + ' ' + hhmm(x.start) + ' to ' + hhmm(x.end) + '. It goes to the bin, where it can be brought back.', 'Delete session', () => { const y = gxSs.find(s => s.start === x.start && s.end === x.end) || x; send({ t: 'gedit', act: 'del', start: y.start, end: y.end, game: y.game }); }); return; }
   const r = e.target.closest('.gx-row'); if (!r) return;
   gxFill(r.parentNode);
   const z = r.parentNode.querySelector('.gx-tlz'), x = z && gxSs[+z.dataset.g];
   if (x) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g);
   r.parentNode.classList.toggle('open');
+  if (r.parentNode.classList.contains('open')) centreOpen(r.parentNode);
 });
+// a session or a warning just opened: its popup glides so it sits in the middle, by its height once open (its details
+// grow over 300 ms: their content's height is known now); taller than the popup, its top just under the day's header
+// (11-02, his ask)
+function centreOpen(el, again) {
+  const card = el.closest('.mcard'); if (!card || !el.isConnected || !el.classList.contains('open')) return;
+  const det = el.querySelector('.gx-det > div'), cr = card.getBoundingClientRect(), r = el.getBoundingClientRect();
+  const grow = det ? det.scrollHeight - det.clientHeight : 0, h = r.height + grow, top = r.top - cr.top + card.scrollTop, view = card.clientHeight;
+  // (taller than the popup: right under its own day's header, which then sits on top, over the day before's: 11-02, his
+  // "put saturday on top, not yesterday")
+  let hd = el.previousElementSibling; while (hd && !hd.classList.contains('gx-day')) hd = hd.previousElementSibling;
+  const hh = hd ? hd.offsetHeight : 0;
+  // (centred, its own header would sit just under the one on top, two headers stacked: its own goes on top instead)
+  let want = h + hh + 40 > view ? top - hh - 1 : top - (view - h) / 2;
+  if (hd && top - hh - want < hh * 2) want = top - hh - 1;
+  want = Math.max(0, want);
+  // (one glide, 11-02 motion audit: near the bottom the list is padded for what is still to grow, so the scroll goes all
+  // the way at once instead of stopping short and going on later; the padding goes once the details fill it)
+  // (the correction below is for this row only: another opened, or the list scrolled by hand, and it lets go)
+  if (!again) { card._centre = el; if (!card._wheel) { card._wheel = 1; card.addEventListener('wheel', () => { card._centre = null; }, { passive: true }); } }
+  else if (card._centre !== el) return;
+  if (!again && grow > 0) {
+    clearTimeout(card._padT); card.style.paddingBottom = '';
+    card.style.paddingBottom = (parseFloat(getComputedStyle(card).paddingBottom) + grow) + 'px';
+    card._padT = setTimeout(() => { card.style.paddingBottom = ''; }, 340);
+  }
+  if (Math.abs(card.scrollTop - want) > (again ? 24 : 4)) card.scrollTo({ top: want, behavior: motionMode() === 'off' ? 'auto' : 'smooth' });
+  // (once it is open: a correction, only when it ended up well off)
+  if (!again) setTimeout(() => centreOpen(el, true), 360);
+}
 function showGame() {
   const rs = feed.rec || [];
   $('gameDot').classList.toggle('on', !!feed.game || rs.length > 0);
-  $('gamesBtn').title = 'Sessions' + (feed.game ? ': ' + feed.game + ' running, ' + durTxt(Math.max(60, nowTs - feed.gameSince - (feed.gameGap || 0))) + (feed.front ? '' : ' (in the background)') : '') + (rs.length ? (feed.game ? ', ' : ': ') + 'recording ' + rs.map(x => x[1]).join(', ') : '');
+  $('gamesBtn').title = 'Sessions' + (feed.game ? ': ' + feed.game + ' running, ' + durTxt(Math.max(60, nowTs - feed.gameSince - (feed.gameGap || 0))) + (feed.front ? '' : ', in the background') : '') + (rs.length ? (feed.game ? ', ' : ': ') + 'recording ' + rs.map(x => x[1]).join(', ') : '');
   if (gmodal.classList.contains('open')) renderRec();
 }
 
@@ -4908,48 +5852,149 @@ const setmodal = $('setmodal');
 function renderSettings() {
   // (a field being typed in keeps what was typed, and its focus)
   const fa = document.activeElement, typing = fa && fa.tagName === 'INPUT' && fa.id && $('setbody').contains(fa) ? { id: fa.id, v: fa.value, a: fa.selectionStart, b: fa.selectionEnd } : null;
+  const tw = togSnap($('setbody')), sw = setmodal.classList.contains('open') ? segSnap($('setbody')) : null;
   renderSettings0();
+  togSlide($('setbody'), tw); segPills($('setbody'), sw);
   const fi = typing && $(typing.id);
   if (fi) { if (fi.value !== typing.v) fi.dataset.dirty = '1'; fi.value = typing.v; fi.focus(); try { fi.setSelectionRange(typing.a, typing.b); } catch (e) { } }
 }
+// a switch drawn again in its new state (Settings and Customize draw their rows again on a change, so CSS alone would
+// show it jump): put back in its old state for a frame, then switched, so it slides there. Not with animations Off
+const togSnap = root => [...root.querySelectorAll('.tog2')].map(t => t.classList.contains('on'));
+function togSlide(root, was) {
+  if (motionMode() === 'off') return;   // (a reply to a click: Minimal slides too, 11-02)
+  const now = [...root.querySelectorAll('.tog2')]; if (now.length !== was.length) return;
+  const moved = now.filter((t, i) => t.classList.contains('on') !== was[i]); if (!moved.length) return;
+  for (const t of moved) t.classList.toggle('on');
+  void root.offsetWidth;
+  for (const t of moved) t.classList.toggle('on');
+}
+// a segment's pick (Animations, Cards, Colour, Keep's Days or Forever) is a pill that slides over to it, like the view
+// tabs': Settings is drawn again on every pick, so the new pill starts where the last pick was (11-02, the motion audit).
+// Not with animations Off
+const segKey = s => s.id || (s.dataset.keep ? 'keep:' + s.dataset.keep : '');
+// (where each pill is now: mid-slide, from where it has got to, so a redraw then doesn't jump it to its end)
+const segSnap = root => { const o = {}; for (const s of root.querySelectorAll('.seg.seg3')) { const k = segKey(s), b = s.querySelector(':scope > button.on'), ind = s.querySelector(':scope > .ind'); if (!k || !b) continue; if (ind && ind.offsetWidth) { const sr = s.getBoundingClientRect(), ir = ind.getBoundingClientRect(); o[k] = { x: ir.left - sr.left - s.clientLeft, w: ir.width }; } else o[k] = { x: b.offsetLeft, w: b.offsetWidth }; } return o; };
+function segPills(root, was) {
+  for (const s of root.querySelectorAll('.seg.seg3')) {
+    const k = segKey(s); if (!k) continue;
+    const b = s.querySelector(':scope > button.on'), ind = s.querySelector(':scope > .ind') || s.insertBefore(document.createElement('i'), s.firstChild);
+    ind.className = 'ind still'; s.classList.add('pill');
+    if (!b) { ind.style.width = '0px'; continue; }
+    const w = was && was[k], x = b.offsetLeft, bw = b.offsetWidth;
+    if (w && motionMode() !== 'off' && (w.x !== x || w.w !== bw)) { ind.style.transform = 'translateX(' + (w.x - 2) + 'px)'; ind.style.width = w.w + 'px'; void ind.offsetWidth; ind.classList.remove('still'); }
+    ind.style.transform = 'translateX(' + (x - 2) + 'px)'; ind.style.width = bw + 'px';
+    if (ind.classList.contains('still')) { void ind.offsetWidth; ind.classList.remove('still'); }
+  }
+}
 // a section of Settings: its header, then its rows in one block
+// the Look's colours (11-02, his pick of the mockups): a palette to start from, then each colour on a chip that opens a
+// grid of tones (8 hues, light, mid and deep, all muted enough for the greys), any hex, the full picker, and for a
+// category Auto (its part's, from the palette). Folded until opened; one chip open at a time
+let lkOpen = false, lkPick = null;
+const hslHex = (h, s, l) => { s /= 100; l /= 100; const a = s * Math.min(l, 1 - l), f = n => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }; return '#' + [f(0), f(8), f(4)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join(''); };
+const TONES = [[78, 55], [68, 50], [56, 45]].map(([l, s]) => [250, 215, 190, 170, 145, 95, 35, 330].map(h => hslHex(h, s, l)));
+const lkChip = (key, cur, name, tag) => '<div class="lk-row"><span class="lk-name">' + esc(name) + '</span><span class="lk-tag">' + tag + '</span><span class="sp"></span>' +
+  '<button class="lk-chip' + (lkPick === key ? ' on' : '') + '" data-lk="chip" data-k="' + esc(key) + '" style="--c:' + (cur || '#5a5a5a') + '"><i></i>' + (cur || 'grey') + '</button></div>' +
+  (lkPick === key ? '<div class="lk-pop"><div class="lk-g">' + TONES.flat().map(c => '<button data-lk="c" data-k="' + esc(key) + '" data-c="' + c + '" style="--c:' + c + '"' + (c === cur ? ' class="on"' : '') + '></button>').join('') + '</div>' +
+    '<div class="lk-f"><input class="lk-hex" data-k="' + esc(key) + '" value="' + (cur || '') + '" maxlength="7" spellcheck="false" placeholder="#rrggbb" title="Any colour: its hex, Enter to use it">' +
+    '<label class="lk-any" title="Any colour: the full picker"><input type="color" data-k="' + esc(key) + '" value="' + (isHex(cur) ? cur : ACC0) + '"></label>' +
+    (key !== 'acc' ? '<button class="lk-auto' + (S.L.cats.some(c => c.id === key && !c.col) ? ' on' : '') + '" data-lk="c" data-k="' + esc(key) + '" data-c="" title="Its part\'s colour, from the palette">Auto</button>' : '') + '</div></div>' : '');
+function lookColours() {
+  const sp = S.look.tint === 'spectrum', pal = PALETTES[S.look.pal];
+  const dots = [S.look.acc].concat(sp ? S.L.cats.map(c => catTint(c) || '#5a5a5a') : []).slice(0, 9).map(c => '<i style="--c:' + c + '"></i>').join('');
+  return '<div class="setrow lk-head' + (lkOpen ? ' open' : '') + '" data-lk="fold"><div>Colours<small>' + (sp ? 'Palette: ' + pal[0] + '. Open to change it, or any one colour.' : 'Open to pick the accent.') + '</small></div><span class="lk-prev">' + dots + '<svg class="lk-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg></span></div>' +
+    '<div class="lk-body' + (lkOpen ? ' open' : '') + '"><div><div class="lk-in">' +
+    (sp ? '<div class="lk-pres">' + Object.keys(PALETTES).map(k => '<button data-lk="pal" data-k="' + k + '" class="' + (S.look.pal === k ? 'on' : '') + '">' + PALETTES[k][0] + '<span class="lk-dots">' + Object.values(PALETTES[k][1]).map(c => '<i style="--c:' + c + '"></i>').join('') + '</span></button>').join('') + '</div>' : '') +
+    lkChip('acc', S.look.acc, 'Accent', 'the view tabs, the periods, the switches') +
+    (sp ? S.L.cats.map(c => lkChip(c.id, catTint(c), c.name, c.col ? 'yours' : 'auto')).join('') : '') + '</div></div></div>';
+}
+// a colour picked: the accent's ('acc'), or a category's ('' its part's again: undo takes it back like any change)
+function pickColour(key, c) {
+  if (key === 'acc') { if (!isHex(c) || S.look.acc === c.toLowerCase()) return; snap(); S.look = Object.assign({}, S.look, { acc: c.toLowerCase() }); applyLook(); saveState(); syncUndo(); }
+  else {
+    const cat = S.L.cats.find(x => x.id === key), v = isHex(c) ? c.toLowerCase() : undefined; if (!cat || cat.col === v) return;
+    snap(); if (v) cat.col = v; else delete cat.col; afterChange();
+  }
+  renderSettings(); if (feed.got) updateView(true, true);
+}
+// a palette: every category back to its part's colour from it, and its accent (undo brings the categories' own back)
+function pickPalette(k) {
+  if (!PALETTES[k]) return;
+  const before = snapOf();
+  for (const c of S.L.cats) delete c.col;
+  S.look = Object.assign({}, S.look, { pal: k, acc: PALETTES[k][2] });
+  if (snapOf() === before) { renderSettings(); return; }   // (the one in use, nothing of yours on it: no step)
+  pushUndo(before); applyLook();
+  afterChange();
+  renderSettings(); if (feed.got) updateView(true, true);
+}
+// (a change in the Look, then the pointer held still: Settings goes see-through so the change shows on the view; a move
+// brings it back. 11-02, his "only works when first clicked" and "not annoying": it comes back every time the pointer
+// rests again, for 10 s after the last change, and not after that)
+let peekT = 0, peekAt = null, lookAt = 0;
+const PEEK_FOR = 10000;
+function peekArm(e) { clearTimeout(peekT); setmodal.classList.remove('peek'); if (motionMode() === 'off' || !e || e.clientX == null) return; lookAt = Date.now(); peekAt = [e.clientX, e.clientY]; peekT = setTimeout(peekNow, 650); }
+// (only while the colours are open and at least half of them in view: 11-02, his "go away as soon as the colours is
+// collapsed and not linger, or when scrolled out of view")
+function peekLive() {
+  const bd = lkOpen && document.querySelector('#setbody .lk-body.open'); if (!bd) return false;
+  const r = bd.getBoundingClientRect(), c = setmodal.querySelector('.mcard').getBoundingClientRect();
+  return r.height > 0 && (Math.min(r.bottom, c.bottom) - Math.max(r.top, c.top)) / Math.min(r.height, c.height) >= 0.5;
+}
+function peekNow() { if (peekAt && setmodal.classList.contains('open') && Date.now() - lookAt < PEEK_FOR && peekLive()) setmodal.classList.add('peek'); }
+function peekEnd() { clearTimeout(peekT); peekAt = null; setmodal.classList.remove('peek'); }
+document.addEventListener('pointermove', e => {
+  if (peekAt && Math.hypot(e.clientX - peekAt[0], e.clientY - peekAt[1]) <= 4) return;
+  if (peekAt) peekEnd();
+  if (setmodal.classList.contains('open') && Date.now() - lookAt < PEEK_FOR && motionMode() !== 'off' && lkOpen) { peekAt = [e.clientX, e.clientY]; peekT = setTimeout(peekNow, 700); }   // (rests again: again)
+}, true);
+for (const k of ['keydown', 'wheel', 'pointerdown']) document.addEventListener(k, () => { if (peekAt || setmodal.classList.contains('peek')) peekEnd(); }, true);   // (a pending one too)
+$('setbody').addEventListener('mousedown', e => { if (e.target.closest('.lk-pop button')) e.preventDefault(); });
+$('setbody').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.lk-hex')) e.target.blur(); });   // (Enter uses the hex, as its tip says: the blur's change applies it)   // (a typed hex keeps its focus: the tone's click isn't lost to a redraw)
 const setSec = (name, rows) => '<section class="setsec"><h3>' + name + '</h3><div class="setbox">' + rows + '</div></section>';
 function renderSettings0() {
   $('setbody').innerHTML =
     setSec('Window',
-    '<div class="setrow"><div>Title<small>Shown in the title bar. Empty: the name of this PC' + (feed.pc ? ' (' + esc(feed.pc) + ')' : '') + '.</small></div><input class="setin" id="sTitle" maxlength="60" spellcheck="false" placeholder="' + esc(feed.pc || 'HW Deck') + '" value="' + esc(S.title || '') + '"></div>' +
+    '<div class="setrow"><div>Title<small>Shown in the title bar. Empty: the name of this PC' + (feed.pc ? ', ' + esc(feed.pc) : '') + '.</small></div><input class="setin" id="sTitle" maxlength="60" spellcheck="false" placeholder="' + esc(feed.pc || 'HW Deck') + '" value="' + esc(S.title || '') + '"></div>' +
     '<div class="setrow"><div>Clock<small>The time of the last reading, next to the title.</small></div><button class="tog2' + (S.clock ? ' on' : '') + '" id="sClock" aria-pressed="' + S.clock + '" title="Show the clock"></button></div>' +
     '<div class="setrow"><div>Animations<small>' + ({ full: 'Rolling numbers, smoothly spinning fans, gliding graphs.', minimal: 'Nothing keeps moving: numbers just change, fans stand still, graphs step. Popups and views still slide.', off: 'Nothing moves at all.' })[motionPicked()] +
-      (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' (Windows asks apps for less motion.)' : '') + (motionMode() !== motionPicked() ? ' Minimal for now: a game is in front.' : '') + '</small></div><span class="seg seg3" id="sMotion">' +
+      (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' Windows asks apps for less motion.' : '') + (motionMode() !== motionPicked() ? ' Minimal for now: a game is in front.' : '') + '</small></div><span class="seg seg3" id="sMotion">' +
       [['full', 'Full'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionPicked() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
     '<div class="setrow"><div>Calmer during games<small>Full animations switch to Minimal while a game is in front, and back after. Saves CPU for the game.</small></div><button class="tog2' + (S.gameCalm !== false ? ' on' : '') + '" id="sCalm" aria-pressed="' + (S.gameCalm !== false) + '" title="Minimal animations while a game is in front"></button></div>') +
+    setSec('Look',
+    '<div class="setrow"><div>Cards<small>' + ({ standard: 'Grey cards with a fine line around them.', oled: 'True black, the cards drawn as lines only: nothing lit but what you read.', soft: 'No lines: a lighter grey lifted by a shadow, rounder corners.' })[S.look.cards] + '</small></div><span class="seg seg3" id="sCards">' +
+      [['standard', 'Standard'], ['oled', 'OLED'], ['soft', 'Soft']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.cards === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
+    '<div class="setrow"><div>Colour<small>' + ({ none: 'Greys only: colour is kept for warnings.', accent: 'One colour on what you pick.', spectrum: 'A colour for each category, and the accent.' })[S.look.tint] + '</small></div><span class="seg seg3" id="sTint">' +
+      [['none', 'Mono'], ['accent', 'Accent'], ['spectrum', 'Spectrum']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.tint === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
+    (S.look.tint !== 'none' ? lookColours() : '')) +
     setSec('Startup',
     '<div class="setrow"><div>Start with Windows<small>Opens in the tray when you sign in.</small></div><button class="tog2' + (feed.autostart ? ' on' : '') + '" id="sAuto" aria-pressed="' + feed.autostart + '" title="Start with Windows"></button></div>' +
     (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub if there is a new version when HW Deck starts, then once a day. Nothing else is sent.') + '</small></div>' +
       '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">' + (feed.canUpdate ? 'Update now' : 'Get it') + '</button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>')) +
     setSec('HWiNFO',
-    '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>A restart turns its sharing back on (Windows asks for permission).</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
-    '<div class="setrow"><div>Keep HWiNFO sharing<small>The free HWiNFO stops sharing after 12 hours. With this on, a Windows task restarts it once it has run about 11 hours, with sharing on (a few seconds without readings). So it starts by itself, HWiNFO\'s welcome screen goes off and it opens in Sensors-only mode. Windows asks for permission once.</small>' +
+    '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>A restart turns its sharing back on. Windows asks for permission.</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
+    '<div class="setrow"><div>Keep HWiNFO sharing<small>The free HWiNFO stops sharing after 12 hours. With this on, a Windows task restarts it with sharing on after about 11 hours of running, with a few seconds without readings. It turns HWiNFO\'s welcome screen off and starts it in Sensors-only mode, so it comes back by itself. Windows asks for permission once.</small>' +
       (feed.keep && feed.keepNote && !feed.keepWait ? '<small class="y">' + esc(feed.keepNote) + '</small>' : '') + '</div>' +
       '<button class="tog2' + (feed.keep ? ' on' : '') + '" id="sKeep" aria-pressed="' + feed.keep + '" title="Keep HWiNFO sharing"' + (feed.fake || feed.keepBusy || feed.keepWait ? ' disabled' : '') + '></button></div>') +
     setSec('Games',
-    '<div class="setrow"><div>Accurate game fps<small>HWiNFO\'s fps can be another app\'s (a browser, Discord, a game\'s launcher). With this on, ' + esc(feed.brand || 'HW Deck') + ' counts the game\'s own frames (DirectX games). Windows asks for permission once, then you sign out and back in.</small>' + fpsNote() + '</div>' +
+    '<div class="setrow"><div>Accurate game fps<small>HWiNFO\'s fps can be another app\'s: a browser, Discord, a game\'s launcher. With this on, ' + esc(feed.brand || 'HW Deck') + ' counts the game\'s own frames in DirectX games. Windows asks for permission once, then you sign out and back in.</small>' + fpsNote() + '</div>' +
       '<button class="tog2' + (feed.fps ? ' on' : '') + '" id="sFps" aria-pressed="' + feed.fps + '" title="Accurate game fps"' + (feed.fake || feed.fpsBusy || feed.fpsWait ? ' disabled' : '') + '></button></div>' +
-    '<div class="setrow"><div>Same game again<small>Started again within this many minutes of closing, a game goes on with its session: the break shows in its chart and doesn\'t count as play. 0: every start is a new session.</small></div><span class="setdays"><input class="setin" id="sGameMerge" inputmode="numeric" maxlength="3" spellcheck="false" placeholder="30" value="' + (Number.isFinite(feed.gameMerge) ? feed.gameMerge : 30) + '"><i>min</i></span></div>') +
+    '<div class="setrow"><div>Same game again<small>A game started again within this many minutes of closing goes on with its session. The break shows in its chart but doesn\'t count as play. 0: always a new session.</small></div><span class="setdays"><input class="setin" id="sGameMerge" inputmode="numeric" maxlength="3" spellcheck="false" placeholder="30" value="' + (Number.isFinite(feed.gameMerge) ? feed.gameMerge : 30) + '"><i>min</i></span></div>') +
     setSec('Data',
-    '<div class="setrow"><div>Keep sessions<small>Game sessions and your own older than this are deleted (a copy goes to games.log.bak).</small></div><span class="setdays"><input class="setin" id="sGameDays" inputmode="numeric" maxlength="4" spellcheck="false" placeholder="30" value="' + (feed.gameDays || '') + '"><i>days</i></span></div>' +
-    '<div class="setrow"><div>Keep warnings<small>The warning history keeps this many days.</small></div><span class="setdays"><input class="setin" id="sWarnDays" inputmode="numeric" maxlength="4" spellcheck="false" placeholder="30" value="' + (feed.warnDays || '') + '"><i>days</i></span></div>' +
+    keepRow('sGameDays', 'gameDays', 'Keep sessions', 'Older sessions, games and your own, go to the bin. Its icon in Sessions brings them back.') +
+    keepRow('sWarnDays', 'warnDays', 'Keep warnings', 'Older warnings go to the bin. Its icon in Warning history brings them back.') +
     '<div class="setrow"><div>Your files<small class="k">' + esc(feed.dataDir) + '</small><small>Layouts, slots, the logs and 7 days of history.</small></div><button class="btn" id="sData">Open</button></div>') +
     setSec('Keys',
     '<div class="setrow" style="display:block"><div class="keys2">' +
-      [['E', 'edit layout on or off'], ['1 2 3', 'Tiles, Overview, Grid'], ['Enter', 'open (or select) the cell in focus'], ['Ctrl+S', 'save to the loaded slot'], ['Ctrl+Z, Ctrl+Shift+Z', 'undo, redo'],
+      [['E', 'edit layout on or off'], ['1 2 3', 'Tiles, Overview, Grid'], ['Enter', 'open or select the cell in focus'], ['Ctrl+S', 'save to the loaded slot'], ['Ctrl+Z, Ctrl+Shift+Z', 'undo, redo'],
        ['Alt + arrows', 'move the selected cell, or swap the selected category with its neighbour'], ['Shift + Alt + arrows', 'the selected category: wider, narrower, its row taller, shorter'],
        ['R  B  S  U', 'the selected category: own row, beside the row above, stack under the left one, unstack'], ['Del', 'remove the selected cell or category'], ['Esc', 'close a popup, then select nothing']].map(k => '<span class="kbd">' + k[0] + '</span><span>' + k[1] + '</span>').join('') + '</div></div>') +
     setSec('About',
     '<div class="setrow"><div>' + (feed.brand && feed.brand !== 'HW Deck' ? esc(feed.brand) + ', built on HW Deck ' : 'HW Deck ') + esc(feed.version) + '<small>Reads HWiNFO\'s shared memory on this PC.</small></div></div>');
 }
-$('setBtn').onclick = () => { renderSettings(); setmodal.classList.add('open'); send({ t: 'getSettings' }); };   // (the host's answer: Start with Windows and the task as they are now)
-function syncUpd() { const d = $('setDot'); d.classList.toggle('on', !!feed.latest); $('setBtn').title = feed.latest ? 'Settings (HW Deck ' + feed.latest + ' is out)' : 'Settings'; }
+$('setBtn').onclick = () => { lkPick = null; peekEnd(); keepPend.gameDays = keepPend.warnDays = false; renderSettings(); setmodal.classList.add('open'); send({ t: 'getSettings' }); };   // (the host's answer: Start with Windows and the task as they are now)
+function syncUpd() { const d = $('setDot'); d.classList.toggle('on', !!feed.latest); $('setBtn').title = feed.latest ? 'Settings: HW Deck ' + feed.latest + ' is out' : 'Settings'; }
 $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sAuto')) { feed.autostart = !feed.autostart; send({ t: 'autostart', on: feed.autostart }); renderSettings(); }
   const mb = e.target.closest('#sMotion button');
@@ -4963,8 +6008,20 @@ $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sGet')) send({ t: feed.canUpdate ? 'updateNow' : 'openRelease' });
   if (e.target.closest('#sClock')) { S.clock = !S.clock; renderTitle(); saveState(); renderSettings(); }
   if (e.target.closest('#sCalm')) { S.gameCalm = S.gameCalm === false; applyMotion(); saveState(); renderSettings(); renderView(false); }
+  const lb = e.target.closest('#sCards button, #sTint button'), lk = lb && (lb.parentElement.id === 'sCards' ? 'cards' : 'tint');
+  if (lb && S.look[lk] !== lb.dataset.v) { snap(); S.look = Object.assign({}, S.look, { [lk]: lb.dataset.v }); if (lk === 'tint') lkPick = null; applyLook(); saveState(); syncUndo(); renderSettings(); lookAt = Date.now(); if (feed.got) updateView(true, true); peekArm(e); }   // (seen at once behind Settings: the graphs take their colour as they are fed)
+  const lq = e.target.closest('[data-lk]'), lw = lq && lq.dataset.lk;
+  if (lw === 'fold') { lkOpen = !lkOpen; if (!lkOpen) { peekEnd(); lookAt = 0; }   // (folded: no more see-through)
+    // (an open chip shuts with it, in place: drawn again, the fold wouldn't glide)
+    if (lkPick) { lkPick = null; const bd = lq.nextElementSibling; bd.querySelectorAll('.lk-pop').forEach(x => x.remove()); bd.querySelectorAll('.lk-chip.on').forEach(x => x.classList.remove('on')); }
+    lq.classList.toggle('open', lkOpen); lq.nextElementSibling.classList.toggle('open', lkOpen); return; }   // (folds in place: it glides)
+  if (lw === 'chip') { lkPick = lkPick === lq.dataset.k ? null : lq.dataset.k; renderSettings(); return; }
+  if (lw === 'c') { pickColour(lq.dataset.k, lq.dataset.c); peekArm(e); return; }
+  if (lw === 'pal') { pickPalette(lq.dataset.k); peekArm(e); return; }
+  if (lkPick && !e.target.closest('.lk-pop')) { lkPick = null; renderSettings(); }   // (a click anywhere else closes the open chip)
 });
 $('setbody').addEventListener('change', e => {
+  if (e.target.matches('.lk-any input, .lk-hex')) { const v = e.target.value.trim(), c = /^#?[0-9a-f]{6}$/i.test(v) ? (v[0] === '#' ? v : '#' + v) : null; if (c) { pickColour(e.target.dataset.k, c); lookAt = Date.now(); } else if (e.target.matches('.lk-hex')) renderSettings(); return; }   // (any colour: the picker closed on one, or a hex typed; not a colour: as it was)
   const id = e.target.id;
   if (id === 'sGameMerge') {   // (0 to 240 minutes; empty or not a number: as it was)
     delete e.target.dataset.dirty;
@@ -4975,15 +6032,48 @@ $('setbody').addEventListener('change', e => {
   }
   if (id !== 'sGameDays' && id !== 'sWarnDays') return;
   delete e.target.dataset.dirty;
-  // (old 0: not set since a damaged settings file, so any number cuts something and asks first)
-  const k = id === 'sGameDays' ? 'gameDays' : 'warnDays', old = feed[k] || 0, v = Math.max(1, Math.min(3650, Math.round(Number(e.target.value)) || old || 30));
-  e.target.value = old || ''; if (v === old) return;
-  const go = () => { feed[k] = v; const i = $(id); if (i) i.value = v; send(k === 'gameDays' ? { t: 'keep', games: v } : { t: 'keep', warns: v }); };   // (only the one changed)
-  if (old && v > old) go();
-  else askConfirm('Keep ' + (k === 'gameDays' ? 'sessions' : 'warnings') + ' ' + v + (v === 1 ? ' day?' : ' days?'), (k === 'gameDays' ? 'Sessions' : 'Warnings') + ' older than that are deleted now. A copy goes to ' + (k === 'gameDays' ? 'games.log.bak' : 'alerts.log.bak') + '.', 'Delete older', go);
+  // (0 to 3650, 0 forever; empty or not a number ("forever" as it shows): as it was. Old null: not set since a damaged
+  // settings file, so any number cuts something and asks first)
+  const k = id === 'sGameDays' ? 'gameDays' : 'warnDays', old = feed[k], raw = e.target.value.trim(), pend = keepPend[k];
+  const v = /^\d+$/.test(raw) ? Math.min(3650, +raw) : pend ? 0 : old == null ? 30 : old;   // (a whole number of days, 0 forever; anything else: as it was)
+  // (switched to days from forever, then nothing or 0 typed: still forever, its field goes)
+  if (pend && v === 0) { keepPend[k] = false; setTimeout(() => { if (setmodal.classList.contains('open')) renderSettings(); }, 0); return; }
+  e.target.value = pend ? String(v) : keepTxt(old); if (v === old) return;
+  // (the field set in place: Settings drawn again here would lose the focus a Tab or click was taking; 0 typed: forever,
+  // the field goes, drawn again once this event is done)
+  const go = () => { keepPend[k] = false; feed[k] = v; const i = $(id); if (i) i.value = keepTxt(v); if (v === 0) setTimeout(() => { if (setmodal.classList.contains('open')) renderSettings(); }, 0); send(k === 'gameDays' ? { t: 'keep', games: v } : { t: 'keep', warns: v }); };   // (only the one changed)
+  if (v === 0 || (old && v > old)) go();   // (forever, or more days: nothing goes)
+  else askConfirm('Keep ' + (k === 'gameDays' ? 'sessions' : 'warnings') + ' ' + v + (v === 1 ? ' day?' : ' days?'), (k === 'gameDays' ? 'Sessions' : 'Warnings') + ' older than that go to the bin now, where they can be brought back.', 'Move to the bin', go, false,
+    pend ? () => { keepPend[k] = false; if (setmodal.classList.contains('open')) renderSettings(); } : null);   // (no from forever: still forever)
 });
-// (a days value put back after Settings redrew under it: left without another key, it still counts)
-$('setbody').addEventListener('focusout', e => { const t = e.target; if (t.dataset && t.dataset.dirty) setTimeout(() => { if (t.dataset.dirty) { delete t.dataset.dirty; t.dispatchEvent(new Event('change', { bubbles: true })); } }, 0); });
+// a days field's text: the days, empty while not set (its placeholder says 30)
+const keepTxt = d => d ? String(d) : '';
+// Keep sessions / warnings: days or forever; the number only for days (0 typed in it: forever too). keepPend: a row just
+// switched from forever to days, its number not typed yet (nothing changes, nothing is asked, until it is)
+const keepPend = {};
+function keepRow(id, k, name, txt) {
+  const fv = feed[k] === 0 && !keepPend[k];
+  return '<div class="setrow"><div>' + name + '<small>' + txt + '</small></div><span class="setkeep">' +
+    (fv ? '' : '<input class="setin" id="' + id + '" inputmode="numeric" maxlength="4" spellcheck="false" placeholder="30" value="' + keepTxt(feed[k]) + '" title="Days">') +
+    '<span class="seg seg3" data-keep="' + k + '"><button data-v="days"' + (fv ? '' : ' class="on"') + '>Days</button><button data-v="forever"' + (fv ? ' class="on"' : '') + '>Forever</button></span></span></div>';
+}
+// days or forever picked: forever goes at once (nothing is deleted); days from forever shows the empty field, and the
+// question about what goes comes once a number is typed (the change above)
+$('setbody').addEventListener('click', e => {
+  const b = e.target.closest('.setkeep .seg button'); if (!b) return;
+  const k = b.parentNode.dataset.keep, fv = b.dataset.v === 'forever', isF = feed[k] === 0 && !keepPend[k];
+  if (fv === isF) return;
+  if (fv) { if (!keepPend[k]) send(k === 'gameDays' ? { t: 'keep', games: 0 } : { t: 'keep', warns: 0 }); keepPend[k] = false; feed[k] = 0; renderSettings(); return; }
+  keepPend[k] = true; renderSettings();
+  const i = $(k === 'gameDays' ? 'sGameDays' : 'sWarnDays'); if (i) i.focus();
+});
+// (a days value put back after Settings redrew under it: left without another key, it still counts; a field switched
+// to days and left empty goes back to forever)
+$('setbody').addEventListener('focusout', e => {
+  const t = e.target; if (t.dataset && t.dataset.dirty) setTimeout(() => { if (t.dataset.dirty) { delete t.dataset.dirty; t.dispatchEvent(new Event('change', { bubbles: true })); } }, 0);
+  const k = t.id === 'sGameDays' ? 'gameDays' : t.id === 'sWarnDays' ? 'warnDays' : null;
+  if (k && keepPend[k] && !t.value.trim()) setTimeout(() => { const a = document.activeElement, row = t.closest('.setkeep') || $('setbody').querySelector('.setkeep .seg[data-keep="' + k + '"]').parentNode; if (keepPend[k] && a !== t && !cmodal.classList.contains('open') && !(a && a.closest && a.closest('.setkeep') === row)) { keepPend[k] = false; if (setmodal.classList.contains('open')) renderSettings(); } }, 120);
+});
 $('setbody').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'sGameDays' || e.target.id === 'sWarnDays' || e.target.id === 'sGameMerge')) { e.preventDefault(); const t = e.target; setTimeout(() => t.blur(), 0); } });   // (later: the same Enter pressed Cancel on the question it opened)
 $('setbody').addEventListener('input', e => {
   if (e.target.id !== 'sTitle') return;
@@ -5002,7 +6092,7 @@ function restartHwinfo() {
 }
 function restartDone() {
   clearTimeout(restartT);
-  const b = $('rstBtn'); b.classList.remove('spin'); b.disabled = feed.fake; b.title = 'Restart HWiNFO (turns its shared memory back on)';
+  const b = $('rstBtn'); b.classList.remove('spin'); b.disabled = feed.fake; b.title = 'Restart HWiNFO to turn its shared memory back on';
 }
 $('rstBtn').onclick = restartHwinfo;
 
@@ -5014,6 +6104,39 @@ function toast(msg, withUndo, ms) {
   const t = $('toast'); t.classList.add('show'); clearTimeout(toastT);
   toastT = setTimeout(() => { t.classList.remove('show'); $('toastUndo').hidden = true; toastDepth = -1; }, ms || (withUndo ? 8000 : msg.length > 60 ? 5000 : 2600));
 }
+// ---------- tooltips: the page's own instead of Windows' (prettify 11-02) ----------
+// A hint (data-tip: every title becomes one, see the top) under the pointer shows as a tip in the app's greys after a
+// short wait; a press, a key or a scroll puts it away until the pointer goes somewhere else
+const tipEl = document.createElement('div'); tipEl.className = 'tip'; tipEl.setAttribute('role', 'tooltip'); document.body.appendChild(tipEl);
+let tipFor = null, tipT = 0;
+// (a hint the page changes while its tip is up, a live row's every second: the tip says the new one)
+const tipObs = new MutationObserver(() => {
+  if (!tipFor || !tipEl.classList.contains('show')) return;
+  const t = tipFor.getAttribute('data-tip'); if (!t) { tipHide(); return; }
+  tipEl.textContent = t; tipPlace(tipFor);
+});
+function tipHide() { clearTimeout(tipT); tipObs.disconnect(); tipFor = null; tipEl.classList.remove('show'); }
+function tipPlace(el) {
+  const r = el.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  const x = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)), below = r.bottom + 8 + h <= innerHeight - 8;
+  tipEl.style.transform = 'translate(' + Math.round(x) + 'px,' + Math.round(below ? r.bottom + 8 : Math.max(8, r.top - 8 - h)) + 'px)';
+}
+document.addEventListener('pointerover', e => {
+  // (a name that may be cut short, a tile's: its whole name as its tip, only when it is cut)
+  const fu = e.target.closest && e.target.closest('[data-full]');
+  if (fu) { if (fu.scrollWidth > fu.clientWidth + 1) fu.setAttribute('data-tip', fu.textContent); else fu.removeAttribute('data-tip'); }
+  const el = e.target.closest && e.target.closest('[data-tip]');
+  if (el === tipFor) return;
+  // (its element drawn again under the pointer, a live row's: the new one's tip at once, no second wait)
+  const again = tipEl.classList.contains('show') && !!tipFor && !tipFor.isConnected;
+  tipHide(); if (!el) return;
+  tipFor = el; tipObs.observe(el, { attributes: true, attributeFilter: ['data-tip'] });
+  const show = () => { const t = el.getAttribute('data-tip'); if (tipFor !== el || !el.isConnected || !t || !t.trim()) return; tipEl.textContent = t; tipPlace(el); tipEl.classList.add('show'); };
+  if (again) show(); else tipT = setTimeout(show, 450);
+});
+document.addEventListener('pointerout', e => { if (tipFor && !(e.relatedTarget && tipFor.contains(e.relatedTarget))) tipHide(); });
+for (const ev of ['pointerdown', 'keydown', 'wheel']) document.addEventListener(ev, tipHide, true);
+document.addEventListener('scroll', tipHide, true);
 // another change after the toast: its Undo would undo that one instead, so it goes
 function toastStale() { if (toastDepth >= 0 && undoSeq !== toastDepth) retireToastUndo(); }
 function retireToastUndo() { $('toastUndo').hidden = true; toastDepth = -1; }
@@ -5026,6 +6149,7 @@ document.addEventListener('keydown', ev => {
   ev.preventDefault(); ev.stopPropagation();
 }, true);
 document.addEventListener('keydown', ev => {
+  if (ev.key === 'Tab') { ev.preventDefault(); return; }   // (Tab doesn't walk the buttons: his call 11-02)
   if (drag && drag.started) { if (ev.key === 'Escape') { cancelPid = drag.pid; endDrag(true); editPress = null; } ev.preventDefault(); return; }   // nothing else mid-drag
   if (rs) {
     if (ev.key === 'Escape') { cancelPid = rs.pid; endHandle(true); }
@@ -5142,7 +6266,8 @@ const agoTxt = s => {
   return s < 60 ? 'less than a minute ago' : m < 60 ? m + ' min ago' : d ? plural(d, 'day') + (h % 24 ? ' ' + (h % 24) + ' h' : '') + ' ago' : h + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') + ' ago';
 };
 // Accurate game fps: how it stands, under its text (nothing while it is off)
-const fpsNote = () => !feed.fps || feed.fpsWait ? '' : '<small class="' + (feed.fpsState === 'on' ? '' : 'y') + '">' + ({ on: 'On: ' + esc(feed.brand || 'HW Deck') + ' counts the game\'s own frames.', signin: 'Almost: sign out of Windows and back in to finish.',
+// (on and working says nothing more, his call 11-02: the row stays two lines; only what needs you shows)
+const fpsNote = () => !feed.fps || feed.fpsWait || feed.fpsState === 'on' ? '' : '<small class="' + (feed.fpsState === 'on' ? '' : 'y') + '">' + ({ on: 'On: ' + esc(feed.brand || 'HW Deck') + ' counts the game\'s own frames.', signin: 'Almost: sign out of Windows and back in to finish.',
   denied: 'Windows doesn\'t let this account count frames: turn this off and on to ask again.', failed: 'Couldn\'t start counting frames.' }[feed.fpsState] || '') + '</small>';
 const keepTip = () => feed.keep ? '' : ' Keep HWiNFO sharing in Settings restarts it before that happens.';
 function showFeed() {
@@ -5155,7 +6280,7 @@ function showFeed() {
     dot.title = feed.status === 'stale' ? 'HWiNFO stopped updating' : 'HWiNFO not found';
     ban.hidden = !feed.got || (!READ.length && !S.L.cats.length);   // the setup screen says it all when there is nothing yet
     setText($('bannerTxt'), feed.status === 'stale' ? 'HWiNFO stopped updating its shared memory ' + agoTxt(feed.age) + '.' + (feed.age >= 60 ? ' The free version does this after 12 hours: Restart HWiNFO turns it back on.' + keepTip() : '')
-      : READ.length ? 'HWiNFO stopped sharing. Restart HWiNFO turns sharing back on; the values come back by themselves.' + keepTip()
+      : READ.length ? 'HWiNFO stopped sharing. Restart HWiNFO turns sharing back on, and the values come back by themselves.' + keepTip()
       : 'HWiNFO isn\'t sharing its readings. Restart HWiNFO turns sharing back on. Never set it up? In HWiNFO: Config, Main Settings, tick Shared Memory Support.');
   }
   if (ban.hidden !== was) { clearTimeout(fitTimer); fitTimer = setTimeout(refit, 30); }   // the banner takes room: fit again
@@ -5177,26 +6302,34 @@ function onHost(m) {
     // (a slot another program held at the start comes in later: the view is linked to it again then, see 'slots'; a
     // missing or damaged one never comes, so only a held one waits)
     slotWanted = st && Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && !S.slots[st.active] && Array.isArray(m.held) && m.held.includes(st.active) ? st.active : null;
-    if (st && st.L && Array.isArray(st.L.cats)) { S.L = cleanLayout(st.L); S.active = Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && S.slots[st.active] ? st.active : null; S.edit = st.edit !== false; S.screen = ['tiles', 'overview', 'grid'].includes(st.screen) ? st.screen : 'tiles'; S.motion = st.motion === false ? 'off' : st.motion === 'reduced' ? 'full' : MOTIONS.includes(st.motion) ? st.motion : undefined; }
+    if (st && st.L && Array.isArray(st.L.cats)) { S.L = cleanLayout(st.L); S.active = Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && S.slots[st.active] ? st.active : null; S.edit = st.edit !== false; S.screen = ['tiles', 'overview', 'grid'].includes(st.screen) ? st.screen : 'tiles'; S.motion = st.motion === false ? 'off' : st.motion === 'reduced' ? 'full' : MOTIONS.includes(st.motion) ? st.motion : undefined; S.look = cleanLook(st.look); applyLook(); }
     else { S.L = emptyLayout(); S.active = null; S.edit = true; S.screen = 'tiles'; }   // first run: nothing, edit mode on
     S.gameCalm = !st || st.gameCalm !== false;
     if (READ.length && ynFixAll()) saveState();   // (a view that came in late: the readings are known already)
     applyMotion();
     if (st && Array.isArray(st.pins)) { DR.L.pinned = st.pins[0] === true; DR.R.pinned = st.pins[1] === true; }
+    // (placed only when its swap button put it there, a flag of its own: 11-02, the first version saved its side every
+    // time, which read as placed and kept it on the right over what he selected)
+    if (st && Array.isArray(st.sides)) { DR.L.side = st.sides[0] === 'r' ? 'r' : 'l'; DR.R.placed = st.rPlaced === true; DR.R.side = st.sides[1] === 'l' ? 'l' : 'r'; if (DR.R.placed && DR.L.side === DR.R.side) DR.R.side = DR.L.side === 'l' ? 'r' : 'l'; }
     S.title = st && typeof st.title === 'string' && st.title.trim() ? st.title.slice(0, 60) : undefined; S.clock = !st || st.clock !== false;
     S.hide = cleanHide(st && st.hide); hideSets();
+    feed.noStarter = !!m.noStarter; S.starterSeen = !!(st && st.starter === true); S.starterNoted = !!(st && st.starterNoted === true); feed.stateIn = !m.stateHeld;
+    // (a new user: the view came with nothing in it. A view set aside as unreadable, or one emptied later, is not)
+    feed.starterFresh = !m.stateBad && !(st && st.L && Array.isArray(st.L.cats) && st.L.cats.length);
     renderTitle(); $('rstBtn').disabled = feed.fake; if (feed.fake) $('rstBtn').title = 'Demo data: there is no HWiNFO to restart';
     undoStack = []; redoStack = []; keyStep.t = 0; sel = null; selCat = null; preview = null; if (dragPt) dragPt.before = null;   // (a point held takes no step from the view it was in)
     app.classList.toggle('editing', S.edit); $('editBtn').classList.toggle('on', S.edit);
     for (const b of document.querySelectorAll('#screens button[data-s]')) b.classList.toggle('active', b.dataset.s === S.screen);
     placeTabInd(true);
     lastSub = ''; subscribe(); enterNext = true; renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves();
+    starterCheck();
   } else if (m.t === 'settings') {
     feed.autostart = !!m.autostart; feed.hwinfo = m.hwinfo || null; feed.keepBusy = !!m.keepBusy; if (m.keepDone) feed.keepWait = false; if (!feed.keepBusy && !feed.keepWait) feed.keep = !!m.keep; feed.keepNote = typeof m.keepNote === 'string' ? m.keepNote : '';
     feed.fpsBusy = !!m.fpsBusy; if (m.fpsDone) feed.fpsWait = false; if (!feed.fpsBusy && !feed.fpsWait) feed.fps = !!m.fps; feed.fpsState = typeof m.fpsState === 'string' ? m.fpsState : 'off'; feed.updates = m.updates !== false; feed.latest = m.latest || null; feed.canUpdate = !!m.canUpdate; syncUpd();
-    feed.gameDays = m.gameDays || 0; feed.warnDays = m.warnDays || 0;   // (0: not set since a damaged settings file, nothing cut)
+    const wd0 = feed.warnDays;
+    feed.gameDays = Number.isFinite(m.gameDays) ? m.gameDays : null; feed.warnDays = Number.isFinite(m.warnDays) ? m.warnDays : null;   // (0: kept forever; null: not set since a damaged settings file. Neither cuts anything)
     feed.gameMerge = Number.isFinite(m.gameMerge) ? m.gameMerge : 30;
-    if ($('wmodal').classList.contains('open')) send({ t: 'alerts' });
+    if ($('wmodal').classList.contains('open') && feed.warnDays !== wd0) send({ t: 'alerts' });   // (its days changed: what it keeps)
     if (setmodal.classList.contains('open')) renderSettings();
   } else if (m.t === 'catalog') {
     const sameKeys = READ.length === m.readings.length && m.readings.every((x, i) => READ[i].key === x[2]);
@@ -5208,10 +6341,11 @@ function onHost(m) {
     lastSub = ''; subscribe();
     // the same readings with new names (a rename in HWiNFO): no rebuild under someone typing in a field
     const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp input, #insp select, #insp textarea, .cn-in');
-    if (sameKeys && typing) { for (const [cid, r] of E) { const c = S.L.cells[cid], n = r.root.querySelector('.tn > span, .nm > span, .gname > span'); if (c && n) setText(n, nameIn(cid)); } renderStorage(); }
+    if (sameKeys && typing) { for (const [cid, r] of E) { const c = S.L.cells[cid], n = r.root.querySelector('.tn > span, .nm > span, .gname > span'); if (c && n) { setText(n, nameIn(cid)); if (n.title) n.title = nameIn(cid); } } renderStorage(); }
     else { renderView(false); renderStorage(); renderInsp(); }
     if (GZ.on) { if (document.activeElement && document.activeElement.matches('#gcz .gz-name')) { gzCompute(); gzChips(); gzDraw(); } else renderGz(); }   // (a name being typed stays: only the readings list is new)
     showFeed();
+    starterCheck();   // (a new user's readings came: Starter now)
     boot.cat = true; bootCheck();
   } else if (m.t === 'spark') {
     for (const k in m.keys) ringFill(k, m.ts, m.keys[k]);
@@ -5258,13 +6392,20 @@ function onHost(m) {
     if (!boot.tick) { boot.tick = true; if (m.status !== 'ok') boot.cat = boot.x = true; bootCheck(m.status !== 'ok' && !READ.length); }   // (no HWiNFO: nothing more to wait for)
     if (modalCid) { refreshModal(); if (bigRange !== '15m' && Date.now() - histAsked > 60000) askHist(); }
     if (HP.shown) { if (anyModalOpen() || !S.L.cells[HP.cid]) hidePrev(); else { fillPrev(); if (!HP.rev0) drawPrev(); } }
-  } else if (m.t === 'hist') {
+  } else if (m.t === 'hist' && !wxTake(m)) {   // (a warning row's chart asked for it: only it, unless the cell popup asked for the same)
     const again = bigHist && bigHist.key === m.key && bigHist.range === m.range;   // (the same graph a minute on: no new draw-in, one under way goes on)
     bigHist = m;
-    if (modalCid && histReady()) { if (!again) bigRev0 = motionOn() ? performance.now() : 0; refreshModal(); if (bigRev0 && !again) bigLoop(); }
+    if (modalCid && histReady()) { if (!again) { bigRevMs = 450; bigRev0 = motionOn() ? performance.now() : 0; } refreshModal(); if (bigRev0 && !again) bigLoop(); }
   } else if (m.t === 'alerts') { if (wmodal.classList.contains('open')) renderWarnings(m.log); }   // (one that comes in after a close isn't drawn)
+  else if (m.t === 'gamesBin') gbRender(m.log);
+  else if (m.t === 'alertsBin') wbRender(m.log);
   else if (m.t === 'games') { if (gmodal.classList.contains('open')) renderGames(m.log, $('glist').querySelector('.gx-sess') ? gxOpen() : undefined); }   // (an edit: what was open stays open; one after a close isn't kept)
-  else if (m.t === 'toast') toast(m.text, false, m.ms);
+  else if (m.t === 'toast') {
+    // (a move that moved nothing, or failed: its undo step goes, if nothing came after it)
+    if (m.moved === 0 && pkStep && undoStack[undoStack.length - 1] === pkStep) { undoStack.pop(); syncUndo(); }
+    if (m.moved !== undefined) pkStep = null;
+    toast(m.text, !!m.undo, m.ms);
+  }   // (undo: a step on the undo stack, a Restore's)
   else if (m.t === 'saveView') saveState();
   else if (m.t === 'gameNow') gxLive(m.s);
   else if (m.t === 'winMax') feed.winMax = !!m.max;   // (the view's file was set aside: the one shown is written)
@@ -5297,7 +6438,7 @@ function onHost(m) {
     S.slots = sl;
     if (slotWanted != null && sent.includes(slotWanted) && sl[slotWanted] && S.active == null) {   // (the slot the view was linked to, held at the start)
       // (its undo steps since the start are that view's too: no Load, Clear, Save or Import came between, or slotWanted would be gone)
-      const w = slotWanted, relink = js => { const o = JSON.parse(js); if (o.active != null) return js; o.active = w; return JSON.stringify(o); };
+      const w = slotWanted, relink = js => { const o = JSON.parse(js); if (o.active != null || o.host) return js; o.active = w; return JSON.stringify(o); };
       undoStack = undoStack.map(relink); redoStack = redoStack.map(relink); if (dragPt && dragPt.before) dragPt.before = relink(dragPt.before);
       S.active = w; saveState();
     }
