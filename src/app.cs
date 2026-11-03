@@ -25,13 +25,13 @@ using Microsoft.Web.WebView2.WinForms;
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
 [assembly: System.Reflection.AssemblyDescription("A dashboard for whatever HWiNFO measures")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("2.0.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("2.0.0.0")]
+[assembly: System.Reflection.AssemblyVersion("2.0.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("2.0.1.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion(AppInfo.Version)]
 
 static class AppInfo
 {
-    public const string Version = "2.0.0";
+    public const string Version = "2.0.1";
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -331,6 +331,27 @@ class FakeSource : Source
     }
     // tests: hold a reading at a value (NaN lets it go)
     public void Pin(string key, double v) { int i = Readings.FindIndex(r => r.Key == key); if (i >= 0) pin[i] = v; }
+    // tests: made-up frames for the bottleneck, as if HW Deck counted the game's (fps 0: none). Without swing they are held
+    // to a clock (a cap), each off its time by up to jitter (a part of the frame time, either way); with swing each takes
+    // its own time off the one before (uncapped), the rate swinging by swing (a part of it) over 1.7 s
+    double frFps, frJitter, frSwing;
+    public void SetFrames(double fps, double jitter, double swing) { frFps = fps; frJitter = jitter; frSwing = swing; }
+    public bool Counted { get { return frFps > 0; } }
+    public bool? Steady()
+    {
+        if (!(frFps > 0)) return null;
+        long f = 10000000, now = clock.Elapsed.Ticks; var r = new Random(7); var ts = new List<long>(); double step = f / frFps;
+        if (frSwing == 0) for (int k = 0; k * step < 6 * f && ts.Count < 20000; k++) ts.Add(now - (long)(k * step) + (long)(step * frJitter * (2 * r.NextDouble() - 1)));
+        else
+            for (long t = now; t > now - 6 * f && ts.Count < 20000; )
+            {
+                ts.Add(t);
+                double fps = frFps * (1 + frSwing * Math.Sin(2 * Math.PI * t / (1.7 * f)));
+                t -= (long)(f / fps * (1 + frJitter * (2 * r.NextDouble() - 1)));
+            }
+        ts.Sort();
+        return global::Frames.Pace(ts, now, f);
+    }
     public override void Poll()
     {
         double t = clock.Elapsed.TotalSeconds, load = 0.5 + 0.5 * Math.Sin(t / 26);
@@ -440,16 +461,19 @@ class DeckSource : Source
     public void Second(bool game)
     {
         foreach (var x in Extras) x.Second();   // first: the bottleneck may go by a build's own measurements
-        Bneck.Second(Inner, game);
+        if (Frames != null) Frames.Second();   // (and by this second's pace of the game's frames)
+        var fs = Inner as FakeSource;
+        if (fs != null) Bneck.Second(Inner, game, fs.Steady(), fs.Counted);
+        else Bneck.Second(Inner, game, Frames != null ? Frames.Steady : null, Frames != null && Frames.On && Frames.Pid != 0);
         if (Values.Length > Inner.Readings.Count) Values[Inner.Readings.Count] = Bneck.Value;
-        if (Frames != null) Frames.Second();
         CopyFrames();
         CopyExtras();
     }
 }
 
-// what limits the fps while a game runs, one call a second: the GPU at 95%+ is gpu-bound ('g'); under 85% with the
-// busiest CPU thread at 80%+ is cpu-bound ('c'); otherwise an fps cap or vsync ('f'); 85-95% keeps the previous call.
+// what limits the fps while a game runs, one call a second: the GPU at 95%+ is gpu-bound ('g'); under 85% the GPU
+// waits: on an fps cap or vsync ('f') when the game's frames come at a held pace (Frames.Pace), else on the CPU side
+// ('c'); 85-95% keeps the previous call.
 // Read from HWiNFO by name: GPU core load, and Max CPU/Thread Usage (else the busiest per-thread or per-core usage)
 class Bottleneck
 {
@@ -457,7 +481,8 @@ class Bottleneck
     static readonly Regex MaxRe = new Regex(@"^Max CPU/Thread Usage$"), ThreadRe = new Regex(@"^(?:[PE]-)?Core ?\d+(?: T\d+)? Usage$", RegexOptions.IgnoreCase);
     public static bool Named(Regex re, Reading r) { return re.IsMatch(r.Label) || (!string.IsNullOrEmpty(r.Orig) && re.IsMatch(r.Orig)); }
     int gpuI = -1, maxI = -1; int[] threads = new int[0];
-    char last = '-';
+    char last = '-'; bool wasGame;
+    public double Gpu = double.NaN, Cpu = double.NaN;   // this second's inputs (for pace.log)
     public char Call = '-';                 // this second's; '-' no game, no readings or HWiNFO not sharing
     public char Live = '-';                 // the same call game or not (the cell shows it outside a game too); '-' no readings
     public double Value = double.NaN;       // this second's call for the history: 1 gpu, 2 cpu, 3 capped
@@ -486,16 +511,31 @@ class Bottleneck
                                 maxI >= 0 ? src.Readings[maxI].Key : threads.Length == 0 && OwnCpu != null ? OwnCpuKey : null, threads.Length };
     }
     static double At(Source src, int i) { return i >= 0 && i < src.Values.Length && !double.IsInfinity(src.Values[i]) ? src.Values[i] : double.NaN; }
-    public void Second(Source src, bool game)
+    // steady: the pace of the game's frames, when HW Deck counts them (see Frames.Pace; null: not counted, or nothing to
+    // tell by). Capped only when it is held: a GPU waiting while no CPU thread reads busy was called capped until 2.0.1,
+    // and 11-03 Deadlock uncapped read "FPS capped" 83% of a session (GPU 63%, its busiest thread 74%, the fps anywhere
+    // from 160 to 590 a minute): a game's threads wait on each other, move between cores, and none reads busy all the
+    // time. HWiNFO's PresentMon fps is left out: it stays the same between its polls and can follow another app
+    // counted: the game in front has its frames counted (steady null then: nothing to tell by yet, a load, back in front)
+    public void Second(Source src, bool game, bool? steady = null, bool counted = false)
     {
         double gpu = At(src, gpuI), cpu = At(src, maxI);
         if (maxI < 0) foreach (int i in threads) { double v = At(src, i); if (!double.IsNaN(v) && (double.IsNaN(cpu) || v > cpu)) cpu = v; }
         if (gpuI < 0 && OwnGpu != null) gpu = OwnGpu();
         if (maxI < 0 && threads.Length == 0 && OwnCpu != null) cpu = OwnCpu();
+        Gpu = gpu; Cpu = cpu;
+        if (game && !wasGame) last = '-';   // (a game starting: no call carried over from the desktop)
+        wasGame = game;
         char live = '-';
         if (src.Status == "ok" && !double.IsNaN(gpu) && !double.IsNaN(cpu))
         {
-            live = gpu >= 95 ? 'g' : gpu < 85 ? (cpu >= 80 ? 'c' : 'f') : last != '-' ? last : gpu >= 90 ? 'g' : cpu >= 80 ? 'c' : 'f';
+            // the GPU not busy: what it waits on. Counted but nothing to tell by yet: the call as it was (a load, back from an
+            // alt-tab). Not counted: in a game a cap can't be seen, so CPU bound; with no game, the desktop at the screen's pace
+            char waits = cpu >= 80 || steady == false ? 'c' : steady == true ? 'f' : counted ? (last == 'c' || last == 'f' ? last : 'c') : game ? 'c' : 'f';
+            // 85 to 95%: a GPU-bound call holds on (the GPU near its top, dipping) unless the pace is held; with none before,
+            // 90%+ is the GPU; else the pace decides, as under 85% (11-03 review: keeping any call let a CPU bound from the
+            // 5 s before the pace was known hold a capped game at 87 to 93% all session)
+            live = gpu >= 95 ? 'g' : gpu < 85 ? waits : (last == 'g' || (last == '-' && gpu >= 90)) && steady != true ? 'g' : waits;
         }
         if (live != '-') last = live;   // (a second with no value keeps the last call for the band)
         Live = live;
@@ -668,6 +708,7 @@ class Frames
     int stallAt;   // the last time the trace was asked again for frames that stopped coming (TickCount, compared unchecked)
     public void Second()
     {
+        Steady = null; PaceLine = null;
         long f = System.Diagnostics.Stopwatch.Frequency, now = System.Diagnostics.Stopwatch.GetTimestamp();
         int pid = Pid;
         if (pid != lastPid) { lastPid = pid; pidAt = now; }
@@ -694,6 +735,60 @@ class Frames
         for (int i = 1; i < ts.Count; i++) if (ts[i] > last - 10 * f) { double g = (ts[i] - ts[i - 1]) * 1000.0 / f; if (g < 1000) gaps.Add(g); }
         if (gaps.Count >= 30) { gaps.Sort(); double p99 = gaps[Math.Min(gaps.Count - 1, (int)Math.Ceiling(gaps.Count * 0.99) - 1)]; Low = p99 > 0 ? 1000.0 / p99 : double.NaN; }
         else Low = double.NaN;
+        Steady = Pace(ts, now, f);
+        if (LogPace) PaceLine = PaceText(ts, f);
+    }
+    // the pace of the game's frames, for the bottleneck (11-03): true when something holds it (an fps cap, vsync, Reflex),
+    // false when it goes up and down, null when there is nothing to tell by. The 5 s before the newest present cut into
+    // 10 slices of 0.5 s, each slice's rate from the time its frames span (no +-1 frame of counting noise, a frame's own
+    // jitter averages out: a driver limiter can swing 30% frame to frame and still hold its rate); held: 8 of the 10
+    // within 2% of the second highest (one fast slice let go, dips under a cap allowed). Nothing to tell by: the newest
+    // present over 1 s old, fewer than 8 slices with 3 frames (a load, an alt-tab, under 5 s in front), a top under 20 fps
+    public const int PaceSlices = 10, PaceNeed = 8; public const double PaceBand = 0.02;
+    public bool? Steady;                    // this second's (null: no game, not counted, or nothing to tell by)
+    public static bool? Pace(List<long> ts, long now, long f)
+    {
+        if (ts.Count < PaceNeed * 3 || f <= 0) return null;
+        if (now - ts[ts.Count - 1] > f) return null;
+        var rate = Slices(ts, f, PaceSlices).Where(r => !double.IsNaN(r)).ToList();
+        if (rate.Count < PaceNeed) return null;
+        rate.Sort();
+        double top = rate[rate.Count - 2];
+        if (top < 20) return null;
+        return rate.Count(r => r >= top * (1 - PaceBand)) >= PaceNeed;
+    }
+    // the 5 s before the newest present in k slices, each one's rate (fps) from the time its frames span (NaN: under 3)
+    static List<double> Slices(List<long> ts, long f, int k)
+    {
+        long last = ts[ts.Count - 1], from = last - 5 * f;
+        var rate = new List<double>(k);
+        int i = 0; while (i < ts.Count && ts[i] <= from) i++;
+        for (int j = 0; j < k; j++)
+        {
+            long end = j == k - 1 ? last : from + (j + 1) * (5 * f) / k;
+            long a = 0, b = 0; int n = 0;
+            for (; i < ts.Count && ts[i] <= end; i++) { if (n == 0) a = ts[i]; b = ts[i]; n++; }
+            rate.Add(n >= 3 && b > a ? (n - 1) * (double)f / (b - a) : double.NaN);
+        }
+        return rate;
+    }
+    // the pace in numbers, to tune Pace from real games (settings "paceLog", see DeckForm.PaceLog): the 10 slices' rates;
+    // the frame times' spread (cv) and lag-1 correlation (ac1: near -0.5 for frames held to a clock with jitter, 0 or more
+    // for frames that each take their own time); q, how much more 0.125 s slices spread than 0.5 s ones (about 4 held to a
+    // clock, 2 or less not). null: under 30 frames
+    public bool LogPace; public string PaceLine;   // (asked for, and this second's)
+    public static string PaceText(List<long> ts, long f)
+    {
+        if (ts.Count < 30) return null;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        long from = ts[ts.Count - 1] - 5 * f;
+        var d = new List<double>(); for (int i = 1; i < ts.Count; i++) if (ts[i - 1] >= from) { double g = (ts[i] - ts[i - 1]) * 1000.0 / f; if (g < 1000) d.Add(g); }
+        if (d.Count < 3) return null;
+        double m = d.Average(), v = d.Sum(x => (x - m) * (x - m)), c = 0; for (int i = 1; i < d.Count; i++) c += (d[i] - m) * (d[i - 1] - m);
+        Func<List<double>, double> rsd = r => { var x = r.Where(y => !double.IsNaN(y)).ToList(); if (x.Count < 3) return double.NaN; double a = x.Average(); return Math.Sqrt(x.Sum(y => (y - a) * (y - a)) / (x.Count - 1)) / a; };
+        var h = Slices(ts, f, 10); double q = rsd(Slices(ts, f, 40)) / rsd(h);
+        return "fps " + (1000 / m).ToString("0.0", inv) + "  slices " + string.Join(",", h.Select(r => double.IsNaN(r) ? "-" : r.ToString("0.0", inv))) +
+            "  cv " + (Math.Sqrt(v / d.Count) / m).ToString("0.0000", inv) + "  ac1 " + (v > 0 ? c / v : double.NaN).ToString("0.000", inv) + "  q " + q.ToString("0.00", inv);
     }
 }
 
@@ -2816,6 +2911,26 @@ partial class DeckForm : Form
                         r["undo"] = n > 0 && fail == null; r["moved"] = fail != null ? 0 : n; Post(r);   // (moved 0: the page drops the step it kept for it)
                     }
                     break;
+                // a bin's row deleted for good (11-03): its exact lines leave the bin's file; nothing keeps a copy
+                case "log:purge":
+                    {
+                        string which = m.ContainsKey("log") ? m["log"] as string : null, name = which == "games" ? "games.log" : which == "alerts" ? "alerts.log" : null;
+                        var arr = m.ContainsKey("lines") ? m["lines"] as System.Collections.ArrayList : null;
+                        if (name == null || arr == null) break;
+                        var lines = arr.Cast<object>().Select(o => o as string).Where(l => !string.IsNullOrEmpty(l)).Distinct().ToList();
+                        int n = 0; string fail = null; var did = new List<string>();
+                        try
+                        {
+                            n = PurgeLines(name, lines, out did);
+                            long asked = m.ContainsKey("n") ? Games.Long(m["n"]) : 0; if (asked > 0 && asked < 100000 && did.Count > 0 && did.Count == lines.Count) n = (int)asked;   // (the page's count, as its rows count them)
+                        }
+                        catch (Exception ex) { fail = ex.Message; Log("log:purge failed: " + ex.Message); }
+                        SendLog(name + ".bak", which + "Bin");
+                        var r = Msg("toast"); Func<int, string> what = k => which == "games" ? (k == 1 ? "1 session" : k + " sessions") : (k == 1 ? "1 warning" : k + " warnings");
+                        r["text"] = fail != null ? "Couldn't delete it: " + fail : did.Count == 0 ? "Nothing deleted: it changed since" : what(Math.Max(1, n)) + " deleted for good";
+                        r["gone"] = fail == null ? did : new List<string>(); Post(r);   // (the page drops undo steps that only held these; a failed write deleted nothing)
+                    }
+                    break;
                 case "gamesLive": gamesLive = true.Equals(m["on"]); if (gamesLive) PostLive(); break;   // the sessions popup opened or closed
                 case "games:clear": lock (games.LogLock) Wipe("games.log"); games.Forget(); SendCleared("games"); SendSettings(); break;
                 // a session of your own: start, stop, a new name while it runs
@@ -2871,6 +2986,7 @@ partial class DeckForm : Form
                 // tests, made-up data only: a game in place of the processes, a reading held at a value
                 case "fakeGame": if (fake) games.Pretend(m.ContainsKey("game") ? m["game"] as string : null, m.ContainsKey("front") && true.Equals(m["front"])); break;
                 case "fakePin": if (fake) ((FakeSource)src.Inner).Pin(m["key"] as string, m["v"] == null ? double.NaN : Convert.ToDouble(m["v"], System.Globalization.CultureInfo.InvariantCulture)); break;
+                case "fakeFrames": if (fake) { Func<string, double> d = k => m.ContainsKey(k) && m[k] != null ? Convert.ToDouble(m[k], System.Globalization.CultureInfo.InvariantCulture) : 0; ((FakeSource)src.Inner).SetFrames(d("fps"), d("jitter"), d("swing")); } break;
                 default: if (t != null && t.StartsWith("x.")) ExtMessage(t, m); break;
             }
         }
@@ -3322,7 +3438,37 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             return Count(name, moved);
         }
     }
+    // lines deleted for good from a log's bin, exactly as they are, every copy (written flushed, like a move); how many:
+    // sessions, or crossings
+    int PurgeLines(string name, List<string> lines, out List<string> gone)
+    {
+        lock (name == "games.log" ? games.LogLock : alertsLock)
+        {
+            string b = P(name) + ".bak";
+            var want = new HashSet<string>(lines);
+            var from = File.Exists(b) ? File.ReadAllLines(b, Encoding.UTF8) : new string[0];
+            gone = from.Where(l => want.Contains(l)).Distinct().ToList();
+            if (gone.Count == 0) return 0;
+            var keep = from.Where(l => !want.Contains(l) && l.Trim().Length > 0).ToList();
+            if (keep.Count > 0) Disk.SwapLines(b, keep); else File.Delete(b);
+            return Count(name, gone);
+        }
+    }
     readonly object alertsLock = new object();   // (alerts.log is written on this thread: the lock only matches games.log's)
+    // settings "paceLog" (2.0.1, no switch in the page, off unless set in settings.json): while a game's frames are counted,
+    // a line a second of the bottleneck's inputs, its call and the game's pace in numbers (Frames.PaceText), in pace.log
+    // (its newest 20 MB), to tune Frames.Pace from real games
+    int paceLines;
+    void PaceLog()
+    {
+        var fr = src.Frames; if (fr == null) return;
+        fr.LogPace = settings.ContainsKey("paceLog") && true.Equals(settings["paceLog"]);
+        if (!fr.LogPace || fr.PaceLine == null) return;
+        var b = src.Bneck; var inv = System.Globalization.CultureInfo.InvariantCulture;
+        AppendLog("pace.log", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", inv) + "  gpu " + b.Gpu.ToString("0", inv) + " cpu " + b.Cpu.ToString("0", inv) +
+            " call " + b.Live + " pace " + (fr.Steady == null ? "-" : fr.Steady.Value ? "held" : "not") + "  " + fr.PaceLine);
+        if (paceLines++ % 3600 == 0) Shorten(P("pace.log"), 20L << 20);   // (at its first line, then hourly)
+    }
     // lines put in among a log's own by time, the log's order kept as it is (one written across a clock change stays as it
     // was); at the same second, a mark that ends something (an exit, a sleep, HWiNFO stopping) goes after them, so a
     // crossing's peak comes back before the mark that ended it; an app's start stays before them
@@ -3504,6 +3650,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             if (MaybeGpuRestart()) return;   // (this copy is closing)
             Try(WinBack);
             src.Second(games.Game != null && now - games.Seen <= 6);
+            PaceLog();
             hist.Sample(src, Bottleneck.ShareKeys, src.Bneck.Shares);
             ExtSecond(now);
             if (pageReady && now % 10 == 0 && src.Inner.Readings.Count > 0)

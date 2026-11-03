@@ -206,7 +206,7 @@ const bnInputs = () => !!feed.bnIn[0] && (!!feed.bnIn[1] || feed.bnIn[2] > 0);
 function bnFrom() {
   const nm = k => { const r = BYKEY.get(k); return r ? esc(r.label) + ' on ' + esc(SENS[r.s].short) : ''; };
   if (!bnInputs()) return 'HWiNFO shares no GPU core load or CPU thread usage on this PC, so there is nothing to go by.';
-  return 'It goes by ' + nm(feed.bnIn[0]) + ' and ' + (feed.bnIn[1] ? nm(feed.bnIn[1]) : 'the busiest of ' + feed.bnIn[2] + ' CPU thread usages') + '.';
+  return 'It goes by ' + nm(feed.bnIn[0]) + ' and ' + (feed.bnIn[1] ? nm(feed.bnIn[1]) : 'the busiest of ' + feed.bnIn[2] + ' CPU thread usages') + (feed.fpsState === 'on' ? ', and the pace of the game\'s frames it counts' : ', but it can\'t see a cap while it doesn\'t count the game\'s frames (Accurate game fps)') + '.';
 }
 const bnLegend = b => b.split.map(q => '<span><i class="lg ' + q[2] + '"></i><em>' + q[0] + '</em>' + q[1] + '%</span>').join('');
 function renderStrip(track, segs, span) {
@@ -3249,7 +3249,7 @@ function renderInsp() {
   const bn = isBneck(c), gsel = '<select id="iGraph"><option value="1"' + (c.graph !== false ? ' selected' : '') + '>Show</option><option value="0"' + (c.graph === false ? ' selected' : '') + '>Hide</option></select>';
   // the bottleneck is a call, not a number: no decimals, no lines
   if (bn) h += '<div class="two"><label class="fld"><span>15 min bar</span>' + gsel + '</label><span></span></div>' +
-    '<div class="fgrp"><span class="hint">Worked out by ' + esc(feed.brand || 'HW Deck') + ' once a second while a game runs, from GPU usage and the busiest CPU thread. GPU bound: the GPU at 95% or more. CPU bound: the GPU under 85% with a thread at 80% or more. FPS capped: neither, so an fps limit or vsync sets the pace.</span></div>';
+    '<div class="fgrp"><span class="hint">Worked out by ' + esc(feed.brand || 'HW Deck') + ' once a second while a game runs, from GPU usage, the busiest CPU thread and the pace of the game\'s frames (Accurate game fps, in Settings). GPU bound: the GPU at 95% or more. FPS capped: the GPU under 85% and the frames coming at a steady pace, so an fps limit or vsync sets it. CPU bound: the GPU under 85% otherwise. Without Accurate game fps, or in a Vulkan or OpenGL game, it can\'t see a cap, so a capped game reads CPU bound too.</span></div>';
   else h += '<div class="two"><label class="fld"><span>Decimals</span><select id="iDec">' + [0, 1, 2, 3].map(d => '<option' + (decOfCell(c, r) === d ? ' selected' : '') + '>' + d + '</option>').join('') + '</select></label>' +
        '<label class="fld"><span>Graph</span>' + gsel + '</label></div>';
   if (!c.pred && !bn) {
@@ -3885,8 +3885,9 @@ function refreshModal(full) {
       : r ? '<span title="' + esc(r.key) + '">' + esc(SENS[r.s].name) + ', ' + esc(r.label) + '.</span>' : sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now.' : 'This reading is not on this PC.';
     if (gatesOn(g)) d += ' Lines: yellow ' + lnTxt(det.y, dec, r, det.below) + (det.r !== undefined ? ', red ' + lnTxt(det.r, dec, r, det.below) : '') + (unit && !isYN(r) ? ' ' + esc(unit) : '') + (g.dir === 'below' ? ', bad when below' : '') + (det.y2 !== undefined || det.r2 !== undefined ? ', and on the other side ' + [det.y2 !== undefined ? 'yellow ' + lnTxt(det.y2, dec, r, !det.below) : '', det.r2 !== undefined ? 'red ' + lnTxt(det.r2, dec, r, !det.below) : ''].filter(Boolean).join(', ') + (g.dir === 'below' ? ', bad when above' : ', bad when below') : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
     if (c.curve && !c.pred) d += ' Follows a fan curve driven by ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ', within ' + fmtL(c.curve.tol, 1) + '%' + (c.curve.warn === false ? ', but it doesn\'t warn when off it' : '') + '.';
-    if (e.strip) d = 'What limits your fps while a game runs, worked out once a second from GPU usage and the busiest CPU thread. GPU bound: the GPU at 95% or more, ' +
-      'normal for a game without an fps limit. CPU bound: the GPU under 85% with a CPU thread at 80% or more. FPS capped: neither is the limit, so an fps limit or vsync sets the pace. ' +
+    if (e.strip) d = 'What limits your fps while a game runs, worked out once a second from GPU usage, the busiest CPU thread and the pace of the game\'s frames (Accurate game fps, in Settings). GPU bound: the GPU at 95% or more, ' +
+      'normal for a game without an fps limit. FPS capped: the GPU under 85% and the frames coming at a steady pace, so an fps limit or vsync sets it. ' +
+      'CPU bound: the GPU under 85% otherwise. The game waits on its own threads, though none may read busy all the time. Without Accurate game fps, or in a Vulkan or OpenGL game, it can\'t see a cap, so a capped game reads CPU bound too. ' +
       'The cell shows the most common call of the last 5 seconds. At 1 h and longer, the bar has a column per minute, or per 10 minutes at 7 days, as tall as the time a game ran in it. ' + bnFrom();
     if (xk && xk.desc) d = xk.desc(modalCid, r);
     $('mdesc').innerHTML = d;
@@ -4738,7 +4739,7 @@ function wxDayHd(dk, n, today, yest, unit) {
 }
 // a row: the cell, from when to when, its peak in its level's colour, how long it lasted, how many times, the lines it
 // crossed, its level; what opens under it is drawn the first time it opens (a big log had 100,000+ hidden rows)
-function wxRow(g, gi) {
+function wxRow(g, gi, bin) {
   const lv = g.level === 'RED' ? 'r' : 'y', w = wxCell(g.name), many = g.eps.length > 1;
   const hm = d => ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2), endT = g.end ? hm(g.end) : null;
   const when = g.first.time + (g.ongoing ? ' to now' : endT && endT !== g.first.time ? ' to ' + endT : '');
@@ -4749,7 +4750,7 @@ function wxRow(g, gi) {
     '<span class="gx-c gx-num"><span class="wx-pk ' + lv + '">' + (g.peak ? esc(wYN(g.peak.v + ' ' + g.peak.u)) : '--') + '</span></span>' +
     '<span class="gx-c gx-num"' + lt + '>' + lasted + '</span><span class="gx-c gx-num wx-x">' + (many ? g.eps.length + 'x' : '1') + '</span>' +
     '<span class="gx-c"><span class="wx-ln">' + esc(wxLines(g, w)) + '</span></span>' +
-    '<span class="gx-c gx-st"><span class="wx-lv' + (lv === 'r' ? ' r' : '') + '"><i></i>' + (lv === 'r' ? 'red' : 'yellow') + '</span></span></div>' +
+    '<span class="gx-c gx-st"><span class="wx-lv' + (lv === 'r' ? ' r' : '') + '"><i></i>' + (lv === 'r' ? 'red' : 'yellow') + '</span></span>' + (bin ? PK_PURGE : '') + '</div>' +
     '<div class="gx-det"><div><div class="gx-in"></div></div></div></div>';
 }
 function drawWarnList(keep) {
@@ -4897,6 +4898,7 @@ $('wlist').addEventListener('click', e => {
     card.scrollTop = st; return;
   }
   if (e.target.closest('#wbMore')) { const card = $('wlist').closest('.mcard'), st = card.scrollTop; wbShow += 300; wbRender(wbText); card.scrollTop = st; return; }
+  const pg = e.target.closest('.gx-purge'); if (pg) { pkPurge('w', pg.closest('.gx-sess')); return; }   // (a bin row's own button: not a pick)
   if (PK.w.mode) { const s = e.target.closest('.gx-sess'); if (s) pkToggle('w', s); return; }   // (picking: a click picks)
   const r = e.target.closest('.gx-row'); if (!r) return;
   const el = r.parentNode; wxFill(el, wGroups[+el.dataset.g]);
@@ -4987,6 +4989,28 @@ function pkAct(k, a) {
   send({ t: 'log:move', log, to, lines, n: k === 'g' ? lines.length : items.filter(x => P.pick.has(pkKey(k, x))).reduce((s, g) => s + g.eps.length, 0) });   // (n: how many, as the rows count them)
   if (a === 'del') pkMode(k, null, true); else { P.pick.clear(); pkBar(k); }   // (the host's new log and bin draw the rows again)
 }
+// a row deleted for good from its bin (11-03, his "in the bin a button in each row to delete it permanently, like it was
+// before"): its exact lines leave the bin's file, after a confirm, no undo. A mark the bin set aside with the crossings
+// it ended stays while another row there ends at it. Any row, an old one too (it can't come back, it can still go)
+const PK_PURGE = '<button class="gx-purge" data-tip="Delete for good"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>';
+function pkPurge(k, el) {
+  const x = el && PK[k].mode === 'bin' ? pkItemOf(k, el) : null; if (!x) return;
+  const others = k === 'w' ? new Set(PK.w.bin.filter(g => g !== x).flatMap(g => g.eps.map(ep => ep.closer).filter(Boolean))) : null;
+  const lines = [...new Set(pkLines(k, x))].filter(l => !others || !others.has(l)); if (!lines.length) return;
+  const what = k === 'g' ? x.game + ', ' + localDay(new Date(x.start * 1000)) + ' ' + hhmm(x.start) + ' to ' + hhmm(x.end)
+    : x.name + ', ' + x.day + ' ' + x.first.time + (x.eps.length > 1 ? ', ' + x.eps.length + ' times' : '');
+  askConfirm(k === 'g' ? 'Delete this session for good?' : 'Delete this row for good?', what + '. It leaves the bin and can\'t be brought back.', 'Delete for good',
+    () => send({ t: 'log:purge', log: k === 'g' ? 'games' : 'alerts', lines, n: k === 'g' ? 1 : x.eps.length }));
+}
+// (what the host deleted, added up since the page opened: a step that brings back from the bin only lines deleted for
+// good has nothing left to move, so it goes; a step out of the log stays, the log keeps its lines)
+const pkGone = new Set();
+function pkForget(gone) {
+  for (const l of gone) pkGone.add(l);
+  const dead = s => { if (!s.startsWith('{"host":')) return false; try { const o = JSON.parse(s); return !!(o.host && o.host.t === 'log:move' && o.host.to === 'log' && Array.isArray(o.host.lines) && o.host.lines.every(l => pkGone.has(l))); } catch (e) { return false; } };
+  const n = undoStack.length + redoStack.length; undoStack = undoStack.filter(s => !dead(s)); redoStack = redoStack.filter(s => !dead(s));
+  if (undoStack.length + redoStack.length !== n) { if (pkStep && !undoStack.includes(pkStep)) pkStep = null; syncUndo(); }
+}
 // the bins on show: sessions', warnings' (the same rows; a crossing the bin has without its end shows no "now")
 function gbRender(text) {
   if (PK.g.mode !== 'bin' || !$('gmodal').classList.contains('open')) return;   // (shut: it let go of its list)
@@ -4997,7 +5021,7 @@ function gbRender(text) {
   const today = localDay(new Date()), y = new Date(); y.setDate(y.getDate() - 1); const yest = localDay(y), dk = u => localDay(new Date(u * 1000)), per = {};
   for (const x of ss) per[dk(x.start)] = (per[dk(x.start)] || 0) + 1;
   let h = '', last = null;
-  ss.forEach((x, i) => { const d = dk(x.start); if (d !== last) { last = d; h += wxDayHd(d, per[d], today, yest, 'session'); } h += gxSessHtml(x, i, false); });
+  ss.forEach((x, i) => { const d = dk(x.start); if (d !== last) { last = d; h += wxDayHd(d, per[d], today, yest, 'session'); } h += gxSessHtml(x, i, false, true); });
   $('glist').innerHTML = h ? '<div class="gx-cols"><span></span><span>session</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
     : '<div class="wempty ico pad">The bin is empty: what Delete, Keep or a move sets aside waits here.</div>';
   pkMark('g'); pkBar('g'); if (slide) pkSlide('g', 1);
@@ -5018,7 +5042,7 @@ function wbRender(text) {
   for (const g of groups) per[g.day] = (per[g.day] || 0) + g.eps.length;
   wxCellAt = null;
   let h = '', last = null;
-  groups.slice(0, wbShow).forEach((g, gi) => { if (g.day !== last) { last = g.day; h += wxDayHd(g.day, per[g.day], today, yest); } h += wxRow(g, gi); });
+  groups.slice(0, wbShow).forEach((g, gi) => { if (g.day !== last) { last = g.day; h += wxDayHd(g.day, per[g.day], today, yest); } h += wxRow(g, gi, true); });
   if (groups.length > wbShow) h += '<button class="linkbtn wmore" id="wbMore">Show ' + plural(groups.length - wbShow, 'older row') + '</button>';
   $('wlist').innerHTML = h ? '<div class="gx-cols"><span></span><span>warning</span><span class="gx-r">peak</span><span class="gx-r">lasted</span><span class="gx-r">times</span><span>its lines</span><span class="gx-r">level</span></div>' + h
     : '<div class="wempty ico pad">The bin is empty: what Keep or a move sets aside waits here.</div>';
@@ -5737,7 +5761,7 @@ function renderGames(text, keep) {
 // a session opened: its details built, its timeline drawn
 function gxOpenSess(el, x) { gxFill(el); const z = el.querySelector('.gx-tlz'); if (z && x) z.outerHTML = gxTimeline(x, gxSplit(x), +z.dataset.g); el.classList.add('open'); }
 // a session: its line in the list and its details (full: built now, else when it opens); the one in progress goes "to now"
-function gxSessHtml(x, i, full) {
+function gxSessHtml(x, i, full, bin) {
     const sp = gxSplit(x), away = typeof x.front === 'number' && typeof x.secs === 'number' ? x.secs - x.front : 0, nb = Array.isArray(x.gaps) ? x.gaps.length : 0;
     const wn = Math.max(0, +x.warns || 0), wl = Array.isArray(x.wl) ? x.wl.filter(w => Array.isArray(w) && w.length >= 3) : [];
     const wt = wl.length ? ' title="' + esc(wl.map(gxWarn).join(', ')) + '"' : '', wv = wn ? '<span class="gx-wv"' + wt + '>' + wn + (wn === 1 ? ' warning' : ' warnings') + '</span>' : '<span class="gx-ok">none</span>';
@@ -5748,7 +5772,7 @@ function gxSessHtml(x, i, full) {
     return '<div class="gx-sess' + (x.custom ? ' cust' : '') + (x.live ? ' live' : '') + '" data-g="' + i + '"><div class="gx-row" tabindex="0" role="button">' + GX_CHEV +
          '<span class="gx-gm">' + nm + '<span class="gx-sub">' + when + '</span></span>' +
          '<span class="gx-c gx-num"' + lenT + '>' + len + '</span><span class="gx-c gx-num gx-fps">' + gxF(x.fps) + '</span><span class="gx-c gx-num gx-lo">' + gxF(x.low) + '</span>' +
-         '<span class="gx-c gx-lb">' + lim + '</span><span class="gx-c gx-st">' + wv + '</span></div>' +
+         '<span class="gx-c gx-lb">' + lim + '</span><span class="gx-c gx-st">' + wv + '</span>' + (bin ? PK_PURGE : '') + '</div>' +
          '<div class="gx-det"><div>' + (full ? gxDetail(x, sp, i, false, gxActs(x, i)) : '<div class="gx-lz" data-g="' + i + '"></div>') + '</div></div></div>';
 }
 // the session in progress from the host (every 5 s while the popup is open; null: none): its row drawn again in place,
@@ -5801,6 +5825,7 @@ $('glist').addEventListener('keydown', e => {
   else if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.gx-row')) { e.preventDefault(); e.target.click(); }   // (a session opened from the keyboard)
 });
 $('glist').addEventListener('click', e => {
+  const pg = e.target.closest('.gx-purge'); if (pg) { pkPurge('g', pg.closest('.gx-sess')); return; }   // (a bin row's own button: not a pick)
   if (PK.g.mode) { const s = e.target.closest('.gx-sess'); if (s) pkToggle('g', s); return; }   // (picking: a click picks)
   const d = e.target.closest('.gx-del');
   if (d) { const x = gxSs[+d.dataset.g]; if (x) askConfirm('Delete this session?', x.game + ', ' + localDay(new Date(x.start * 1000)) + ' ' + hhmm(x.start) + ' to ' + hhmm(x.end) + '. It goes to the bin, where it can be brought back.', 'Delete session', () => { const y = gxSs.find(s => s.start === x.start && s.end === x.end) || x; send({ t: 'gedit', act: 'del', start: y.start, end: y.end, game: y.game }); }); return; }
@@ -6404,6 +6429,7 @@ function onHost(m) {
     // (a move that moved nothing, or failed: its undo step goes, if nothing came after it)
     if (m.moved === 0 && pkStep && undoStack[undoStack.length - 1] === pkStep) { undoStack.pop(); syncUndo(); }
     if (m.moved !== undefined) pkStep = null;
+    if (Array.isArray(m.gone) && m.gone.length) pkForget(m.gone);   // (rows deleted for good)
     toast(m.text, !!m.undo, m.ms);
   }   // (undo: a step on the undo stack, a Restore's)
   else if (m.t === 'saveView') saveState();

@@ -1132,6 +1132,14 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 /* (the bar rises in from pkBar, as it shows only: 11-02, the motion audit) */
 .pkwait { pointer-events: none; }   /* (the list waiting for the bin's rows: no click lands on the old ones) */
 #gmodal.binning #gsum, #gmodal.binning #grun, #gmodal.binning #gcz, #wmodal.binning #wsum { display: none; }   /* (the bin on show: its rows only) */
+/* a bin row's Delete for good (11-03): its button at the row's right end, room made for it (the column titles too); an
+   old row, faded as it can't be picked, keeps the button at full strength */
+:is(#gmodal, #wmodal).binning :is(.gx-row, .gx-cols) { padding-right: 52px; }
+:is(#gmodal, #wmodal) .gx-purge { position: absolute; right: 10px; top: 50%; translate: 0 -50%; width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 8px; background: none; color: #6e6e6e; cursor: pointer; transition: color 120ms, background 120ms, border-color 120ms; }
+:is(#gmodal, #wmodal) .gx-purge svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+:is(#gmodal, #wmodal) .gx-purge:hover { color: var(--red); background: #241818; border-color: #3a2424; }
+:is(#gmodal, #wmodal) .picking .gx-sess.nopk:has(.gx-purge) { opacity: 1; }
+:is(#gmodal, #wmodal) .picking .gx-sess.nopk:has(.gx-purge) .gx-row > :not(.gx-purge) { opacity: 0.45; }
 /* Spectrum in the popups (11-02): a reading's and a warning's dot in their category's colour (the chart lines take it
    through --fc, the cell popup and the hover preview draw theirs in it) */
 :where(:root[data-tint="spectrum"]) :is(#gmodal, #wmodal) .gx-rw[style*="--cc"] .n::before,

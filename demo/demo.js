@@ -6,7 +6,7 @@
 (() => {
   'use strict';
   const RELEASES = 'https://github.com/RodrigoArsenioo/hwdeck/releases/latest';
-  const VERSION = '2.0.0';
+  const VERSION = '2.0.1';
   const T0 = Math.floor(Date.now() / 1000);
   const nowS = () => Math.floor(Date.now() / 1000);
   const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
@@ -387,6 +387,7 @@
       case 'games:bin': post({ t: 'gamesBin', log: '' }); break;
       case 'alerts:bin': post({ t: 'alertsBin', log: '' }); break;
       case 'log:move': post({ t: 'toast', text: IN_APP, ms: 4000, moved: 0 }); if (m.log === 'games') post({ t: 'games', log: gamesLog() }); else post({ t: 'alerts', log: load('alertsCleared') ? '' : alertsLog }); break;
+      case 'log:purge': post({ t: 'toast', text: IN_APP, ms: 4000 }); post({ t: m.log === 'games' ? 'gamesBin' : 'alertsBin', log: '' }); break;
       case 'games:clear': clears.push(nowS()); keep('gamesCleared', clears.slice(-20)); keep('own', []); post({ t: 'games', log: '' }); break;
       case 'rec': {   // your own sessions, recorded from the made-up readings
         const rec = load('rec') || [], at = rec.findIndex(x => x[0] === m.start), t = nowS();

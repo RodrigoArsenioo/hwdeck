@@ -137,6 +137,11 @@ if (Test-Path "$d\test\data-bn") { Remove-Item -Recurse -Force -LiteralPath "$d\
 $p = Start-Deck 'data-bn' 9236 300
 Run 'bottleneck' test/e2e-bneck.mjs 9236 test/data-bn
 if (-not $p.WaitForExit(8000)) { Stop-Process -Id $p.Id -Force }
+# its pace test and call on their own, on made-up frame times (no window)
+"== bottleneck pace"
+$out = powershell -NoProfile -ExecutionPolicy Bypass -File "$d\test\pace-check.ps1"
+$out
+if (-not ($out -match 'ALL PASS')) { $failed++ }
 
 # a build with extras (port 9236 again): test\ext\extras-test.cs compiled in, test\ext\extras.js next to the page, in
 # test\out\ext; the test quits it itself, to check its stop hook

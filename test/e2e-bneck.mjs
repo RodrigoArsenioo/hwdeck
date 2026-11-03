@@ -21,6 +21,10 @@ const host = m => ev(`send(${JSON.stringify(m)})`);
 const pin = (key, v) => host({ t: 'fakePin', key, v });
 const game = (name, front) => host({ t: 'fakeGame', game: name, front });
 const ts = () => ev('nowTs');
+// made-up frames as if HW Deck counted the game's (2.0.1): a cap at 240 (held to a clock, each frame off its time by up
+// to 20%), an uncapped game (each frame its own time, the rate swinging 10% over 1.7 s), or none (fps 0)
+const frames = (fps, jitter = 0, swing = 0) => host({ t: 'fakeFrames', fps, jitter, swing });
+const CAPPED = () => frames(240, 0.2), UNCAPPED = () => frames(280, 0.15, 0.1);
 
 ok('catalog arrives, HWiNFO\'s 300 and two of its own (the bottleneck, the game time)', await until('READ.length === 302 && feed.got'), await ev('READ.length'));
 ok('the bottleneck is a reading of the "HW Deck" sensor, right after HWiNFO\'s', await ev('(() => { const r = BYKEY.get(BNECK); return !!r && SENS[r.s].name === "HW Deck" && r.label === "Bottleneck" && r.idx === 300; })()'));
@@ -29,6 +33,7 @@ const gpuKey = await ev('(READ.find(r => r.label === "GPU Core Load" && /^dGPU/.
 const cpuKey = await ev('(READ.find(r => r.label === "Max CPU/Thread Usage" && /^CPU/.test(SENS[r.s].name)) || {}).key');
 ok('made-up data has the readings it goes by (GPU Core Load, Max CPU/Thread Usage)', !!gpuKey && !!cpuKey, gpuKey + ', ' + cpuKey);
 await game(null);   // whatever runs on this PC: from here on the test says what plays
+await CAPPED();
 
 // ---- Storage: found by search, added like any other reading ----
 let c = await p.center('#q'); await p.click(c.x, c.y); await p.type('bottleneck');
@@ -59,7 +64,21 @@ const a1 = await ts();
 ok('the GPU at 50% with a thread at 95%: CPU bound (the most common call of the last 5 s)', await untilShown('CPU bound'), await shown());
 await p.sleep(2000);
 await pin(cpuKey, 40);
-ok('the GPU at 50%, the thread at 40%: FPS capped', await untilShown('FPS capped'), await shown());
+ok('the GPU at 50%, the thread at 40%, the frames at a held pace: FPS capped', await untilShown('FPS capped'), await shown());
+// (11-03: Deadlock uncapped read capped 83% of a session, GPU 63%, its busiest thread 74%)
+await UNCAPPED();
+ok('the same, the frames\' pace going up and down (uncapped): CPU bound', await untilShown('CPU bound', 10000), await shown());
+ok('(the host\'s call this second: CPU bound)', await ev('feed.bnl === 2'), await ev('feed.bnl'));
+await CAPPED();
+ok('held again: FPS capped', await untilShown('FPS capped', 10000), await shown());
+await frames(0);
+ok('no frames counted: it can\'t see a cap, CPU bound', await untilShown('CPU bound', 10000), await shown());
+await CAPPED();
+ok('counted again, held: FPS capped (after 5 s of frames)', await untilShown('FPS capped', 12000), await shown());
+await pin(cpuKey, 85);
+ok('held, but a thread at 85%: CPU bound', await untilShown('CPU bound', 8000), await shown());
+await pin(cpuKey, 40);
+ok('(back to capped)', await untilShown('FPS capped', 8000), await shown());
 await pin(gpuKey, 90);
 await p.sleep(4000);
 ok('the GPU between 85 and 95% keeps the previous call', await shown() === 'FPS capped', await shown());
@@ -100,6 +119,8 @@ ok('back to 15 min: the seconds again', await ev('$("mextra").querySelectorAll("
 ok('its title says the call', await ev('$("mval").textContent.trim() === "FPS capped" && /most common call of the last 5 seconds/.test($("mdesc").textContent)'), await ev('$("mval").textContent'));
 const desc = await ev('$("mdesc").textContent');
 ok('it says which readings it goes by, found by their names', /goes by GPU Core Load on dGPU and Max CPU\/Thread Usage on CPU[^.]*\.$/.test(desc), desc.split('. ').pop());
+ok('and that a cap is seen from the pace of the game\'s frames, not without them (2.0.1)', /FPS capped: the GPU under 85% and the frames coming at a steady pace/.test(desc) && /Without Accurate game fps, or in a Vulkan or OpenGL game, it can't see a cap/.test(desc) && /it can't see a cap while it doesn't count the game's frames \(Accurate game fps\)\.$/.test(desc), desc);
+ok('with the frames counted, it says it goes by their pace', await ev('(() => { const s = feed.fpsState; feed.fpsState = "on"; const d = bnFrom(); feed.fpsState = s; return /, and the pace of the game.s frames it counts\\.$/.test(d); })()'));
 await ev('closeDetail()');
 
 // ---- the other views ----

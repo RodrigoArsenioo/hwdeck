@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.1 (2026-11-03)
+
+- The bottleneck tells an fps cap from the CPU by the pace of the game's frames. "FPS capped" now needs the frames to come at a steady pace. With the GPU under 85% and the pace going up and down, it says CPU bound. Before, an uncapped game whose busiest CPU thread stayed under 80% read "FPS capped" most of the time. It needs Accurate game fps (Settings). Without it, or in a Vulkan or OpenGL game, it can't see a cap, so a capped game reads CPU bound.
+- The bins: every row has a button to delete it for good. It asks first, and there is no undo.
+
 ## 2.0.0 (2026-11-02)
 
 - Look, in Settings: the cards (Standard, OLED: true black with the cards drawn as lines, Soft: no lines, a shadow) and the colour (Mono, Accent: one colour on the tabs, periods and switches, Spectrum: a colour for each category on its name, icons and graphs, and the accent). Nine palettes to start from, and any colour of your own for the accent or a category: a grid of tones, a hex, or the full picker. Spectrum's colours carry to the cell popup, the hover preview, game sessions and the warning history. While you pick, Settings turns see-through for a moment so you see the change on the view.
