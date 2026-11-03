@@ -3,7 +3,7 @@
 ## 2.0.1 (2026-11-03)
 
 - The bottleneck tells an fps cap from the CPU by the pace of the game's frames. "FPS capped" now needs the frames to come at a steady pace. With the GPU under 85% and the pace going up and down, it says CPU bound. Before, an uncapped game whose busiest CPU thread stayed under 80% read "FPS capped" most of the time. It needs Accurate game fps (Settings). Without it, or in a Vulkan or OpenGL game, it can't see a cap, so a capped game reads CPU bound.
-- The bins: every row has a button to delete it for good. It asks first, and there is no undo.
+- The bins: every row has a button to delete it permanently. It asks first, and there is no undo.
 
 ## 2.0.0 (2026-11-02)
 

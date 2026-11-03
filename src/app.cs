@@ -2911,7 +2911,7 @@ partial class DeckForm : Form
                         r["undo"] = n > 0 && fail == null; r["moved"] = fail != null ? 0 : n; Post(r);   // (moved 0: the page drops the step it kept for it)
                     }
                     break;
-                // a bin's row deleted for good (11-03): its exact lines leave the bin's file; nothing keeps a copy
+                // a bin's row deleted permanently (11-03): its exact lines leave the bin's file; nothing keeps a copy
                 case "log:purge":
                     {
                         string which = m.ContainsKey("log") ? m["log"] as string : null, name = which == "games" ? "games.log" : which == "alerts" ? "alerts.log" : null;
@@ -2927,7 +2927,7 @@ partial class DeckForm : Form
                         catch (Exception ex) { fail = ex.Message; Log("log:purge failed: " + ex.Message); }
                         SendLog(name + ".bak", which + "Bin");
                         var r = Msg("toast"); Func<int, string> what = k => which == "games" ? (k == 1 ? "1 session" : k + " sessions") : (k == 1 ? "1 warning" : k + " warnings");
-                        r["text"] = fail != null ? "Couldn't delete it: " + fail : did.Count == 0 ? "Nothing deleted: it changed since" : what(Math.Max(1, n)) + " deleted for good";
+                        r["text"] = fail != null ? "Couldn't delete it: " + fail : did.Count == 0 ? "Nothing deleted: it changed since" : what(Math.Max(1, n)) + " deleted permanently";
                         r["gone"] = fail == null ? did : new List<string>(); Post(r);   // (the page drops undo steps that only held these; a failed write deleted nothing)
                     }
                     break;
@@ -3438,7 +3438,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             return Count(name, moved);
         }
     }
-    // lines deleted for good from a log's bin, exactly as they are, every copy (written flushed, like a move); how many:
+    // lines deleted permanently from a log's bin, exactly as they are, every copy (written flushed, like a move); how many:
     // sessions, or crossings
     int PurgeLines(string name, List<string> lines, out List<string> gone)
     {

@@ -4989,17 +4989,17 @@ function pkAct(k, a) {
   send({ t: 'log:move', log, to, lines, n: k === 'g' ? lines.length : items.filter(x => P.pick.has(pkKey(k, x))).reduce((s, g) => s + g.eps.length, 0) });   // (n: how many, as the rows count them)
   if (a === 'del') pkMode(k, null, true); else { P.pick.clear(); pkBar(k); }   // (the host's new log and bin draw the rows again)
 }
-// a row deleted for good from its bin (11-03, his "in the bin a button in each row to delete it permanently, like it was
+// a row deleted permanently from its bin (11-03, his "in the bin a button in each row to delete it permanently, like it was
 // before"): its exact lines leave the bin's file, after a confirm, no undo. A mark the bin set aside with the crossings
 // it ended stays while another row there ends at it. Any row, an old one too (it can't come back, it can still go)
-const PK_PURGE = '<button class="gx-purge" data-tip="Delete for good"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>';
+const PK_PURGE = '<button class="gx-purge" data-tip="Delete permanently"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>';
 function pkPurge(k, el) {
   const x = el && PK[k].mode === 'bin' ? pkItemOf(k, el) : null; if (!x) return;
   const others = k === 'w' ? new Set(PK.w.bin.filter(g => g !== x).flatMap(g => g.eps.map(ep => ep.closer).filter(Boolean))) : null;
   const lines = [...new Set(pkLines(k, x))].filter(l => !others || !others.has(l)); if (!lines.length) return;
   const what = k === 'g' ? x.game + ', ' + localDay(new Date(x.start * 1000)) + ' ' + hhmm(x.start) + ' to ' + hhmm(x.end)
     : x.name + ', ' + x.day + ' ' + x.first.time + (x.eps.length > 1 ? ', ' + x.eps.length + ' times' : '');
-  askConfirm(k === 'g' ? 'Delete this session for good?' : 'Delete this row for good?', what + '. It leaves the bin and can\'t be brought back.', 'Delete for good',
+  askConfirm(k === 'g' ? 'Delete this session permanently?' : 'Delete this row permanently?', what + '. It leaves the bin and can\'t be brought back.', 'Delete permanently',
     () => send({ t: 'log:purge', log: k === 'g' ? 'games' : 'alerts', lines, n: k === 'g' ? 1 : x.eps.length }));
 }
 // (what the host deleted, added up since the page opened: a step that brings back from the bin only lines deleted for
@@ -6429,7 +6429,7 @@ function onHost(m) {
     // (a move that moved nothing, or failed: its undo step goes, if nothing came after it)
     if (m.moved === 0 && pkStep && undoStack[undoStack.length - 1] === pkStep) { undoStack.pop(); syncUndo(); }
     if (m.moved !== undefined) pkStep = null;
-    if (Array.isArray(m.gone) && m.gone.length) pkForget(m.gone);   // (rows deleted for good)
+    if (Array.isArray(m.gone) && m.gone.length) pkForget(m.gone);   // (rows deleted permanently)
     toast(m.text, !!m.undo, m.ms);
   }   // (undo: a step on the undo stack, a Restore's)
   else if (m.t === 'saveView') saveState();

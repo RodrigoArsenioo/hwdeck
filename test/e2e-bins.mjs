@@ -29,9 +29,9 @@ const pickRow = async (list, name, n = 0) => { const c = await p.centerOf(row(li
 const names = list => E(`[...document.querySelectorAll('${list} .gx-sess .gx-gn')].map(x => x.textContent)`);
 const bar = id => E(`$(${JSON.stringify(id)}).textContent`);
 const toastTxt = () => E('$("toastTxt").textContent');
-// a bin row's Delete for good button (11-03), clicked
+// a bin row's Delete permanently button (11-03), clicked
 const purgeOf = (list, name, n = 0) => row(list, name, n) + ".querySelector('.gx-purge')";
-const clickPurge = async (list, name, n = 0) => { const c = await p.centerOf(purgeOf(list, name, n)); if (!c) throw new Error('no Delete for good on ' + name); await p.click(c.x, c.y); await p.sleep(350); };
+const clickPurge = async (list, name, n = 0) => { const c = await p.centerOf(purgeOf(list, name, n)); if (!c) throw new Error('no Delete permanently on ' + name); await p.click(c.x, c.y); await p.sleep(350); };
 const untilNot = async (fn, ms = 4000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (!(await fn())) return true; await p.sleep(200); } return false; };
 
 ok('the readings come', await until('feed.got && READ.length > 100', 10000));
@@ -103,29 +103,29 @@ await click('#gbar [data-pk="restore"]');
 ok('Restore: back in the log in time order, the old ones still in the bin', await untilFile(() => { const l = lines('games.log'); return l.length === 3 && l[0] === G.a1 && l[2] === G.b1; }) && /Old A/.test(text('games.log.bak')) && !text('games.log.bak').includes(G.a1), text('games.log'));
 ok('the bin list follows: the old two', await until('document.querySelectorAll("#glist .gx-sess").length === 2', 4000));
 
-// ---- Delete for good (11-03, his "a button in each row to delete permanently, like it was before"): on every bin row,
+// ---- Delete permanently (11-03, his "a button in each row to delete permanently, like it was before"): on every bin row,
 // the old ones too; it asks first, picks nothing, takes exactly that line out of the bin, has no undo ----
-ok('every bin row has its Delete for good, the old ones at full strength', await E('(() => { const s = [...document.querySelectorAll("#glist .gx-sess")]; return s.length === 2 && s.every(x => !!x.querySelector(".gx-row > .gx-purge") && getComputedStyle(x).opacity === "1"); })()'));
+ok('every bin row has its Delete permanently, the old ones at full strength', await E('(() => { const s = [...document.querySelectorAll("#glist .gx-sess")]; return s.length === 2 && s.every(x => !!x.querySelector(".gx-row > .gx-purge") && getComputedStyle(x).opacity === "1"); })()'));
 ok('it sits right of the last column, which lines up with its title', await E('(() => { const r = document.querySelector("#glist .gx-sess .gx-row"), st = r.querySelector(".gx-st").getBoundingClientRect(), b = r.querySelector(".gx-purge").getBoundingClientRect(), h = document.querySelector("#glist .gx-cols").lastElementChild.getBoundingClientRect(); return b.left >= st.right && b.right <= r.getBoundingClientRect().right && Math.abs(h.right - st.right) < 1.5; })()'),
   await E('(() => { const r = document.querySelector("#glist .gx-sess .gx-row"); return [r.querySelector(".gx-st").getBoundingClientRect().right, r.querySelector(".gx-purge").getBoundingClientRect().left, document.querySelector("#glist .gx-cols").lastElementChild.getBoundingClientRect().right]; })()'));
 const pc = await p.centerOf(purgeOf('#glist', 'Old A'));
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pc.x, y: pc.y }); await p.sleep(900);
-ok('hovering it says what it does', await E('document.querySelector(".tip").classList.contains("show") && document.querySelector(".tip").textContent === "Delete for good"'), await E('document.querySelector(".tip").textContent'));
+ok('hovering it says what it does', await E('document.querySelector(".tip").classList.contains("show") && document.querySelector(".tip").textContent === "Delete permanently"'), await E('document.querySelector(".tip").textContent'));
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await p.sleep(300);
 const gb0 = text('games.log.bak'), gl0 = text('games.log');
 await clickPurge('#glist', 'Old A');
-ok('it asks first, naming the session', await E('$("cmodal").classList.contains("open") && $("ctitle").textContent === "Delete this session for good?" && /^Old A, \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d to \\d\\d:\\d\\d\\. It leaves the bin and can.t be brought back\\.$/.test($("cdesc").textContent) && $("cyes").textContent === "Delete for good"'), await E('$("ctitle").textContent + " / " + $("cdesc").textContent'));
+ok('it asks first, naming the session', await E('$("cmodal").classList.contains("open") && $("ctitle").textContent === "Delete this session permanently?" && /^Old A, \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d to \\d\\d:\\d\\d\\. It leaves the bin and can.t be brought back\\.$/.test($("cdesc").textContent) && $("cyes").textContent === "Delete permanently"'), await E('$("ctitle").textContent + " / " + $("cdesc").textContent'));
 ok('and picks nothing', await E('PK.g.pick.size === 0 && !document.querySelector("#glist .gx-sess.pk")'));
 await click('#cno');
 ok('No: nothing deleted', text('games.log.bak') === gb0 && await E('!$("cmodal").classList.contains("open") && document.querySelectorAll("#glist .gx-sess").length === 2'));
 await clickPurge('#glist', 'Old A'); await click('#cyes');
 ok('Yes: exactly its line leaves the bin, the log untouched', await untilFile(() => !text('games.log.bak').includes(G.oldA)) && text('games.log.bak').includes(G.oldB) && text('games.log') === gl0, text('games.log.bak'));
-ok('the bin list follows, a toast says so, with no Undo', await until('document.querySelectorAll("#glist .gx-sess").length === 1', 4000) && /^1 session deleted for good$/.test(await toastTxt()) && await E('$("toastUndo").hidden'), await toastTxt());
+ok('the bin list follows, a toast says so, with no Undo', await until('document.querySelectorAll("#glist .gx-sess").length === 1', 4000) && /^1 session deleted permanently$/.test(await toastTxt()) && await E('$("toastUndo").hidden'), await toastTxt());
 await E(`send({ t: 'log:purge', log: 'games', lines: ['not a line the bin has'] })`); await p.sleep(700);
 ok('a line the bin no longer has: nothing deleted, it says so', /Nothing deleted: it changed since/.test(await toastTxt()) && text('games.log.bak').includes(G.oldB), await toastTxt());
 await E(`send({ t: 'log:purge', log: 'nope', lines: [${JSON.stringify(G.oldB)}] }); send({ t: 'log:purge', log: 'games' })`); await p.sleep(700);
 ok('a log it doesn\'t know, or no lines: nothing happens', text('games.log.bak').includes(G.oldB) && await E('document.querySelectorAll("#glist .gx-sess").length === 1'));
-// a session moved to the bin and then deleted for good: the move's undo step goes with it (nothing left to bring back)
+// a session moved to the bin and then deleted permanently: the move's undo step goes with it (nothing left to bring back)
 await click('#gbar [data-pk="back"]');
 await click('#gselBtn'); await pickRow('#glist', 'Game B'); await click('#gbar [data-pk="del"]');
 ok('(Game B moved to the bin)', await untilFile(() => text('games.log.bak').includes(G.b1) && !text('games.log').includes(G.b1)));
@@ -134,7 +134,7 @@ ok('(its undo step is there)', await moveStep());
 await click('#gbinBtn');
 ok('(the bin: Game B and Old B)', await until('document.querySelectorAll("#glist .gx-sess").length === 2', 5000), JSON.stringify(await names('#glist')));
 await clickPurge('#glist', 'Game B'); await click('#cyes');
-ok('deleted for good: in neither file', await untilFile(() => !text('games.log.bak').includes(G.b1)) && !text('games.log').includes(G.b1), text('games.log.bak'));
+ok('deleted permanently: in neither file', await untilFile(() => !text('games.log.bak').includes(G.b1)) && !text('games.log').includes(G.b1), text('games.log.bak'));
 ok('the move\'s undo step went with it', await untilNot(moveStep), await E('undoStack.length'));
 ok('the other steps stay (the Restore before it)', await E(`undoStack.some(s => s.startsWith('{"host":') && JSON.parse(s).host.lines.includes(${JSON.stringify(G.a1)}))`));
 await click('#gbar [data-pk="back"]');
@@ -180,23 +180,23 @@ await click('#wbar [data-pk="restore"]');
 ok('restored with its mark: all four lines in the log, none left in the bin', await untilFile(() => [L1, LX, L2, L3].every(l => lines('alerts.log').includes(l)) && ![L1, LX, L2, L3].some(l => lines('alerts.log.bak').includes(l))), text('alerts.log.bak').slice(-300));
 await click('#wbar [data-pk="back"]');
 ok('in the list: the first Lag crossing lasted its minute, not to a later mark', await until('[...document.querySelectorAll("#wlist .gx-sess")].filter(s => s.querySelector(".gx-gn").textContent === "Lag").some(s => s.querySelectorAll(".gx-num")[1].textContent === "1m")', 5000), await E('[...document.querySelectorAll("#wlist .gx-sess")].filter(s => s.querySelector(".gx-gn").textContent === "Lag").map(s => s.textContent).join(" | ")'));
-// ---- Delete for good in the warnings' bin: two crossings one mark of the bin ended (the mark stays until the second goes),
+// ---- Delete permanently in the warnings' bin: two crossings one mark of the bin ended (the mark stays until the second goes),
 // a row that went yellow then red (all its lines go), the old row ----
 const F1 = M(400) + '  YELLOW  Foo: 1 (over its line)', B1 = M(399.5) + '  YELLOW  Bar: 1 (over its line)', FX = M(399) + '  MARK    app exit',
   Z1 = M(390) + '  YELLOW  Zed: 1 (over its line)', Z2 = M(389.5) + '  RED     Zed: 2 (over its line)', Z3 = M(389) + '  OK      Zed: back to normal (peak 2)';
 writeFileSync(join(data, 'alerts.log.bak'), text('alerts.log.bak') + [F1, B1, FX, Z1, Z2, Z3].join('\r\n') + '\r\n');
 const al0 = text('alerts.log');
-ok('(no Delete for good outside the bin)', await E('!document.querySelector("#wlist .gx-purge")'));
+ok('(no Delete permanently outside the bin)', await E('!document.querySelector("#wlist .gx-purge")'));
 await click('#wbinBtn');
 ok('the bin: Foo, Bar, Zed and the old one, each with its button', await until('["Foo", "Bar", "Zed", "Old"].every(n => [...document.querySelectorAll("#wlist .gx-sess .gx-gn")].some(x => x.textContent === n))', 5000) && await E('[...document.querySelectorAll("#wlist .gx-sess")].every(s => !!s.querySelector(".gx-purge"))'), JSON.stringify(await names('#wlist')));
 const barLasted = () => E(row('#wlist', 'Bar') + ".querySelectorAll('.gx-num')[1].textContent");
 const bl0 = await barLasted();
 await clickPurge('#wlist', 'Zed');
-ok('a warning row asks too, naming it and how many times', await E('$("ctitle").textContent === "Delete this row for good?" && /^Zed, \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d\\. It leaves/.test($("cdesc").textContent)'), await E('$("cdesc").textContent'));
+ok('a warning row asks too, naming it and how many times', await E('$("ctitle").textContent === "Delete this row permanently?" && /^Zed, \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d\\. It leaves/.test($("cdesc").textContent)'), await E('$("cdesc").textContent'));
 ok('and picks nothing', await E('PK.w.pick.size === 0'));
 await click('#cyes');
 ok('Zed (yellow, then red, then back): all three of its lines go', await untilFile(() => ![Z1, Z2, Z3].some(l => lines('alerts.log.bak').includes(l))) && [F1, B1, FX].every(l => lines('alerts.log.bak').includes(l)), text('alerts.log.bak'));
-ok('its toast counts it as one warning', /^1 warning deleted for good$/.test(await toastTxt()), await toastTxt());
+ok('its toast counts it as one warning', /^1 warning deleted permanently$/.test(await toastTxt()), await toastTxt());
 await clickPurge('#wlist', 'Foo'); await click('#cyes');
 ok('Foo: its line goes, the mark that ended it stays for Bar', await untilFile(() => !lines('alerts.log.bak').includes(F1)) && lines('alerts.log.bak').includes(FX) && lines('alerts.log.bak').includes(B1), text('alerts.log.bak'));
 ok('Bar still ends at that mark, as long as before', await until(`!${row('#wlist', 'Foo')} && !!${row('#wlist', 'Bar')}`, 4000) && await barLasted() === bl0 && bl0 !== '--', bl0 + ' / ' + await barLasted());
