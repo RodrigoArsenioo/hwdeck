@@ -190,6 +190,10 @@ ok('Alt+Right swaps it with the category on its right', flat(await rows('tiles')
 
 // looks in the panel
 await click(`${cat('gpu')} .cn`);
+// (GPU moved to the right: the settings slide across to the left, under the pointer resting on GPU's name, and stay;
+// 11-03, they went away once past it, as if the pointer had been in them and left)
+await p.sleep(800);
+ok('the settings slide across under a pointer at rest and stay open', await E('DR.R.el.classList.contains("open") && DR.R.el.classList.contains("left")'), await E('DR.R.el.className'));
 await E(`(() => { const s = document.querySelector('#insp select[data-lay="per"]'); s.value = '2'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`); await p.sleep(300);
 ok('Tiles per row from the panel', (await J('S.L.views.tiles.cat.gpu')).per === 2);
 await click('#insp .seg[data-lay="size"] button[data-v="short"]');
@@ -354,6 +358,18 @@ await click(`${cat('cpu')} .cn`);
 ok('selecting something opens the settings drawer', await E('document.querySelector(".insp").classList.contains("open")'));
 await p.key('Escape', 'Escape', 27); await p.sleep(500);
 ok('Esc: nothing selected, the drawer goes', await E('!selCat && !document.querySelector(".insp").classList.contains("open")'));
+// the settings sliding across to stop under a pointer at rest (11-03): a pointer still in them as they stop counts as come
+// in, so once it leaves they go, the selection kept (the pointer waits where they will stop; the swap clicked from the page)
+await click(`${cat('cpu')} .cn`); await p.sleep(500);
+const landX = await E('document.querySelector(".insp").classList.contains("left") ? innerWidth - 150 : 150');
+await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: landX, y: 500 }); await p.sleep(500);
+await E('$("swapR").click()'); await p.sleep(800);
+ok('the settings stopping under a pointer at rest: it counts as in them', await E('document.querySelector(".insp").classList.contains("open") && DR.R.hover === true && !DR.R.ghost'), await E('JSON.stringify({ cls: DR.R.el.className, hover: DR.R.hover, ghost: DR.R.ghost })'));
+await E('$("pinR").click()'); await p.sleep(300);
+await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 300 }); await p.sleep(900);
+ok('and once it leaves they go, the selection kept', await E('!document.querySelector(".insp").classList.contains("open") && selCat === "cpu"'), await E('DR.R.el.className + " " + selCat'));
+await p.key('Escape', 'Escape', 27); await p.sleep(400);
+await E('(() => { DR.L.side = "l"; DR.R.side = "r"; syncDrawers(); saveState(); return 1; })()'); await p.sleep(300);
 
 // ---- the title bar: this PC's name (or your title), the clock, Restart HWiNFO ----
 const pc = await E('feed.pc');

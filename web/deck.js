@@ -2921,7 +2921,7 @@ $('newcat').onclick = newCategory; $('addCat').onclick = newCategory;
 // select something and go once the pointer has been in them and left (the selection stays: their tab brings them back).
 // While you drag, a drawer stays only as long as the pointer is on it (so the view under it takes the drop) ----------
 const DR = { L: { el: document.querySelector('.storage'), tab: $('tabL'), pin: $('pinL') }, R: { el: document.querySelector('.insp'), tab: $('tabR'), pin: $('pinR') } };
-for (const k of ['L', 'R']) Object.assign(DR[k], { pinned: false, hover: false, t: 0, side: k === 'L' ? 'l' : 'r', placed: false });
+for (const k of ['L', 'R']) Object.assign(DR[k], { pinned: false, hover: false, t: 0, side: k === 'L' ? 'l' : 'r', placed: false, sliding: null, ghost: false });
 // (side: where you put it with its swap button, kept; 11-02, his "a pinned side bar can move left and right, pinning only
 // keeps it open". The two never sit on the same side: the settings take the side Storage leaves. The settings, pinned or
 // not, open away from what you selected, so they never cover it; only moved by hand (placed) they stay where you put them,
@@ -2950,7 +2950,13 @@ function slideDrawers(before) {
     const b = before[i], el = DR[k].el;
     if (!b.open || !el.classList.contains('open') || b.side === drawerSide(k)) return;
     const dx = b.r.left - el.getBoundingClientRect().left;
-    if (Math.abs(dx) > 2) el.animate([{ transform: 'translateX(' + dx + 'px)' }, { transform: 'none' }], { duration: motionOn() ? 340 : 200, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    if (Math.abs(dx) > 2) {
+      const a = el.animate([{ transform: 'translateX(' + dx + 'px)' }, { transform: 'none' }], { duration: motionOn() ? 340 : 200, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+      // (while it slides, a pointer it passes under doesn't count; one still in it as it stops does, as a pointer come in:
+      // it stopped under the pointer, or the pointer went in on the way)
+      const d = DR[k], end = () => { if (d.sliding !== a) return; d.sliding = null; if (d.ghost && d.el.matches(':hover')) { d.ghost = false; clearTimeout(d.t); d.hover = true; syncDrawers(); } };
+      d.sliding = a; a.finished.then(end, end);
+    }
   });
 }
 function syncDrawers() {
@@ -2978,8 +2984,10 @@ function syncDrawers() {
 for (const k of ['L', 'R']) {
   const d = DR[k];
   const inside = e => !!e.relatedTarget && (d.el.contains(e.relatedTarget) || d.tab.contains(e.relatedTarget));
-  const enter = () => { clearTimeout(d.t); if (!d.hover) d.t = setTimeout(() => { d.hover = true; syncDrawers(); }, d.el.classList.contains('open') ? 0 : 90); };
-  const leave = e => { if (inside(e)) return; clearTimeout(d.t); d.t = setTimeout(() => { if (d.hover) d.byPick = false; d.hover = false; syncDrawers(); }, drag && drag.started ? 0 : 380); };
+  // (a drawer sliding across under a pointer at rest is not the pointer going into it: 11-03, the settings passed under it
+  // on their way to the other side and went away once past, as if the pointer had been in them and left. Its leave goes too)
+  const enter = e => { if (d.sliding && e.currentTarget === d.el) { d.ghost = true; return; } d.ghost = false; clearTimeout(d.t); if (!d.hover) d.t = setTimeout(() => { d.hover = true; syncDrawers(); }, d.el.classList.contains('open') ? 0 : 90); };
+  const leave = e => { if (inside(e)) return; if (d.ghost) { d.ghost = false; return; } clearTimeout(d.t); d.t = setTimeout(() => { if (d.hover) d.byPick = false; d.hover = false; syncDrawers(); }, drag && drag.started ? 0 : 380); };
   for (const el of [d.el, d.tab]) { el.addEventListener('mouseenter', enter); el.addEventListener('mouseleave', leave); }
   d.tab.addEventListener('click', () => { d.pinned = true; d.hover = true; syncDrawers(); saveState(); });
   d.pin.addEventListener('click', () => { d.pinned = !d.pinned; if (!d.pinned) d.placed = false; syncDrawers(); saveState(); });   // (unpinned: back to opening away from the selection)
