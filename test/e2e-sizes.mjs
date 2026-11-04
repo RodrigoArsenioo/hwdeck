@@ -236,6 +236,20 @@ await click('#view .tile[data-cid="f5"]');
 await p.key('ArrowRight', 'ArrowRight', 39, 2); await p.sleep(900);
 ok('Ctrl+Right on one drawn 4/3 wide: a pixel wider than that, not narrower', (await look('f5')).w > 4 / 3 && (await look('f5')).w < 1.36, JSON.stringify(await look('f5')));
 await E('undo()'); await p.sleep(500);
+// (2.1.2: a caption cut in its tile takes its shorter words, "15 min max 1,049 RPM" at a quarter of a row; its own when they fit)
+const capT = await E(`(() => {
+  const el = document.createElement('div'); el.className = 'tc'; el.style.width = '60px'; document.body.appendChild(el);
+  const F = '15 min max 1,049 RPM', Sh = 'max 1,049 RPM', out = [];
+  capSet(el, F, Sh); capMeasure(); out.push(el.textContent);
+  capSet(el, F, Sh); out.push(el.textContent);   // (the next second: no measuring, the same words)
+  el.style.width = '400px'; el._fit = null; capSet(el, F, Sh); capMeasure(); out.push(el.textContent);
+  el.remove(); return out; })()`);
+ok('a cut caption takes its shorter words, keeps them without measuring again, and its own when it fits (2.1.2)', capT[0] === 'max 1,049 RPM' && capT[1] === 'max 1,049 RPM' && capT[2] === '15 min max 1,049 RPM', JSON.stringify(capT));
+const subS = await E(`(() => { for (const id in S.L.cells) { const c = S.L.cells[id], r = c.key ? BYKEY.get(c.key) : null; if (!r || isBneck(c) || c.key === GTIME || gfKind(r) || isYN(r) || c.curve || c.pred) continue; const e = evalCell(id, c, true, false); if (/^15 min max /.test(e.sub || '')) return [e.sub, e.subS && e.subS.of, e.subS && e.subS.s]; } return null; })()`);
+ok('a reading\'s "15 min max" caption carries its shorter words, "max ..." (2.1.2)', !!subS && subS[1] === subS[0] && subS[2] === subS[0].replace(/^15 min /, ''), JSON.stringify(subS));
+await p.sleep(1200);
+const cutNow = await E(`[...document.querySelectorAll('#view .tile .tc')].filter(c => c.offsetParent && /^15 min max /.test(c.textContent) && capCut(c)).length`);
+ok('no "15 min max" caption left cut in the view', cutNow === 0, String(cutNow));
 ok('no page errors', errs.length === 0, JSON.stringify(errs));
 await p.cmd('Emulation.clearDeviceMetricsOverride');
 console.log(done() ? 'ALL PASS' : 'SOME FAILED');

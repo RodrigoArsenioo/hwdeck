@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.2 (2026-11-04)
+
+- A "15 min max" caption that doesn't fit its tile says just "max", for example "max 1,049 RPM", instead of being cut. It is checked only when its text or the tile's size changes.
+- HWDeck.exe carries its real version in its file details again (2.1.1's said 2.1.0).
+
 ## 2.1.1 (2026-11-04)
 
 - With no game running, Game time has a graph too: the last 24 hours, Yes for each minute a game was on.

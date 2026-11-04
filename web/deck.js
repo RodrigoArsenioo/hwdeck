@@ -971,6 +971,7 @@ function evalCell0(cid, c, peek, quick) {
   } else if (r && !quick && !isYN(r)) {
     let mx = -Infinity; for (const x of series(r.key, HLEN)) if (x > mx) mx = x;
     out.sub = isFinite(mx) ? '15 min max ' + fl(mx) + (unitOf(r) ? ' ' + unitOf(r) : '') : '';
+    if (isFinite(mx)) out.subS = { of: out.sub, s: 'max ' + fl(mx) + (unitOf(r) ? ' ' + unitOf(r) : '') };   // (a tile too narrow for it, 2.1.2)
   }
   if (gt) {
     out.txt = durTxt(v * 60); out.utxt = '';
@@ -1652,6 +1653,32 @@ function judgeRest(skipDrawn) {
 // which cells are on screen (their graphs are drawn): read at the top of a tick, before it writes anything, so the
 // second lays the page out once (2.1, the perf review 11-04)
 let sightPre = null;
+// a tile's caption with shorter words (e.subS, for the caption it was made with): its own when they fit, else the
+// shorter ones. Measured (is it cut?) only when its text or its size changes, all of a second's at once after its
+// writes; a ResizeObserver says when the size changed (2.1.2)
+const capRO = new ResizeObserver(es => { for (const e of es) e.target._fit = null; });
+let capQ = [];
+function capSet(el, full, short) {
+  if (!short || short === full) { setText(el, full); return; }
+  if (!el._capRO) { el._capRO = true; capRO.observe(el); }
+  const f = el._fit;
+  if (f && f.full === full && f.short === short) { setText(el, f.cut ? short : full); return; }
+  setText(el, full); capQ.push([el, full, short]);
+}
+// (cut: its text wider than its box, both unrounded: "15 min max 516 RPM" ran 1.1 px over, which the whole-pixel
+// scrollWidth and clientWidth didn't show, and still got its "...")
+const capRange = document.createRange();
+function capCut(el) {
+  if (!el.isConnected || !el.firstChild) return false;
+  const w = el.getBoundingClientRect().width; if (!(w > 0)) return false;
+  capRange.selectNodeContents(el); return capRange.getBoundingClientRect().width > w + 0.05;
+}
+function capMeasure() {
+  if (!capQ.length) return;
+  const q = capQ; capQ = [];
+  const cut = q.map(([el]) => capCut(el));
+  q.forEach(([el, full, short], i) => { el._fit = { full, short, cut: cut[i] }; if (cut[i]) setText(el, short); });
+}
 function readSight() {
   const sr = sectionsEl.getBoundingClientRect(), m = new Map();
   for (const [cid, r] of E) { const b = r.root.getBoundingClientRect(); m.set(cid, b.bottom > sr.top - 60 && b.top < sr.bottom + 60 && b.height > 0); }
@@ -1684,7 +1711,11 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     // (a tile's caption can be shorter, what it leaves out in the name's corner: tsub and tag; a narrow tile's shorter
     // still: tsubS and tagS, 2.1)
     const nq = r.kind === 'tile' && r.root.classList.contains('nq');
-    if (r.cap) { setText(r.cap, r.kind === 'tile' && e.tsub != null ? (nq && e.tsubS ? e.tsubS : e.tsub) : e.sub); r.cap.classList.toggle('y', e.lvl === 1); r.cap.classList.toggle('r', e.lvl === 2); }
+    if (r.cap) {
+      const full = r.kind === 'tile' && e.tsub != null ? (nq && e.tsubS ? e.tsubS : e.tsub) : e.sub;
+      capSet(r.cap, full, r.kind === 'tile' && e.subS && e.subS.of === full ? e.subS.s : null);   // (cut: its shorter words, 2.1.2)
+      r.cap.classList.toggle('y', e.lvl === 1); r.cap.classList.toggle('r', e.lvl === 2);
+    }
     if (r.tq) setText(r.tq, e.tsub != null && e.tag && !nq ? e.tag : '');   // (a narrow tile: none, its name keeps the room; his ask 11-04)
     if (r.kind === 'tile') {
       r.root.classList.toggle('yellow', e.lvl === 1); r.root.classList.toggle('red', e.lvl === 2); r.root.classList.toggle('warm', e.warm > 0 || e.warmR > 0);
@@ -1731,6 +1762,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     if (k.tag) { setText(k.tag, txt); k.tag.className = 'tag' + (lv === 2 ? ' r' : lv === 1 ? ' y' : ''); }
     k.el.classList.toggle('warn-y', lv === 1); k.el.classList.toggle('warn-r', lv === 2);
   }
+  capMeasure();   // (captions whose text or size changed: cut ones take their shorter words, after every write above)
 }
 
 // ---------- fit: in the clean view, the largest scale at which nothing scrolls (it scrolls past 60%) ----------
