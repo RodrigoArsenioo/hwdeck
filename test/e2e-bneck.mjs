@@ -23,7 +23,7 @@ const game = (name, front) => host({ t: 'fakeGame', game: name, front });
 const ts = () => ev('nowTs');
 // made-up frames as if HW Deck counted the game's (2.0.1): a cap at 240 (held to a clock, each frame off its time by up
 // to 20%), an uncapped game (each frame its own time, the rate swinging 10% over 1.7 s), or none (fps 0)
-const frames = (fps, jitter = 0, swing = 0) => host({ t: 'fakeFrames', fps, jitter, swing });
+const frames = (fps, jitter = 0, swing = 0, stable = false) => host({ t: 'fakeFrames', fps, jitter, swing, stable });
 const CAPPED = () => frames(240, 0.2), UNCAPPED = () => frames(280, 0.15, 0.1);
 
 ok('catalog arrives, HWiNFO\'s 300 and two of its own (the bottleneck, the game time)', await until('READ.length === 302 && feed.got'), await ev('READ.length'));
@@ -49,7 +49,9 @@ const untilShown = async (want, ms = 8000) => { const t0 = Date.now(); while (Da
 
 const CALLS = ['GPU bound', 'CPU bound', 'FPS capped'];
 const untilCall = async ms => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (CALLS.includes(await shown())) return true; await p.sleep(200); } return false; };
-ok('no game: the call of right now all the same, and it says no game runs', await untilCall(9000) && await cap() === 'no game running', await shown() + ' / ' + await cap());
+// (2.1: no game and no session yet: -- in grey, not the desktop's call; before, "FPS capped" beside "no game running")
+await p.sleep(2500);
+ok('no game, no session yet: -- in grey, it says no game runs (not the call of the desktop)', await shown() === '--' && await cap() === 'no game running' && await ev(`${cell}.querySelector('.tv').classList.contains('grey')`), await shown() + ' / ' + await cap());
 ok('but nothing of it goes into the history (the reading has no value with no game)', await ev('BYKEY.get(BNECK).v == null && [1, 2, 3].includes(feed.bnl)'), await ev('[BYKEY.get(BNECK).v, feed.bnl]'));
 
 // ---- the calls ----
@@ -79,24 +81,32 @@ await pin(cpuKey, 85);
 ok('held, but a thread at 85%: CPU bound', await untilShown('CPU bound', 8000), await shown());
 await pin(cpuKey, 40);
 ok('(back to capped)', await untilShown('FPS capped', 8000), await shown());
+// (2.1: a held pace whose rate has stayed put for 30 s is a cap, even with a busy thread)
+await frames(240, 0.2, 0, true); await pin(cpuKey, 85);
+ok('held, a thread at 85%, the rate put for 30 s: FPS capped (2.1)', await untilShown('FPS capped', 8000) && await p.sleep(3000).then(() => shown()) === 'FPS capped', await shown());
+await pin(cpuKey, 40); await CAPPED();
 await pin(gpuKey, 90);
 await p.sleep(4000);
 ok('the GPU between 85 and 95% keeps the previous call', await shown() === 'FPS capped', await shown());
-ok('its caption is the split of the last 15 min', /^gpu \d+%, cpu \d+%, capped \d+%$/.test(await cap()), await cap());
-ok('the tile has a bar of the calls in three colours instead of a graph', await ev(`(() => { const el = ${cell}; const k = [...el.querySelectorAll('.strip span')].map(s => s.className); return !el.querySelector('canvas') && ['b-gpu', 'b-cpu', 'b-cap'].every(x => k.includes(x)); })()`),
-  await ev(`[...${cell}.querySelectorAll('.strip span')].map(s => s.className + ' ' + s.style.left + ' ' + s.style.width).join(' | ')`));
+ok('its caption is the split of the last 15 min, the most first (2.1)', await cap().then(c => /^(GPU|CPU|capped) \d+%(, (GPU|CPU|capped) \d+%)*$/.test(c) && c.match(/\d+/g).map(Number).every((v, i, a) => !i || a[i - 1] >= v)), await cap());
+// (11-04, his "for EVERY bar in the app replace with a graph ... even the bottleneck": a graph, each call a level)
+const lvOf = sel => `(() => { const cv = ${sel}, G = cv && graphs.get(cv); return G && G.to ? { lo: G.to.lo, hi: G.to.hi, past: !!G.to.past, n: G.to.pts.length, v: [...new Set(G.to.pts.map(q => q.v))].sort() } : null; })()`;
+// (a big graph drew its line: bright pixels right of its names)
+const LIT = `(cv => { if (!cv || !cv.width) return 0; const d = window.devicePixelRatio || 1, x0 = Math.round(56 * d), im = cv.getContext('2d').getImageData(x0, 0, cv.width - x0, cv.height).data; let n = 0; for (let i = 0; i < im.length; i += 4) if (im[i] > 120 && im[i + 3] > 200) n++; return n; })`;
+ok('the tile has a graph of the calls where the bar was: GPU, CPU and capped as levels (11-04)', await ev(`(() => { const g = ${lvOf(`${cell}.querySelector('canvas')`)}; return !${cell}.querySelector('.strip') && !!g && g.lo === 1 && g.hi === 3 && [1, 2, 3].every(x => g.v.includes(x)); })()`),
+  await ev(`JSON.stringify(${lvOf(`${cell}.querySelector('canvas')`)})`));
 ok('the host sends the call as a number (3 = capped)', await ev('BYKEY.get(BNECK).v === 3'), await ev('BYKEY.get(BNECK).v'));
 
 // ---- the hover preview and the popup: the bar large and the split ----
 await ev('setEdit(false)'); await p.sleep(400);
 c = await p.center(`#view .dc[data-cid="${cid}"]`);
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y }); await p.sleep(900);
-ok('the hover preview shows the bar and the split, no graph', await ev('HP.shown && hprev.querySelector("canvas").hidden && !hprev.querySelector(".pstrip").hidden && hprev.querySelectorAll(".pstrip .strip span").length >= 3 && /gpu\\d+%.*cpu\\d+%.*capped\\d+%/.test(hprev.querySelector(".ps").textContent)'),
+ok('the hover preview shows the calls as a graph and the split', await ev('HP.shown && hprev.querySelector("canvas").hidden && !hprev.querySelector(".pstrip").hidden && ' + LIT + '(hprev.querySelector(".pstrip canvas")) > 40 && /gpu\\d+%.*cpu\\d+%.*capped\\d+%/.test(hprev.querySelector(".ps").textContent)'),
   await ev('hprev.querySelector(".ps").textContent + " / " + hprev.querySelector(".pv").textContent'));
 ok('and the call in words', await ev('hprev.querySelector(".pv").textContent === "FPScapped"'), await ev('hprev.querySelector(".pv").textContent'));
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 300 }); await p.sleep(250);
 c = await p.center(`#view .dc[data-cid="${cid}"]`); await p.click(c.x, c.y); await p.sleep(600);
-ok('the popup shows the bar of the last 15 min and the split instead of a graph, the range tabs above it', await ev('modal.classList.contains("open") && !$("mgraphsec").hidden && $("mgraph").hidden && $("mstats").hidden && !!$("mrng").offsetWidth && $("mextra").querySelectorAll(".bnp .bnc rect").length >= 3 && /gpu\\d+%.*cpu\\d+%.*capped\\d+%/.test($("mextra").querySelector(".mstats").textContent)'),
+ok('the popup shows the calls of the last 15 min as a graph and the split, the range tabs above it', await ev('modal.classList.contains("open") && !$("mgraphsec").hidden && $("mgraph").hidden && $("mstats").hidden && !!$("mrng").offsetWidth && ' + LIT + '($("mextra").querySelector(".bnp canvas.bnc")) > 40 && /gpu\\d+%.*cpu\\d+%.*capped\\d+%/.test($("mextra").querySelector(".mstats").textContent)'),
   await ev('$("mextra").textContent'));
 // over an hour and more: the host's history, a column per minute (10 minutes over 7 days), each split into the calls
 const rangeOk = async (r, n) => {
@@ -104,7 +114,7 @@ const rangeOk = async (r, n) => {
   const got = await until(`histReady() && Array.isArray(bigHist.sg) && bigHist.sg.length === ${n} && bigHist.sc.length === ${n} && bigHist.sf.length === ${n} && !document.querySelector('.bnp.loading')`, 5000);
   await p.sleep(300);
   return got && await ev(`(() => { const H = bigHist, last = [H.sg, H.sc, H.sf].map(a => a.slice(-3).reduce((x, y) => x + (y || 0), 0));
-    return H.sg.every((x, i) => (x || 0) + (H.sc[i] || 0) + (H.sf[i] || 0) <= 1.0001) && last.every(x => x > 0) && document.querySelectorAll('.bnp .bnc rect').length >= 3 &&
+    return H.sg.every((x, i) => (x || 0) + (H.sc[i] || 0) + (H.sf[i] || 0) <= 1.0001) && last.every(x => x > 0) && !!document.querySelector('.bnp canvas.bnc')._h && BNP.B.cols.some(Boolean) && ${LIT}(document.querySelector('.bnp canvas.bnc')) > 0 &&
       /gpu\\d+%cpu\\d+%capped\\d+%game time\\d+[ms]/.test($('mextra').querySelector('.mstats').textContent); })()`);
 };
 ok('1 h: a column per minute, each call\'s share of it, the split and the game time', await rangeOk('1h', 60), await ev('$("mextra").querySelector(".mstats").textContent + " | " + JSON.stringify(bigHist && [bigHist.range, bigHist.sg && bigHist.sg.slice(-3), bigHist.sc && bigHist.sc.slice(-3), bigHist.sf && bigHist.sf.slice(-3)])'));
@@ -115,19 +125,19 @@ ok('hovering a minute reads out its split and how long a game ran in it', await 
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await p.sleep(200);
 for (const [r, n] of [['6h', 360], ['12h', 720], ['24h', 1440], ['7d', 1008]]) ok(r + ': the same from the host\'s history (' + n + ' columns)', await rangeOk(r, n), await ev('$("mextra").querySelector(".mstats").textContent'));
 c = await p.center('#mrng button[data-r="15m"]'); await p.click(c.x, c.y); await p.sleep(400);
-ok('back to 15 min: the seconds again', await ev('$("mextra").querySelectorAll(".bnp .bnc rect").length >= 3 && !/game time/.test($("mextra").querySelector(".mstats").textContent)'));
-ok('its title says the call', await ev('$("mval").textContent.trim() === "FPS capped" && /most common call of the last 5 seconds/.test($("mdesc").textContent)'), await ev('$("mval").textContent'));
+ok('back to 15 min: the seconds again', await ev(LIT + '($("mextra").querySelector(".bnp canvas.bnc")) > 40 && !/game time/.test($("mextra").querySelector(".mstats").textContent)'));
+ok('its title says the call', await ev('$("mval").textContent.trim() === "FPS capped" && /most common answer of the last 5 seconds/.test($("mdesc").textContent)'), await ev('$("mval").textContent'));
 const desc = await ev('$("mdesc").textContent');
-ok('it says which readings it goes by, found by their names', /goes by GPU Core Load on dGPU and Max CPU\/Thread Usage on CPU[^.]*\.$/.test(desc), desc.split('. ').pop());
-ok('and that a cap is seen from the pace of the game\'s frames, not without them (2.0.1)', /FPS capped: the GPU under 85% and the frames coming at a steady pace/.test(desc) && /Without Accurate game fps, or in a Vulkan or OpenGL game, it can't see a cap/.test(desc) && /it can't see a cap while it doesn't count the game's frames \(Accurate game fps\)\.$/.test(desc), desc);
-ok('with the frames counted, it says it goes by their pace', await ev('(() => { const s = feed.fpsState; feed.fpsState = "on"; const d = bnFrom(); feed.fpsState = s; return /, and the pace of the game.s frames it counts\\.$/.test(d); })()'));
+ok('it says which readings it goes by, found by their names', /It reads GPU Core Load \(dGPU\), Max CPU\/Thread Usage \(CPU[^)]*\)/.test(desc), desc.split('. ').slice(-2).join('. '));
+ok('and that a cap is seen from the rhythm of the game\'s frames, without them only one at the refresh rate (2.1)', /FPS capped: the GPU has time to spare and the frames come at a steady rhythm/.test(desc) && /Without it, or in a Vulkan or OpenGL game, only a cap at the screen's refresh rate shows/.test(desc) && /It isn't counting the game's frames now \(Accurate game fps\), so only a cap at the screen's refresh rate shows\.$/.test(desc), desc);
+ok('with the frames counted, it says it goes by their pace', await ev('(() => { const s = feed.fpsState; feed.fpsState = "on"; const d = bnFrom(); feed.fpsState = s; return / and the pace of the game.s frames\\.$/.test(d); })()'));
 await ev('closeDetail()');
 
 // ---- the other views ----
 await ev('showScreen("overview")'); await p.sleep(700);
-ok('Overview: the call, its split and its bar', await shown() === 'FPS capped' && /^gpu \d+%/.test(await cap()) && await ev(`${cell}.querySelectorAll('.strip span').length >= 3`), await shown() + ' / ' + await cap());
+ok('Overview: the call, its split and its graph', await shown() === 'FPS capped' && /^(GPU|CPU|capped) \d+%/.test(await cap()) && await ev(`(() => { const g = ${lvOf(`${cell}.querySelector('canvas')`)}; return !!g && g.lo === 1 && g.v.length >= 2; })()`), await shown() + ' / ' + await cap());
 await ev('showScreen("grid")'); await p.sleep(700);
-ok('Grid: the call, the bar across min / max / average, its split under info', await shown() === 'FPS capped' && /^gpu \d+%/.test(await cap()) && await ev(`${cell}.querySelectorAll('td.gstrip .strip span').length >= 3 && !${cell}.querySelector('td.gn')`), await shown() + ' / ' + await cap());
+ok('Grid: the call, its graph across min / max / average, its split under info', await shown() === 'FPS capped' && /^(GPU|CPU|capped) \d+%/.test(await cap()) && await ev(`(() => { const g = ${lvOf(`${cell}.querySelector('td.gstrip canvas')`)}; return !!g && g.lo === 1 && g.v.length >= 2 && !${cell}.querySelector('td.gn'); })()`), await shown() + ' / ' + await cap());
 await ev('showScreen("tiles")'); await p.sleep(500);
 
 // ---- its settings: no decimals, no lines, no fan curve ----
@@ -151,7 +161,7 @@ await until('feed.front', 5000);
 // a session needs a minute to be logged
 await until('nowTs - feed.gameSince >= 66', 70000);
 await game(null);
-ok('the game ends: the call goes on (FPS capped), no game running, nothing more in the history', await until('BYKEY.get(BNECK).v == null', 5000) && await untilShown('FPS capped', 5000) && await cap() === 'no game running', await shown() + ' / ' + await cap());
+ok('the game ends: nothing more in the history', await until('BYKEY.get(BNECK).v == null', 5000), await ev('BYKEY.get(BNECK).v'));
 ok('on a PC whose HWiNFO shares neither reading it says so', await ev(`(() => { const k = feed.bnIn; feed.bnIn = [null, null, 0]; const s = evalCell(${JSON.stringify(cid)}, S.L.cells[${JSON.stringify(cid)}], true, true).sub, d = bnFrom(); feed.bnIn = k; return s === 'needs GPU usage and CPU thread usage' && /shares no GPU core load/.test(d); })()`));
 
 const gl = () => text(join(data, 'games.log')).trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).find(x => x.game === 'Bench Game');
@@ -165,20 +175,35 @@ if (g) {
   ok('a call per minute (- with none in front) for the timeline', typeof g.tb === 'string' && g.tb.length >= 2 && /^[gcf-]+$/.test(g.tb) && /[gcf]/.test(g.tb) && g.tf.length === g.tb.length, JSON.stringify({ tb: g.tb, tf: g.tf }));
   ok('and each minute\'s seconds per call, in front only', Array.isArray(g.tc) && g.tc.length === g.tb.length && g.tc.every((x, i) => x === null ? g.tb[i] === '-' : x.length === 3) &&
     [0, 1, 2].every(k => g.tc.reduce((a, x) => a + (x ? x[k] : 0), 0) === [g.g, g.c, g.f][k]), JSON.stringify({ tc: g.tc, tb: g.tb }));
+  // ---- 2.1: no game, the cell shows that session: its call, its split, its minutes as the strip, "last session" ----
+  const most = g.g >= g.c && g.g >= g.f ? 'GPU bound' : g.c >= g.f ? 'CPU bound' : 'FPS capped';
+  ok('no game: the last session\'s call (the most seconds), in the softer grey', await until(`!!feed.lg && feed.lg.end === ${g.end}`, 8000) && await untilShown(most, 5000) && await ev(`${cell}.querySelector('.tv').classList.contains('past')`), await shown() + ' / ' + most);
+  ok('its split in the caption, the most first, and "last session" in the name\'s corner', /^(GPU|CPU|capped) \d+%(, (GPU|CPU|capped) \d+%)*$/.test(await cap()) && await ev(`${cell}.querySelector('.tq').textContent === 'last session'`), await cap() + ' / ' + await ev(`${cell}.querySelector('.tq').textContent`));
+  ok('its minutes as its graph, at their calls\' levels (a minute with a call a point, over its own length)', await ev(`(() => { const g = ${lvOf(`${cell}.querySelector('canvas')`)}, n = ${JSON.stringify(g.tb)}.replace(/-/g, '').length; return !!g && g.past && g.lo === 1 && g.hi === 3 && g.n === n; })()`), await ev(`JSON.stringify(${lvOf(`${cell}.querySelector('canvas')`)})`));
+  ok('the hover and the popup say "last session" too (rows and others: the whole caption)', await ev(`/^last session: /.test(evalCell(${JSON.stringify(cid)}, S.L.cells[${JSON.stringify(cid)}], true, true).sub)`));
+  // the game's fps and its 1% low with no value (HW Deck's own, made up here): the session's averages and minutes
+  const fpsIdle = await ev(`(() => { const add = (key, label) => { if (BYKEY.get(key)) return; const o = { idx: READ.length, key, s: BYKEY.get(BNECK).s, t: 'other', label, unit: 'FPS', kind: null, v: null, mn: null, mx: null, av: null, hay: label.toLowerCase(), at: nowTs }; READ.push(o); BYKEY.set(key, o); };
+    add('hwdeck.0/fps', 'Game framerate'); add('hwdeck.0/fps1', 'Game framerate (1% low)');
+    const f = evalCell('x', { key: 'hwdeck.0/fps' }, true, true), l = evalCell('x', { key: 'hwdeck.0/fps1' }, true, true);
+    return [f.txt, f.utxt, f.col, f.tag, f.tsub, f.sub, Array.isArray(f.past) && f.past.length, l.txt, l.tsub]; })()`);
+  ok('no game: the game\'s fps shows the last session\'s average, its minutes as the graph', fpsIdle[0] === (g.fps == null ? '--' : String(Math.round(g.fps))) && fpsIdle[1] === 'FPS' && fpsIdle[2] === 'past' && fpsIdle[3] === 'last session' &&
+    (g.fps == null ? /^no fps counted in Bench Game$/.test(fpsIdle[4]) : fpsIdle[4] === 'avg, Bench Game' && fpsIdle[5] === 'last session avg, Bench Game') && fpsIdle[6] === (g.tf || []).length, JSON.stringify(fpsIdle) + ' fps ' + g.fps);
+  ok('and its 1% low the session\'s, with its share of the fps', fpsIdle[7] === (g.low == null ? '--' : String(Math.round(g.low))) && (g.low == null || g.fps == null || /^avg, \d+% of the fps$/.test(fpsIdle[8])), JSON.stringify(fpsIdle.slice(7)));
+  ok('a past session\'s minutes draw as a graph (missing minutes are gaps)', await ev(`(() => { const s = pastState([100, 110, null, 120, 130], { key: 'hwdeck.0/fps' }); return !!s && s.past && s.pts.length === 4 && s.end === 10 && s.pts[2].s - s.pts[1].s > 2 && s.pts[1].s - s.pts[0].s <= 2; })()`));
 }
 
 // ---- the game log: what limited a session in its row and its timeline; lines from before it still show ----
 const oldAt = Math.floor(Date.now() / 1000) - 2 * 86400;   // older than the calls, still inside the days kept
 const old = JSON.stringify({ game: 'Old Game', start: oldAt, end: oldAt + 3600, from: oldAt, secs: 3600, front: 3600, fps: 120, low: 90, items: [['GPU temp', '°C', 60, 70]], warns: 0 });
 await ev(`renderGames(${JSON.stringify(old + '\r\n' + text(join(data, 'games.log')))})`);
-const lim = await ev('[...document.querySelectorAll("#glist .gx-sess")].map(s => (gxFill(s), s)).map(s => [s.querySelector(".gx-gn").textContent, s.querySelectorAll(".gx-row .gx-nbar span").length, s.querySelector(".gx-row .gx-nbar + .gx-sub, .gx-row .gx-c:nth-child(6) .gx-sub").textContent, !!s.querySelector(".gx-bnc rect"), s.querySelector(".gx-det").textContent])');
+const lim = await ev('[...document.querySelectorAll("#glist .gx-sess")].map(s => (gxFill(s), s)).map(s => [s.querySelector(".gx-gn").textContent, s.querySelectorAll(".gx-row .gx-nbar span").length, s.querySelector(".gx-row .gx-nbar + .gx-sub, .gx-row .gx-c:nth-child(6) .gx-sub").textContent, !!s.querySelector(".gx-bnc path.bl"), s.querySelector(".gx-det").textContent])');
 ok('a session shows what limited it (row and timeline); one from before (no g, c, f) still shows, without it', lim.length === 2 && lim[0][0] === 'Bench Game' && lim[0][1] >= 2 && /^(gpu-bound|cpu-bound|capped) \d+%$/.test(lim[0][2]) && lim[0][3] && /gpu-bound \d+%cpu-bound \d+%capped \d+%/.test(lim[0][4]) &&
   lim[1][0] === 'Old Game' && lim[1][1] === 0 && lim[1][2] === '--' && !lim[1][3] && /GPU60\.070\.0/.test(lim[1][4]), JSON.stringify(lim.map(x => x.slice(0, 4))));
 ok('no warning lines for it', !/Bottleneck/.test(text(join(data, 'alerts.log'))));
 
 // ---- history: the host keeps its seconds, a reloaded page gets them back ----
 await p.cmd('Page.reload'); await p.sleep(3000);
-ok('after a reload the bar comes back from the host\'s history', await until('series(BNECK, HLEN).filter(x => x >= 1 && x <= 3).length >= 50 && document.querySelectorAll(".dc .strip span").length >= 3', 5000), await ev('series(BNECK, HLEN).filter(x => x >= 1).length'));
+ok('after a reload the bar comes back from the host\'s history (and, no game, the cell shows the last session again)', await until('series(BNECK, HLEN).filter(x => x >= 1 && x <= 3).length >= 50 && bnStrip().segs.length >= 3 && !!feed.lg && [...document.querySelectorAll(".dc canvas")].some(cv => { const G = graphs.get(cv); return !!G && !!G.to && G.to.past && G.to.lo === 1; })', 6000), await ev('[series(BNECK, HLEN).filter(x => x >= 1).length, bnStrip().segs.length, !!feed.lg]'));
 ok('no page errors', errs.length === 0, errs.join(' | '));
 p.evaluate(`send({ t: 'exit' })`).catch(() => {});
 t0 = Date.now(); let gone = false;

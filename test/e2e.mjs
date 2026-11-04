@@ -207,7 +207,7 @@ ok('Clear view (after its confirmation) empties the view', await E('S.L.cats.len
 await p.key('z', 'KeyZ', 90, 2); await p.sleep(300);
 ok('Ctrl+Z brings it back, slot and all', await E(`Object.keys(S.L.cells).length === ${cellsBefore} && S.active === 1 && !isDirty()`));
 await E('removeCell(S.L.cats.find(c => c.cells.length).cells[0])'); await p.sleep(200);
-ok('a change puts the dot on the saves button', await E('$("savesDot").classList.contains("on")'));
+ok('a change puts the dot on the save button, not on Saves', await E('$("saveDot").classList.contains("on") && !$("savesBtn").querySelector(".bdot") && /unsaved changes/.test($("qsaveBtn").title)'));
 await click('#savesBtn'); await click('#slist .srow2[data-slot="0"] [data-a="load"]');
 ok('loading over unsaved changes asks first', await E('$("cmodal").classList.contains("open")'));
 await click('#cyes'); await p.sleep(200);

@@ -1,5 +1,54 @@
 # Changelog
 
+## 2.1.0 (2026-11-04)
+
+- The bottleneck tells a cap far more often. HW Deck now gets the game's frames from Windows every quarter of a second instead of every second, and only the two Present events it uses. Before, the newest frames were often over a second old when it judged, so it couldn't tell, and kept its last answer. Measured with a test game on an RTX 5090: fps caps from 60 to 238 read capped 100% of the time (38 to 94% before), with no answers left unsure (up to 62% before). The cost is 0.15% of one CPU core, and the game's frame times didn't change.
+- A capped game with one busy CPU thread reads capped once its fps has held for 30 seconds. Before, a thread at 80% always meant CPU bound.
+- In a game whose frames HW Deck can't count (Vulkan, OpenGL, or Accurate game fps off), HWiNFO's fps sitting at the screen's refresh rate reads as capped (vsync). Its caption says only vsync caps can be seen there.
+- The game cells say more: FPS its average this session, 1% low how far under the fps it sits and its lowest of 15 minutes, Bottleneck its split with the most first ("CPU 87%, GPU 10%, capped 3%").
+- The bottleneck's description is rewritten in plain words.
+- With no game running, the game cells show your last session in a softer grey: its average fps and 1% low with each minute as the graph, how long it lasted and when it ended, and what limited it with each minute as the strip. "last session" sits in each tile's corner, and Game time's corner says how long you played in the last 24 hours. Before, they showed "--" with nothing under it, and Bottleneck showed the desktop's "FPS capped" next to "no game running".
+- The bottleneck is a graph now, like the other cells: a line that steps between GPU bound, CPU bound and capped, in its tile, row and table, with the three names along its side in the hover and the popup. A game session's details draw what limited it the same way.
+- The dot for unsaved changes sits on the Save button now, not on Saves.
+- Tiles: a row of normal-size tiles that leaves room at its end shares it out, so seven tiles four to a row read four over three, all the width. Tiles you sized yourself stay as you set them, and a category of a single row stays as it is.
+- Tile sizes in thirds: 1/3, 2/3, 4/3 and 5/3 sit under the quarter steps, so three tiles of 4/3 fill a row of four.
+- Calmer during games now also covers a session you start yourself: Full animations switch to Minimal while it records.
+- When a game ends, the game cells wait a moment for its summary, so the session before it never flashes in between.
+- Smoother motion:
+  - A game coming to the front or leaving it no longer rebuilds the whole view: what moves settles in place.
+  - A warning's glow is a layer that fades, so the tile isn't painted again every frame. While a game is in front it is shorter.
+  - With a popup open, the view under it holds still.
+  - A game cell switching between the game and its last session fades once, with no digits rolling from one number to the other.
+  - Buttons fade their hover colours.
+  - Tooltips show at once right after another one.
+  - A new toast message bumps.
+  - The HWiNFO banner comes in as one change.
+  - The "now" marker under a cell's lines glides.
+  - A graph's line turns yellow or red with its text.
+  - The popup's hover guide moves at the same speed on any screen.
+  - Off has no press scale or tile lift left, and Windows' reduce motion counts from the first frame.
+  - Changing Animations or Calmer during games settles the view in place instead of rebuilding it, so the switch moves at once.
+  - Back from the tray or the taskbar, the view shows where things are now at once, without rolling digits or sliding graphs from minutes before.
+  - A tile you resize glides to its new size, as the tiles around it do.
+  - The bottleneck's graph steps from one call to the next instead of sliding through the one between.
+  - A button's dot fades in and out.
+  - A popup that an extras build opens holds the view still too.
+  - A session you record shows in Game sessions without a red wash, and its dot holds still.
+- Lighter on the PC:
+  - The game check every 3 seconds reads only the process ids, not every process and thread.
+  - Game folders are looked for again hourly, or when a new program comes to the front, not every 10 minutes.
+  - The history writes only what is new every 15 minutes, to hist.jrn, and writes hist.bin whole once a day and at exit. Before, it rewrote hist.bin every 15 minutes, about 18 MB an hour on a big layout. It keeps the same safety: after a crash, the journal comes back too.
+  - Graphs are drawn again only when a pixel would change, and a past session's graph is drawn once.
+  - The page lays itself out once a second instead of twice.
+  - Back from the tray, only the missed seconds are sent.
+  - pace.log stays open while a game is counted, and past 20 MB it becomes pace.log.old.
+  - Where HWiNFO runs from is checked on its own process once a minute, not with a list of every process and thread.
+  - The frame count's quarter-second timer sleeps while no game is in front, and counting a game's frames no longer makes new lists every second.
+  - The popup's and the hover's graphs keep their size instead of measuring the page every second.
+- Editing: the settings open on the other half of the window from what you click. With half or more of it on the left, they open on the right, and the other way round. Before, a cell on the right half moved them only if they would have covered it. Settings you pinned or moved yourself, or Storage open, still decide as before.
+- Game sessions from before 2.0.1 have their bottleneck worked out again, once, the first time 2.1 starts. They called it "FPS capped" whenever the GPU was under 85% and no CPU thread was busy, and they didn't keep the pace of the frames that 2.0.1 goes by. They did keep each minute's average fps: minutes where it held at one value, or at a cap the same game showed in another session, stay capped, and the rest counts as CPU bound. A note says how many sessions changed, once. The log as it was stays beside it (games.log.before-2.1).
+- The window keeps its size when you un-maximize it or bring it back from the taskbar. Before, it grew by the height of a title bar each time.
+
 ## 2.0.2 (2026-11-03)
 
 - The bins: the delete button says "Delete permanently", in its hover text, the question it asks and the note after.

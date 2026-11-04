@@ -164,6 +164,13 @@ $p = Start-Deck 'data-g' 9237 300
 Run 'game sessions' test/e2e-games.mjs 9237 test/data-g
 Quit-Deck $p 9237
 
+# sessions from before 2.0.1 re-estimated at the start (port 9237): old lines in the log and the bin before it starts
+if (Test-Path "$d\test\data-re") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-re" }
+node test/e2e-reest.mjs seed test/data-re | Out-Null
+$p = Start-Deck 'data-re' 9237 300
+Run 'old sessions re-estimated' test/e2e-reest.mjs 9237 test/data-re
+Quit-Deck $p 9237
+
 # after 1.4.0 (port 9240): memory in GB, hidden from Storage, the popups, Customize, the re-measure, imports, a hovering warning
 if (Test-Path "$d\test\data-14x") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-14x" }
 $env:HWDECK_FAKEZERO = '1'   # (fans at 0 rpm all along: one hidden by default, one not)

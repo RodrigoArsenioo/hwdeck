@@ -50,6 +50,14 @@ ok('so four tiles of 0.75 (one saved as 0.7501 x 0.9999) and one of 1 still fill
 ok('a tile that starts a new row goes under the ones before it, and the ones after it too (no filling the hole above)', await E(`(() => { const L = packTiles([{ w: 0.75, h: 1 }, { w: 0.75, h: 1 }, { w: 0.75, h: 1 }, { w: 0.75, h: 1 }, { w: 1, h: 1, nl: true }, { w: 1, h: 1 }, { w: 1, h: 1 }], 4);
   return L.pos.slice(4).map(p => p.x + ',' + p.y).join(' ') === '0,1 1,1 2,1' && L.H === 2; })()`));
 ok('without it the next tile fills the end of the row', await E('packTiles([{ w: 0.75, h: 1 }, { w: 0.75, h: 1 }, { w: 0.75, h: 1 }, { w: 0.75, h: 1 }, { w: 1, h: 1 }], 4).pos[4].y === 0'));
+// ---- 2.1: a row of normal tiles that leaves room at its end shares it out (his call 11-04), thirds ----
+const N = n => Array.from({ length: n }, () => ({ w: 1, h: 1 }));
+ok('seven normal tiles, four to a row: the three under them are drawn 4/3 wide, side by side (placed as they are)', await E(`(() => { const L = placeTiles(${JSON.stringify(N(7))}, Array(7).fill(8.6), 4, 0.62); const q = L.pos.slice(4); return L.pos.slice(0, 4).every(p => p.dw == null) && q.every((p, i) => Math.abs(p.dw - 4 / 3) < 1e-9 && Math.abs(p.dx - i * 4 / 3) < 1e-9 && p.x === i && p.w === 1); })()`));
+ok('five: the one under them takes the whole row', await E(`(() => { const L = placeTiles(${JSON.stringify(N(5))}, Array(5).fill(8.6), 4, 0.62); return L.pos[4].dw === 4 && L.pos[4].dx === 0; })()`));
+ok('a category of one row with room left stays as it is (no row fills the width to go by)', await E(`placeTiles(${JSON.stringify(N(3))}, Array(3).fill(8.6), 4, 0.62).pos.every(p => p.dw == null)`));
+ok('a row with a tile of its own size stays as you set it', await E(`(() => { const s = ${JSON.stringify(N(6))}; s[5] = { w: 0.75, h: 1 }; const L = placeTiles(s, Array(6).fill(8.6), 4, 0.62); return L.pos.every(p => p.dw == null); })()`));
+ok('a row a taller tile reaches into stays as it is', await E(`(() => { const s = ${JSON.stringify(N(7))}; s[0] = { w: 1, h: 2 }; const L = placeTiles(s, Array(7).fill(8.6), 4, 0.62); return L.pos.filter(p => p.y >= 1 - 1e-6).every(p => p.dw == null); })()`));
+ok('sizes in thirds: 1.3333 is 4/3 and 0.6667 is 2/3 (three of 4/3 fill a row of 4), 0.34 stays', await E('szNum(1.3333) === 4 / 3 && szNum(0.6667) === 2 / 3 && szNum(0.34) === 0.34 && packTiles([{ w: 4 / 3, h: 1 }, { w: 4 / 3, h: 1 }, { w: 4 / 3, h: 1 }, { w: 1, h: 1 }], 4).pos[3].y === 1'));
 ok('and the packing takes a tile a hair too big for a spot (no hole, no tile pushed down)', await E('(() => { const L = packTiles([{ w: 0.75, h: 1 }, { w: 0.75, h: 1 }, { w: 0.75, h: 1 }, { w: 0.7501, h: 1 }, { w: 1, h: 1 }], 4); return L.pos[4].y === 0 && L.H === 1; })()'));
 
 // ---- a layout: Left (6 tiles, 3 a row) beside Right (2 tiles, 2 a row), then Low (3 tiles, 3 a row) ----
@@ -119,13 +127,17 @@ await E('undo()'); await p.sleep(500);
 ok('undo brings the size back', (await look('a0')).h !== undefined, JSON.stringify(await look('a0')));
 
 // ---- quick sizes: width and height in quarter steps, smaller and bigger ----
-ok('quick sizes: a width and a height row, 0.25 to 2 in quarter steps', await E(`[...document.querySelectorAll('#insp .seg.qs[data-lay="cw"] button')].map(b => b.textContent).join(' ') === '.25 .5 .75 1 1.25 1.5 1.75 2' && document.querySelectorAll('#insp .seg.qs[data-lay="ch"] button').length === 8`));
+ok('quick sizes: a width and a height row, 0.25 to 2 in quarter steps, the thirds under each (2.1)', await E(`[...document.querySelectorAll('#insp .seg.qs:not(.qt)[data-lay="cw"] button')].map(b => b.textContent).join(' ') === '.25 .5 .75 1 1.25 1.5 1.75 2' && [...document.querySelectorAll('#insp .seg.qs.qt[data-lay="cw"] button')].map(b => b.textContent).join(' ') === '1/3 2/3 4/3 5/3' && document.querySelectorAll('#insp .seg.qs[data-lay="ch"] button').length === 12`));
 await click('#insp .seg[data-lay="cw"] button[data-v="1"]'); await click('#insp .seg[data-lay="ch"] button[data-v="0.75"]');
 ok('one click each: 1 by 0.75', JSON.stringify(await J('cellSize("a0")')) === '{"w":1,"h":0.75}' && await E(`document.querySelector('#insp .seg[data-lay="ch"] button.on').dataset.v === '0.75'`), JSON.stringify(await look('a0')));
 await click('#insp .seg[data-lay="ch"] button[data-v="1.25"]');
 ok('and 1 by 1.25', JSON.stringify(await J('cellSize("a0")')) === '{"w":1,"h":1.25}', JSON.stringify(await look('a0')));
 await click('#insp .seg[data-lay="ch"] button[data-v="1"]');
 ok('1 by 1: a normal tile again (nothing kept)', !(await look('a0')).w && !(await look('a0')).h, JSON.stringify(await look('a0')));
+await click('#insp .seg.qt[data-lay="cw"] button:nth-child(3)');
+ok('one click: 4/3 wide, exactly, its button on', (await J('cellSize("a0")')).w === 4 / 3 && await E(`document.querySelector('#insp .seg.qt[data-lay="cw"] button.on').textContent === '4/3'`) && /"w":1\.333/.test(JSON.stringify(await look('a0'))), JSON.stringify(await look('a0')));
+await click('#insp .seg[data-lay="cw"] button[data-v="1"]');
+ok('and back to 1', !(await look('a0')).w, JSON.stringify(await look('a0')));
 
 // ---- the corner: quarter steps, Alt for any size ----
 const one = await box('a0');
@@ -207,6 +219,23 @@ ok('Starts a new row: kept in the layout, the tile marked, saved through a reloa
 ok('it goes under the tiles before it', await E(`(() => { const t = id => document.querySelector('#view .tile[data-cid="' + id + '"]').getBoundingClientRect(); return t('a3').top >= Math.max(t('a0').bottom, t('a1').bottom, t('a2').bottom) - 1 && Math.abs(t('a3').left - t('a0').left) < 2; })()`));
 await E('undo()'); await p.sleep(500);
 ok('undo takes it away', !(await look('a3')).nl && await E(`!document.querySelector('#view .tile[data-cid="a3"]').dataset.nl`), JSON.stringify(await look('a3')));
+// ---- 2.1: a row of normal tiles drawn wider (fillRows); its corner and Ctrl+arrows go from what you see ----
+await E(`(() => { const t = READ.filter(r => r.t === 'temp').map(r => r.key), L = { v: 1, cats: [{ id: 'f', name: 'Fill', collapsed: false, cells: [] }], cells: {} };
+  for (let i = 0; i < 7; i++) { L.cells['f' + i] = { key: t[i], graph: true }; L.cats[0].cells.push('f' + i); }
+  L.views = { tiles: { rows: [{ cols: [{ stack: ['f'] }] }], cat: { f: { per: 4 } } } };
+  S.L = cleanLayout(L); S.edit = true; app.classList.add('editing'); sel = null; selCat = null; showScreen('tiles', true); afterChange(); return 1; })()`);
+await p.sleep(1500);
+const fw = await J(`['f0', 'f3', 'f4', 'f5', 'f6'].map(id => { const r = document.querySelector('#view .tile[data-cid="' + id + '"]').getBoundingClientRect(); return [r.left, r.right, r.width]; })`);
+ok('seven normal tiles four to a row: the three under them fill the row, side by side (2.1)', near(fw[4][1], fw[1][1], 1) && near(fw[2][0], fw[0][0], 1) && near(fw[2][2], fw[3][2], 1) && fw[2][2] > fw[0][2] * 1.25, JSON.stringify(fw.map(x => x.map(Math.round))));
+seen = await dragCorner('f6', -30, 0, true);
+const f6 = await box('f6');
+ok('the corner of the last one, dragged 30 px left: its right edge follows the pointer (not a third of a tile off)', near(f6.r, fw[4][1] - 30, 3) && (await look('f6')).w > 1.5, JSON.stringify({ was: Math.round(fw[4][1]), now: Math.round(f6.r), look: await look('f6') }) + ' ' + seen.pill);
+await E('undo()'); await p.sleep(700);
+ok('undo: drawn wider again', near((await box('f6')).r, fw[4][1], 1), JSON.stringify(await box('f6')));
+await click('#view .tile[data-cid="f5"]');
+await p.key('ArrowRight', 'ArrowRight', 39, 2); await p.sleep(900);
+ok('Ctrl+Right on one drawn 4/3 wide: a pixel wider than that, not narrower', (await look('f5')).w > 4 / 3 && (await look('f5')).w < 1.36, JSON.stringify(await look('f5')));
+await E('undo()'); await p.sleep(500);
 ok('no page errors', errs.length === 0, JSON.stringify(errs));
 await p.cmd('Emulation.clearDeviceMetricsOverride');
 console.log(done() ? 'ALL PASS' : 'SOME FAILED');

@@ -45,6 +45,7 @@ ok('its lines are typed in GB', await E(`/GB/.test(document.querySelector('.gate
 await E(`(() => { const i = $('iY'); i.value = '1'; i.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`); await p.sleep(200);
 ok('and kept in MB, as the host reads them (1 GB = 1024 MB)', await E(`S.L.cells[${JSON.stringify(rcid)}].gates.y === 1024`), await E(`S.L.cells[${JSON.stringify(rcid)}].gates.y`));
 ok('the scale under the lines reads GB', await E(`[...document.querySelectorAll('#gScale .tk')].some(t => t.textContent === '1.0')`), await E(`$('gScale').textContent`));
+ok('its "now" marker is a layer that glides, not a new element each second (2.1)', await E(`(() => { const w = document.querySelector('#gScale .mkw'); if (!w) return false; const a = w; tickInsp(); return document.querySelector('#gScale .mkw') === a && /translateX/.test(a.style.transform) && /^now /.test(a.querySelector('.tk.now').textContent); })()`), await E(`$('gScale').innerHTML.slice(0, 200)`));
 ok('over its line, the caption says so in GB', await until(`/^over yellow 1\\.0$/.test(${cellEl}.querySelector('.tc').textContent)`, 8000), await E(`${cellEl}.querySelector('.tc').textContent`));
 const mbLine = await (async () => { let t0 = Date.now(); while (Date.now() - t0 < 9000) { const m = text(join(data, 'alerts.log')).match(/YELLOW\s+Physical Memory Used: ([\d.]+) GB/); if (m) return m; await p.sleep(300); } return null; })();
 ok('the warning log has it in GB too', !!mbLine, text(join(data, 'alerts.log')).trim().split('\n').slice(-2).join(' | '));
@@ -217,9 +218,10 @@ await host({ t: 'fakePin', key: tKey, v: null });
 
 // ---- calmer during games: Full is Minimal while a game is in front, back after; a setting (on by default) turns it off ----
 const mode = () => E('document.documentElement.dataset.motion');
-await E(`(() => { S.motion = 'full'; S.gameCalm = true; applyMotion(); saveState(); return 1; })()`);
+await E(`(() => { S.motion = 'full'; S.gameCalm = true; applyMotion(); saveState(); window.__v0 = document.querySelector('#view .dc'); return 1; })()`);
 await host({ t: 'fakeGame', game: 'Calm Game', front: true });
 ok('a game in front: Full turns Minimal, the pick stays Full', await until('document.documentElement.dataset.motion === "minimal" && motionPicked() === "full" && !motionOn()', 5000), await mode());
+ok('and the view is not drawn again for it: what moves settles in place (2.1)', await E('!!window.__v0 && document.querySelector("#view .dc") === window.__v0 && stepped.size === 0 && rolling.size === 0'), await E('[!!window.__v0, document.querySelector("#view .dc") === window.__v0, stepped.size, rolling.size]'));
 await E('$("setBtn").click()'); await p.sleep(250);
 ok('Settings shows Full picked and says why it is Minimal now', await E('document.querySelector("#sMotion button.on").dataset.m === "full" && /a game is in front/.test($("setbody").textContent) && $("sCalm").classList.contains("on")'));
 await E('$("sCalm").click()'); await p.sleep(700);
@@ -228,7 +230,21 @@ await E('$("sCalm").click()'); await p.sleep(700); await E('$("setmodal").classL
 ok('back on: Minimal again while the game is in front, and saved', (await mode()) === 'minimal' && JSON.parse(text(join(data, 'state.json')).replace(/^﻿/, '')).gameCalm === true, await mode());
 await host({ t: 'fakeGame', game: 'Calm Game', front: false });
 ok('the game in the background: Full again', await until('document.documentElement.dataset.motion === "full"', 5000), await mode());
+// (2.1, his call 11-04: a session you started does the same as a game in front)
+// (in one go, between two ticks: the next tick brings the host's list of your sessions again)
+ok('a session you started recording: Full turns Minimal too, and back when it stops (2.1)', await E(`(() => { const k = feed.rec; feed.rec = [[nowTs, 'Session 1']]; const on = motionMode(), p = motionPicked(); feed.rec = []; const off = motionMode(); feed.rec = k; return on === 'minimal' && p === 'full' && off === 'full'; })()`), await mode());
 await host({ t: 'fakeGame', game: null });
+// (2.1, the motion audit: a warning's glow is a layer whose opacity fades, under the tile's content, gone when done)
+const gl = await E(`(() => { const [cid, r] = [...E].find(([id, x]) => x.kind === 'tile') || []; if (!r) return 'no tile'; glow(r, 1); const o = r.root.querySelector('.glw.y'); return o ? [getComputedStyle(o).position, getComputedStyle(o).zIndex, getComputedStyle(r.root).isolation].join() : 'no layer'; })()`);
+ok('a warning glow on a tile: a layer under its content (absolute, z -1, the tile isolated) (2.1)', gl === 'absolute,-1,isolate', gl);
+await p.sleep(2200);
+ok('and the layer goes when its fade is done', await E('!document.querySelector("#view .glw")'));
+// (2.1: a popup open, the view under its blur holds still: no fans turning, no rolls, its own value still rolls)
+await E(`(() => { const id = Object.keys(S.L.cells)[0]; openDetail(id); return 1; })()`); await p.sleep(700);
+ok('a popup open: the view holds still under it (2.1)', await E('modalUp && ![...stepped].some(s => s._srate && !s.closest(".modal"))'), await E('[modalUp, [...stepped].filter(s => s._srate).length]'));
+await E('closeDetail()'); await p.sleep(500);
+ok('closed: the view moves again', await E('!modalUp'));
+ok('back from the tray: a spark with only the missed seconds lands at the newest ones (2.1)', await E(`(() => { ringFill('t.k', 1000, Array(900).fill(5)); ringFill('t.k', 1000, [7, 8, 9]); const a = series('t.k', 4, 1000); return a[0] === 5 && a[1] === 7 && a[2] === 8 && a[3] === 9; })()`), await E(`JSON.stringify(series('t.k', 4, 1000))`));
 await E(`(() => { S.motion = 'minimal'; applyMotion(); return 1; })()`); await host({ t: 'fakeGame', game: 'Calm Game', front: true });
 ok('Minimal or Off picked by hand stay as they are during a game', await until('feed.front === true', 5000) && (await mode()) === 'minimal');
 await host({ t: 'fakeGame', game: null });

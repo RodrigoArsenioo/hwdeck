@@ -74,15 +74,15 @@ ok('no key for bars that aren\'t there', await ev(`!document.querySelector("${de
 ok('the timeline: fps and its 1% low as lines, the band between, a gap while not in front', await ev(`(() => { const s = document.querySelector("${det} .gx-fpsc"); return !!s && s.querySelectorAll("polyline.fp").length === 2 && s.querySelectorAll("polyline.lo").length === 2 && s.querySelectorAll("polygon").length === 2; })()`), await ev(`document.querySelector("${det} .gx-tl") && document.querySelector("${det} .gx-tl").textContent`));
 ok('the fps chart is tall, with round numbers along its side', await ev(`(() => { const s = document.querySelector("${det} .gx-fpsc"), y = [...document.querySelectorAll("${det} .gx-yax span")].map(x => +x.textContent); return s.getBoundingClientRect().height >= 130 && y.length >= 3 && y.length <= 7 && y.every((v, i) => !i || v > y[i - 1]) && y[0] <= 70 && y[y.length - 1] >= 180; })()`),
   await ev(`[...document.querySelectorAll("${det} .gx-yax span")].map(x => x.textContent)`));
-ok('what limited it, minute by minute, and the split', await ev(`document.querySelectorAll("${det} .gx-bnc rect").length > 60`) && /^fps1% lowgpu-bound 36%cpu-bound 60%capped 4%not in front 23m$/.test(await T(det + ' .gx-leg')), await T(det + ' .gx-leg'));
-// minute 12: 15 s gpu-bound, 40 s cpu-bound, 5 s capped, stacked in that order from the bottom; minute 3 has only its call
-const colOf = m => ev(`[...document.querySelectorAll("${det} .gx-bnc rect")].filter(r => Math.abs(+r.getAttribute("x") - ${m * 10} - 0.8) < 0.01).map(r => r.getAttribute("class") + ":" + (+r.getAttribute("height")).toFixed(1) + "@" + (+r.getAttribute("y")).toFixed(1)).join()`);
-ok('each minute shows its share of each call (gpu, cpu, capped from the bottom)', await colOf(12) === 'b-gpu:10.0@30.0,b-cpu:26.7@3.3,b-cap:3.3@0.0', await colOf(12));
-ok('a minute with only its main call (an older session) shows that call alone', await colOf(3) === 'b-cpu:40.0@0.0', await colOf(3));
-ok('minutes not in front stay empty', await colOf(40) === '', await colOf(40));
-ok('the calls have their own colours (not yellow or red), the same in the legend', await ev(`(() => { const f = c => getComputedStyle(document.querySelector("${det} .gx-bnc rect." + c)).fill, b = c => getComputedStyle(document.querySelector("${det} .gx-leg b." + c)).backgroundColor;
-  const fs = ['b-gpu', 'b-cpu', 'b-cap'].map(f); return new Set(fs).size === 3 && ['b-gpu', 'b-cpu', 'b-cap'].every(c => f(c) === b(c)) && !fs.some(x => /230, 200, 74|229, 72, 77/.test(x)); })()`),
-  await ev(`['b-gpu', 'b-cpu', 'b-cap'].map(c => getComputedStyle(document.querySelector("${det} .gx-bnc rect." + c)).fill)`));
+ok('what limited it, minute by minute, as a graph, and the split', await ev(`(document.querySelector("${det} .gx-bnc path.bl").getAttribute("d").match(/H/g) || []).length > 60`) && /^fps1% lowgpu-bound 36%cpu-bound 60%capped 4%not in front 23m$/.test(await T(det + ' .gx-leg')), await T(det + ' .gx-leg'));
+// each minute's main call as a level (11-04, his "for EVERY bar in the app replace with a graph"): the line's height
+// over a minute (6 GPU, 20 CPU, 34 capped on its 40 high box); minute 12: 15 s gpu-bound, 40 s cpu-bound, 5 s capped
+const lvAt = m => ev(`(() => { const d = document.querySelector("${det} .gx-bnc path.bl").getAttribute("d"); let x = 0, y = 0, out = ''; for (const [, c, a, b] of d.matchAll(/([MHV])([\\d.]+)(?: ([\\d.]+))?/g)) { if (c === 'M') { x = +a; y = +b; } else if (c === 'V') y = +a; else { const x2 = +a; if (x <= ${m * 10} && x2 >= ${(m + 1) * 10}) out = String(y); x = x2; } } return out; })()`);
+ok('each minute shows its main call as a level (minute 12: cpu-bound)', await lvAt(12) === '20', await lvAt(12));
+ok('a minute with only its main call (an older session) shows that call', await lvAt(3) === '20', await lvAt(3));
+ok('minutes not in front stay empty (a gap in the line)', await lvAt(40) === '', await lvAt(40));
+ok('the levels are named on the right (GPU, CPU, capped) and the line is not yellow or red', await ev(`[...document.querySelectorAll("${det} .gx-bny span")].map(x => x.textContent).join() === 'GPU,CPU,capped' && !/230, 200, 74|229, 72, 77/.test(getComputedStyle(document.querySelector("${det} .gx-bnc path.bl")).stroke)`),
+  await ev(`[...document.querySelectorAll("${det} .gx-bny span")].map(x => x.textContent).join() + ' ' + getComputedStyle(document.querySelector("${det} .gx-bnc path.bl")).stroke`));
 // the hover read-out: the minute under the pointer
 const hoverAt = async (m, chart) => { const r = await ev(`(() => { const e = document.querySelector("${det} ${chart}"); e.scrollIntoView({ block: "center" }); const b = e.getBoundingClientRect(); return { x: b.left + (${m} + 0.5) / ${mins} * b.width, y: b.top + b.height / 2 }; })()`);
   await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y }); await p.sleep(250); return T(det + ' .gx-tip'); };
@@ -215,6 +215,7 @@ let t0 = Date.now(); while (!gl() && Date.now() - t0 < 6000) await p.sleep(250);
 const g = gl() || {};
 const item = n => (g.items || []).find(it => it[0] === n);
 ok('the session is logged', !!gl(), text(join(data, 'games.log')).slice(-300));
+ok('its line says its bottleneck rule (bv 2: the pace of the frames, since 2.0.1)', g.bv === 2, JSON.stringify(g.bv));
 // the same game again within Same game again (30 minutes unless set): its session goes on (one line in the end, the break kept apart: not play), and
 // the sessions popup shows it while it runs (Now playing, updated every 5 s)
 {
@@ -261,7 +262,13 @@ ok('the session is logged', !!gl(), text(join(data, 'games.log')).slice(-300));
 await host({ t: 'fakeGame', game: 'Background App', front: false }); await p.sleep(4500);
 ok('an app that only runs in the background (an overlay, a tool from Steam) starts no session', await ev('feed.game === null'), await ev('feed.game'));
 await host({ t: 'fakeGame', game: null });
-ok('no game: Game time shows -- in grey', await until(`(() => { const e = evalCell(__gt, S.L.cells[__gt], true, true); return e.txt === '--' && e.col === 'grey' && e.sub === 'no game running'; })()`, 8000), await ev(gtOf('__gt, S.L.cells[__gt], true, true')));
+// (2.1: no game, Game time shows the last session, the one that ended last, in a softer grey; with none, --)
+const lastLine = () => text(join(data, 'games.log')).trim().split('\n').map(l => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(x => x && x.game && !x.custom).sort((a, b) => a.end - b.end).pop();
+const LL = lastLine();
+const gtIdle = `(() => { const e = evalCell(__gt, S.L.cells[__gt], true, true); return { txt: e.txt, tsub: e.tsub, sub: e.sub, tag: e.tag, col: e.col }; })()`;
+ok('no game: the page has the last session from the host (the one that ended last, as games.log has it)', !!LL && await until(`!!feed.lg && feed.lg.end === ${LL ? LL.end : -1} && feed.lg.game === ${JSON.stringify(LL ? LL.game : '')}`, 8000), await ev('JSON.stringify(feed.lg && [feed.lg.game, feed.lg.end])') + ' / log ' + JSON.stringify(LL && [LL.game, LL.end]));
+ok('no game: Game time shows its length in the softer grey, what it was and when it ended, the 24 h in the corner (2.1)', await until(`(() => { const e = ${gtIdle}; return e.txt === durTxt(${LL ? LL.secs : 0}) && e.col === 'past' && e.tsub.startsWith(${JSON.stringify((LL ? LL.game : '') + ', ended ')}) && /( ago| just now)$/.test(e.tsub) && (e.tag === 'last session' ? e.sub === e.tsub : / in 24 h$/.test(e.tag) && e.sub === e.tsub + ', ' + e.tag); })()`, 8000), await ev(`JSON.stringify(${gtIdle})`));
+ok('no game and no session: Game time shows -- in grey', await ev(`(() => { const k = feed.lg; feed.lg = null; const e = evalCell(__gt, S.L.cells[__gt], true, true); feed.lg = k; return e.txt === '--' && e.col === 'grey' && e.sub === 'no game running'; })()`), await ev(gtOf('__gt, S.L.cells[__gt], true, true')));
 await ev(`(() => { const id = __gt; mutate(() => { for (const c of S.L.cats) c.cells = c.cells.filter(x => x !== id); S.L.cats = S.L.cats.filter(c => c.cells.length || c.name !== 'Game time check'); delete S.L.cells[id]; }); return 1; })()`);
 ok('its main readings, found by their HWiNFO names, marked as main', ['CPU temp', 'GPU temp', 'GPU hotspot', 'GPU memory', 'CPU power', 'GPU power', 'GPU usage', 'CPU usage', 'VRAM', 'RAM'].every(n => item(n) && item(n).length === 11 && item(n)[6] === 1 && typeof item(n)[9] === 'string' && item(n)[10] === 0),
   (g.items || []).map(it => it[0] + ':' + it.length + ':' + it[6]).join(', '));
@@ -288,7 +295,7 @@ ok('and the game\'s warning while it ran', o.warns >= 1 && (o.wl || []).some(w =
 ok('nothing records any more', await until('feed.rec.length === 0 && $("grun").hidden', 8000));
 await until('[...document.querySelectorAll("#glist .gx-gn")].some(x => x.textContent === "Bench Game")', 5000);
 await ev('(() => { const s = document.querySelector("#glist .gx-sess"); if (!s.classList.contains("open")) s.querySelector(".gx-row").click(); return 1; })()'); await p.sleep(400);
-ok('the popup shows it on top, opened, with its warning and the timeline', await ev('(() => { const s = document.querySelector("#glist .gx-sess"); return s.classList.contains("open") && s.querySelector(".gx-gn").textContent === "Bench Game" && /^2 warnings$/.test(s.querySelector(".gx-st").textContent) && /Hot CPU 91\\.5 °C/.test(s.querySelector(".gx-st .gx-wv").title) && !!s.querySelector(".gx-fpsc polyline") && !!s.querySelector(".gx-bnc rect"); })()'),
+ok('the popup shows it on top, opened, with its warning and the timeline', await ev('(() => { const s = document.querySelector("#glist .gx-sess"); return s.classList.contains("open") && s.querySelector(".gx-gn").textContent === "Bench Game" && /^2 warnings$/.test(s.querySelector(".gx-st").textContent) && /Hot CPU 91\\.5 °C/.test(s.querySelector(".gx-st .gx-wv").title) && !!s.querySelector(".gx-fpsc polyline") && !!s.querySelector(".gx-bnc path.bl"); })()'),
   await ev('document.querySelector("#glist .gx-sess").textContent.slice(0, 300)'));
 ok('its CPU row: past its red line, a red max', await ev('(() => { const r = [...document.querySelectorAll("#glist .gx-sess.open .gx-rw")].find(x => x.querySelector(".n").textContent === "CPU"); return !!r && r.querySelector("span.m").className === "m r"; })()'));
 ok('and the tracked reading has its row, with a value', await ev('(() => { const r = [...document.querySelectorAll("#glist .gx-sess.open .gx-grp")][0].querySelectorAll(".gx-rw"); const last = r[r.length - 1]; return !last.classList.contains("nil") && /\\d/.test(last.querySelector("span.m").textContent); })()'),
@@ -301,7 +308,7 @@ await ev(`(() => { const s = ${sess('Bench run')}; if (!s.classList.contains('op
 ok('its summary: how long it ran, from when to when, its fps and what limited it', /^length\d+m\d\d:\d\d to \d\d:\d\d$/.test(await ev(`${sess('Bench run')}.querySelector('.gx-s5 > div:nth-child(2)').textContent`)) &&
   /^average fps\d+/.test(await ev(`${sess('Bench run')}.querySelector('.gx-s5 > div:nth-child(1)').textContent`)) && /gpu \d+%/.test(await ev(`${sess('Bench run')}.querySelector('.gx-s5').textContent`)),
   await ev(`${sess('Bench run')}.querySelector('.gx-s5').textContent`));
-ok('and the same charts as a game\'s: fps and what limited it, minute by minute', await ev(`!!${sess('Bench run')}.querySelector('.gx-fpsc polyline') && ${sess('Bench run')}.querySelectorAll('.gx-bnc rect').length >= 2`));
+ok('and the same charts as a game\'s: fps and what limited it, minute by minute', await ev(`!!${sess('Bench run')}.querySelector('.gx-fpsc polyline') && (${sess('Bench run')}.querySelector('.gx-bnc path.bl').getAttribute('d').match(/H/g) || []).length >= 2`));
 ok('its name and Delete sit inside the details, clear of the card\'s edges', await ev(`(() => { const s = ${sess('Bench run')}, a = s.querySelector('.gx-in .gx-acts'), c = s.getBoundingClientRect(); if (!a) return false; const n = a.querySelector('.gx-nmf').getBoundingClientRect(), d = a.querySelector('.gx-del').getBoundingClientRect(); return n.left - c.left >= 30 && c.right - d.right >= 10; })()`));
 await ev(`(() => { const i = ${sess('Bench run')}.querySelector('.gx-nm'); i.value = 'Renamed run'; i.dispatchEvent(new Event('change', { bubbles: true })); return 1; })()`);
 ok('a session of yours takes a new name, in the log too', await until(`!!${sess('Renamed run')}`, 5000) && !!text(join(data, 'games.log')).match(/"game":"Renamed run"[^\n]*"custom":1/), text(join(data, 'games.log')).slice(-200));

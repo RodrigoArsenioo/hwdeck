@@ -36,7 +36,7 @@ new MutationObserver(ms => {
 // readings to stream than the cells hold (what its captions read)
 const EXT = window.EXT = { kinds: {}, msg: null, loaded: false, kindOf: null, after: null, head: null, tag: null, keys: null };
 const xkOf = r => { if (!r) return null; const k = r.kind || (EXT.kindOf ? EXT.kindOf(r) : null); return k ? EXT.kinds[k] || null : null; };
-const xBody = (cid, r, where) => { const xk = xkOf(r); return xk && xk.body ? '<div class="xb" data-x="1">' + xk.body(cid, r, where) + '</div>' : null; };
+const xBody = (cid, r, where) => { const xk = xkOf(r), h = xk && xk.body ? xk.body(cid, r, where) : null; return h != null ? '<div class="xb" data-x="1">' + h + '</div>' : null; };   // (null for a view: the cell's own graph there)
 // a control in a cell's own body (an extra's button, a field, a link): a click there is the control's; anywhere else in
 // the body (the pins' bars, a strip) it opens the cell as anywhere on it
 const inCtl = t => !!(t && t.closest && t.closest('[data-x] button, [data-x] input, [data-x] select, [data-x] textarea, [data-x] a, [data-x] [role=button]'));
@@ -194,7 +194,91 @@ function bnStrip() {
   const tot = n[1] + n[2] + n[3];
   return { segs, tot, split: tot ? [1, 2, 3].map(k => [BN[k][3], Math.round(n[k] * 100 / tot), BN[k][2]]) : [] };
 }
-const bnSplit = b => b.split.map(q => q[0] + ' ' + q[1] + '%').join(', ');
+// (the most of it first, none left out at 0%: "CPU 87%, GPU 10%, capped 3%", 2.1)
+const bnSplit = b => b.split.filter(q => q[1] > 0).slice().sort((x, y) => y[1] - x[1]).map(q => (q[0] === 'capped' ? q[0] : q[0].toUpperCase()) + ' ' + q[1] + '%').join(', ');
+// the game's frame rate readings (HW Deck's own count, or HWiNFO's PresentMon): 'fps', 'low' (its 1% low) or null, and a
+// 1% low's fps beside it
+const gfKind = r => !r ? null : r.key === 'hwdeck.0/fps' || (isPM(r) && /^Framerate( Presented)?( \(avg\))?$/.test(r.label)) ? 'fps' : r.key === 'hwdeck.0/fps1' || (isPM(r) && /1% low/i.test(r.label)) ? 'low' : null;
+function gfPair(r) {
+  const f = r.key === 'hwdeck.0/fps1' ? BYKEY.get('hwdeck.0/fps') : READ.find(x => x.s === r.s && /^Framerate( Presented)?( \(avg\))?$/.test(x.label));
+  if (!f) return 0;
+  const xs = series(f.key, 10).filter(x => x != null && x > 0);   // (the last 10 s, as the 1% low)
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : Number.isFinite(f.v) ? f.v : 0;
+}
+// the last game session while no game runs (the host's "lastGame", 2.1): the Game cells show it in a softer grey
+const lastG = () => !feed.game && feed.lg && feed.lg.end > 0 && typeof feed.lg.game === 'string' ? feed.lg : null;
+// a Game cell (2.1): when a game ends they wait for its summary (feed.lgWait, at most 1.5 s), so the session before
+// it never flashes in between (the motion audit 11-04)
+const isGameCell = c => { const r = c.key ? BYKEY.get(c.key) : null; return isBneck(c) || c.key === GTIME || !!gfKind(r) || (!!r && r.kind === 'gametime'); };
+// how long ago it ended, short: "4h 02m ago", "2 days ago"
+const agoShort = s => s < 60 ? 'just now' : s < 86400 ? durTxt(s) + ' ago' : plural(Math.floor(s / 86400), 'day') + ' ago';
+// its time played in the last 24 h (a session that began before them counts its share), "6h 37m in 24 h"; none: ''
+function dayPlay(L) {
+  let s = 0; const from = nowTs - 86400;
+  for (const d of Array.isArray(L.day) ? L.day : []) if (Array.isArray(d) && d[1] > from) s += d[0] >= from ? d[2] : d[2] * (d[1] - from) / Math.max(1, d[1] - d[0]);
+  return s >= 60 ? durTxt(s) + ' in 24 h' : '';
+}
+// its calls as a strip over its own minutes (tb: a letter a minute, g gpu, c cpu, f capped), each call's share from
+// its seconds (g, c, f), and the call that held most of them (0 none)
+function lgStrip(L) {
+  const tb = typeof L.tb === 'string' ? L.tb : '', k = { g: 1, c: 2, f: 3 }, segs = [];
+  for (let a = 0, i = 1; i <= tb.length; i++) if (i === tb.length || tb[i] !== tb[a]) { if (k[tb[a]]) segs.push([a, i, BN[k[tb[a]]][2]]); a = i; }
+  const n = [0, +L.g || 0, +L.c || 0, +L.f || 0], tot = n[1] + n[2] + n[3];
+  return { segs, span: Math.max(1, tb.length), tot, split: tot ? [1, 2, 3].map(q => [BN[q][3], Math.round(n[q] * 100 / tot), BN[q][2]]) : [],
+           call: !tot ? 0 : n[1] >= n[2] && n[1] >= n[3] ? 1 : n[2] >= n[3] ? 2 : 3 };
+}
+// its calls as a graph (11-04, his "for EVERY bar in the app replace with a graph ... even the bottleneck"): a level per
+// call, GPU bound at the top (3), CPU bound in the middle (2), capped at the bottom (1); no game, a gap
+const bnLv = k => BN[k] ? 4 - k : null;
+const BN_LV = ['capped', 'CPU', 'GPU'];
+// the last 15 min in the cells' 6 s buckets, each its most common call (the graph in a tile, a row, a card)
+function bnState() {
+  const s = series(BNECK, HLEN), start = nowTs - HLEN + 1, pts = [], b0 = Math.floor(start / BUCKET), b1 = Math.floor(nowTs / BUCKET);
+  for (let b = b0; b <= b1; b++) {
+    const n = [0, 0, 0, 0];
+    for (let t = Math.max(start, b * BUCKET); t <= Math.min(nowTs, b * BUCKET + BUCKET - 1); t++) { const x = s[t - start]; if (BN[x]) n[x]++; }
+    const k = n[1] + n[2] + n[3] === 0 ? 0 : n[1] >= n[2] && n[1] >= n[3] ? 1 : n[2] >= n[3] ? 2 : 3;
+    if (k) pts.push({ s: b, v: bnLv(k), x: b === b1 ? (nowTs + 1) / BUCKET : b + 0.5 });
+  }
+  if (pts.length < 2) return null;
+  return { pts, end: (nowTs + 1) / BUCKET, span: NB, lo: 1, hi: 3, step: true, map: new Map(pts.map(q => [q.s, q])) };
+}
+// the last session's minutes as levels (one array while it is the same session, so its graph is drawn once)
+const BNPC = { tb: null, lv: null };
+function bnPast(L) {
+  const tb = typeof L.tb === 'string' ? L.tb : '', k = { g: 3, c: 2, f: 1 };
+  if (BNPC.tb !== tb) { BNPC.tb = tb; BNPC.lv = [...tb].map(ch => k[ch] || null); }
+  return BNPC.lv;
+}
+// a popup's or the hover's graph of the calls: a level per column, a step where the call changes, its names on the left
+const BN_PADL = 50;
+function drawLevels(cv, lv, rev, col) {
+  const { ctx, w, h, dpr } = graphCtx(cv);
+  if (!w || !h) return;
+  const padL = BN_PADL * dpr, padR = 4 * dpr, padT = 9 * dpr, padB = 7 * dpr, n = Math.max(1, lv.length);
+  const xL = i => padL + i / n * (w - padL - padR), Y = v => padT + (3 - v) / 2 * (h - padT - padB);   // (a column's left edge; its right is the next one's)
+  ctx.font = (11 * dpr) + 'px Segoe UI'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let v = 1; v <= 3; v++) {
+    const y = Math.round(Y(v)) + 0.5;
+    ctx.strokeStyle = '#1e1e1e'; ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+    ctx.fillStyle = '#666'; ctx.fillText(BN_LV[v - 1], padL - 8 * dpr, y);
+  }
+  const runs = []; let cur = null;
+  lv.forEach((v, i) => { if (v == null) { cur = null; return; } if (!cur) runs.push(cur = []); cur.push(i); });
+  const trace = run => { for (const i of run) { ctx.lineTo(xL(i), Y(lv[i])); ctx.lineTo(xL(i + 1), Y(lv[i])); } };
+  ctx.save();
+  if (rev < 1) { ctx.beginPath(); ctx.rect(0, 0, padL + (w - padL - padR) * rev, h); ctx.clip(); }
+  ctx.beginPath();
+  for (const run of runs) { ctx.moveTo(xL(run[0]), h - padB); trace(run); ctx.lineTo(xL(run[run.length - 1] + 1), h - padB); ctx.closePath(); }
+  const grad = ctx.createLinearGradient(0, padT, 0, h - padB); grad.addColorStop(0, hexA(col, 0.16)); grad.addColorStop(1, hexA(col, 0));
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  for (const run of runs) { ctx.moveTo(xL(run[0]), Y(lv[run[0]])); trace(run); }
+  ctx.strokeStyle = col; ctx.lineWidth = 1.8 * dpr; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+  ctx.fillStyle = col;   // (a call on its own between gaps, a short game over 7 days, still shows: a dot)
+  for (const run of runs) if (xL(run[run.length - 1] + 1) - xL(run[0]) < 3 * dpr) { ctx.beginPath(); ctx.arc((xL(run[0]) + xL(run[run.length - 1] + 1)) / 2, Y(lv[run[0]]), 2 * dpr, 0, 7); ctx.fill(); }
+  ctx.restore();
+}
 // what the cell shows: the most common call of the last 5 s, so one odd second can't flip it
 function bnNow() {
   const n = [0, 0, 0, 0];
@@ -204,16 +288,11 @@ function bnNow() {
 // what the host goes by: [GPU usage key, Max CPU/Thread Usage key, how many per-thread usages]
 const bnInputs = () => !!feed.bnIn[0] && (!!feed.bnIn[1] || feed.bnIn[2] > 0);
 function bnFrom() {
-  const nm = k => { const r = BYKEY.get(k); return r ? esc(r.label) + ' on ' + esc(SENS[r.s].short) : ''; };
+  const nm = k => { const r = BYKEY.get(k); return r ? esc(r.label) + ' (' + esc(SENS[r.s].short) + ')' : ''; };
   if (!bnInputs()) return 'HWiNFO shares no GPU core load or CPU thread usage on this PC, so there is nothing to go by.';
-  return 'It goes by ' + nm(feed.bnIn[0]) + ' and ' + (feed.bnIn[1] ? nm(feed.bnIn[1]) : 'the busiest of ' + feed.bnIn[2] + ' CPU thread usages') + (feed.fpsState === 'on' ? ', and the pace of the game\'s frames it counts' : ', but it can\'t see a cap while it doesn\'t count the game\'s frames (Accurate game fps)') + '.';
+  return 'It reads ' + nm(feed.bnIn[0]) + ', ' + (feed.bnIn[1] ? nm(feed.bnIn[1]) : 'the busiest of ' + feed.bnIn[2] + ' CPU thread usages') + (feed.fpsState === 'on' ? ' and the pace of the game\'s frames.' : '. It isn\'t counting the game\'s frames now (Accurate game fps), so only a cap at the screen\'s refresh rate shows.');
 }
 const bnLegend = b => b.split.map(q => '<span><i class="lg ' + q[2] + '"></i><em>' + q[0] + '</em>' + q[1] + '%</span>').join('');
-function renderStrip(track, segs, span) {
-  let h = '';
-  for (const g of segs) h += '<span class="' + g[2] + '" style="left:' + (g[0] / span * 100) + '%;width:' + Math.max(0.3, (g[1] - g[0]) / span * 100) + '%"></span>';
-  if (track._h !== h) { track.innerHTML = h; track._h = h; }
-}
 const isFanR = r => !!r && (r.t === 'fan' || r.unit === 'RPM');
 const isF = u => /\u00b0F/.test(u || '');   // HWiNFO can show temperatures in Fahrenheit
 const tempUnit = r => r && isF(r.unit) ? '\u00b0F' : '\u00b0C';
@@ -236,7 +315,7 @@ let nowTs = 0;
 function ring(key) { let g = rings.get(key); if (!g) { g = { v: new Float32Array(HLEN).fill(NaN), at: new Float64Array(HLEN) }; rings.set(key, g); } return g; }
 function dropRings(keep) { for (const k of rings.keys()) if (!keep.has(k)) rings.delete(k); }
 function ringPut(key, ts, v) { const g = ring(key), k = ts % HLEN; g.v[k] = v == null ? NaN : v; g.at[k] = ts; }
-function ringFill(key, ts, arr) { const g = ring(key); for (let i = 0; i < HLEN; i++) { const s = ts - HLEN + 1 + i, k = s % HLEN; g.v[k] = arr[i] == null ? NaN : arr[i]; g.at[k] = s; } }
+function ringFill(key, ts, arr) { const g = ring(key), n = Math.min(HLEN, arr.length); for (let i = 0; i < n; i++) { const s = ts - n + 1 + i, k = s % HLEN; g.v[k] = arr[i] == null ? NaN : arr[i]; g.at[k] = s; } }   // (fewer than 15 min: the newest seconds, ending at ts, 2.1)
 // the last n seconds of a reading, oldest first, NaN where nothing was measured
 function series(key, n, end) {
   end = end || nowTs; const g = rings.get(key), out = new Array(n);
@@ -412,15 +491,15 @@ const isObj = x => !!x && typeof x === 'object' && !Array.isArray(x);
 const share = x => typeof x === 'number' && isFinite(x) && x > 0 ? Math.min(6, Math.max(0.5, Math.round(x * 2) / 2)) : undefined;
 const sid = s => typeof s === 'string' ? s : s.id;
 const clone = x => JSON.parse(JSON.stringify(x));
-// a tile's size in Tiles: w and h in tiles (a normal tile is 1 x 1), each 0.25 to 2. The sizes that have a name keep it
+// a tile's size in Tiles: w and h in tiles (a normal tile is 1 x 1), each 0.25 to 2 (quarter steps and thirds, 2.1). The sizes that have a name keep it
 // (wide 2 x 1, tall 1 x 2, big 2 x 2), so an older HW Deck still draws those; it draws any other size as a normal tile
 const SZ = { wide: [2, 1], tall: [1, 2], big: [2, 2] };
-// (a size a hair off a quarter step, a third of a pixel or less, from a snap or a px step, is that step: 0.9999 is 1, so four
-// tiles of 0.75 and one of 1 still fill a row of 4)
+// (a size a hair off a quarter step or a third, a third of a pixel or less, from a snap or a px step, is that step: 0.9999
+// is 1, so four tiles of 0.75 and one of 1 still fill a row of 4; 1.3333 is 4/3, so three of them fill it too)
 const SNAPQ = 0.002;
 // (where a tile's pitch is known, a third of a pixel at that pitch: a 1 px step on a big tile is kept; a size read from a
 // file only loses float noise, it was snapped when it was made)
-const szNum = (x, tol = SNAPQ) => { if (typeof x !== 'number' || !isFinite(x)) return 1; const v = Math.round(x * 1e4) / 1e4, q = Math.round(v * 4) / 4; return Math.min(2, Math.max(0.25, Math.abs(v - q) < tol ? q : v)); };
+const szNum = (x, tol = SNAPQ) => { if (typeof x !== 'number' || !isFinite(x)) return 1; const v = Math.round(x * 1e4) / 1e4, q = Math.round(v * 4) / 4, t = Math.round(v * 3) / 3; return Math.min(2, Math.max(0.25, Math.abs(v - q) < tol ? q : Math.abs(v - t) < tol ? t : v)); };
 const snapAt = G => G && G.p > 0 ? Math.min(SNAPQ, 0.33 / G.p) : SNAPQ;
 const isSz = k => typeof k === 'string' && Object.prototype.hasOwnProperty.call(SZ, k);
 function sizeLook(w, h, tol, tolH) {
@@ -529,9 +608,12 @@ function renderTitle() {
 // opens in Full, which costs less than it did)
 const reducedMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
 const MOTIONS = ['full', 'minimal', 'off'];
+try { if (matchMedia('(prefers-reduced-motion: reduce)').matches && !document.documentElement.dataset.motion) document.documentElement.dataset.motion = 'off'; } catch (e) { }   // (until the saved choice comes, 2.1)
 const motionPicked = () => MOTIONS.includes(S.motion) ? S.motion : reducedMotion.matches ? 'off' : 'full';
-// Full calms down to Minimal while a game is in front (Settings, on unless turned off), and comes back after
-const gameCalmNow = () => S.gameCalm !== false && !!feed.game && !!feed.front;
+// Full calms down to Minimal while a game is in front, or a session you started records (his call 11-04) (Settings, on
+// unless turned off), and comes back after
+const recNow = () => Array.isArray(feed.rec) && feed.rec.length > 0;
+const gameCalmNow = () => S.gameCalm !== false && ((!!feed.game && !!feed.front) || recNow());
 const motionMode = () => { const m = motionPicked(); return m === 'full' && gameCalmNow() ? 'minimal' : m; };
 const motionOn = () => motionMode() === 'full';   // the moving parts: spins, rolls, glides, draw-ins
 function applyMotion() { document.documentElement.dataset.motion = motionMode(); }
@@ -607,7 +689,7 @@ function paintTint() {
   }
 }
 applyLook();
-if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', () => { applyMotion(); if (feed.got) redrawView(); });
+if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', () => { applyMotion(); if (feed.got) calmSettle(); });
 // the view drawn again for the motion, but not under a held cell or handle (it would move away under it, or lose the
 // click): when it's let go
 let viewLater = false;
@@ -670,9 +752,9 @@ const catOf = cid => S.L.cats.find(c => c.cells.includes(cid));
 const slotName = i => S.slots[i] ? (S.slots[i].name || 'Slot ' + (i + 1)) : 'Slot ' + (i + 1);
 function syncSaves() {
   const d = isDirty();
-  $('savesDot').classList.toggle('on', d);
-  $('savesBtn').title = 'Saves' + (S.active != null ? ': ' + slotName(S.active) + (d ? ', unsaved changes' : '') : '');
-  $('qsaveBtn').title = (S.active != null ? 'Save to ' + slotName(S.active) : 'Save to a free slot') + ', Ctrl+S';
+  $('saveDot').classList.toggle('on', d);   // (unsaved changes: the dot on Save, his call 11-04; it was on Saves)
+  $('savesBtn').title = 'Saves' + (S.active != null ? ': ' + slotName(S.active) : '');
+  $('qsaveBtn').title = (S.active != null ? 'Save to ' + slotName(S.active) + (d ? ', unsaved changes' : '') : 'Save to a free slot') + ', Ctrl+S';
   if ($('smodal').classList.contains('open')) renderSaves();
 }
 
@@ -686,6 +768,7 @@ function cellKeys() {
     if (c.key === CONN && feed.c12keys) for (const k of feed.c12keys[0].concat(feed.c12keys[1])) set.add(k);   // its pins
   }
   if (EXT.keys) for (const k of EXT.keys()) set.add(k);
+  if (modalCid && TCELL[modalCid]) set.add(TCELL[modalCid].key);   // (a popup with no cell: its reading too, while it is open)
   return [...set];
 }
 function subscribe() {
@@ -753,16 +836,50 @@ function evalCell0(cid, c, peek, quick) {
   const xk = xkOf(r);
   if (xk && xk.eval && xk.eval(out, r, c)) return out;
   if (isBneck(c)) {   // a call in words, no lines; its caption is the split of the last 15 min
-    // (no game: what the GPU and CPU say right now, the strip and the history stay a game's)
-    const b = bnStrip(), w = BN[v] ? BN[bnNow() || v] : null, lw = !w && BN[feed.bnl] ? BN[feed.bnl] : null;
+    // (no game: the last session's call, its split and its minutes as the strip, 2.1; none, --)
+    const L = lastG();
+    if (L && bnInputs()) {
+      const b = lgStrip(L);
+      out.txt = b.call ? BN[b.call][0] : '--'; out.utxt = b.call ? BN[b.call][1] : ''; out.strip = b; out.past = bnPast(L); out.col = 'past'; out.tag = 'last session';
+      out.tsub = b.tot ? bnSplit(b) : 'no calls in ' + L.game; out.sub = b.tot ? 'last session: ' + bnSplit(b) : 'last session: ' + out.tsub;
+      out.tsubS = b.tot ? 'last: ' + bnSplit(b).split(', ').slice(0, 2).join(', ') : 'no calls';   // (a narrow tile: its two biggest, "last" here)
+      return out;
+    }
+    const b = bnStrip(), w = BN[v] ? BN[bnNow() || v] : null, lw = !w && feed.game && BN[feed.bnl] ? BN[feed.bnl] : null;
     out.txt = w ? w[0] : lw ? lw[0] : '--'; out.utxt = w ? w[1] : lw ? lw[1] : ''; out.strip = b;
     out.col = (w || lw) && live ? 'white' : 'grey';
-    out.sub = w ? bnSplit(b) : !bnInputs() ? 'needs GPU usage and CPU thread usage' : feed.game && !live ? 'waiting for HWiNFO' : 'no game running';
+    out.sub = w ? (feed.bnb === 1 && v !== 3 ? 'only vsync caps show in this game' : feed.bnb === 2 ? 'can\'t see fps caps in this game' : bnSplit(b)) : !bnInputs() ? 'needs GPU usage and CPU thread usage' : feed.game && !live ? 'waiting for HWiNFO' : 'no game running';
+    // (a narrow tile: the two biggest shares, shorter words; his "make the little subtitle under it fit", 11-04)
+    out.tsub = out.sub;
+    out.tsubS = w ? (feed.bnb === 1 && v !== 3 ? 'vsync caps only' : feed.bnb === 2 ? 'fps caps unseen' : bnSplit(b).split(', ').slice(0, 2).join(', ')) : !bnInputs() ? 'needs GPU and CPU usage' : out.sub;
     return out;
   }
   // the game session so far, as a length (its lines in minutes, like the host's); with no game: --
   const gt = c.key === GTIME, gtSub = () => feed.game ? feed.game + (feed.front ? '' : ', in the background') : 'no game running';
-  if (gt && v == null) { if (!peek) calmGone(cid); out.txt = '--'; out.utxt = ''; out.sub = gtSub(); out.col = 'grey'; return out; }
+  if (gt && v == null) {
+    if (!peek) calmGone(cid);
+    const L = lastG();
+    if (L) {   // (no game: the last session's length, what it was and when it ended; the 24 h's play in the corner)
+      const ago = agoShort(Math.max(0, nowTs - L.end)), day = dayPlay(L);
+      out.txt = durTxt(L.secs > 0 ? L.secs : L.end - L.start); out.utxt = ''; out.col = 'past'; out.tag = day || 'last session'; out.tagS = 'last session';
+      out.tsub = L.game + ', ended ' + ago; out.tsubS = L.game + ', ' + ago; out.sub = out.tsub + (day ? ', ' + day : '');
+      return out;
+    }
+    out.txt = '--'; out.utxt = ''; out.sub = gtSub(); out.col = 'grey'; return out;
+  }
+  // (no game: the game's fps and its 1% low, with no value, are the last session's averages, its minutes as the graph;
+  // HWiNFO's, which follow what is in front, stay as they are)
+  const gk = gfKind(r), L = gk && !c.pred && v == null ? lastG() : null;
+  if (L) {
+    if (!peek) calmGone(cid);
+    const x = gk === 'fps' ? L.fps : L.low, has = typeof x === 'number' && isFinite(x);
+    out.txt = has ? fmt(x, 0) : '--'; out.utxt = unitOf(r); out.col = 'past'; out.tag = 'last session'; out.past = gk === 'fps' ? L.tf : L.tl;
+    const pc = gk === 'low' && has && L.fps > 0 ? Math.min(100, Math.round(x / L.fps * 100)) + '% of the fps' : '';
+    out.tsub = !has ? 'no fps counted in ' + L.game : gk === 'fps' ? 'avg, ' + L.game : 'avg' + (pc ? ', ' + pc : '');
+    out.tsubS = !has ? 'no fps counted' : gk === 'fps' ? 'last avg, ' + L.game : 'last avg' + (pc ? ', ' + pc.replace(' of the fps', ' of fps') : '');   // (a narrow tile: "last" here, no corner note)
+    out.sub = !has ? 'last session: ' + out.tsub : 'last session avg, ' + (gk === 'fps' ? L.game : pc || L.game);
+    return out;
+  }
   if (v == null) {
     if (!peek) calmGone(cid);
     out.col = 'grey';
@@ -831,6 +948,12 @@ function evalCell0(cid, c, peek, quick) {
   } else if (memPair(r) && memPair(r).v != null && v > 0) {   // memory: how much of it is in use
     const size = memSize((v + memPair(r).v) / 1024);
     out.sub = Math.round(v / 1024 / size * 100) + '% of ' + size + ' GB';
+  } else if (r && !quick && gfKind(r) === 'fps' && feed.game && feed.sf && gxN(feed.sf[0]) !== null) {
+    out.sub = 'avg ' + fmt(gxN(feed.sf[0]), 0) + ' this session';   // (the game's fps: its average this session, 2.1)
+  } else if (r && !quick && gfKind(r) === 'low') {
+    // (its 1% low: how far under the fps of the same 10 s it sits, and its lowest of the last 15 min)
+    const f = gfPair(r); let lo = Infinity; for (const x of series(r.key, HLEN)) if (x != null && x > 0 && x < lo) lo = x;
+    out.sub = [f > 0 ? Math.min(100, Math.round(v / f * 100)) + '% of the fps' : '', isFinite(lo) ? '15 min low ' + fmt(lo, 0) : ''].filter(Boolean).join(', ');
   } else if (r && !quick && !isYN(r)) {
     let mx = -Infinity; for (const x of series(r.key, HLEN)) if (x > mx) mx = x;
     out.sub = isFinite(mx) ? '15 min max ' + fl(mx) + (unitOf(r) ? ' ' + unitOf(r) : '') : '';
@@ -845,7 +968,7 @@ function evalCell0(cid, c, peek, quick) {
   return out;
 }
 // (tc: its category's colour under Spectrum, in place of the grey)
-const sparkColor = (e, hero, tc) => e.col === 'yellow' ? COLORS.yellow : e.col === 'red' ? COLORS.red : e.col === 'grey' ? '#3a3a3a' : tc || (hero ? '#8f8f8f' : '#7c7c7c');
+const sparkColor = (e, hero, tc) => e.col === 'yellow' ? COLORS.yellow : e.col === 'red' ? COLORS.red : e.col === 'grey' ? '#3a3a3a' : e.col === 'past' ? '#5a5a5a' : tc || (hero ? '#8f8f8f' : '#7c7c7c');
 const graphCol = (e, hero, tc) => { const base = sparkColor(e, hero, tc); return e.warm ? mixHex(base, COLORS.yellow, e.warm * 0.75) : e.warmR ? mixHex(base, COLORS.red, e.warmR * 0.75) : base; };
 
 // ---------- odometer numbers: the digits roll to their new places, forward when it goes up, back when it goes down ----------
@@ -867,8 +990,10 @@ function odoFlush() {
   }
   if (next < Infinity && !odoT) odoT = setTimeout(odoFlush, next);
 }
-function odo(el, s, due) {
+let catchUp = false;   // (this draw brings minutes the page missed, back from the tray: shown at once, 2.1)
+function odo(el, s, due, cut) {   // (cut: a different number, not a change of this one: shown at once, never rolled)
   if (!el) return;
+  if (cut) due = true;
   s = s === null || s === undefined ? '' : String(s);
   const built = !!el._ocells && el._t === el._ot;
   if (built && el._ot === s) { if (el._pend != null) { el._pend = null; odoWait.delete(el); } return; }
@@ -881,7 +1006,7 @@ function odo(el, s, due) {
   }
   odoWait.delete(el); el._pend = null; el._at = now;
   const old = built ? el._ot : null, num = x => { const n = parseFloat(String(x).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; };
-  const a = num(old), b = num(s), up = a === null || b === null || Math.abs(b) >= Math.abs(a), roll = motionOn();   // the digits show the size: -5 to -7 rolls up
+  const a = num(old), b = num(s), up = a === null || b === null || Math.abs(b) >= Math.abs(a), roll = motionOn() && !cut && !stillUnder(el);   // the digits show the size: -5 to -7 rolls up
   const shape = x => x.replace(/[0-9]/g, '0');
   el._t = el._ot = s;
   if (!built || shape(old) !== shape(s)) {
@@ -935,6 +1060,17 @@ function settleReel(rl) {
   rl.parentNode.classList.remove('roll');
 }
 
+// a popup is open: the view under its blur holds still (no spins, rolls or slides; its values still change every second),
+// the popup itself moves as usual (2.1, the motion audit 11-04)
+let modalUp = false;
+const modalObs = new MutationObserver(() => { const was = modalUp; modalUp = !!document.querySelector('.modal.open'); if (was && !modalUp && motionOn()) motionRun(); });   // (closed: the fans turn again at once, in Full only)
+const watchModal = m => modalObs.observe(m, { attributes: true, attributeFilter: ['class'] });
+for (const m of document.querySelectorAll('.modal')) watchModal(m);
+// (a build's own popup, made after the page: Controls in the fork's extras.js; the motion audit 11-04 found the view kept
+// moving under it, and Full stuck still after a popup over it closed first)
+new MutationObserver(rs => { for (const r of rs) for (const n of r.addedNodes) if (n.nodeType === 1 && n.classList.contains('modal')) { watchModal(n); modalObs.takeRecords(); modalUp = !!document.querySelector('.modal.open'); } })
+  .observe(document.body, { childList: true });
+const stillUnder = el => modalUp && !!el && !el.closest('.modal, #hprev');
 // ---------- fan icons turn with their fan: one turn a second at 1500 rpm ----------
 function spinWrap(svg) {
   let w = svg.parentNode;
@@ -962,7 +1098,7 @@ function motionTick() {
 }
 function spinIcon(svg, rpm) {
   if (!svg) return;
-  const rate = motionOn() && rpm > 0 && feed.status === 'ok' ? Math.max(0.05, Math.round(rpm / 1500 * 20) / 20) : 0;
+  const rate = motionOn() && rpm > 0 && feed.status === 'ok' && !stillUnder(svg) ? Math.max(0.05, Math.round(rpm / 1500 * 20) / 20) : 0;
   if (!rate && !stepped.has(svg)) return;
   const w = spinWrap(svg);
   if (!stepped.has(svg)) spinSeen.observe(w);   // (again after a stop that kept its wrapper: Minimal, then Full)
@@ -971,9 +1107,28 @@ function spinIcon(svg, rpm) {
   if (rate) motionRun();
 }
 const pauseSpin = svg => { if (svg) svg._srate = 0; };
+// Full and Minimal swapped (a game came to the front or left it, a session of yours started or stopped): what moves
+// settles where it is now; nothing is drawn again. Back to Full, the next tick turns the fans and rolls the digits
+// again. (Before 2.1 the whole view was rebuilt, right as the game took the front: the motion audit 11-04)
+function calmSettle() {
+  if (motionOn()) { motionRun(); return; }
+  for (const svg of [...stepped]) unstep(svg);
+  for (const rl of [...rolling]) { rolling.delete(rl); rl._p = rl._to; settleReel(rl); }
+  for (const G of graphs.values()) if (G.t0 || G.rev0 || G.colT0) { G.cur = G.from = G.to; G.t0 = 0; G.rev0 = 0; G.colT0 = 0; G.dirty = true; }
+  kickGraphs();
+}
 function sweepSpins() { for (const s of stepped) if (!s.isConnected) unstep(s); }
 function glow(r, lvl) {
-  if (motionMode() === 'off') return;
+  const mm = motionMode(); if (mm === 'off') return;
+  // (a tile: a tinted layer under its content whose opacity fades, on the compositor, so the tile isn't painted again
+  // every frame; 1.8 s in Full, 0.9 s in Minimal, which is the mode while a game is in front. Other rows keep the inset
+  // shadow, in Full only. 2.1, the motion audit 11-04)
+  if (r.kind === 'tile') {   // (a tile is always positioned: no style read mid-write, the motion audit 11-04)
+    const o = document.createElement('i'); o.className = 'glw ' + (lvl === 2 ? 'r' : 'y'); r.root.appendChild(o);
+    o.animate([{ opacity: 1 }, { opacity: 0 }], { duration: mm === 'full' ? 1800 : 900, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }).finished.then(() => o.remove(), () => o.remove());
+    return;
+  }
+  if (mm !== 'full') return;
   const c = lvl === 2 ? '229,72,77' : '230,200,74';
   const kf = [{ boxShadow: 'inset 0 0 0 999px rgba(' + c + ',0.16)' }, { boxShadow: 'inset 0 0 0 999px rgba(' + c + ',0)' }];
   for (const el of r.root.tagName === 'TR' ? [...r.root.children] : [r.root]) el.animate(kf, { duration: 1800, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
@@ -986,6 +1141,7 @@ let graphRaf = 0;
 const easeOut = p => 1 - Math.pow(1 - p, 3);
 const easeInOut = p => p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
 function graphState(c) {
+  if (isBneck(c)) return bnState();
   const bs = buckets(c), pts = [];
   for (let i = 0; i < bs.length; i++) { if (bs[i].v === null) continue; pts.push({ s: bs[i].b, v: bs[i].v, x: i === bs.length - 1 ? (nowTs + 1) / BUCKET : bs[i].b + 0.5 }); }
   if (pts.length < 2) return null;
@@ -1001,22 +1157,45 @@ function graphState(c) {
   const span = Math.min(NB, Math.max(10, end - pts[0].s));
   return { pts, end, span, lo, hi, map: new Map(pts.map(q => [q.s, q])) };
 }
+// a past session's minutes as a graph (2.1: a Game cell while no game runs): its whole length, a missing minute a gap
+function pastState(a, c) {
+  const pts = [];
+  a.forEach((v, i) => { if (typeof v === 'number' && isFinite(v)) pts.push({ s: 2 * i, v, x: 2 * i + 1 }); });   // (2 apart: a missing minute leaves 4, a gap)
+  if (pts.length < 2) return null;
+  let lo = Infinity;
+  for (const q of pts) if (q.v < lo) lo = q.v;
+  const r = BYKEY.get(c.key), u = r && r.unit;
+  let hi = scaleTop(pts.map(q => q.v), u).top;
+  const minSpan = Math.max(minSpanOf(u), 1, Math.abs(hi) * 0.04);
+  if (hi - lo < minSpan) { const mid = (hi + lo) / 2; lo = mid - minSpan / 2; hi = mid + minSpan / 2; if (lo < 0) { hi -= lo; lo = 0; } }
+  if (isBneck(c)) { lo = 1; hi = 3; }   // (its calls' levels)
+  return { pts, end: 2 * a.length, span: 2 * a.length, lo, hi, past: true, step: isBneck(c), map: new Map(pts.map(q => [q.s, q])) };
+}
 function lerpState(a, b, p) {
   if (!a || !b) return b;
   const e = easeInOut(p);
   const pts = b.pts.map(q => { const o = a.map.get(q.s); return o ? { s: q.s, v: o.v + (q.v - o.v) * e, x: o.x + (q.x - o.x) * p } : q; });
   return { pts, end: a.end + (b.end - a.end) * p, span: a.span + (b.span - a.span) * p, lo: a.lo + (b.lo - a.lo) * e, hi: a.hi + (b.hi - a.hi) * e, map: new Map(pts.map(q => [q.s, q])) };
 }
-function graphFeed(cv, c, col) {
+function graphFeed(cv, c, col, past) {
   const now = performance.now();
   let G = graphs.get(cv);
   if (!G) { G = { cur: null, from: null, to: null, t0: 0, rev0: cv._enter && now - cv._enter < 1000 && motionOn() ? now : 0, last: 0 }; graphs.set(cv, G); cv._enter = 0; }   // (scrolled to later: no sweep then)
+  const same = G.col === col;
+  if (G.col && !same && motionOn() && /^#[0-9a-f]{6}$/i.test(G.col) && /^#[0-9a-f]{6}$/i.test(col)) { G.colFrom = G.drawCol || G.col; G.colT0 = now; }   // (2.1: 300 ms, as the text)
   G.col = col;
-  const st = graphState(c);
+  // (2.1, the perf review 11-04: a past session's minutes don't change: drawn once, not every second)
+  if (Array.isArray(past) && same && G.pastRef === past && G.to && G.to.past && !G.t0 && !G.colT0) return;
+  G.pastRef = Array.isArray(past) ? past : null;
+  const st = Array.isArray(past) ? pastState(past, c) : graphState(c);   // (past: a session's minutes, see pastState)
   if (!st) { G.cur = G.from = G.to = null; G.dirty = true; kickGraphs(); return; }
   // (a slide too small to see isn't played, just drawn once: most seconds a steady reading moves under a pixel, and those
   // slides were most of Full's cost, 27% of a core with 40 cells against 19% without them, 10-13)
-  if (!G.to || !motionOn() || !seenMove(G.cur || G.to, st, G)) { G.cur = G.from = G.to = st; G.t0 = 0; } else { G.from = G.cur || G.to; G.to = st; G.t0 = now; }
+  // (2.1: nothing a pixel would show, the last drawing stays; the change adds up until it shows, then it is drawn. Most
+  // seconds a steady reading's line moves under a pixel)
+  const shows = !G.to || !!G.to.past !== !!st.past || !same || seenMove(G.cur || G.to, st, G);
+  if (!shows && !G.t0 && !G.colT0 && !G.rev0) return;
+  if (st.step || !G.to || !motionOn() || catchUp || stillUnder(cv) || !!G.to.past !== !!st.past || !shows) { G.cur = G.from = G.to = st; G.t0 = 0; }   // (a step graph, the bottleneck's calls: never slid) else { G.from = G.cur || G.to; G.to = st; G.t0 = now; }
   G.dirty = true; kickGraphs();
 }
 // would a slide from a to b show? The line's scroll, its span and each point's height, in pixels on this canvas
@@ -1035,8 +1214,9 @@ function graphLoop(now) {
   const todo = [];
   for (const [cv, G] of graphs) {
     if (!cv.isConnected) { graphs.delete(cv); continue; }
-    const p = G.t0 ? Math.min(1, (now - G.t0) / GDUR) : 1, rv = G.rev0 ? Math.min(1, (now - G.rev0) / 800) : 1;
-    const moving = p < 1 || rv < 1;
+    const p = G.t0 ? Math.min(1, (now - G.t0) / GDUR) : 1, rv = G.rev0 ? Math.min(1, (now - G.rev0) / 800) : 1, cp = G.colT0 ? Math.min(1, (now - G.colT0) / 300) : 1;
+    G.drawCol = cp < 1 ? mixHex(G.colFrom, G.col, cp) : G.col; if (cp >= 1) G.colT0 = 0;
+    const moving = p < 1 || rv < 1 || cp < 1;
     if (!moving && !G.dirty) continue;
     todo.push({ cv, G, p, rv, moving });
   }
@@ -1060,7 +1240,7 @@ function drawGraph(cv, G, rev) {
   if (cv.height !== h) cv.height = h;
   const ctx = cv.getContext('2d');
   ctx.clearRect(0, 0, w, h);
-  const st = G.cur;
+  const st = G.cur, col = G.drawCol || G.col;   // (mid-blend: the colour on its way, 2.1; the motion audit 11-04 found it never drawn)
   if (!st || st.pts.length < 2) return;
   const pad = 5 * dpr, x0 = st.end - st.span, X = x => 1 + (x - x0) / st.span * (w - 1 - pad), Y = v => h - 3 * dpr - (Math.min(st.hi, Math.max(st.lo, v)) - st.lo) / (st.hi - st.lo) * (h - 3 * dpr - pad);   // (a cut spike at the top edge)
   ctx.save();
@@ -1068,21 +1248,23 @@ function drawGraph(cv, G, rev) {
   // a stretch with no readings (HWiNFO away) is a gap, not a straight line across it
   const segs = [];
   st.pts.forEach((q, i) => { if (!i || q.s - st.pts[i - 1].s > 2) segs.push([]); segs[segs.length - 1].push(q); });
+  // (a step graph, the bottleneck's calls: level, then the step, 2.1)
+  const trace = sg => sg.forEach((q, i) => { if (!i) { ctx.moveTo(X(q.x), Y(q.v)); return; } if (st.step) ctx.lineTo(X(q.x), Y(sg[i - 1].v)); ctx.lineTo(X(q.x), Y(q.v)); });
   ctx.beginPath();
-  for (const sg of segs) sg.forEach((q, i) => i ? ctx.lineTo(X(q.x), Y(q.v)) : ctx.moveTo(X(q.x), Y(q.v)));
-  ctx.strokeStyle = G.col; ctx.globalAlpha = 0.9; ctx.lineWidth = 1.4 * dpr; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  for (const sg of segs) trace(sg);
+  ctx.strokeStyle = col; ctx.globalAlpha = 0.9; ctx.lineWidth = 1.4 * dpr; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   ctx.stroke();
-  ctx.fillStyle = G.col;   // a reading on its own between gaps (a line needs two) still shows, as a dot
+  ctx.fillStyle = col;   // a reading on its own between gaps (a line needs two) still shows, as a dot
   for (const sg of segs) if (sg.length === 1) { ctx.beginPath(); ctx.arc(X(sg[0].x), Y(sg[0].v), 1.1 * dpr, 0, 7); ctx.fill(); }
   const tip = st.pts[st.pts.length - 1];
   ctx.beginPath();
-  for (const sg of segs) { sg.forEach((q, i) => i ? ctx.lineTo(X(q.x), Y(q.v)) : ctx.moveTo(X(q.x), Y(q.v))); ctx.lineTo(X(sg[sg.length - 1].x), h); ctx.lineTo(X(sg[0].x), h); ctx.closePath(); }
+  for (const sg of segs) { trace(sg); ctx.lineTo(X(sg[sg.length - 1].x), h); ctx.lineTo(X(sg[0].x), h); ctx.closePath(); }
   const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, G.col + '2e'); grad.addColorStop(1, G.col + '00');
+  grad.addColorStop(0, col + '2e'); grad.addColorStop(1, col + '00');
   ctx.globalAlpha = 1; ctx.fillStyle = grad; ctx.fill();
   if (rev >= 1) {
-    ctx.fillStyle = G.col + '38'; ctx.beginPath(); ctx.arc(X(tip.x), Y(tip.v), 4.2 * dpr, 0, 7); ctx.fill();
-    ctx.fillStyle = G.col; ctx.beginPath(); ctx.arc(X(tip.x), Y(tip.v), 1.9 * dpr, 0, 7); ctx.fill();
+    ctx.fillStyle = col + '38'; ctx.beginPath(); ctx.arc(X(tip.x), Y(tip.v), 4.2 * dpr, 0, 7); ctx.fill();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X(tip.x), Y(tip.v), 1.9 * dpr, 0, 7); ctx.fill();
   }
   ctx.restore();
 }
@@ -1126,16 +1308,23 @@ function idsIn(cat) {
   const ids = cellsOf(cat), lead = catLook(cat.id).lead, i = lead ? ids.indexOf(lead) : -1;
   return i > 0 ? [lead].concat(ids.slice(0, i), ids.slice(i + 1)) : ids;
 }
-const nameIn = cid => cellLook(cid).name || cellName(S.L.cells[cid]);
+// a popup for a reading with no cell in the layout (an extras build opens one from its own menu, 2.1): its cell is
+// kept aside here, never in the layout or saved
+const TCELL = {};
+const cellAt = cid => S.L.cells[cid] || TCELL[cid];
+function openReading(key, name) { const cid = 't:' + key; if (!TCELL[cid]) TCELL[cid] = { key, name: name || '' }; openDetail(cid); subscribe(); }   // (its last 15 min come with the subscription)
+const nameIn = cid => cellLook(cid).name || cellName(cellAt(cid));
 const headTab = () => S.edit ? ' tabindex="0"' : '';
 function tileHtml(cid, lk, pre) {
   const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c), short = !!lk && lk.size === 'short', z = cellSize(cid), nm = nameIn(cid);
   const xb = miss ? null : xBody(cid, r, short ? 'short' : 'tile');
-  const graph = xb != null ? xb : c.graph === false ? '' : isBneck(c) ? '<span class="strip"></span>' : short ? '' : '<canvas></canvas>';
-  const nog = xb == null && (miss || c.graph === false || (short && !isBneck(c)));
+  // (a short tile has no graph, but the bottleneck and an extras reading that asks for one keep a small one, 11-04)
+  const xk = xkOf(r), sg = isBneck(c) || !!(xk && xk.shortGraph);
+  const graph = xb != null ? xb : c.graph === false ? '' : short ? (sg ? '<canvas class="sg"></canvas>' : '') : '<canvas></canvas>';
+  const nog = xb == null && (miss || c.graph === false || (short && !sg));
   return '<div class="tile dc' + (c.pred ? ' pred' : '') + (short ? ' short' : '') + (miss ? ' missing' : '') + (nog ? ' nog' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + (pre ? pre[1] : '') + anim() + (pre ? ';' + pre[0] : '') + '" data-cid="' + esc(cid) + '" data-k="tile" tabindex="0"' +
     (z.w !== 1 ? ' data-w="' + z.w + '"' : '') + (z.h !== 1 ? ' data-h="' + z.h + '"' : '') + (cellLook(cid, 'tiles').nl ? ' data-nl="1"' : '') + '>' +
-    '<div class="tn">' + iconOf(c, r) + '<span data-full="1">' + esc(nm) + '</span></div>' +   // (a name cut short shows whole on hover: see the tips)
+    '<div class="tn">' + iconOf(c, r) + '<span data-full="1">' + esc(nm) + '</span><span class="tq"></span></div>' +   // (a name cut short shows whole on hover: see the tips)
     '<div class="tv"><span class="v"></span><small class="u">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small></div><div class="tc"></div>' +
     (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit ? '<span class="corner" title="Drag to size it: it snaps to quarter steps, to the edges of other tiles and to the bottom of the columns beside it. Hold Alt for any size, double-click for a normal tile">' + ICONS.corner + '</span>' : '') + '</div>';
 }
@@ -1164,7 +1353,7 @@ function cardHtml(cat) {
       '<div class="dgrid bcells">' + ids.map(cid => {
         const b = bits(cid);
         return '<div class="bcell dc' + b.cls + '" data-cid="' + esc(cid) + '" data-k="row" tabindex="0"><div class="bl"><span class="lbl">' + b.nm + '<i></i></span>' + val(b.u) + '</div>' +
-          (b.xb != null ? b.xb : b.on ? (b.bn ? '<span class="strip rsp"></span>' : '<canvas class="rsp"></canvas>') : b.miss && S.edit ? rl : '<span class="gph"></span>') + '</div>';
+          (b.xb != null ? b.xb : b.on ? '<canvas class="rsp"></canvas>' : b.miss && S.edit ? rl : '<span class="gph"></span>') + '</div>';
       }).join('') + '</div></section>';
   const hero = lk.style !== 'list';
   return '<section class="card ' + cls + (lk.style === 'small' ? ' small' : '') + (lk.style === 'list' ? ' list' : '') + anim() + '" data-cat="' + esc(cat.id) + '"><div class="ch dch"' + headTab() + '>' + catHead(cat, icon) + '<span class="tag"></span></div>' +
@@ -1172,8 +1361,8 @@ function cardHtml(cat) {
       const b = bits(cid);
       if (i === 0 && hero) return '<div class="hero dc' + b.cls + '" data-cid="' + esc(cid) + '" data-k="hero" tabindex="0"><div><div class="nm">' + iconOf(b.c, b.r) + '<span>' + esc(nameIn(cid)) + '</span></div>' +
         '<div class="hv"><span class="v"></span><small class="u">' + b.u + '</small></div><div class="hc"></div>' + (b.miss && S.edit ? rl : '') + '</div>' +
-        (b.xb != null ? xBody(cid, b.r, 'hero') : b.on ? (b.bn ? '<span class="strip"></span>' : '<canvas></canvas>') : '<span></span>') + '</div>';
-      const mid = b.xb != null ? b.xb : b.on ? (b.bn ? '<span class="strip rsp"></span>' : '<canvas class="rsp"></canvas>') : b.miss && S.edit ? rl : '';
+        (b.xb != null ? xBody(cid, b.r, 'hero') : b.on ? '<canvas></canvas>' : '<span></span>') + '</div>';
+      const mid = b.xb != null ? b.xb : b.on ? '<canvas class="rsp"></canvas>' : b.miss && S.edit ? rl : '';
       return '<div class="row dc' + b.cls + (mid ? '' : ' nog') + '" data-cid="' + esc(cid) + '" data-k="row" tabindex="0"><span class="lbl">' + b.nm + '<i></i></span>' + mid + val(b.u) + '</div>';
     }).join('') + '</div></section>';
 }
@@ -1283,7 +1472,7 @@ function buildGrid() {
         const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c), xb = miss ? null : xBody(cid, r, 'grid');
         return '<tr class="dc' + (miss ? ' missing' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + '" data-cid="' + esc(cid) + '" data-k="grow" tabindex="0"><td class="gname">' + iconOf(c, r) + '<span>' + esc(nameIn(cid)) + '</span>' + (miss && S.edit ? '<button class="btn rl">Re-link</button>' : '') + '</td>' +
           '<td class="gval"><span class="v"></span><span class="u gu">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</span></td>' +
-          (xb != null ? '<td class="gstrip" colspan="3">' + xb + '</td>' : isBneck(c) && !miss ? '<td class="gstrip" colspan="3">' + (c.graph !== false ? '<span class="strip"></span>' : '') + '</td>' : '<td class="gn"></td><td class="gn"></td><td class="gn"></td>') + '<td class="glines"></td><td class="ginfo"></td></tr>';
+          (xb != null ? '<td class="gstrip" colspan="3">' + xb + '</td>' : isBneck(c) && !miss ? '<td class="gstrip" colspan="3">' + (c.graph !== false ? '<canvas></canvas>' : '') + '</td>' : '<td class="gn"></td><td class="gn"></td><td class="gn"></td>') + '<td class="glines"></td><td class="ginfo"></td></tr>';
       }).join('') + '</tbody>').join('') + '</table></div>';
   const v = viewOf('grid');
   if (v && v.rows) {   // your tables: each column of the one row is a table
@@ -1345,7 +1534,7 @@ function buildView() {
   for (const el of document.querySelectorAll('#view .dc')) {
     // (never inside a build's own body, .xb: that is extras.js's to fill)
     const q = s => { for (const x of el.querySelectorAll(s)) if (!x.closest('.xb')) return x; return null; }, cid = el.dataset.cid, c = S.L.cells[cid];
-    const r = { root: el, cid, kind: el.dataset.k, v: q('.v'), u: q('.u'), vbox: q('.tv, .hv, .val, .gval'), cap: q('.tc, .hc, .lbl i, .ginfo'), canvas: q('canvas'), strip: q('.strip'), lines: q('.glines'), xb: el.querySelector('.xb') };
+    const r = { root: el, cid, kind: el.dataset.k, v: q('.v'), u: q('.u'), vbox: q('.tv, .hv, .val, .gval'), cap: q('.tc, .hc, .lbl i, .ginfo'), tq: q('.tq'), canvas: q('canvas') || el.querySelector('.xb canvas.xg'), strip: q('.strip'), lines: q('.glines'), xb: el.querySelector('.xb') };
     if (r.kind === 'grow') r.td = el.children;
     if (c && isFanCell(c)) r.fan = q('.tn svg, .nm svg, .gname svg');
     if (r.canvas) { r.canvas._enter = enterNext ? performance.now() : 0; ro.observe(r.canvas); }   // (when the view arrived)
@@ -1428,6 +1617,9 @@ function playFlip(was) {
     const a = was.cells.get(el.dataset.cid);
     if (!a) { el.animate([{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'ease-out' }); continue; }
     const b = el.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
+    // (a new size, a size button or a wider row: from its old middle, half seen, as a category; it snapped while its
+    // neighbours glided: the motion audit 11-04)
+    if (Math.abs(a.width - b.width) > 8 || Math.abs(a.height - b.height) > 8) { el.animate([{ transform: 'translate(' + (a.left + a.width / 2 - b.left - b.width / 2) + 'px, ' + (a.top + a.height / 2 - b.top - b.height / 2) + 'px)', opacity: 0.5 }, { transform: 'none', opacity: 1 }], { duration: 240, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); continue; }
     if (Math.abs(dx) + Math.abs(dy) > 1) el.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }], { duration: 240, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
   }
 }
@@ -1441,29 +1633,48 @@ function judgeRest(skipDrawn) {
     if (isMissing(c)) calmGone(cid); else evalCell(cid, c, false, true);
   }
 }
+// which cells are on screen (their graphs are drawn): read at the top of a tick, before it writes anything, so the
+// second lays the page out once (2.1, the perf review 11-04)
+let sightPre = null;
+function readSight() {
+  const sr = sectionsEl.getBoundingClientRect(), m = new Map();
+  for (const [cid, r] of E) { const b = r.root.getBoundingClientRect(); m.set(cid, b.bottom > sr.top - 60 && b.top < sr.bottom + 60 && b.height > 0); }
+  return m;
+}
 function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's, judges nothing)
   paintTint();   // (writes only when a colour changed: readings that just came in, a new view)
   // seen: gets its number this time (all of them after a rebuild); sight: its graph is drawn (only what is on screen)
-  const sr = sectionsEl.getBoundingClientRect(), seen = new Map(), sight = new Map();
-  for (const [cid, r] of E) { const b = r.root.getBoundingClientRect(), on = b.bottom > sr.top - 60 && b.top < sr.bottom + 60 && b.height > 0; sight.set(cid, on); seen.set(cid, all || on); }
+  let pre = sightPre; sightPre = null;
+  if (pre) for (const cid of E.keys()) if (!pre.has(cid)) { pre = null; break; }   // (the view drawn again since: read now)
+  const vis = pre || readSight(), seen = new Map(), sight = new Map();
+  for (const cid of E.keys()) { const on = !!vis.get(cid); sight.set(cid, on); seen.set(cid, all || on); }
   const cardLvl = {};
   for (const [cid, r] of E) {
     const c = S.L.cells[cid]; if (!c) continue;
+    if (feed.lgWait && isGameCell(c)) { if (performance.now() - feed.lgWait < 1500) continue; feed.lgWait = 0; }   // (as they were, until the summary of the game that just ended is in)
     const rd = c.key ? BYKEY.get(c.key) : null, vis = seen.get(cid);
     if (isMissing(c)) { if (!peek) calmGone(cid); odo(r.v, '--'); setText(r.cap, missingTxt(c)); continue; }
     const e = evalCell(cid, c, !!peek, !vis);
     const cat = catOf(cid); if (cat) cardLvl[cat.id] = Math.max(cardLvl[cat.id] || 0, e.lvl);
     const dec = decOfCell(c, rd);
-    if (vis) odo(r.v, e.txt != null ? e.txt : fmtV(e.v, dec, rd));
+    // (a Game cell between a live game and its last session: a different number, not a change of it: shown at once, the
+    // cell fading in once; 2.1, the motion audit 11-04)
+    const gm = e.col === 'past' ? 'past' : 'live', flip = r._gm !== undefined && r._gm !== gm && isGameCell(c); r._gm = gm;
+    if (vis) odo(r.v, e.txt != null ? e.txt : fmtV(e.v, dec, rd), flip || catchUp, flip || catchUp);
+    if (flip && vis && motionMode() !== 'off') for (const el of [r.vbox, r.cap, r.tq, r.canvas, r.strip]) if (el) el.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: motionOn() ? 320 : 200, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
     if (e.txt != null) setText(r.u, e.utxt);
     const colCls = e.col === 'white' ? '' : e.col;
-    if (r.vbox) { for (const k of ['yellow', 'red', 'grey']) r.vbox.classList.toggle(k, colCls === k); }
-    if (r.cap) { setText(r.cap, e.sub); r.cap.classList.toggle('y', e.lvl === 1); r.cap.classList.toggle('r', e.lvl === 2); }
+    if (r.vbox) { for (const k of ['yellow', 'red', 'grey', 'past']) r.vbox.classList.toggle(k, colCls === k); }
+    // (a tile's caption can be shorter, what it leaves out in the name's corner: tsub and tag; a narrow tile's shorter
+    // still: tsubS and tagS, 2.1)
+    const nq = r.kind === 'tile' && r.root.classList.contains('nq');
+    if (r.cap) { setText(r.cap, r.kind === 'tile' && e.tsub != null ? (nq && e.tsubS ? e.tsubS : e.tsub) : e.sub); r.cap.classList.toggle('y', e.lvl === 1); r.cap.classList.toggle('r', e.lvl === 2); }
+    if (r.tq) setText(r.tq, e.tsub != null && e.tag && !nq ? e.tag : '');   // (a narrow tile: none, its name keeps the room; his ask 11-04)
     if (r.kind === 'tile') {
       r.root.classList.toggle('yellow', e.lvl === 1); r.root.classList.toggle('red', e.lvl === 2); r.root.classList.toggle('warm', e.warm > 0 || e.warmR > 0);
       // (prettify 11-02: a tile that just went yellow, or yellow to red, also pulses a ring out, with the glow below; not
       // as the view is drawn, and only with Full animations. r._lvl moves on below, after the glow)
-      if (r._lvl !== undefined && e.lvl > r._lvl && motionMode() === 'full') { r.root.classList.remove('flare'); void r.root.offsetWidth; r.root.classList.add('flare'); clearTimeout(r._fl); r._fl = setTimeout(() => r.root.classList.remove('flare'), 1000); }
+      if (r._lvl !== undefined && e.lvl > r._lvl && motionMode() === 'full' && !catchUp) { r.root.classList.remove('flare'); const fr = r.root; requestAnimationFrame(() => fr.classList.add('flare')); clearTimeout(r._fl); r._fl = setTimeout(() => r.root.classList.remove('flare'), 1000); }
       const wk = e.warm ? 'y' + e.warm : e.warmR ? 'r' + e.warmR : '';   // (the border fades toward yellow before it, toward red past it)
       if (r._w !== wk) { r._w = wk; r.root.style.setProperty('--wb', e.warm ? mixHex('#242424', '#5c4f1d', e.warm * 0.85) : e.warmR ? mixHex('#5c4f1d', '#6b2020', e.warmR * 0.85) : ''); }
     }
@@ -1490,10 +1701,9 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     }
     if (r.fan) spinIcon(r.fan, e.v);
     const xk = xkOf(rd); if (xk && xk.update) xk.update(r.root, rd, e, cid);
-    if (r._lvl !== undefined && e.lvl > r._lvl) glow(r, e.lvl);
+    if (r._lvl !== undefined && e.lvl > r._lvl && !catchUp) glow(r, e.lvl);
     r._lvl = e.lvl;
-    if (r.canvas && sight.get(cid)) graphFeed(r.canvas, c, graphCol(e, r.kind === 'hero', cat && S.look.tint === 'spectrum' ? catTint(cat) : ''));
-    if (r.strip && e.strip && sight.get(cid)) renderStrip(r.strip, e.strip.segs, HLEN);
+    if (r.canvas && sight.get(cid)) graphFeed(r.canvas, c, graphCol(e, r.kind === 'hero', cat && S.look.tint === 'spectrum' ? catTint(cat) : ''), e.past);
   }
   for (const k of CARDS) {
     const cat = S.L.cats.find(c => c.id === k.cat); if (!cat) continue;
@@ -1579,12 +1789,30 @@ function measureUnits(tgs, fs) {
     unitH.set(t, { narrow: t.classList.contains('narrow'), fs });
   });
 }
+// a row of normal tiles (1 x 1, none sized by you) that leaves room at its end shares it out, once another row of the
+// category fills the width (his call 11-04: four tiles over three look as a category of four over one of three per row
+// did). Drawn wider (dx, dw); placed as they are (x, w: what a drag, a size and the heights go by)
+function fillRows(sz, pos, k) {
+  if (!pos.some(p => p.x + p.w >= k - SNAPQ)) return;
+  const nb = Math.ceil(Math.max(0, ...pos.map(p => p.y + p.h)) - PE);
+  for (let r = 0; r < nb; r++) {
+    const ids = []; let ok = true;
+    pos.forEach((p, i) => { if (p.y < r + 1 - PE && p.y + p.h > r + PE) { if (Math.abs(p.y - r) > PE || Math.abs(p.h - 1) > PE || sz[i].w !== 1 || sz[i].h !== 1) ok = false; ids.push(i); } });
+    if (!ok || !ids.length) continue;
+    ids.sort((a, b) => pos[a].x - pos[b].x);
+    if (!ids.every((i, j) => Math.abs(pos[i].x - j) < PE) || ids.length >= k - SNAPQ) continue;   // (from the left with no hole, room at the end)
+    const f = k / ids.length;
+    for (const i of ids) { pos[i].dx = pos[i].x * f; pos[i].dw = f; }
+  }
+}
+const drawnX = p => p.dx != null ? p.dx : p.x, drawnW = p => p.dw != null ? p.dw : p.w;
 // the packed tiles in rem: one tile high is a row, as tall as the tallest normal-height tile that starts in it (like a
 // grid row; at least the shortest tile of the category); any other height takes its share of the rows it spans. G: the
 // gap in rem; even (a Fill row): every row as tall as the tallest. Gives each tile's top and height (ty, th) and the
 // height of them all (TH)
 function placeTiles(sz, nat, k, G, even) {
   const { pos, H } = packTiles(sz, k), nb = Math.max(1, Math.ceil(H - PE)), bh = Array(nb).fill(Math.min(...nat));
+  fillRows(sz, pos, k);
   // (a tile 1 high or more starting on a row needs its own height over the rows it covers: smoothly less per row as it
   // gets taller, so 1.001 high is no jump from 1)
   pos.forEach((p, i) => { const r = Math.round(p.y); if (p.h >= 1 - PE && Math.abs(p.y - r) < PE) { const need = (nat[i] + G) / p.h - G; for (let b = r; b < Math.min(nb, r + Math.floor(p.h + PE)); b++) bh[b] = Math.max(bh[b], need); } });
@@ -1605,7 +1833,7 @@ function packTg(t, k) {
     const L = placeTiles(tiles.map(szOf), nat, k, G, even);
     tiles.forEach((x, j) => {
       const s = x.style, p = L.pos[j];
-      s.setProperty('--x', p.x); s.setProperty('--w', p.w); s.setProperty('--y', p.y); s.setProperty('--h', p.h);
+      s.setProperty('--x', drawnX(p)); s.setProperty('--w', drawnW(p)); s.setProperty('--y', p.y); s.setProperty('--h', p.h);
       s.setProperty('--ty', p.ty.toFixed(3)); s.setProperty('--th', p.th.toFixed(3));
       x.classList.toggle('hx', p.h > 1 + PE);
     });
@@ -1617,18 +1845,18 @@ function packTg(t, k) {
 }
 // what each tile shows at the size it has now (W wide, the gap g, in px; see .tg.pk in deck.css): everything; no graph;
 // no caption; the name beside the value on one line; the value alone. Small tiles get tight padding
-const FITS = ['l0', 'l1', 'ns', 'ng', 'nc', 'ph', 'pw', 'nu', 'cq'];
+const FITS = ['l0', 'l1', 'ns', 'ng', 'nc', 'ph', 'pw', 'nu', 'cq', 'nq'];   // (nq: narrow for the long corner note and caption, see tsubS)
 function tileFit(t, W, k, g, fs, gr) {
   if (!t._L) return;
   t._tw = W;
   const short = t.classList.contains('shorts'), pw = (W + g) / k;
   tileKids(t).forEach((x, j) => {
     const p = t._L.pos[j]; if (!p) return;
-    const w = (p.w * pw - g) / fs, h = p.th + (gr ? p.h * gr / fs : 0);
+    const w = (drawnW(p) * pw - g) / fs, h = p.th + (gr ? p.h * gr / fs : 0);   // (a row that fills: as wide as it is drawn)
     const c = (short ? (h < 1.9 || w < 4 ? 'l0 ng nc ph' : h < 2.9 ? 'ng nc ph' : '')
       : w < 4.5 ? (h >= 5.3 ? 'ns ng nc' : 'l0 ng nc ph') : h < 2.6 ? (w >= 9 ? 'l1 ng nc ph' : 'l0 ng nc ph') : h < 5.3 ? (w >= 7 ? 'l1 ng nc ph' : 'l0 ng nc ph') : h < 6.9 ? 'ng nc' : h < 7.9 ? 'ng' : '') + (w < 8 ? ' pw' : '') + (w < 4.5 ? ' nu' : '');
     // (cq: sized by its own box, for a tile that isn't 1 x 1, shows less, or grows in a Fill row; a plain tile needn't)
-    const cq = c || Math.abs(p.w - 1) > PE || Math.abs(p.h - 1) > PE || gr ? c + ' cq' : c;
+    const cq = (c || Math.abs(p.w - 1) > PE || Math.abs(p.h - 1) > PE || gr ? c + ' cq' : c) + (w < 18.5 ? ' nq' : '');   // (18.5rem: measured 11-04, "Game time" and "6h 33m in 24 h" are cut at 16)
     if (x._fit === cq) return;
     x._fit = cq; const on = cq.split(' ');
     for (const f of FITS) x.classList.toggle(f, on.includes(f));
@@ -2559,12 +2787,22 @@ function guides(lines) {
 // steps, to the edges of the other tiles and to the bottom of the columns beside it; Alt: any size, to the pixel
 function startCorner(tile) {
   const G = tileGeo(tile); if (!G) return false;
-  const xs = [], ys = [];
-  const after = new Set(tileKids(G.tg).slice(G.j + 1));
-  for (const t of document.querySelectorAll('#view .tile')) if (t !== tile && !after.has(t)) { const r = t.getBoundingClientRect(); if (r.width) { xs.push(r.left, r.right); ys.push(r.top, r.bottom); } }
+  const xs = [], ys = [], kids = tileKids(G.tg), pos = G.tg._L ? G.tg._L.pos : [], tgL = G.tg.getBoundingClientRect().left;
+  const after = new Set(kids.slice(G.j + 1));
+  // (a row drawn wider, see fillRows, goes back to its placing once a size in it changes: its tiles' edges as placed)
+  const placed = q => [tgL + q.x * G.p, tgL + q.x * G.p + pxW(G, q.w)];
+  for (const t of document.querySelectorAll('#view .tile')) if (t !== tile && !after.has(t)) {
+    const r = t.getBoundingClientRect(); if (!r.width) continue;
+    const q = t.parentElement === G.tg ? pos[kids.indexOf(t)] : null;
+    xs.push(...(q && q.dw != null ? placed(q) : [r.left, r.right])); ys.push(r.top, r.bottom);
+  }
   xs.push(G.tg.getBoundingClientRect().right);
   guideBox = sectionsEl.getBoundingClientRect();
-  const w0 = Math.min(G.s.w, G.k), a0 = G.at(w0, G.s.h);
+  // (this one drawn wider: it goes from where it is placed to its right edge as drawn, so the corner stays under the
+  // pointer)
+  const pd = pos[G.j];
+  if (pd && pd.dw != null) { const r = G.r, left = placed(pd)[0]; G.r = { left, top: r.top, right: r.right, bottom: r.bottom, width: r.right - left, height: r.height }; }
+  const w0 = pd && pd.dw != null ? Math.min(2, G.k, Math.max(0.25, r4((G.r.width + G.g) / G.p))) : Math.min(G.s.w, G.k), a0 = G.at(w0, G.s.h);
   Object.assign(rs, G, { kind: 'corner', tile, cid: tile.dataset.cid, w0, h0: G.s.h, w: G.s.w, h: G.s.h, th0: a0.th, TH0: a0.TH, sx: a0.x, sy: a0.y, xs, ys, ends: colEnds(tile.closest('.dcat')) });
   return true;
 }
@@ -2676,7 +2914,8 @@ function nudgeSize(cid, dx, dy, quarter) {
   if (nudge && nudge.cid !== cid) flushNudge();
   const t = tileEl(cid), G = tileGeo(t); if (!G) return;
   const z = nudge && nudge.cid === cid ? { w: nudge.w, h: nudge.h } : cellSize(cid);
-  const q = (v, d) => (d > 0 ? Math.floor(v * 4 + PE) + 1 : Math.ceil(v * 4 - PE) - 1) / 4, w0 = Math.min(z.w, G.k), lim = (v, mx) => r4(Math.min(mx, Math.max(0.25, v)));
+  const pd = (!nudge || nudge.cid !== cid) && G.tg._L ? G.tg._L.pos[G.j] : null;   // (drawn wider, see fillRows: a width step goes from what you see)
+  const q = (v, d) => (d > 0 ? Math.floor(v * 4 + PE) + 1 : Math.ceil(v * 4 - PE) - 1) / 4, w0 = Math.min(dx && pd && pd.dw != null ? r4(pd.dw) : z.w, G.k), lim = (v, mx) => r4(Math.min(mx, Math.max(0.25, v)));
   // (only the side the arrow moves changes: a wide tile in a one-per-row category stays wide)
   const w = !dx || (dx > 0 && z.w >= G.k - PE) ? z.w : lim(quarter ? q(w0, dx) : (pxW(G, w0) + dx + G.g) / G.p, Math.min(2, G.k));   // (a wide tile held to the row stays wide)
   const h = !dy ? z.h : lim(quarter ? q(z.h, dy) : solveSize(hh => G.at(w0, hh).th, G.at(w0, z.h).th + dy, z.h), 2);
@@ -2934,12 +3173,15 @@ function drawerOpen(k) {
   if (d.hover || d.pinned || typing) return true;
   return k === 'L' ? !!relinkFor || (!S.L.cats.length && READ.length > 0) : d.byPick && (!!sel || !!selCat);
 }
-// the settings open on the side away from what you selected, so they never cover it (pinned or from their tab: the right)
+// the settings open on the side away from what you selected (pinned or from their tab: the right). His rule 11-04: the
+// window cut in half down the middle; half or more of the cell (or the category) on the left, they open on the right,
+// and the other way round. Before, a cell on the right half opened them on the left only if they would have covered it
 function selOnRight() {
   const el = sel ? document.querySelector('#view .dc[data-cid="' + sel + '"]') : selCat ? document.querySelector('#view .dcat[data-cat="' + selCat + '"]') : null;
   if (!el) return false;
-  const r = el.getBoundingClientRect(), v = sectionsEl.getBoundingClientRect();
-  return r.right > v.right - DR.R.el.offsetWidth - 20 && r.left + r.width / 2 > v.left + v.width / 2;
+  const r = el.getBoundingClientRect(), mid = innerWidth / 2;
+  const onLeft = r.width > 0 ? Math.max(0, Math.min(r.right, mid) - r.left) / r.width : r.left < mid ? 1 : 0;
+  return onLeft < 0.5;
 }
 // a drawer that changes sides while open slides across to its new one (11-02, his ask: it jumped across, then faded in);
 // one that opens or shuts comes from its edge as before
@@ -3257,7 +3499,7 @@ function renderInsp() {
   const bn = isBneck(c), gsel = '<select id="iGraph"><option value="1"' + (c.graph !== false ? ' selected' : '') + '>Show</option><option value="0"' + (c.graph === false ? ' selected' : '') + '>Hide</option></select>';
   // the bottleneck is a call, not a number: no decimals, no lines
   if (bn) h += '<div class="two"><label class="fld"><span>15 min bar</span>' + gsel + '</label><span></span></div>' +
-    '<div class="fgrp"><span class="hint">Worked out by ' + esc(feed.brand || 'HW Deck') + ' once a second while a game runs, from GPU usage, the busiest CPU thread and the pace of the game\'s frames (Accurate game fps, in Settings). GPU bound: the GPU at 95% or more. FPS capped: the GPU under 85% and the frames coming at a steady pace, so an fps limit or vsync sets it. CPU bound: the GPU under 85% otherwise. Without Accurate game fps, or in a Vulkan or OpenGL game, it can\'t see a cap, so a capped game reads CPU bound too.</span></div>';
+    '<div class="fgrp"><span class="hint">Checked by ' + esc(feed.brand || 'HW Deck') + ' every second while a game runs. GPU bound: the GPU almost fully busy (95% or more). FPS capped: the GPU has time to spare and the frames come at a steady rhythm, so an fps limit, vsync or Reflex holds them. CPU bound: the GPU has time to spare and the rhythm keeps changing. Spotting a cap needs Accurate game fps. Without it, or in a Vulkan or OpenGL game, only a cap at the screen\'s refresh rate shows.</span></div>';
   else h += '<div class="two"><label class="fld"><span>Decimals</span><select id="iDec">' + [0, 1, 2, 3].map(d => '<option' + (decOfCell(c, r) === d ? ' selected' : '') + '>' + d + '</option>').join('') + '</select></label>' +
        '<label class="fld"><span>Graph</span>' + gsel + '</label></div>';
   if (!c.pred && !bn) {
@@ -3382,8 +3624,15 @@ function tickInsp() {
     const cuts = [mn, ...marks.filter(x => x > mn && x < mx).sort((x, y) => x - y), mx], zc = ['#1f2a22', '#4d4317', '#4a1e21'];
     const bar = cuts.slice(1).map((z, i) => '<i style="width:' + Math.max(0, P(z) - P(cuts[i])) + '%;background:' + zc[gateLevel(g, (cuts[i] + z) / 2).raw] + '"></i>').join('');
     const r = c.key ? BYKEY.get(c.key) : null, dec = decOfCell(c, r);
-    sc.innerHTML = '<div class="bar">' + bar + '</div>' + (e.v != null ? '<span class="mk" style="left:' + P(e.v) + '%"></span><span class="tk" style="left:' + P(e.v) + '%;top:-12px;color:var(--fg)">now ' + fmtV(e.v, dec, r) + '</span>' : '') +
-      marks.map(x => '<span class="tk" style="left:' + P(x) + '%">' + (isYN(r) ? lnTxt(x, dec, r, (x === g.y || (g.mode === 'yr' && x === g.r)) === (g.dir === 'below')) : fmtV(x, dec, r)) + '</span>').join('');
+    // (the bar and the marks drawn again only when they move by a whole percent; the "now" marker glides on its own layer,
+    // 2.1: it was a new element every second, so it jumped)
+    const R1 = x => Math.round(P(x));
+    const stat = '<div class="bar">' + bar.replace(/width:([\d.]+)%/g, (m, w) => 'width:' + Math.round(+w) + '%') + '</div>' + (e.v != null ? '<div class="mkw"><span class="mk"></span><span class="tk now" style="left:0;top:-12px;color:var(--fg)"></span></div>' : '') +
+      marks.map(x => '<span class="tk" style="left:' + R1(x) + '%">' + (isYN(r) ? lnTxt(x, dec, r, (x === g.y || (g.mode === 'yr' && x === g.r)) === (g.dir === 'below')) : fmtV(x, dec, r)) + '</span>').join('');
+    const k = sel + '|' + stat;
+    if (sc._k !== k) { sc._k = k; sc.innerHTML = stat; }
+    const mw = sc.querySelector('.mkw');
+    if (mw && e.v != null) { mw.style.transform = 'translateX(' + P(e.v).toFixed(2) + '%)'; setText(mw.querySelector('.tk.now'), 'now ' + fmtV(e.v, dec, r)); }
   }
   if ($('cChart') && c.curve) drawCurveSvg(c, e);
   const st = $('cStat');
@@ -3667,21 +3916,25 @@ function catSizeHtml(cat, ids) {
     '<div class="btnrow"><button class="btn" data-lay="fitrow"' + (blk && colEnds(blk).cols.length ? '' : ' disabled') + '>Line up the bottom</button></div>' +
     '<span class="hint">Its tiles get a little taller or shorter, so its column ends level with the tallest column beside it.</span>';
 }
-// a tile's width or height in one click: quarter steps from 0.25 to 2 (no wider than its row of tiles)
-const QSZ = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+// a tile's width or height in one click: quarter steps from 0.25 to 2, and thirds under them (his ask 11-04: three of
+// 4/3 fill a row of four) (no wider than its row of tiles)
+const QSZ = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2], TSZ = [[1 / 3, '1/3'], [2 / 3, '2/3'], [4 / 3, '4/3'], [5 / 3, '5/3']];
+const qbtn = (v, t, cur, per) => '<button data-v="' + v + '"' + (per && v > per ? ' disabled' : '') + ' class="' + (Math.abs(v - cur) < 1e-6 ? 'on' : '') + '">' + t + '</button>';
 const qsizes = (label, key, cur, per) => '<div class="fld"><span>' + label + '</span><div class="seg qs" data-lay="' + key + '">' +
-  QSZ.map(v => '<button data-v="' + v + '"' + (per && v > per ? ' disabled' : '') + ' class="' + (v === cur ? 'on' : '') + '">' + String(v).replace(/^0\./, '.') + '</button>').join('') + '</div></div>';
+  QSZ.map(v => qbtn(v, String(v).replace(/^0\./, '.'), cur, per)).join('') + '</div><div class="seg qs qt" data-lay="' + key + '">' + TSZ.map(([v, t]) => qbtn(v, t, cur, per)).join('') + '</div></div>';
 function cellLayHtml(cid, c) {
   const vn = S.screen, V = VNAME[vn], cl = cellLook(cid), cat = catOf(cid), lk = cat ? catLook(cat.id) : {};
   let h = '<div class="fgrp"><span class="sub">In ' + V + '</span>';
   h += cl.name != null ? '<div class="fld"><span>Name in ' + V + '</span><div class="vname"><input id="lvName" value="' + esc(cl.name) + '" placeholder="' + esc(cellName(c)) + '"><button class="ib" data-lay="vname-x" title="The same name as in the other views">' + ICONS.x + '</button></div></div>'
     : '<button class="linkbtn" data-lay="vname-on" style="align-self:flex-start">Different name in ' + V + '</button>';
   if (vn === 'tiles') {
-    const z = cellSize(cid), G = tileGeo(tileEl(cid)), px = G ? [Math.round(pxW(G, z.w)), Math.round(G.at(Math.min(z.w, G.k), z.h).th)] : null, num = (k, v, min, max, step, u) => '<label><input type="number" data-sz="' + k + '" value="' + v + '"' +
+    const z = cellSize(cid), G = tileGeo(tileEl(cid)), pd = G && G.tg._L ? G.tg._L.pos[G.j] : null, dw = pd && pd.dw != null ? pd.dw : null;   // (dw: drawn wider, its row fills)
+    const px = G ? [Math.round(pxW(G, dw != null ? dw : z.w)), Math.round(G.at(Math.min(z.w, G.k), z.h).th)] : null, num = (k, v, min, max, step, u) => '<label><input type="number" data-sz="' + k + '" value="' + v + '"' +
       (min != null ? ' min="' + min + '" max="' + max + '"' : ' title="At this window size"') + ' step="' + step + '"><i>' + u + '</i></label>';
-    h += '<div class="fld"><span>Size: a normal tile is 1 x 1</span><div class="szin">' + num('w', z.w, 0.25, 2, 'any', 'wide') + num('h', z.h, 0.25, 2, 'any', 'tall') + '</div>' +
+    h += '<div class="fld"><span>Size: a normal tile is 1 x 1</span><div class="szin">' + num('w', r4(z.w), 0.25, 2, 'any', 'wide') + num('h', r4(z.h), 0.25, 2, 'any', 'tall') + '</div>' +
       (px ? '<div class="szin">' + num('pw', px[0], null, null, 1, 'px') + num('ph', px[1], null, null, 1, 'px') + '</div>' : '') + '</div>' +
       qsizes('Width', 'cw', z.w, lk.per) + qsizes('Height', 'ch', z.h) +
+      (dw != null ? '<span class="hint">Drawn ' + fmtSz(dw) + ' wide: a row of normal tiles shares out the room left at its end. A size of its own keeps it as you set it.</span>' : '') +
       '<label class="chk"><input type="checkbox" data-lay="nl"' + (cl.nl ? ' checked' : '') + '> Starts a new row</label>' +
       '<span class="hint">This tile and the ones after it start a new row, so the row before ends early: say, four tiles of 0.75, then the rest together on their own row.</span>' +
       '<span class="hint">Or drag its corner: it snaps to quarter steps and to other tiles. Hold Alt for any size. Ctrl+arrows: 1 px, or a quarter step with Shift.' +
@@ -3843,7 +4096,7 @@ function placeRng(still) {
   ri.classList.toggle('still', !!still); ri.style.width = b.offsetWidth + 'px'; ri.style.transform = 'translateX(' + (b.offsetLeft - 2) + 'px)';
 }
 const histKey = c => c.pred ? c.curve.src : c.key;
-function askHist() { const c = S.L.cells[modalCid]; if (!c) return; histAsked = Date.now(); send({ t: 'hist', key: histKey(c), range: bigRange }); }
+function askHist() { const c = cellAt(modalCid); if (!c) return; histAsked = Date.now(); send({ t: 'hist', key: histKey(c), range: bigRange }); }
 function setRange(r, still) {
   bigRange = r;
   for (const b of mrng.querySelectorAll('button')) b.classList.toggle('on', b.dataset.r === r);
@@ -3860,14 +4113,14 @@ mrng.addEventListener('click', e => {
   bigRevMs = 450; bigRev0 = ready && motionOn() ? performance.now() : 0;
   if (modalCid) { refreshModal(); bigLoop(); }
 });
-const histReady = () => { const c = S.L.cells[modalCid]; return c && bigHist && bigHist.key === histKey(c) && bigHist.range === bigRange; };
+const histReady = () => { const c = cellAt(modalCid); return c && bigHist && bigHist.key === histKey(c) && bigHist.range === bigRange; };
 function histOf(c) {   // the host's long history for this cell; a predicted fan's goes through its curve
   if (!c.pred) return bigHist;
   const f = a => a.map(x => x == null ? null : interp(c.curve.pts, x));
   return Object.assign({}, bigHist, { avg: f(bigHist.avg), max: f(bigHist.max) });
 }
 function openDetail(cid) {
-  const c = S.L.cells[cid]; if (!c) return;
+  const c = cellAt(cid); if (!c) return;
   hidePrev();
   modalCid = cid; modal.classList.add('open'); lastBig = null; openedAt = performance.now();
   const mv = $('mval'); if (mv._n) mv._n._ot = undefined;
@@ -3875,9 +4128,9 @@ function openDetail(cid) {
   refreshModal(true);
   bigRevMs = 700; bigRev0 = motionOn() ? performance.now() : 0; bigLoop();
 }
-function closeDetail() { modalCid = null; bigHist = null; modal.classList.remove('open'); pauseSpin(document.querySelector('#micon svg')); }
+function closeDetail() { const t = modalCid != null && !!TCELL[modalCid]; modalCid = null; bigHist = null; modal.classList.remove('open'); pauseSpin(document.querySelector('#micon svg')); if (t) subscribe(); }
 function refreshModal(full) {
-  const c = S.L.cells[modalCid]; if (!c) { closeDetail(); return; }
+  const c = cellAt(modalCid); if (!c) { closeDetail(); return; }
   const r = c.key ? BYKEY.get(c.key) : null, e = evalCell(modalCid, c, true, true), dec = decOfCell(c, r), unit = c.pred ? 'RPM' : unitOf(r), xk = xkOf(r);
   const mi = $('micon'), ic = iconOf(c, r);
   if (mi._h !== ic) { mi.innerHTML = ic; mi._h = ic; sweepSpins(); }
@@ -3893,10 +4146,11 @@ function refreshModal(full) {
       : r ? '<span title="' + esc(r.key) + '">' + esc(SENS[r.s].name) + ', ' + esc(r.label) + '.</span>' : sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now.' : 'This reading is not on this PC.';
     if (gatesOn(g)) d += ' Lines: yellow ' + lnTxt(det.y, dec, r, det.below) + (det.r !== undefined ? ', red ' + lnTxt(det.r, dec, r, det.below) : '') + (unit && !isYN(r) ? ' ' + esc(unit) : '') + (g.dir === 'below' ? ', bad when below' : '') + (det.y2 !== undefined || det.r2 !== undefined ? ', and on the other side ' + [det.y2 !== undefined ? 'yellow ' + lnTxt(det.y2, dec, r, !det.below) : '', det.r2 !== undefined ? 'red ' + lnTxt(det.r2, dec, r, !det.below) : ''].filter(Boolean).join(', ') + (g.dir === 'below' ? ', bad when above' : ', bad when below') : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
     if (c.curve && !c.pred) d += ' Follows a fan curve driven by ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ', within ' + fmtL(c.curve.tol, 1) + '%' + (c.curve.warn === false ? ', but it doesn\'t warn when off it' : '') + '.';
-    if (e.strip) d = 'What limits your fps while a game runs, worked out once a second from GPU usage, the busiest CPU thread and the pace of the game\'s frames (Accurate game fps, in Settings). GPU bound: the GPU at 95% or more, ' +
-      'normal for a game without an fps limit. FPS capped: the GPU under 85% and the frames coming at a steady pace, so an fps limit or vsync sets it. ' +
-      'CPU bound: the GPU under 85% otherwise. The game waits on its own threads, though none may read busy all the time. Without Accurate game fps, or in a Vulkan or OpenGL game, it can\'t see a cap, so a capped game reads CPU bound too. ' +
-      'The cell shows the most common call of the last 5 seconds. At 1 h and longer, the bar has a column per minute, or per 10 minutes at 7 days, as tall as the time a game ran in it. ' + bnFrom();
+    if (e.strip) d = 'What\'s limiting your fps, checked every second while a game runs. GPU bound: the GPU is almost fully busy (95% or more), normal for a game without an fps limit. ' +
+      'FPS capped: the GPU has time to spare and the frames come at a steady rhythm, so an fps limit, vsync or Reflex is holding them. ' +
+      'CPU bound: the GPU has time to spare and the rhythm keeps changing, so the game is waiting on the CPU, even when no single core shows as busy. ' +
+      'Spotting a cap needs Accurate game fps (Settings). Without it, or in a Vulkan or OpenGL game, only a cap at the screen\'s refresh rate shows. ' +
+      'The cell shows the most common answer of the last 5 seconds. In the 1 h view and longer, the graph shows the main answer of each minute (10 minutes in the 7 day view); point at one for its split. ' + bnFrom();
     if (xk && xk.desc) d = xk.desc(modalCid, r);
     $('mdesc').innerHTML = d;
   }
@@ -3953,17 +4207,6 @@ function bnCols() {   // per column [gpu, cpu, capped] as parts of it (null: no 
   return { n, step: H.step, end, old: H.sg.every(x => x == null) && Array.isArray(H.avg) && H.avg.some(x => x != null),
     cols: H.sg.map((x, i) => { const v = [at(H.sg, i), at(H.sc, i), at(H.sf, i)]; return v[0] + v[1] + v[2] > 0 ? v : null; }) };
 }
-function bnSvg(B) {
-  const W = B.n * 10, H = 60, gap = B.step > 1 && B.n <= 120 ? 1.6 : 0;
-  let h = '<line x1="0" x2="' + W + '" y1="' + H + '" y2="' + H + '"/>';
-  for (let i = 0; i < B.n;) {
-    const v = B.cols[i]; let j = i + 1;
-    if (B.step === 1) while (j < B.n && String(B.cols[j]) === String(v)) j++;   // seconds: a run of one call is one block
-    if (v) { let y = H; v.forEach((p, k) => { if (p <= 0) return; const hh = p * H; y -= hh; h += '<rect class="' + BN[k + 1][2] + '" x="' + (i * 10 + gap / 2).toFixed(1) + '" y="' + y.toFixed(2) + '" width="' + ((j - i) * 10 - gap).toFixed(1) + '" height="' + hh.toFixed(2) + '"/>'; }); }
-    i = j;
-  }
-  return { vb: '0 0 ' + W + ' ' + H, h };
-}
 function bnSum(B) {   // each call's share of the game time in the range, like the split of the last 15 min
   const n = [0, 0, 0, 0];
   for (const v of B.cols) if (v) v.forEach((p, k) => { n[k + 1] += p; });
@@ -3977,10 +4220,13 @@ function bnTicks(B) {
   return '<span>' + bnClock(t0, false, wk) + '</span><span>' + bnClock(t0 + B.n * B.step / 2, false, wk) + '</span><span>now</span>';
 }
 function bnPanel(box, e, full) {
-  if (full || !box.querySelector('.bnp')) box.innerHTML = '<div class="bnp"><div class="bnw"><svg class="bnc" preserveAspectRatio="none"></svg><i class="bgd"></i><div class="btip"></div></div><div class="sticks"></div><div class="mstats"></div></div>';
-  const B = BNP.B = bnCols(), svg = box.querySelector('.bnc');
+  if (full || !box.querySelector('.bnp')) box.innerHTML = '<div class="bnp"><div class="bnw"><canvas class="bnc"></canvas><i class="bgd"></i><div class="btip"></div></div><div class="sticks"></div><div class="mstats"></div></div>';
+  const B = BNP.B = bnCols(), cv = box.querySelector('.bnc');
   box.querySelector('.bnp').classList.toggle('loading', !B);
-  if (B) { const d = bnSvg(B); if (svg._h !== d.h) { svg.setAttribute('viewBox', d.vb); svg.innerHTML = d.h; svg._h = d.h; } }
+  if (B) {   // (drawn again only when a column or its size changed)
+    const lv = B.cols.map(v => v ? 3 - v.indexOf(Math.max(v[0], v[1], v[2])) : null), k = lv.join() + '|' + cvDims(cv).join('x');
+    if (cv._h !== k) { drawLevels(cv, lv, 1, cellTint(modalCid) || '#c9c9c9'); cv._h = k; }
+  }
   const sum = B && bnSum(B);
   const lg = !B ? '<span>loading...</span>' : sum.tot ? bnLegend(sum) + (B.step > 1 ? '<span><em>game time</em>' + (sum.secs < 59.5 ? Math.round(sum.secs) + 's' : durTxt(sum.secs)) + '</span>' : '') : B.old ? '<span>The split per minute is kept from HW Deck 1.3.0 on: nothing here yet</span>' : '<span>no game in ' + BN_SPAN[bigRange] + '</span>';
   const el = box.querySelector('.mstats'); if (el._h !== lg) { el.innerHTML = lg; el._h = lg; }
@@ -3990,7 +4236,7 @@ function bnPanel(box, e, full) {
 // the read-out under the pointer: that second's call, or that minute's (block's) split and how long a game ran in it
 function bnHover(box) {
   const w = box.querySelector('.bnw'); if (!w) return;
-  const B = BNP.B, r = w.getBoundingClientRect(), f = BNP.x === null ? -1 : (BNP.x - r.left) / Math.max(1, r.width);
+  const B = BNP.B, r = w.getBoundingClientRect(), pw = Math.max(1, r.width - BN_PADL - 4), f = BNP.x === null ? -1 : (BNP.x - r.left - BN_PADL) / pw;   // (the graph right of its names)
   if (!B || f < 0 || f > 1) { w.classList.remove('hv'); return; }
   const i = Math.max(0, Math.min(B.n - 1, Math.floor(f * B.n))), v = B.cols[i], at = B.end - (B.n - 1 - i) * B.step;
   let h = '<b>' + bnClock(at, B.step === 1, B.n * B.step >= 2 * 86400) + '</b>';
@@ -4002,7 +4248,7 @@ function bnHover(box) {
          '<span>a game for ' + (s >= 60 ? Math.round(s / 60) + ' min' : s + ' s') + '</span>';
   }
   const tip = w.querySelector('.btip'); if (tip._h !== h) { tip.innerHTML = h; tip._h = h; }
-  const gx = (i + 0.5) / B.n * r.width, tw = tip.offsetWidth;
+  const gx = BN_PADL + (i + 0.5) / B.n * pw, tw = tip.offsetWidth;
   w.querySelector('.bgd').style.left = gx.toFixed(1) + 'px';
   tip.style.left = (gx + 12 + tw > r.width ? gx - 12 - tw : gx + 12).toFixed(1) + 'px';
   w.classList.add('hv');
@@ -4012,8 +4258,19 @@ $('mextra').addEventListener('pointerleave', () => { BNP.x = null; bnHover($('me
 // a press outside the popup closes it, however soon after it opened and wherever (the same spot as the cell too)
 modal.addEventListener('mousedown', e => { if (e.target === modal) closeDetail(); });
 $('mclose').onclick = closeDetail;
+const cvSize = new WeakMap();
+const cvRO = new ResizeObserver(es => {
+  for (const e of es) cvSize.set(e.target, [e.contentRect.width, e.contentRect.height]);
+  if (modalCid && lastBig) drawBigGraph.apply(null, lastBig); if (HP.shown) drawPrev();   // (a new size: drawn again now, not at the next tick)
+});
+// a big graph's canvas size: kept by the observer once seen, so no draw reads it after the tick's writes (2.1)
+function cvDims(cv) {
+  let d = cvSize.get(cv);
+  if (!d || !d[0] || !d[1]) { if (!d) cvRO.observe(cv); d = [cv.clientWidth, cv.clientHeight]; cvSize.set(cv, d); }   // (seen hidden: read again)
+  return d;
+}
 function graphCtx(cv) {
-  const dpr = window.devicePixelRatio || 1, w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+  const [cw, ch] = cvDims(cv), dpr = window.devicePixelRatio || 1, w = Math.round(cw * dpr), h = Math.round(ch * dpr);
   if (cv.width !== w) cv.width = w;
   if (cv.height !== h) cv.height = h;
   const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, w, h);
@@ -4167,18 +4424,22 @@ mgraph.addEventListener('mousemove', e => { HV.tx = e.clientX - mgraph.getBoundi
 mgraph.addEventListener('mouseleave', () => { HV.on = false; kickHover(); });
 function kickHover() { if (!HV.raf) HV.raf = requestAnimationFrame(hoverStep); }
 function valAt(arr, f) { const i = Math.floor(f), j = Math.min(arr.length - 1, i + 1), a = arr[i], b = arr[j]; if (a === null || a === undefined) return b === null || b === undefined ? null : b; if (b === null || b === undefined) return a; return a + (b - a) * (f - i); }
-function hoverStep() {
+function hoverStep(t) {
   HV.raf = 0;
+  // (the glide was tuned on a 240 Hz screen, a frame every 4.17 ms: the same speed on any refresh rate, 2.1)
+  const dt = HV.t && t ? Math.min(64, t - HV.t) : 1000 / 60; HV.t = t || 0;
+  const kf = f => 1 - Math.pow(1 - f, dt / 4.17);
   const M = bigMap, dpr = window.devicePixelRatio || 1, W = mgraph.offsetWidth, Hh = mgraph.offsetHeight;
-  mhover.style.left = mgraph.offsetLeft + 'px'; mhover.style.top = mgraph.offsetTop + 'px'; mhover.style.width = W + 'px'; mhover.style.height = Hh + 'px';
+  const box = mgraph.offsetLeft + ',' + mgraph.offsetTop + ',' + W + ',' + Hh;
+  if (mhover._box !== box) { mhover._box = box; mhover.style.left = mgraph.offsetLeft + 'px'; mhover.style.top = mgraph.offsetTop + 'px'; mhover.style.width = W + 'px'; mhover.style.height = Hh + 'px'; }
   if (mhover.width !== Math.round(W * dpr)) mhover.width = Math.round(W * dpr);
   if (mhover.height !== Math.round(Hh * dpr)) mhover.height = Math.round(Hh * dpr);
   const ctx = mhover.getContext('2d'); ctx.clearRect(0, 0, mhover.width, mhover.height);
   const snap = !motionOn();   // (animations off or minimal: the guide sits on the pointer, no glide or fade)
-  HV.a = snap ? (HV.on && M ? 1 : 0) : HV.a + ((HV.on && M ? 1 : 0) - HV.a) * 0.24;
-  if (!M || (!HV.on && HV.a < 0.02)) { mtip.style.opacity = 0; HV.cx = HV.on ? HV.cx : null; return; }
+  HV.a = snap ? (HV.on && M ? 1 : 0) : HV.a + ((HV.on && M ? 1 : 0) - HV.a) * kf(0.24);
+  if (!M || (!HV.on && HV.a < 0.02)) { mtip.style.opacity = 0; HV.cx = HV.on ? HV.cx : null; HV.t = 0; return; }
   const plotL = M.padL / dpr, plotR = (M.w - M.padR) / dpr, tx = Math.max(plotL, Math.min(plotR, HV.tx));
-  HV.cx = HV.cx === null || snap ? tx : HV.cx + (tx - HV.cx) * 0.28;
+  HV.cx = HV.cx === null || snap ? tx : HV.cx + (tx - HV.cx) * kf(0.28);
   const f = (HV.cx - plotL) / Math.max(1, plotR - plotL) * (M.n - 1), v = valAt(M.data, f), X = HV.cx * dpr;
   ctx.globalAlpha = HV.a; ctx.strokeStyle = 'rgba(232,232,232,0.28)'; ctx.lineWidth = dpr; ctx.setLineDash([3 * dpr, 3 * dpr]);
   ctx.beginPath(); ctx.moveTo(X, M.padT); ctx.lineTo(X, M.h - M.padB); ctx.stroke(); ctx.setLineDash([]);
@@ -4191,21 +4452,21 @@ function hoverStep() {
   const fm = x => x === null ? '--' : M.unit === 'Yes/No' ? (x >= 0.5 ? 'Yes' : 'No') : noNeg0(M.dec ? x.toFixed(M.dec) : Math.round(x).toLocaleString('en-US'));
   const peak = M.maxData ? valAt(M.maxData, f) : null;
   const html = '<b>' + fm(v) + '</b> ' + esc(M.unit === 'Yes/No' ? '' : M.unit || '') + (peak !== null && M.maxData ? '<em>peak ' + fm(peak) + '</em>' : '') + '<em>' + day + hm + '</em>';
-  if (mtip._h !== html) { mtip.innerHTML = html; mtip._h = html; }
-  const tw = mtip.offsetWidth, th = mtip.offsetHeight;
+  if (mtip._h !== html) { mtip.innerHTML = html; mtip._h = html; mtip._w = mtip.offsetWidth; mtip._hh = mtip.offsetHeight; }   // (its size read when it changes, not every frame)
+  const tw = mtip._w, th = mtip._hh;
   let lx = mgraph.offsetLeft + HV.cx + 14; if (lx + tw > mgraph.offsetLeft + W) lx = mgraph.offsetLeft + HV.cx - tw - 14;
   const ly = mgraph.offsetTop + Math.max(0, Math.min(Hh - th, tipY - th - 10));
   mtip.style.transform = 'translate(' + lx.toFixed(1) + 'px,' + ly.toFixed(1) + 'px)'; mtip.style.opacity = HV.a > 0.5 ? 1 : 0;
-  if (Math.abs(tx - HV.cx) > 0.3 || (HV.on ? HV.a < 0.99 : HV.a > 0.02)) kickHover();
+  if (Math.abs(tx - HV.cx) > 0.3 || (HV.on ? HV.a < 0.99 : HV.a > 0.02)) kickHover(); else HV.t = 0;
 }
 
 // ---------- hover preview: rest the pointer on a cell (clean view) and its 15 min graph shows beside it ----------
 const hprev = document.createElement('div');
 hprev.id = 'hprev';
 hprev.innerHTML = '<div class="ph"><span class="pi"></span><span class="pt"></span><span class="pv"></span></div><canvas></canvas>' +
-  '<div class="pstrip" hidden><div class="strip big"></div><div class="sticks"><span>-15m</span><span>-10m</span><span>-5m</span><span>now</span></div></div><div class="ps"></div><div class="pc"></div>';
+  '<div class="pstrip" hidden><canvas></canvas><div class="sticks"></div></div><div class="ps"></div><div class="pc"></div>';
 document.body.appendChild(hprev);
-const HP = { cid: null, el: null, timer: 0, shown: false, rev0: 0, raf: 0 };
+const HP = { cid: null, el: null, timer: 0, shown: false, rev0: 0, raf: 0, ext: false };
 const anyModalOpen = () => [...document.querySelectorAll('.modal')].some(m => m.classList.contains('open'));
 sectionsEl.addEventListener('pointerover', e => {
   const n = S.edit || drag ? null : e.target.closest('#view .dc');
@@ -4217,10 +4478,29 @@ sectionsEl.addEventListener('pointerover', e => {
   else HP.timer = setTimeout(() => { if (HP.cid === cid && !anyModalOpen()) showPrev(false); }, 330);
 });
 sectionsEl.addEventListener('pointerleave', () => { HP.cid = null; clearTimeout(HP.timer); hidePrev(); });
+// an extras build's own boxes (its Controls popup's devices, 2.1) show the same preview: a box with data-prev-key, over
+// the popup it sits in (a popup opened over that one hides it); a reading with no cell in the layout uses one kept
+// aside (cellAt)
+const prevBlocked = n => [...document.querySelectorAll('.modal.open')].some(m => !m.contains(n));
+const prevOff = () => { if (HP.ext) { HP.ext = false; HP.cid = null; clearTimeout(HP.timer); hidePrev(); } };
+document.addEventListener('pointerover', e => {
+  const n = S.edit || drag || !e.target.closest ? null : e.target.closest('[data-prev-key]');
+  if (!n) { prevOff(); return; }
+  const key = n.dataset.prevKey;
+  let cid = Object.keys(S.L.cells).find(id => S.L.cells[id].key === key);
+  if (!cid) { cid = 't:' + key; if (!TCELL[cid]) TCELL[cid] = { key, name: n.dataset.prevName || '' }; }
+  if (cid === HP.cid && HP.el === n) return;
+  HP.cid = cid; HP.el = n; HP.ext = true; clearTimeout(HP.timer);
+  if (prevBlocked(n)) { hidePrev(); return; }
+  if (HP.shown) showPrev(true);
+  else HP.timer = setTimeout(() => { if (HP.cid === cid && HP.el === n && !prevBlocked(n)) showPrev(false); }, 330);
+});
+document.addEventListener('pointerdown', prevOff, true);   // (a press opens its popup: the preview goes)
+document.documentElement.addEventListener('pointerleave', prevOff);
 window.addEventListener('blur', () => { HP.cid = null; hidePrev(); });
 function hidePrev() { HP.shown = false; hprev.classList.remove('on'); pauseSpin(hprev.querySelector('.pi svg')); }
 function fillPrev() {
-  const c = S.L.cells[HP.cid]; if (!c) return false;
+  const c = cellAt(HP.cid); if (!c) return false;
   const r = c.key ? BYKEY.get(c.key) : null, e = evalCell(HP.cid, c, true, true), dec = decOfCell(c, r), f = x => x == null || !isFinite(x) ? '--' : fmtV(x, dec, r);
   const pi = hprev.querySelector('.pi'), ic = iconOf(c, r);
   if (pi._h !== ic) { pi.innerHTML = ic; pi._h = ic; sweepSpins(); }
@@ -4228,10 +4508,15 @@ function fillPrev() {
   setText(hprev.querySelector('.pt'), nameIn(HP.cid));
   const pv = hprev.querySelector('.pv'), vh = e.txt != null ? esc(e.txt) + '<small>' + esc(e.utxt) + '</small>' : esc(fmtV(e.v, dec, r)) + '<small>' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small>';
   if (pv._h !== vh) { pv.innerHTML = vh; pv._h = vh; }
-  pv.style.color = COLORS[e.col] || COLORS.white;
-  // the bottleneck shows its bar and each call's share instead of a graph and min / avg / max
+  pv.style.color = e.col === 'past' ? '#a3a3a3' : COLORS[e.col] || COLORS.white;   // (past: the last game session, 2.1)
+  // the bottleneck shows its calls as a graph (GPU, CPU, capped) and each call's share instead of min / avg / max
+  HP.e = e;
   hprev.querySelector('canvas').hidden = !!e.strip; hprev.querySelector('.pstrip').hidden = !e.strip;
-  if (e.strip) renderStrip(hprev.querySelector('.pstrip .strip'), e.strip.segs, HLEN);
+  if (e.strip) {
+    const L = e.col === 'past' ? lastG() : null, ck = u => bnClock(u, false, false);
+    const tk = L ? '<span>' + ck(L.start) + '</span><span>' + ck((L.start + L.end) / 2) + '</span><span>' + ck(L.end) + '</span>' : '<span>-15m</span><span>-10m</span><span>-5m</span><span>now</span>';
+    const st = hprev.querySelector('.pstrip .sticks'); if (st._h !== tk) { st.innerHTML = tk; st._h = tk; }
+  }
   const v = e.strip ? [] : cellSeries(c, HLEN).filter(x => isFinite(x));
   const sh = e.strip ? bnLegend(e.strip) : v.length && !isYN(r) ? '<span><em>min</em>' + f(Math.min(...v)) + '</span><span><em>avg</em>' + f(v.reduce((a, b) => a + b, 0) / v.length) + '</span><span><em>max</em>' + f(Math.max(...v)) + '</span>' : '';
   const ps = hprev.querySelector('.ps'); if (ps._h !== sh) { ps.innerHTML = sh; ps._h = sh; }
@@ -4239,8 +4524,18 @@ function fillPrev() {
   return true;
 }
 function drawPrev() {
-  const c = S.L.cells[HP.cid]; if (!c || isBneck(c)) { HP.rev0 = 0; return; }
+  const c = cellAt(HP.cid); if (!c) { HP.rev0 = 0; return; }
+  const p0 = HP.rev0 && motionOn() ? Math.min(1, (performance.now() - HP.rev0) / 450) : 1, more = () => { if (p0 < 1) { if (!HP.raf) HP.raf = requestAnimationFrame(() => { HP.raf = 0; if (HP.shown) drawPrev(); }); } else HP.rev0 = 0; };
+  if (isBneck(c)) {   // its calls: the last session's minutes, or the last 15 min's seconds
+    const e = HP.e || {}, lv = e.col === 'past' && Array.isArray(e.past) ? e.past : series(BNECK, HLEN).map(bnLv);
+    drawLevels(hprev.querySelector('.pstrip canvas'), lv, easeOut(p0), e.col === 'past' ? '#a3a3a3' : cellTint(HP.cid) || '#c9c9c9');
+    more(); return;
+  }
   const r = c.key ? BYKEY.get(c.key) : null, g = c.gates, gk = gbK(r), det = gbDet(gateLines(g), gk);
+  if (HP.e && HP.e.pspan && Array.isArray(HP.e.past)) {   // (an extras reading with a whole day, as its graph in the view)
+    drawBigGraph(hprev.querySelector('canvas'), HP.e.past, det, 0, isYN(r) ? 'Yes/No' : unitOf(r), false, null, HP.e.pspan * 1000, { rev: easeOut(p0) });
+    more(); return;
+  }
   const sp = gbArr(bucketArr(c, isYN(r)), gk), vals = sp.filter(x => x !== null);   // (a Yes/No reading: each bucket's peak, as its popup)
   let gate = false;
   if (vals.length > 1 && det.y !== undefined) { const hi = Math.max(...vals), spn = Math.max(1.2, hi - Math.min(...vals)); gate = det.y > hi && det.y < hi + spn * 1.2; }
@@ -4486,7 +4781,7 @@ function starterCheck() {
   // (a view of their own, or one that isn't a new user's (emptied, set aside): the note, never Starter over it; once the
   // note showed, that stays so even after the view is emptied)
   if (S.L.cats.length || !feed.starterFresh || S.starterNoted) {
-    $('notice').classList.add('show');
+    $('notice').classList.add('show'); $('estNotice').classList.remove('show');   // (the sessions' note after this one)
     if (!S.starterNoted) { S.starterNoted = true; saveState(); }
     return;
   }
@@ -4495,7 +4790,21 @@ function starterCheck() {
   enterNext = true; setEdit(false); subscribe(); syncSaves();
   toast('Starter: a layout built from this PC\'s sensors. The pencil, or E, edits it', false, 7000);
 }
-function starterSeen() { S.starterSeen = true; $('notice').classList.remove('show'); saveState(); }
+function starterSeen() { S.starterSeen = true; $('notice').classList.remove('show'); saveState(); estCheck(); }
+// sessions from before 2.0.1 this update worked out again (2.1, the host's Games.ReestimateFiles; feed.estNote: how
+// many): a note like Starter's, once, after Starter's if that one is up. Its X or Show sessions and it's gone for good
+// (the host forgets the count). A new install has nothing to change, so it never shows there
+let estGone = false;
+function estCheck() {
+  const el = $('estNotice'), n = feed.estNote || 0;
+  if (!(n > 0) || estGone) { el.classList.remove('show'); return; }
+  if ($('notice').classList.contains('show')) return;   // (Starter's note first)
+  $('estTxt').textContent = 'HW Deck worked out the bottleneck of ' + n + (n === 1 ? ' game session' : ' game sessions') + ' from before 2.0.1 again. Back then a GPU that wasn\'t busy read as "FPS capped". Now only minutes whose fps held steady stay capped, and the rest count as CPU bound.';
+  el.classList.add('show');
+}
+function estSeen() { estGone = true; $('estNotice').classList.remove('show'); send({ t: 'estSeen' }); }
+$('estClose').onclick = estSeen;
+$('estShow').onclick = () => { estSeen(); $('gamesBtn').click(); };
 $('noticeClose').onclick = starterSeen;
 $('noticeShow').onclick = () => {
   starterSeen(); renderSaves(); smodal.classList.add('open');
@@ -4814,7 +5123,7 @@ function wxTake(m) {
   const k = m.key + '|' + m.range, ws = wxWait.get(k); if (!ws) return false;
   wxWait.delete(k);
   for (const o of ws) if (o.ch.isConnected) wxChart(o, m);
-  const c = modalCid != null ? S.L.cells[modalCid] : null;
+  const c = modalCid != null ? cellAt(modalCid) : null;
   return !(c && histKey(c) === m.key && bigRange === m.range);
 }
 // a row's chart, the session chart's look (11-02, his "copy the game sessions"): its reading over the minutes around it
@@ -5226,15 +5535,21 @@ function gxTimeline(x, sp, gi) {
          '<i class="gx-gd"></i><i class="gx-dot lo"></i><i class="gx-dot fp"></i></span><span class="gx-yax">' + yl + '</span></div>';
   }
   if (D.sh.some(Boolean)) {
-    // a column per minute, its share of each call stacked: gpu at the bottom, then cpu, capped on top
-    const H2 = 40, gap = N <= 120 ? 1.6 : 0;
-    let cols = '';
-    D.sh.forEach((s, m) => {
-      if (!s) return;
-      let y = H2;
-      s.forEach((v, k) => { if (v <= 0) return; const hh = v * H2; y -= hh; cols += '<rect class="b-' + GX_BN[k][0] + '" x="' + (m * 10 + gap / 2).toFixed(1) + '" y="' + y.toFixed(2) + '" width="' + (10 - gap).toFixed(1) + '" height="' + hh.toFixed(2) + '"/>'; });
-    });
-    h += '<div class="gx-tr s"><span class="l">limited by</span><span class="gx-plot"><svg class="gx-bnc" viewBox="0 0 ' + N * 10 + ' ' + H2 + '" preserveAspectRatio="none"><line x1="0" x2="' + N * 10 + '" y1="' + H2 + '" y2="' + H2 + '"/>' + cols + '</svg><i class="gx-gd"></i></span><span></span></div>';
+    // each minute's main call as a level, a step where it changes: GPU at the top, CPU in the middle, capped at the
+    // bottom, their names on the right (11-04, his "for EVERY bar in the app replace with a graph"; its split per
+    // minute stays in the tip)
+    const H2 = 40, Yl = v => 6 + (3 - v) * 14, lv = D.sh.map(s => s ? 3 - s.indexOf(Math.max(s[0], s[1], s[2])) : null), M = lv.length;
+    let d = '', fl = '';
+    for (let m = 0; m < M; m++) {
+      if (lv[m] == null) continue;
+      if (!m || lv[m - 1] == null) { d += 'M' + m * 10 + ' ' + Yl(lv[m]); fl += 'M' + m * 10 + ' ' + H2 + 'V' + Yl(lv[m]); }
+      else if (lv[m] !== lv[m - 1]) { d += 'V' + Yl(lv[m]); fl += 'V' + Yl(lv[m]); }
+      d += 'H' + (m + 1) * 10; fl += 'H' + (m + 1) * 10;
+      if (m === M - 1 || lv[m + 1] == null) fl += 'V' + H2 + 'Z';
+    }
+    const gl = [3, 2, 1].map(v => '<line class="g" x1="0" x2="' + N * 10 + '" y1="' + Yl(v) + '" y2="' + Yl(v) + '"/>').join('');
+    h += '<div class="gx-tr s"><span class="l">limited by</span><span class="gx-plot"><svg class="gx-bnc" viewBox="0 0 ' + N * 10 + ' ' + H2 + '" preserveAspectRatio="none">' + gl + '<path class="bf" d="' + fl + '"/><path class="bl" d="' + d + '"/></svg><i class="gx-gd"></i></span>' +
+         '<span class="gx-bny">' + [3, 2, 1].map(v => '<span style="top:' + (Yl(v) / H2 * 100).toFixed(1) + '%">' + BN_LV[v - 1] + '</span>').join('') + '</span></div>';
   }
   h += '<div class="gx-tip"></div></div>';
   // clock ticks: start and end, and the round half hours (quarters, fives) between them; none past the end, which a
@@ -5992,9 +6307,9 @@ function renderSettings0() {
     '<div class="setrow"><div>Title<small>Shown in the title bar. Empty: the name of this PC' + (feed.pc ? ', ' + esc(feed.pc) : '') + '.</small></div><input class="setin" id="sTitle" maxlength="60" spellcheck="false" placeholder="' + esc(feed.pc || 'HW Deck') + '" value="' + esc(S.title || '') + '"></div>' +
     '<div class="setrow"><div>Clock<small>The time of the last reading, next to the title.</small></div><button class="tog2' + (S.clock ? ' on' : '') + '" id="sClock" aria-pressed="' + S.clock + '" title="Show the clock"></button></div>' +
     '<div class="setrow"><div>Animations<small>' + ({ full: 'Rolling numbers, smoothly spinning fans, gliding graphs.', minimal: 'Nothing keeps moving: numbers just change, fans stand still, graphs step. Popups and views still slide.', off: 'Nothing moves at all.' })[motionPicked()] +
-      (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' Windows asks apps for less motion.' : '') + (motionMode() !== motionPicked() ? ' Minimal for now: a game is in front.' : '') + '</small></div><span class="seg seg3" id="sMotion">' +
+      (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' Windows asks apps for less motion.' : '') + (motionMode() !== motionPicked() ? (feed.game && feed.front ? ' Minimal for now: a game is in front.' : ' Minimal for now: your session is recording.') : '') + '</small></div><span class="seg seg3" id="sMotion">' +
       [['full', 'Full'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionPicked() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
-    '<div class="setrow"><div>Calmer during games<small>Full animations switch to Minimal while a game is in front, and back after. Saves CPU for the game.</small></div><button class="tog2' + (S.gameCalm !== false ? ' on' : '') + '" id="sCalm" aria-pressed="' + (S.gameCalm !== false) + '" title="Minimal animations while a game is in front"></button></div>') +
+    '<div class="setrow"><div>Calmer during games<small>Full animations switch to Minimal while a game is in front or a session you started records, and back after. Saves CPU for the game.</small></div><button class="tog2' + (S.gameCalm !== false ? ' on' : '') + '" id="sCalm" aria-pressed="' + (S.gameCalm !== false) + '" title="Minimal animations while a game is in front"></button></div>') +
     setSec('Look',
     '<div class="setrow"><div>Cards<small>' + ({ standard: 'Grey cards with a fine line around them.', oled: 'True black, the cards drawn as lines only: nothing lit but what you read.', soft: 'No lines: a lighter grey lifted by a shadow, rounder corners.' })[S.look.cards] + '</small></div><span class="seg seg3" id="sCards">' +
       [['standard', 'Standard'], ['oled', 'OLED'], ['soft', 'Soft']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.cards === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
@@ -6031,7 +6346,7 @@ function syncUpd() { const d = $('setDot'); d.classList.toggle('on', !!feed.late
 $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sAuto')) { feed.autostart = !feed.autostart; send({ t: 'autostart', on: feed.autostart }); renderSettings(); }
   const mb = e.target.closest('#sMotion button');
-  if (mb && mb.dataset.m !== S.motion) { S.motion = mb.dataset.m; applyMotion(); saveState(); renderSettings(); renderView(false); }   // the one already on too: picked by hand, it stops following Windows
+  if (mb && mb.dataset.m !== S.motion) { S.motion = mb.dataset.m; applyMotion(); calmSettle(); saveState(); renderSettings(); }   // (2.1: settled in place, no rebuild: the motion audit 11-04)   // the one already on too: picked by hand, it stops following Windows
   if (e.target.closest('#sRestart')) restartHwinfo();
   // (it shows what was asked while Windows asks for permission; the host's answer to it (keepDone) says how it really is)
   if (e.target.closest('#sKeep') && !feed.fake && !feed.keepBusy && !feed.keepWait) { feed.keep = !feed.keep; feed.keepWait = true; send({ t: 'keepSharing', on: feed.keep }); renderSettings(); }
@@ -6040,7 +6355,7 @@ $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sUpd')) { feed.updates = !feed.updates; if (!feed.updates) feed.latest = null; send({ t: 'updates', on: feed.updates }); syncUpd(); renderSettings(); }
   if (e.target.closest('#sGet')) send({ t: feed.canUpdate ? 'updateNow' : 'openRelease' });
   if (e.target.closest('#sClock')) { S.clock = !S.clock; renderTitle(); saveState(); renderSettings(); }
-  if (e.target.closest('#sCalm')) { S.gameCalm = S.gameCalm === false; applyMotion(); saveState(); renderSettings(); renderView(false); }
+  if (e.target.closest('#sCalm')) { S.gameCalm = S.gameCalm === false; applyMotion(); calmSettle(); saveState(); renderSettings(); }
   const lb = e.target.closest('#sCards button, #sTint button'), lk = lb && (lb.parentElement.id === 'sCards' ? 'cards' : 'tint');
   if (lb && S.look[lk] !== lb.dataset.v) { snap(); S.look = Object.assign({}, S.look, { [lk]: lb.dataset.v }); if (lk === 'tint') lkPick = null; applyLook(); saveState(); syncUndo(); renderSettings(); lookAt = Date.now(); if (feed.got) updateView(true, true); peekArm(e); }   // (seen at once behind Settings: the graphs take their colour as they are fed)
   const lq = e.target.closest('[data-lk]'), lw = lq && lq.dataset.lk;
@@ -6134,7 +6449,8 @@ let toastT = 0, toastDepth = -1;
 function toast(msg, withUndo, ms) {
   setText($('toastTxt'), msg); $('toastUndo').hidden = !withUndo;
   toastDepth = withUndo ? undoSeq : -1;
-  const t = $('toast'); t.classList.add('show'); clearTimeout(toastT);
+  const t = $('toast'), was = t.classList.contains('show'); t.classList.add('show'); clearTimeout(toastT);
+  if (was && motionMode() !== 'off') t.animate([{ opacity: 0.4, translate: '0 4px' }, { opacity: 1, translate: '0 0' }], { duration: 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });   // (a new message, not the old one changing; 2.1)
   toastT = setTimeout(() => { t.classList.remove('show'); $('toastUndo').hidden = true; toastDepth = -1; }, ms || (withUndo ? 8000 : msg.length > 60 ? 5000 : 2600));
 }
 // ---------- tooltips: the page's own instead of Windows' (prettify 11-02) ----------
@@ -6148,7 +6464,8 @@ const tipObs = new MutationObserver(() => {
   const t = tipFor.getAttribute('data-tip'); if (!t) { tipHide(); return; }
   tipEl.textContent = t; tipPlace(tipFor);
 });
-function tipHide() { clearTimeout(tipT); tipObs.disconnect(); tipFor = null; tipEl.classList.remove('show'); }
+let tipLast = 0;   // (when a tip last went away: the next one within 700 ms shows at once, 2.1)
+function tipHide() { clearTimeout(tipT); tipObs.disconnect(); tipFor = null; if (tipEl.classList.contains('show')) tipLast = performance.now(); tipEl.classList.remove('show'); }
 function tipPlace(el) {
   const r = el.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight;
   const x = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)), below = r.bottom + 8 + h <= innerHeight - 8;
@@ -6164,8 +6481,9 @@ document.addEventListener('pointerover', e => {
   const again = tipEl.classList.contains('show') && !!tipFor && !tipFor.isConnected;
   tipHide(); if (!el) return;
   tipFor = el; tipObs.observe(el, { attributes: true, attributeFilter: ['data-tip'] });
-  const show = () => { const t = el.getAttribute('data-tip'); if (tipFor !== el || !el.isConnected || !t || !t.trim()) return; tipEl.textContent = t; tipPlace(el); tipEl.classList.add('show'); };
-  if (again) show(); else tipT = setTimeout(show, 450);
+  const warm = performance.now() - tipLast < 700;
+  const show = () => { const t = el.getAttribute('data-tip'); if (tipFor !== el || !el.isConnected || !t || !t.trim()) return; tipEl.textContent = t; tipPlace(el); tipEl.classList.toggle('warm', warm || again); tipEl.classList.add('show'); };
+  if (again) show(); else tipT = setTimeout(show, warm ? 60 : 450);
 });
 document.addEventListener('pointerout', e => { if (tipFor && !(e.relatedTarget && tipFor.contains(e.relatedTarget))) tipHide(); });
 for (const ev of ['pointerdown', 'keydown', 'wheel']) document.addEventListener(ev, tipHide, true);
@@ -6316,7 +6634,11 @@ function showFeed() {
       : READ.length ? 'HWiNFO stopped sharing. Restart HWiNFO turns sharing back on, and the values come back by themselves.' + keepTip()
       : 'HWiNFO isn\'t sharing its readings. Restart HWiNFO turns sharing back on. Never set it up? In HWiNFO: Config, Main Settings, tick Shared Memory Support.');
   }
-  if (ban.hidden !== was) { clearTimeout(fitTimer); fitTimer = setTimeout(refit, 30); }   // the banner takes room: fit again
+  if (ban.hidden !== was) {   // the banner takes room: fit again at once, eased in (2.1: before, it pushed the view down and the fit came a frame later)
+    clearTimeout(fitTimer);
+    if (S.L.cats.length && $('view')) refit(); else fitTimer = setTimeout(refit, 30);
+    if (motionMode() !== 'off' && !ban.hidden) ban.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  }
 }
 function onHost(m) {
   if (m.t === 'state') {
@@ -6359,6 +6681,7 @@ function onHost(m) {
   } else if (m.t === 'settings') {
     feed.autostart = !!m.autostart; feed.hwinfo = m.hwinfo || null; feed.keepBusy = !!m.keepBusy; if (m.keepDone) feed.keepWait = false; if (!feed.keepBusy && !feed.keepWait) feed.keep = !!m.keep; feed.keepNote = typeof m.keepNote === 'string' ? m.keepNote : '';
     feed.fpsBusy = !!m.fpsBusy; if (m.fpsDone) feed.fpsWait = false; if (!feed.fpsBusy && !feed.fpsWait) feed.fps = !!m.fps; feed.fpsState = typeof m.fpsState === 'string' ? m.fpsState : 'off'; feed.updates = m.updates !== false; feed.latest = m.latest || null; feed.canUpdate = !!m.canUpdate; syncUpd();
+    feed.estNote = Math.max(0, +m.estNote || 0); estCheck();
     const wd0 = feed.warnDays;
     feed.gameDays = Number.isFinite(m.gameDays) ? m.gameDays : null; feed.warnDays = Number.isFinite(m.warnDays) ? m.warnDays : null;   // (0: kept forever; null: not set since a damaged settings file. Neither cuts anything)
     feed.gameMerge = Number.isFinite(m.gameMerge) ? m.gameMerge : 30;
@@ -6382,23 +6705,28 @@ function onHost(m) {
     boot.cat = true; bootCheck();
   } else if (m.t === 'spark') {
     for (const k in m.keys) ringFill(k, m.ts, m.keys[k]);
-    if (m.ts - nowTs > 2) { if (lastTick && m.ts - lastTick > 2) resetSeen(); nowTs = m.ts; }   // (only after a gap, a show from the tray: else the second moves at its tick, with its values)
+    if (m.ts - nowTs > 2) { if (lastTick && m.ts - lastTick > 2) resetSeen(); nowTs = m.ts; catchUp = true; }   // (only after a gap, a show from the tray: else the second moves at its tick, with its values)
     if (curveWait && m.keys[curveWait.src]) {
       const c = S.L.cells[curveWait.cid], s2 = series(curveWait.src, 30).filter(x => isFinite(x)), src = BYKEY.get(curveWait.src);
       if (c && c.curve && c.curve.src === curveWait.src && s2.length) { c.curve.pts = startCurve(BYKEY.get(c.key), { v: s2[s2.length - 1], unit: src ? src.unit : '' }); saveState(); if (sel === curveWait.cid) renderInsp(); }
       curveWait = null;
     }
     updateView(true, true);   // (the second is judged at its tick, as the host does)
+    catchUp = false;
   } else if (m.t === 'tick') {
     const was = feed.status, first = !feed.got;
+    sightPre = readSight();   // (before this second writes anything: its layout read once, 2.1)
     const calmWas = motionMode();
+    if (feed.game && !m.game) feed.lgWait = performance.now();   // (a game ended: its summary is a moment away)
     feed.status = m.status; feed.age = m.age; feed.got = true; feed.game = m.game; feed.front = m.front; feed.gameSince = m.gameSince; feed.pm = !!m.pm;
-    if (motionMode() !== calmWas) { applyMotion(); if (setmodal.classList.contains('open')) renderSettings(); if (!first) redrawView(); }   // a game came to the front or left it
+    feed.rec = Array.isArray(m.rec) ? m.rec.filter(x => Array.isArray(x) && x.length >= 2) : [];   // your own sessions running: [start, name]
+    if (motionMode() !== calmWas) { applyMotion(); calmSettle(); if (setmodal.classList.contains('open')) renderSettings(); }   // a game came to the front or left it (2.1: in place, no rebuild)
     feed.c12 = Array.isArray(m.c12) ? m.c12 : null;
     feed.gameGap = Number.isFinite(m.gameGap) ? m.gameGap : 0;   // (the session's breaks: not play)
     feed.gs = m.gs && typeof m.gs === 'object' ? m.gs : null;   // this game session's min, average, max of the game's own readings
+    feed.sf = Array.isArray(m.sf) ? m.sf : null;   // this game session's average fps and 1% low so far
     feed.bnl = m.bnl;   // the bottleneck's call this second, game or not
-    feed.rec = Array.isArray(m.rec) ? m.rec.filter(x => Array.isArray(x) && x.length >= 2) : [];   // your own sessions running: [start, name]
+    feed.bnb = +m.bnb || 0;   // (a game in front whose frames aren't counted: 1 only vsync caps show, 2 none)
     if (lastTick && m.ts - lastTick > 2) resetSeen();   // seconds we didn't see (hidden): holds and episodes start again
     // as the log: HWiNFO not sharing for 10 s ends every hold and episode (its Mark); a shorter stall's seconds don't
     // count as calm ones (the log counts calm seconds, the page their times: moved on by the stall)
@@ -6424,7 +6752,7 @@ function onHost(m) {
     if (GZ.on && gmodal.classList.contains('open')) gzDraw();
     if (!boot.tick) { boot.tick = true; if (m.status !== 'ok') boot.cat = boot.x = true; bootCheck(m.status !== 'ok' && !READ.length); }   // (no HWiNFO: nothing more to wait for)
     if (modalCid) { refreshModal(); if (bigRange !== '15m' && Date.now() - histAsked > 60000) askHist(); }
-    if (HP.shown) { if (anyModalOpen() || !S.L.cells[HP.cid]) hidePrev(); else { fillPrev(); if (!HP.rev0) drawPrev(); } }
+    if (HP.shown) { if ((HP.ext ? prevBlocked(HP.el) : anyModalOpen()) || !cellAt(HP.cid)) hidePrev(); else { fillPrev(); if (!HP.rev0) drawPrev(); } }
   } else if (m.t === 'hist' && !wxTake(m)) {   // (a warning row's chart asked for it: only it, unless the cell popup asked for the same)
     const again = bigHist && bigHist.key === m.key && bigHist.range === m.range;   // (the same graph a minute on: no new draw-in, one under way goes on)
     bigHist = m;
@@ -6432,6 +6760,7 @@ function onHost(m) {
   } else if (m.t === 'alerts') { if (wmodal.classList.contains('open')) renderWarnings(m.log); }   // (one that comes in after a close isn't drawn)
   else if (m.t === 'gamesBin') gbRender(m.log);
   else if (m.t === 'alertsBin') wbRender(m.log);
+  else if (m.t === 'lastGame') { feed.lg = m.s || null; if (feed.lgWait) { feed.lgWait = 0; if (feed.got) updateView(true, true); } }   // (the last game session, for the Game cells while no game runs; one that just ended is drawn at once)
   else if (m.t === 'games') { if (gmodal.classList.contains('open')) renderGames(m.log, $('glist').querySelector('.gx-sess') ? gxOpen() : undefined); }   // (an edit: what was open stays open; one after a close isn't kept)
   else if (m.t === 'toast') {
     // (a move that moved nothing, or failed: its undo step goes, if nothing came after it)
