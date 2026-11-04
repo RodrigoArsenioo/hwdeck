@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1 (2026-11-04)
+
+- With no game running, Game time has a graph too: the last 24 hours, Yes for each minute a game was on.
+- Captions that were cut in a narrow tile fit now: the Bottleneck's last session (its two biggest shares, without "last:" in front), Game time's last session (when it ended) and the 1% low while a game runs (shorter words, the same numbers).
+
 ## 2.1.0 (2026-11-04)
 
 - The bottleneck tells a cap far more often. HW Deck now gets the game's frames from Windows every quarter of a second instead of every second, and only the two Present events it uses. Before, the newest frames were often over a second old when it judged, so it couldn't tell, and kept its last answer. Measured with a test game on an RTX 5090: fps caps from 60 to 238 read capped 100% of the time (38 to 94% before), with no answers left unsure (up to 62% before). The cost is 0.15% of one CPU core, and the game's frame times didn't change.

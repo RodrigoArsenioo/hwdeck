@@ -218,6 +218,18 @@ function dayPlay(L) {
   for (const d of Array.isArray(L.day) ? L.day : []) if (Array.isArray(d) && d[1] > from) s += d[0] >= from ? d[2] : d[2] * (d[1] - from) / Math.max(1, d[1] - d[0]);
   return s >= 60 ? durTxt(s) + ' in 24 h' : '';
 }
+// (2.1.1, his "no graph under game tile cell" 11-04: no game, Game time's graph is the last 24 h, Yes a minute a session
+// ran, as his dashboard's; one array while the minute and the sessions are the same, so it is drawn once a minute)
+const PLAYDAY = { k: '', lv: null };
+function playDay(L) {
+  const m0 = Math.floor(nowTs / 60) - 1440, day = Array.isArray(L.day) ? L.day.filter(d => Array.isArray(d) && d[1] > d[0]) : [];
+  const k = m0 + '|' + day.map(d => d[0] + '-' + d[1]).join();
+  if (PLAYDAY.k === k) return PLAYDAY.lv;
+  const lv = new Array(1440).fill(0);
+  for (const d of day) for (let m = Math.max(0, Math.floor(d[0] / 60) - m0); m < Math.min(1440, Math.ceil(d[1] / 60) - m0); m++) lv[m] = 1;
+  PLAYDAY.k = k; PLAYDAY.lv = lv;
+  return lv;
+}
 // its calls as a strip over its own minutes (tb: a letter a minute, g gpu, c cpu, f capped), each call's share from
 // its seconds (g, c, f), and the call that held most of them (0 none)
 function lgStrip(L) {
@@ -842,7 +854,7 @@ function evalCell0(cid, c, peek, quick) {
       const b = lgStrip(L);
       out.txt = b.call ? BN[b.call][0] : '--'; out.utxt = b.call ? BN[b.call][1] : ''; out.strip = b; out.past = bnPast(L); out.col = 'past'; out.tag = 'last session';
       out.tsub = b.tot ? bnSplit(b) : 'no calls in ' + L.game; out.sub = b.tot ? 'last session: ' + bnSplit(b) : 'last session: ' + out.tsub;
-      out.tsubS = b.tot ? 'last: ' + bnSplit(b).split(', ').slice(0, 2).join(', ') : 'no calls';   // (a narrow tile: its two biggest, "last" here)
+      out.tsubS = b.tot ? bnSplit(b).split(', ').slice(0, 2).join(', ') : 'no calls';   // (a narrow tile: its two biggest, as a game shows them; "last: " didn't fit, 2.1.1)
       return out;
     }
     const b = bnStrip(), w = BN[v] ? BN[bnNow() || v] : null, lw = !w && feed.game && BN[feed.bnl] ? BN[feed.bnl] : null;
@@ -862,7 +874,8 @@ function evalCell0(cid, c, peek, quick) {
     if (L) {   // (no game: the last session's length, what it was and when it ended; the 24 h's play in the corner)
       const ago = agoShort(Math.max(0, nowTs - L.end)), day = dayPlay(L);
       out.txt = durTxt(L.secs > 0 ? L.secs : L.end - L.start); out.utxt = ''; out.col = 'past'; out.tag = day || 'last session'; out.tagS = 'last session';
-      out.tsub = L.game + ', ended ' + ago; out.tsubS = L.game + ', ' + ago; out.sub = out.tsub + (day ? ', ' + day : '');
+      out.tsub = L.game + ', ended ' + ago; out.tsubS = 'ended ' + ago; out.sub = out.tsub + (day ? ', ' + day : '');   // (a narrow tile: when it ended; "Deadlock, 1h 04m ago" was cut, 2.1.1)
+      out.past = playDay(L); out.pspan = 86400; out.yn = true;   // (its graph: the 24 h, Yes / No a minute, 2.1.1)
       return out;
     }
     out.txt = '--'; out.utxt = ''; out.sub = gtSub(); out.col = 'grey'; return out;
@@ -952,8 +965,9 @@ function evalCell0(cid, c, peek, quick) {
     out.sub = 'avg ' + fmt(gxN(feed.sf[0]), 0) + ' this session';   // (the game's fps: its average this session, 2.1)
   } else if (r && !quick && gfKind(r) === 'low') {
     // (its 1% low: how far under the fps of the same 10 s it sits, and its lowest of the last 15 min)
-    const f = gfPair(r); let lo = Infinity; for (const x of series(r.key, HLEN)) if (x != null && x > 0 && x < lo) lo = x;
-    out.sub = [f > 0 ? Math.min(100, Math.round(v / f * 100)) + '% of the fps' : '', isFinite(lo) ? '15 min low ' + fmt(lo, 0) : ''].filter(Boolean).join(', ');
+    const f = gfPair(r), pc = f > 0 ? Math.min(100, Math.round(v / f * 100)) : null; let lo = Infinity; for (const x of series(r.key, HLEN)) if (x != null && x > 0 && x < lo) lo = x;
+    out.sub = [pc !== null ? pc + '% of the fps' : '', isFinite(lo) ? '15 min low ' + fmt(lo, 0) : ''].filter(Boolean).join(', ');
+    out.tsub = out.sub; out.tsubS = [pc !== null ? pc + '% of fps' : '', isFinite(lo) ? 'low ' + fmt(lo, 0) : ''].filter(Boolean).join(', ');   // (a narrow tile: "14% of the fps, 15 min low 10" was cut, 2.1.1)
   } else if (r && !quick && !isYN(r)) {
     let mx = -Infinity; for (const x of series(r.key, HLEN)) if (x > mx) mx = x;
     out.sub = isFinite(mx) ? '15 min max ' + fl(mx) + (unitOf(r) ? ' ' + unitOf(r) : '') : '';
@@ -1169,7 +1183,9 @@ function pastState(a, c) {
   const minSpan = Math.max(minSpanOf(u), 1, Math.abs(hi) * 0.04);
   if (hi - lo < minSpan) { const mid = (hi + lo) / 2; lo = mid - minSpan / 2; hi = mid + minSpan / 2; if (lo < 0) { hi -= lo; lo = 0; } }
   if (isBneck(c)) { lo = 1; hi = 3; }   // (its calls' levels)
-  return { pts, end: 2 * a.length, span: 2 * a.length, lo, hi, past: true, step: isBneck(c), map: new Map(pts.map(q => [q.s, q])) };
+  const yn = c.key === GTIME;   // (Game time's past is its day of play, Yes / No: 2.1.1)
+  if (yn) { lo = 0; hi = 1; }
+  return { pts, end: 2 * a.length, span: 2 * a.length, lo, hi, past: true, step: isBneck(c) || yn, map: new Map(pts.map(q => [q.s, q])) };
 }
 function lerpState(a, b, p) {
   if (!a || !b) return b;
@@ -4533,7 +4549,7 @@ function drawPrev() {
   }
   const r = c.key ? BYKEY.get(c.key) : null, g = c.gates, gk = gbK(r), det = gbDet(gateLines(g), gk);
   if (HP.e && HP.e.pspan && Array.isArray(HP.e.past)) {   // (an extras reading with a whole day, as its graph in the view)
-    drawBigGraph(hprev.querySelector('canvas'), HP.e.past, det, 0, isYN(r) ? 'Yes/No' : unitOf(r), false, null, HP.e.pspan * 1000, { rev: easeOut(p0) });
+    drawBigGraph(hprev.querySelector('canvas'), HP.e.past, HP.e.yn ? {} : det, 0, isYN(r) || HP.e.yn ? 'Yes/No' : unitOf(r), false, null, HP.e.pspan * 1000, { rev: easeOut(p0) });   // (Game time's day of play: its lines are in minutes, not on it)
     more(); return;
   }
   const sp = gbArr(bucketArr(c, isYN(r)), gk), vals = sp.filter(x => x !== null);   // (a Yes/No reading: each bucket's peak, as its popup)

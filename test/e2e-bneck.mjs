@@ -179,6 +179,8 @@ if (g) {
   const most = g.g >= g.c && g.g >= g.f ? 'GPU bound' : g.c >= g.f ? 'CPU bound' : 'FPS capped';
   ok('no game: the last session\'s call (the most seconds), in the softer grey', await until(`!!feed.lg && feed.lg.end === ${g.end}`, 8000) && await untilShown(most, 5000) && await ev(`${cell}.querySelector('.tv').classList.contains('past')`), await shown() + ' / ' + most);
   ok('its split in the caption, the most first, and "last session" in the name\'s corner', /^(GPU|CPU|capped) \d+%(, (GPU|CPU|capped) \d+%)*$/.test(await cap()) && await ev(`${cell}.querySelector('.tq').textContent === 'last session'`), await cap() + ' / ' + await ev(`${cell}.querySelector('.tq').textContent`));
+  ok('in a narrow tile, its two biggest shares as a running game shows them ("last: " was cut, 2.1.1)', await ev(`/^(GPU|CPU|capped) \\d+%(, (GPU|CPU|capped) \\d+%)?$/.test(evalCell(${JSON.stringify(cid)}, S.L.cells[${JSON.stringify(cid)}], true, true).tsubS)`),
+    await ev(`evalCell(${JSON.stringify(cid)}, S.L.cells[${JSON.stringify(cid)}], true, true).tsubS`));
   ok('its minutes as its graph, at their calls\' levels (a minute with a call a point, over its own length)', await ev(`(() => { const g = ${lvOf(`${cell}.querySelector('canvas')`)}, n = ${JSON.stringify(g.tb)}.replace(/-/g, '').length; return !!g && g.past && g.lo === 1 && g.hi === 3 && g.n === n; })()`), await ev(`JSON.stringify(${lvOf(`${cell}.querySelector('canvas')`)})`));
   ok('the hover and the popup say "last session" too (rows and others: the whole caption)', await ev(`/^last session: /.test(evalCell(${JSON.stringify(cid)}, S.L.cells[${JSON.stringify(cid)}], true, true).sub)`));
   // the game's fps and its 1% low with no value (HW Deck's own, made up here): the session's averages and minutes
@@ -188,6 +190,10 @@ if (g) {
     return [f.txt, f.utxt, f.col, f.tag, f.tsub, f.sub, Array.isArray(f.past) && f.past.length, l.txt, l.tsub]; })()`);
   ok('no game: the game\'s fps shows the last session\'s average, its minutes as the graph', fpsIdle[0] === (g.fps == null ? '--' : String(Math.round(g.fps))) && fpsIdle[1] === 'FPS' && fpsIdle[2] === 'past' && fpsIdle[3] === 'last session' &&
     (g.fps == null ? /^no fps counted in Bench Game$/.test(fpsIdle[4]) : fpsIdle[4] === 'avg, Bench Game' && fpsIdle[5] === 'last session avg, Bench Game') && fpsIdle[6] === (g.tf || []).length, JSON.stringify(fpsIdle) + ' fps ' + g.fps);
+  // (2.1.1: frames coming in, the 1% low's caption in a narrow tile says the same in shorter words)
+  const lowLive = await ev(`(() => { const f = BYKEY.get('hwdeck.0/fps'), l = BYKEY.get('hwdeck.0/fps1'), fv = f.v, lv = l.v; f.v = 100; l.v = 60;
+    const e = evalCell('x', { key: 'hwdeck.0/fps1' }, true, false); f.v = fv; l.v = lv; return [e.sub, e.tsub, e.tsubS]; })()`);
+  ok('frames coming in: the 1% low\'s share of the fps and its 15 min low, shorter in a narrow tile (2.1.1)', /^60% of the fps(, 15 min low \d+)?$/.test(lowLive[0]) && lowLive[1] === lowLive[0] && /^60% of fps(, low \d+)?$/.test(lowLive[2]), JSON.stringify(lowLive));
   ok('and its 1% low the session\'s, with its share of the fps', fpsIdle[7] === (g.low == null ? '--' : String(Math.round(g.low))) && (g.low == null || g.fps == null || /^avg, \d+% of the fps$/.test(fpsIdle[8])), JSON.stringify(fpsIdle.slice(7)));
   ok('a past session\'s minutes draw as a graph (missing minutes are gaps)', await ev(`(() => { const s = pastState([100, 110, null, 120, 130], { key: 'hwdeck.0/fps' }); return !!s && s.past && s.pts.length === 4 && s.end === 10 && s.pts[2].s - s.pts[1].s > 2 && s.pts[1].s - s.pts[0].s <= 2; })()`));
 }
