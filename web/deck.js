@@ -635,7 +635,7 @@ function tidyViews(L) {
 }
 const cleanSlot = s => s && typeof s === 'object' && s.layout && Array.isArray(s.layout.cats)
   ? { v: 1, name: typeof s.name === 'string' ? s.name.trim().slice(0, 80) : '', layout: cleanLayout(s.layout) } : null;
-const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined, title: undefined, clock: true, look: { cards: 'standard', tint: 'none', acc: '#7fa6e8', pal: 'muted' } };
+const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined, title: undefined, clock: true, look: { theme: 'classic', changed: false, base: '#0d0d0d', fades: [], cell: '#151515', op: 100, line: true, corners: 'normal', tint: 'none', acc: '#7fa6e8', pal: 'muted' } };
 // the title bar: your title (this PC's name when there is none), the feed's dot and the time of the last reading
 function renderTitle() {
   setText($('title'), (S.title && S.title.trim()) || feed.pc || feed.brand || 'HW Deck');
@@ -657,22 +657,87 @@ const gameCalmNow = () => S.gameCalm !== false && ((!!feed.game && !!feed.front)
 const motionMode = () => { const m = motionPicked(); return m === 'full' && gameCalmNow() ? 'minimal' : m; };
 const motionOn = () => motionMode() === 'full';   // the moving parts: spins, rolls, glides, draw-ins
 function applyMotion() { document.documentElement.dataset.motion = motionMode(); }
-// the look, in Settings (11-02): the cards' surface (Standard, OLED: true black with the cards drawn as lines only, Soft:
-// no lines, a shadow) and where colour goes (Mono: greys only, Accent: one colour you pick on what you pick, Spectrum:
-// each category a colour, its part's or yours, on its graphs, icons and name). The greys stay neutral either way;
-// warnings stay yellow and red. deck.css keeps the tokens (--tile, --pill, --acc, ...), the page only says which look is on
-const THEMES = { cards: ['standard', 'oled', 'soft'], tint: ['none', 'accent', 'spectrum'] };
+// the look, in Settings (11-02; the theme rework 11-05, his "ember and graphite are just ways to control the bg color
+// ... a person can choose the bg AND fade colors in ANY edge", then "cells opacity", "change the cells color as well
+// and add some defaults", "remove oled and soft", "reintegrate the current system or else using spectrum with this new
+// theme system might look horrendous"): a theme to start from, then all of it yours: the background (a base colour and
+// a fade on any edge or corner: its colour, size, strength), the cells (fill, opacity, outline, corners) and where
+// colour goes (Mono: greys only, Accent: one colour on what you pick, Spectrum: each category a colour, its part's or
+// yours, from a palette; Match makes that palette from the background's fades, so it always fits). Warnings stay
+// yellow and red. The page sets the tokens from the look (--bg, --tile, --pop, ...); deck.css only reads them
+const THEMES = { tint: ['none', 'accent', 'spectrum'], corners: ['sharp', 'normal', 'round'] };
 const ACC0 = '#7fa6e8', isHex = c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
-// (Outline, the first afternoon of 11-02, is OLED now)
-const cleanLook = o => ({ cards: o && o.cards === 'outline' ? 'oled' : o && THEMES.cards.includes(o.cards) ? o.cards : 'standard', tint: o && THEMES.tint.includes(o.tint) ? o.tint : 'none', acc: o && isHex(o.acc) ? o.acc.toLowerCase() : ACC0, pal: o && Object.prototype.hasOwnProperty.call(PALETTES, o.pal) ? o.pal : 'muted' });
-const lookPlain = () => S.look.cards === 'standard' && S.look.tint === 'none' && S.look.acc === ACC0 && S.look.pal === 'muted';
-function applyLook() { const d = document.documentElement; d.dataset.cards = S.look.cards; d.dataset.tint = S.look.tint; d.style.setProperty('--acc', S.look.acc); TINT.clear(); }
+const FADE_AT = { tl: [0, 0, 'Top left'], t: [50, 0, 'Top'], tr: [100, 0, 'Top right'], r: [100, 50, 'Right'], br: [100, 100, 'Bottom right'], b: [50, 100, 'Bottom'], bl: [0, 100, 'Bottom left'], l: [0, 50, 'Left'] };
+// the themes to start from. Classic is the look of before (Standard's greys exactly); OLED and Soft the cards of those
+// names, now themes
+const THEME_PRESETS = {
+  classic: { name: 'Classic', base: '#0d0d0d', fades: [], cell: '#151515', op: 100, line: true, corners: 'normal', tint: 'none', acc: ACC0, pal: 'muted' },
+  oled: { name: 'OLED', base: '#000000', fades: [], cell: '#000000', op: 0, line: true, corners: 'normal', tint: 'none', acc: ACC0, pal: 'muted' },
+  soft: { name: 'Soft', base: '#101010', fades: [], cell: '#1a1a1a', op: 100, line: false, corners: 'round', tint: 'none', acc: ACC0, pal: 'muted' },
+  warm: { name: 'Warm', base: '#120e0b', fades: [{ at: 'tl', c: '#8a5a2e', size: 80, a: 24 }], cell: '#1a1612', op: 100, line: true, corners: 'normal', tint: 'accent', acc: '#e0a458', pal: 'fire' },
+  slate: { name: 'Slate', base: '#0c0e11', fades: [{ at: 't', c: '#4a6a94', size: 85, a: 34 }], cell: '#151a21', op: 85, line: true, corners: 'normal', tint: 'accent', acc: '#7aa2d6', pal: 'ocean' },
+  aurora: { name: 'Aurora', base: '#0a0b14', fades: [{ at: 'tl', c: '#7052e0', size: 75, a: 38 }, { at: 'br', c: '#1ca8be', size: 80, a: 30 }], cell: '#1a1b2e', op: 45, line: true, corners: 'round', tint: 'spectrum', acc: '#9d8cff', pal: 'match' },
+  sunset: { name: 'Sunset', base: '#0d0a0a', fades: [{ at: 'b', c: '#d9572b', size: 95, a: 30 }, { at: 'tr', c: '#7a34b8', size: 55, a: 22 }], cell: '#1c1515', op: 60, line: true, corners: 'normal', tint: 'spectrum', acc: '#ff8c42', pal: 'match' },
+  neon: { name: 'Neon', base: '#0b0c10', fades: [{ at: 'l', c: '#2f6fe0', size: 60, a: 30 }, { at: 'r', c: '#e0407a', size: 60, a: 26 }], cell: '#14151c', op: 55, line: true, corners: 'sharp', tint: 'spectrum', acc: '#7aa2ff', pal: 'match' },
+};
+const lcHex = c => c.toLowerCase(), clampN = (v, lo, hi, d) => v !== null && v !== '' && Number.isFinite(+v) ? Math.max(lo, Math.min(hi, Math.round(+v))) : d;
+const cleanFade = f => f && FADE_AT[f.at] && isHex(f.c) ? { at: f.at, c: lcHex(f.c), size: clampN(f.size, 20, 100, 70), a: clampN(f.a, 5, 80, 30) } : null;
+// a saved look made whole. One from before 11-05 (cards and a colour) opens as its theme with the colour it had:
+// Standard as Classic, OLED (and Outline, the first afternoon of 11-02) as OLED, Soft as Soft
+function cleanLook(o) {
+  o = o && typeof o === 'object' ? o : {};
+  const theme = THEME_PRESETS[o.theme] ? o.theme : o.cards === 'oled' || o.cards === 'outline' ? 'oled' : o.cards === 'soft' ? 'soft' : 'classic', P = THEME_PRESETS[theme];
+  const own = isHex(o.base) && isHex(o.cell);   // (a look of 11-05 on: its own background and cells)
+  const seen = new Set(), fades = own && Array.isArray(o.fades) ? o.fades.map(cleanFade).filter(f => f && !seen.has(f.at) && seen.add(f.at)) : P.fades.map(f => Object.assign({}, f));
+  return { theme, changed: own && o.changed === true, base: own ? lcHex(o.base) : P.base, fades, cell: own ? lcHex(o.cell) : P.cell, op: own ? clampN(o.op, 0, 100, P.op) : P.op, line: own ? o.line !== false : P.line,
+    corners: own && THEMES.corners.includes(o.corners) ? o.corners : P.corners, tint: THEMES.tint.includes(o.tint) ? o.tint : 'none', acc: isHex(o.acc) ? lcHex(o.acc) : ACC0,
+    pal: Object.prototype.hasOwnProperty.call(PALETTES, o.pal) ? o.pal : 'muted' };
+}
+const lookPlain = () => S.look.theme === 'classic' && !S.look.changed && S.look.tint === 'none' && S.look.acc === ACC0 && S.look.pal === 'muted';
+// colours: a hex mixed toward another (t of b), as rgba, its hue, and one made from a hue
+const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const rgbaOf = (h, a) => 'rgba(' + hexRgb(h).join(', ') + ', ' + a + ')';
+function hueOf(h) { const [r, g, b] = hexRgb(h).map(v => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; if (!d) return [0, 0]; const l = (mx + mn) / 2; return [(mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60, (l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn)) * 100]; }
+function lookHsl(h, s, l) { h = ((h % 360) + 360) % 360; s /= 100; l /= 100; const a = s * Math.min(l, 1 - l), f = n => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }; return '#' + [f(0), f(8), f(4)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join(''); }
+// Match: each part's colour spread between the fades' hues (one fade: around its hue; none: around the base's, or
+// Muted's when the base is a grey), light enough to read on the cells; its accent the first fade's hue
+function palMatch(L) {
+  let hs = L.fades.map(f => hueOf(f.c)[0]);
+  if (!hs.length) { const [h, s] = hueOf(L.base); if (s < 15) return [Object.assign({}, PALETTES.muted[1]), PALETTES.muted[2]]; hs = [h]; }
+  const d = hs.length > 1 ? ((hs[1] - hs[0] + 540) % 360) - 180 : 0;
+  const pts = hs.length > 1 ? [-0.15, 0.12, 0.38, 0.62, 0.88, 1.15].map(t => hs[0] + d * t) : [-60, -30, 0, 30, 60, 90].map(x => hs[0] + x);
+  const o = {}; ['game', 'gpu', 'mem', 'drive', 'cpu', 'fan'].forEach((k, i) => { o[k] = lookHsl(pts[i], 65, 70); });
+  return [o, lookHsl(hs[0], 70, 72)];
+}
+// the background (its fades over the base), a cell's fill (see-through below 100%), its line
+const bgiOf = L => L.fades.map(f => { const [x, y] = FADE_AT[f.at], w = f.size * (y === 50 ? 0.9 : 1.15), h = f.size * (x === 50 ? 0.9 : 1.25);
+  return 'radial-gradient(' + w + '% ' + h + '% at ' + x + '% ' + y + '%, ' + rgbaOf(f.c, f.a / 100) + ', transparent 72%)'; }).concat([L.base]).join(', ');
+const tileOf = L => L.op >= 100 ? L.cell : rgbaOf(L.cell, L.op / 100);
+const solidOf = L => mixHex(L.base, L.cell, L.op / 100);   // (a see-through cell over the base)
+const lineOf = L => L.line ? mixHex(solidOf(L), '#ffffff', 0.0655 + (1 - L.op / 100) * 0.0835) : 'transparent';   // (the less cell, the brighter its line: OLED's still shows)
+// the tokens: the popups, drawers, fields and Settings in the cells' colour. Classic gives the greys of before exactly
+function lookVars(L) {
+  const solid = solidOf(L), line = lineOf(L), tile = tileOf(L), R = { sharp: ['0.25rem', '0.35rem'], normal: ['0.77rem', '0.92rem'], round: ['1.05rem', '1.2rem'] }[L.corners], up = t => mixHex(solid, '#ffffff', t);
+  return { '--bg': L.base, '--bgi': bgiOf(L), '--tile': tile, '--tile-solid': solid, '--tile-line': line, '--card-line': L.line ? mixHex(solid, '#ffffff', 0.0611 + (1 - L.op / 100) * 0.0879) : 'transparent',   // (a step under the tile's: Classic #232323, OLED #262626, as before)
+    '--nav': tile, '--nav-line': line,
+    '--rule': L.line ? up(0.0556 + (1 - L.op / 100) * 0.045) : 'transparent', '--tile-sh': L.line ? 'none' : '0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 6px 18px rgba(0, 0, 0, 0.35)',
+    '--tile-r': R[0], '--card-r': R[1], '--side': mixHex(L.base, solid, 0.25), '--panel': solid, '--raise': up(0.028), '--line': up(0.0655), '--line2': up(0.1282),
+    '--pop': solid, '--pop-line': up(0.1), '--pop2': up(0.0043), '--pop2-line': up(0.106), '--box': up(0.017) };
+}
+function applyLook() {
+  const d = document.documentElement, L = S.look, m = palMatch(L);
+  PALETTES.match[1] = m[0]; PALETTES.match[2] = m[1];   // (Match always the current background's: its dots in Colours too)
+  delete d.dataset.cards; d.dataset.tint = L.tint; d.style.setProperty('--acc', L.acc);
+  const v = lookVars(L); for (const k in v) d.style.setProperty(k, v[k]);
+  TINT.clear();
+}
 // Spectrum: a category takes the colour you gave it (cat.col, saved with the layout), else the colour of the part most
 // of its cells read (more than half of those that tell); a mix, or readings of nothing in particular (the board, the
 // network, your own), stay grey
 // (the palettes: [name, a colour per part, the accent]. 11-02, his "all too similar": each one a family of its own or a
 // set of clearly different hues; Dusk is the one he set by hand on his dashboard, Fire his ask)
 const PALETTES = {
+  match: ['Match', { game: '#a99bdc', gpu: '#74c69d', cpu: '#7fa6e8', mem: '#4fb8ad', drive: '#8fa0c8', fan: '#6cc8d8' }, '#7fa6e8'],   // (the background's: applyLook sets it)
   muted: ['Muted', { game: '#a99bdc', gpu: '#74c69d', cpu: '#7fa6e8', mem: '#4fb8ad', drive: '#8fa0c8', fan: '#6cc8d8' }, '#7fa6e8'],
   dusk: ['Dusk', { game: '#8fa0c8', gpu: '#d98aa8', cpu: '#c79ad6', mem: '#a99bdc', drive: '#4fb8ad', fan: '#74c69d' }, '#c79ad6'],
   fire: ['Fire', { game: '#ff7a5c', gpu: '#ff9f43', cpu: '#ffc15e', mem: '#f6d06f', drive: '#e8735a', fan: '#ff5d73' }, '#ff9f43'],
@@ -1117,7 +1182,7 @@ let lastPress = null;
 document.addEventListener('pointerdown', e => { lastPress = { el: e.target, t: performance.now(), x: e.clientX, y: e.clientY }; }, true);
 document.addEventListener('keydown', () => { lastPress = null; }, true);   // (a popup a key opened grows as before, not out of the last click)
 function growFrom(m) {
-  const card = m.querySelector(':scope > .mcard');
+  const card = m.querySelector(':scope > .mcard, :scope > .mwrap');   // (.mwrap: a card with a panel docked beside it, both grow as one: the dashboard's Controls and its TV remote, 11-05)
   if (!card || !motionOn() || !lastPress || performance.now() - lastPress.t > 700 || m.contains(lastPress.el) || !lastPress.el.isConnected) return;
   const src = lastPress.el.closest('.tile, .row, .bcell, .gx-row, .card, button, .ib') || lastPress.el, r = src.getBoundingClientRect();
   const w = card.offsetWidth, h = card.offsetHeight; if (!w || !h) return;
@@ -4720,8 +4785,10 @@ function showPrev(glide) {
 // ---------- confirmations, in their own small popup ----------
 const cmodal = $('cmodal');
 let confirmYes = null, confirmNo = null;
-// (onNo: run when it is shut any other way than its yes)
-function askConfirm(title, desc, yes, onYes, calm, onNo) {
+// (onNo: run when it is shut any other way than its yes; icon: 'power' or 'clean' for a question that isn't a delete,
+// else the bin, or calm's)
+function askConfirm(title, desc, yes, onYes, calm, onNo, icon) {
+  if (icon) cmodal.dataset.ci = icon; else delete cmodal.dataset.ci;
   setText($('ctitle'), title); setText($('cdesc'), desc); setText($('cyes'), yes); confirmYes = onYes; confirmNo = onNo || null;
   cmodal.classList.toggle('calm', !!calm);
   cmodal.classList.add('open'); (calm ? $('cyes') : $('cno')).focus();
@@ -6361,6 +6428,8 @@ function showGame() {
 // ---------- settings ----------
 const setmodal = $('setmodal');
 function renderSettings() {
+  // (a slider of the look let go by a redraw, not by the pointer: its change kept as one step and saved, the review 11-05)
+  if (lkDrag != null) { const b = lkDrag; lkDrag = null; if (snapOf() !== b) { S.look.changed = true; pushUndo(b); saveState(); syncUndo(); } }
   // (a field being typed in keeps what was typed, and its focus)
   const fa = document.activeElement, typing = fa && fa.tagName === 'INPUT' && fa.id && $('setbody').contains(fa) ? { id: fa.id, v: fa.value, a: fa.selectionStart, b: fa.selectionEnd } : null;
   const tw = togSnap($('setbody')), sw = setmodal.classList.contains('open') ? segSnap($('setbody')) : null;
@@ -6402,27 +6471,85 @@ function segPills(root, was) {
 // the Look's colours (11-02, his pick of the mockups): a palette to start from, then each colour on a chip that opens a
 // grid of tones (8 hues, light, mid and deep, all muted enough for the greys), any hex, the full picker, and for a
 // category Auto (its part's, from the palette). Folded until opened; one chip open at a time
-let lkOpen = false, lkPick = null;
+let lkOpen = false, lkPick = null, lkBg = false, lkCells = false, bgSel = null, lkDrag = null;
 const hslHex = (h, s, l) => { s /= 100; l /= 100; const a = s * Math.min(l, 1 - l), f = n => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }; return '#' + [f(0), f(8), f(4)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join(''); };
 const TONES = [[78, 55], [68, 50], [56, 45]].map(([l, s]) => [250, 215, 190, 170, 145, 95, 35, 330].map(h => hslHex(h, s, l)));
+// (a background's base and a cell's fill: dark ones, greys first, then the tones' hues deep)
+const DARK = [['#000000', '#0b0b0b', '#101010', '#151515', '#1a1a1a', '#202020', '#262626', '#2e2e2e']].concat([[9, 32], [13, 26]].map(([l, s]) => [250, 215, 190, 170, 145, 95, 35, 330].map(h => hslHex(h, s, l))));
+const LK_OWN = new Set(['base', 'cell', 'fade']), LK_DARK = new Set(['base', 'cell']);
 const lkChip = (key, cur, name, tag) => '<div class="lk-row"><span class="lk-name">' + esc(name) + '</span><span class="lk-tag">' + tag + '</span><span class="sp"></span>' +
   '<button class="lk-chip' + (lkPick === key ? ' on' : '') + '" data-lk="chip" data-k="' + esc(key) + '" style="--c:' + (cur || '#5a5a5a') + '"><i></i>' + (cur || 'grey') + '</button></div>' +
-  (lkPick === key ? '<div class="lk-pop"><div class="lk-g">' + TONES.flat().map(c => '<button data-lk="c" data-k="' + esc(key) + '" data-c="' + c + '" style="--c:' + c + '"' + (c === cur ? ' class="on"' : '') + '></button>').join('') + '</div>' +
+  (lkPick === key ? '<div class="lk-pop"><div class="lk-g">' + (LK_DARK.has(key) ? DARK : TONES).flat().map(c => '<button data-lk="c" data-k="' + esc(key) + '" data-c="' + c + '" style="--c:' + c + '"' + (c === cur ? ' class="on"' : '') + '></button>').join('') + '</div>' +
     '<div class="lk-f"><input class="lk-hex" data-k="' + esc(key) + '" value="' + (cur || '') + '" maxlength="7" spellcheck="false" placeholder="#rrggbb" title="Any colour: its hex, Enter to use it">' +
     '<label class="lk-any" title="Any colour: the full picker"><input type="color" data-k="' + esc(key) + '" value="' + (isHex(cur) ? cur : ACC0) + '"></label>' +
-    (key !== 'acc' ? '<button class="lk-auto' + (S.L.cats.some(c => c.id === key && !c.col) ? ' on' : '') + '" data-lk="c" data-k="' + esc(key) + '" data-c="" title="Its part\'s colour, from the palette">Auto</button>' : '') + '</div></div>' : '');
+    (key !== 'acc' && !LK_OWN.has(key) ? '<button class="lk-auto' + (S.L.cats.some(c => c.id === key && !c.col) ? ' on' : '') + '" data-lk="c" data-k="' + esc(key) + '" data-c="" title="Its part\'s colour, from the palette">Auto</button>' : '') + '</div></div>' : '');
 function lookColours() {
   const sp = S.look.tint === 'spectrum', pal = PALETTES[S.look.pal];
   const dots = [S.look.acc].concat(sp ? S.L.cats.map(c => catTint(c) || '#5a5a5a') : []).slice(0, 9).map(c => '<i style="--c:' + c + '"></i>').join('');
-  return '<div class="setrow lk-head' + (lkOpen ? ' open' : '') + '" data-lk="fold"><div>Colours<small>' + (sp ? 'Palette: ' + pal[0] + '. Open to change it, or any one colour.' : 'Open to pick the accent.') + '</small></div><span class="lk-prev">' + dots + '<svg class="lk-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg></span></div>' +
-    '<div class="lk-body' + (lkOpen ? ' open' : '') + '"><div><div class="lk-in">' +
+  return '<div class="setrow lk-head' + (lkOpen ? ' open' : '') + '" data-lk="fold" data-f="col"><div>Colours<small>' + (sp ? 'Palette: ' + pal[0] + '. Open to change it, or any one colour.' : 'Open to pick the accent.') + '</small></div><span class="lk-prev">' + dots + '<svg class="lk-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg></span></div>' +
+    '<div class="lk-body lk-cols' + (lkOpen ? ' open' : '') + '"><div><div class="lk-in">' +
     (sp ? '<div class="lk-pres">' + Object.keys(PALETTES).map(k => '<button data-lk="pal" data-k="' + k + '" class="' + (S.look.pal === k ? 'on' : '') + '">' + PALETTES[k][0] + '<span class="lk-dots">' + Object.values(PALETTES[k][1]).map(c => '<i style="--c:' + c + '"></i>').join('') + '</span></button>').join('') + '</div>' : '') +
     lkChip('acc', S.look.acc, 'Accent', 'the view tabs, the periods, the switches') +
     (sp ? S.L.cats.map(c => lkChip(c.id, catTint(c), c.name, c.col ? 'yours' : 'auto')).join('') : '') + '</div></div></div>';
 }
-// a colour picked: the accent's ('acc'), or a category's ('' its part's again: undo takes it back like any change)
+// ---- the theme, the background and the cells (11-05) ----
+const lkFold = (f, open, name, small, dots) => '<div class="setrow lk-head' + (open ? ' open' : '') + '" data-lk="fold" data-f="' + f + '"><div>' + name + '<small>' + small + '</small></div><span class="lk-prev">' +
+  dots.map(c => '<i class="dk" style="--c:' + c + '"></i>').join('') + '<svg class="lk-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg></span></div>';
+const lkRange = (k, name, v, lo, hi) => '<div class="lk-row"><span class="lk-name">' + name + '</span><span class="sp"></span><input type="range" class="lk-rng" id="lkr-' + k + '" data-k="' + k + '" min="' + lo + '" max="' + hi + '" step="1" value="' + v + '" style="--v:' + ((v - lo) / (hi - lo) * 100) + '%"><span class="lk-v">' + v + '%</span></div>';
+// a theme's card: its background, three cells, a graph line in each in its colour (grey, the accent, or the palette's)
+function thCard(id) {
+  const P = cleanLook(Object.assign({ theme: id }, THEME_PRESETS[id])), on = S.look.theme === id && !S.look.changed, pal = P.pal === 'match' ? palMatch(P)[0] : PALETTES[P.pal][1];
+  const r = P.corners === 'sharp' ? '2px' : P.corners === 'round' ? '6px' : '4px';
+  return '<button class="th-b' + (on ? ' on' : '') + '" data-lk="theme" data-k="' + id + '"><span class="th-pv" style="background:' + bgiOf(P) + '">' +
+    ['gpu', 'cpu', 'fan'].map(k => '<i style="--t:' + tileOf(P) + ';--l:' + (P.line ? lineOf(P) : 'transparent') + ';--r:' + r + ';--g:' + (P.tint === 'none' ? '#8f8f8f' : P.tint === 'accent' ? P.acc : pal[k]) + '"></i>').join('') +
+    '</span><span class="th-n">' + THEME_PRESETS[id].name + '</span></button>';
+}
+function lookTheme() { return '<div class="setrow th-row"><div>Theme<small>' + THEME_PRESETS[S.look.theme].name + (S.look.changed ? ', changed' : '') + '</small></div><div class="th-grid">' + Object.keys(THEME_PRESETS).map(thCard).join('') + '</div></div>'; }
+// the background: a small screen of it with a point on each edge and corner (a + where there is no fade, the fade's
+// colour where there is), its base, and the fade picked: its colour, size and strength
+function lookBg() {
+  const L = S.look; if (!L.fades.some(f => f.at === bgSel)) bgSel = L.fades.length ? L.fades[0].at : null;
+  const f = L.fades.find(x => x.at === bgSel), PLUS = '<svg viewBox="0 0 8 8"><path d="M4 1v6M1 4h6"/></svg>';
+  return lkFold('bg', lkBg, 'Background', L.base + (L.fades.length ? ', ' + L.fades.length + (L.fades.length > 1 ? ' fades' : ' fade') : ''), [L.base].concat(L.fades.map(x => x.c))) +
+    '<div class="lk-body' + (lkBg ? ' open' : '') + '"><div><div class="lk-in"><div class="bg-ed"><div class="bg-fr"><div class="bg-mini" style="background:' + bgiOf(L) + '"><span class="bg-tb"></span><span class="bg-gh" style="--t:' + tileOf(L) + ';--l:' + (L.line ? lineOf(L) : 'transparent') + '">' + '<i></i>'.repeat(12) + '</span>' +
+    Object.keys(FADE_AT).map(k => { const g = L.fades.find(x => x.at === k); return '<button class="bg-h' + (g ? ' f' : '') + (k === bgSel ? ' on' : '') + '" data-lk="fade" data-at="' + k + '" title="' + FADE_AT[k][2] + '" style="left:' + FADE_AT[k][0] + '%;top:' + FADE_AT[k][1] + '%' + (g ? ';--c:' + g.c : '') + '">' + (g ? '' : PLUS) + '</button>'; }).join('') +
+    '</div></div><div class="bg-side">' + lkChip('base', L.base, 'Base', '') +
+    (f ? '<div class="bg-fh"><i style="--c:' + f.c + '"></i><span class="lk-name">' + FADE_AT[f.at][2] + '</span><button class="bg-x" data-lk="fadex" title="Remove"><svg viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button></div>' +
+      lkChip('fade', f.c, 'Colour', '') + lkRange('size', 'Size', f.size, 20, 100) + lkRange('a', 'Strength', f.a, 5, 80) : '') + '</div></div></div></div></div>';
+}
+function lookCells() {
+  const L = S.look;
+  return lkFold('cells', lkCells, 'Cells', L.cell + ', ' + L.op + '% opacity' + (L.line ? ', outline' : '') + ', ' + L.corners + ' corners', [L.cell]) +
+    '<div class="lk-body' + (lkCells ? ' open' : '') + '"><div><div class="lk-in ce-in">' + lkChip('cell', L.cell, 'Fill', '') + lkRange('op', 'Opacity', L.op, 0, 100) +
+    '<div class="lk-row"><span class="lk-name">Outline</span><span class="sp"></span><button class="tog2' + (L.line ? ' on' : '') + '" data-lk="line" aria-pressed="' + L.line + '"></button></div>' +
+    '<div class="lk-row"><span class="lk-name">Corners</span><span class="sp"></span><span class="seg seg3">' + [['sharp', 'Sharp'], ['normal', 'Normal'], ['round', 'Round']].map(([v, t]) => '<button data-lk="cor" data-v="' + v + '" class="' + (L.corners === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div></div></div></div>';
+}
+// a theme picked: all of it, undone like any change
+function pickTheme(id) {
+  if (!THEME_PRESETS[id]) return;
+  const before = snapOf();
+  S.look = cleanLook(Object.assign(JSON.parse(JSON.stringify(THEME_PRESETS[id])), { theme: id, changed: false }));
+  if (snapOf() === before) { renderSettings(); return; }
+  pushUndo(before); bgSel = null; lkPick = null; applyLook(); saveState(); syncUndo(); renderSettings(); if (feed.got) updateView(true, true);
+}
+// a change to the background or the cells: undone like any change, the theme now "changed". A Match palette follows
+// the background, and so does its accent while it is Match's
+function lookEdit(fn) {
+  const before = snapOf(), m0 = PALETTES.match[2], L = JSON.parse(JSON.stringify(S.look));
+  fn(L);
+  const nl = cleanLook(Object.assign(L, { changed: S.look.changed }));
+  if (JSON.stringify(nl) === JSON.stringify(S.look)) return;   // (nothing changed, the tone already on picked: no step, the theme not "changed", the review 11-05)
+  nl.changed = true; S.look = nl;
+  if (S.look.pal === 'match' && S.look.acc === m0) { applyLook(); S.look.acc = PALETTES.match[2]; }
+  pushUndo(before); applyLook(); saveState(); syncUndo(); renderSettings(); if (feed.got) updateView(true, true);
+}
+// a new fade's colour: the accent when the look has colour, else a violet
+const newFade = () => S.look.tint !== 'none' ? S.look.acc : '#6c5ce0';
+// a colour picked: the accent's ('acc'), the look's own (the base, the fill, the fade picked), or a category's ('' its
+// part's again: undo takes it back like any change)
 function pickColour(key, c) {
-  if (key === 'acc') { if (!isHex(c) || S.look.acc === c.toLowerCase()) return; snap(); S.look = Object.assign({}, S.look, { acc: c.toLowerCase() }); applyLook(); saveState(); syncUndo(); }
+  if (LK_OWN.has(key)) { if (!isHex(c)) return; c = c.toLowerCase(); lookEdit(L => { if (key === 'fade') { const f = L.fades.find(x => x.at === bgSel); if (f) f.c = c; } else L[key] = c; }); return; }
+  if (key === 'acc') { if (!isHex(c) || S.look.acc === c.toLowerCase()) return; snap(); S.look = Object.assign({}, S.look, { acc: c.toLowerCase(), changed: true }); applyLook(); saveState(); syncUndo(); }
   else {
     const cat = S.L.cats.find(x => x.id === key), v = isHex(c) ? c.toLowerCase() : undefined; if (!cat || cat.col === v) return;
     snap(); if (v) cat.col = v; else delete cat.col; afterChange();
@@ -6434,33 +6561,14 @@ function pickPalette(k) {
   if (!PALETTES[k]) return;
   const before = snapOf();
   for (const c of S.L.cats) delete c.col;
-  S.look = Object.assign({}, S.look, { pal: k, acc: PALETTES[k][2] });
+  S.look = Object.assign({}, S.look, { pal: k, acc: PALETTES[k][2] }, S.look.pal !== k || S.look.acc !== PALETTES[k][2] ? { changed: true } : {});
   if (snapOf() === before) { renderSettings(); return; }   // (the one in use, nothing of yours on it: no step)
   pushUndo(before); applyLook();
   afterChange();
   renderSettings(); if (feed.got) updateView(true, true);
 }
-// (a change in the Look, then the pointer held still: Settings goes see-through so the change shows on the view; a move
-// brings it back. 11-02, his "only works when first clicked" and "not annoying": it comes back every time the pointer
-// rests again, for 10 s after the last change, and not after that)
-let peekT = 0, peekAt = null, lookAt = 0;
-const PEEK_FOR = 10000;
-function peekArm(e) { clearTimeout(peekT); setmodal.classList.remove('peek'); if (motionMode() === 'off' || !e || e.clientX == null) return; lookAt = Date.now(); peekAt = [e.clientX, e.clientY]; peekT = setTimeout(peekNow, 650); }
-// (only while the colours are open and at least half of them in view: 11-02, his "go away as soon as the colours is
-// collapsed and not linger, or when scrolled out of view")
-function peekLive() {
-  const bd = lkOpen && document.querySelector('#setbody .lk-body.open'); if (!bd) return false;
-  const r = bd.getBoundingClientRect(), c = setmodal.querySelector('.mcard').getBoundingClientRect();
-  return r.height > 0 && (Math.min(r.bottom, c.bottom) - Math.max(r.top, c.top)) / Math.min(r.height, c.height) >= 0.5;
-}
-function peekNow() { if (peekAt && setmodal.classList.contains('open') && Date.now() - lookAt < PEEK_FOR && peekLive()) setmodal.classList.add('peek'); }
-function peekEnd() { clearTimeout(peekT); peekAt = null; setmodal.classList.remove('peek'); }
-document.addEventListener('pointermove', e => {
-  if (peekAt && Math.hypot(e.clientX - peekAt[0], e.clientY - peekAt[1]) <= 4) return;
-  if (peekAt) peekEnd();
-  if (setmodal.classList.contains('open') && Date.now() - lookAt < PEEK_FOR && motionMode() !== 'off' && lkOpen) { peekAt = [e.clientX, e.clientY]; peekT = setTimeout(peekNow, 700); }   // (rests again: again)
-}, true);
-for (const k of ['keydown', 'wheel', 'pointerdown']) document.addEventListener(k, () => { if (peekAt || setmodal.classList.contains('peek')) peekEnd(); }, true);   // (a pending one too)
+// (11-05: Settings stays as it is while the look is changed. The see-through when the pointer rested, the eye that held
+// the view and Settings moving aside were all tried and all removed, his "just remove it, it's just worse")
 $('setbody').addEventListener('mousedown', e => { if (e.target.closest('.lk-pop button')) e.preventDefault(); });
 $('setbody').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.lk-hex')) e.target.blur(); });   // (Enter uses the hex, as its tip says: the blur's change applies it)   // (a typed hex keeps its focus: the tone's click isn't lost to a redraw)
 const setSec = (name, rows) => '<section class="setsec"><h3>' + name + '</h3><div class="setbox">' + rows + '</div></section>';
@@ -6474,8 +6582,7 @@ function renderSettings0() {
       [['full', 'Full'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionPicked() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
     '<div class="setrow"><div>Calmer during games<small>Full animations switch to Minimal while a game is in front or a session you started records, and back after. Saves CPU for the game.</small></div><button class="tog2' + (S.gameCalm !== false ? ' on' : '') + '" id="sCalm" aria-pressed="' + (S.gameCalm !== false) + '" title="Minimal animations while a game is in front"></button></div>') +
     setSec('Look',
-    '<div class="setrow"><div>Cards<small>' + ({ standard: 'Grey cards with a fine line around them.', oled: 'True black, the cards drawn as lines only: nothing lit but what you read.', soft: 'No lines: a lighter grey lifted by a shadow, rounder corners.' })[S.look.cards] + '</small></div><span class="seg seg3" id="sCards">' +
-      [['standard', 'Standard'], ['oled', 'OLED'], ['soft', 'Soft']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.cards === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
+    lookTheme() + lookBg() + lookCells() +
     '<div class="setrow"><div>Colour<small>' + ({ none: 'Greys only: colour is kept for warnings.', accent: 'One colour on what you pick.', spectrum: 'A colour for each category, and the accent.' })[S.look.tint] + '</small></div><span class="seg seg3" id="sTint">' +
       [['none', 'Mono'], ['accent', 'Accent'], ['spectrum', 'Spectrum']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.tint === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
     (S.look.tint !== 'none' ? lookColours() : '')) +
@@ -6504,7 +6611,7 @@ function renderSettings0() {
     setSec('About',
     '<div class="setrow"><div>' + (feed.brand && feed.brand !== 'HW Deck' ? esc(feed.brand) + ', built on HW Deck ' : 'HW Deck ') + esc(feed.version) + '<small>Reads HWiNFO\'s shared memory on this PC.</small></div></div>');
 }
-$('setBtn').onclick = () => { lkPick = null; peekEnd(); keepPend.gameDays = keepPend.warnDays = false; renderSettings(); setmodal.classList.add('open'); send({ t: 'getSettings' }); };   // (the host's answer: Start with Windows and the task as they are now)
+$('setBtn').onclick = () => { lkPick = null; keepPend.gameDays = keepPend.warnDays = false; renderSettings(); setmodal.classList.add('open'); send({ t: 'getSettings' }); };   // (the host's answer: Start with Windows and the task as they are now)
 function syncUpd() { const d = $('setDot'); d.classList.toggle('on', !!feed.latest); $('setBtn').title = feed.latest ? 'Settings: HW Deck ' + feed.latest + ' is out' : 'Settings'; }
 $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sAuto')) { feed.autostart = !feed.autostart; send({ t: 'autostart', on: feed.autostart }); renderSettings(); }
@@ -6519,20 +6626,35 @@ $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sGet')) send({ t: feed.canUpdate ? 'updateNow' : 'openRelease' });
   if (e.target.closest('#sClock')) { S.clock = !S.clock; renderTitle(); saveState(); renderSettings(); }
   if (e.target.closest('#sCalm')) { S.gameCalm = S.gameCalm === false; applyMotion(); calmSettle(); saveState(); renderSettings(); }
-  const lb = e.target.closest('#sCards button, #sTint button'), lk = lb && (lb.parentElement.id === 'sCards' ? 'cards' : 'tint');
-  if (lb && S.look[lk] !== lb.dataset.v) { snap(); S.look = Object.assign({}, S.look, { [lk]: lb.dataset.v }); if (lk === 'tint') lkPick = null; applyLook(); saveState(); syncUndo(); renderSettings(); lookAt = Date.now(); if (feed.got) updateView(true, true); peekArm(e); }   // (seen at once behind Settings: the graphs take their colour as they are fed)
+  const lb = e.target.closest('#sTint button'), lk = lb && 'tint';
+  if (lb && S.look[lk] !== lb.dataset.v) { snap(); S.look = Object.assign({}, S.look, { [lk]: lb.dataset.v, changed: true }); lkPick = null; applyLook(); saveState(); syncUndo(); renderSettings(); if (feed.got) updateView(true, true); }   // (seen at once behind Settings: the graphs take their colour as they are fed)
   const lq = e.target.closest('[data-lk]'), lw = lq && lq.dataset.lk;
-  if (lw === 'fold') { lkOpen = !lkOpen; if (!lkOpen) { peekEnd(); lookAt = 0; }   // (folded: no more see-through)
-    // (an open chip shuts with it, in place: drawn again, the fold wouldn't glide)
-    if (lkPick) { lkPick = null; const bd = lq.nextElementSibling; bd.querySelectorAll('.lk-pop').forEach(x => x.remove()); bd.querySelectorAll('.lk-chip.on').forEach(x => x.classList.remove('on')); }
-    lq.classList.toggle('open', lkOpen); lq.nextElementSibling.classList.toggle('open', lkOpen); return; }   // (folds in place: it glides)
+  if (lw === 'fold') { const f = lq.dataset.f, open = f === 'bg' ? (lkBg = !lkBg) : f === 'cells' ? (lkCells = !lkCells) : (lkOpen = !lkOpen);
+    // (an open chip shuts, in place: drawn again, the fold wouldn't glide)
+    if (lkPick) { lkPick = null; document.querySelectorAll('#setbody .lk-pop').forEach(x => x.remove()); document.querySelectorAll('#setbody .lk-chip.on').forEach(x => x.classList.remove('on')); }
+    lq.classList.toggle('open', open); lq.nextElementSibling.classList.toggle('open', open); return; }   // (folds in place: it glides)
+  if (lw === 'theme') { pickTheme(lq.dataset.k); return; }
+  if (lw === 'fade') { const at = lq.dataset.at; lkPick = null; if (S.look.fades.some(f => f.at === at)) { bgSel = at; renderSettings(); } else { bgSel = at; lookEdit(L => { L.fades.push({ at, c: newFade(), size: 70, a: 30 }); }); } return; }
+  if (lw === 'fadex') { const at = bgSel; lkPick = null; lookEdit(L => { L.fades = L.fades.filter(f => f.at !== at); }); bgSel = null; renderSettings(); return; }
+  if (lw === 'line') { lookEdit(L => { L.line = !L.line; }); return; }
+  if (lw === 'cor') { const v = lq.dataset.v; if (S.look.corners !== v) lookEdit(L => { L.corners = v; }); return; }
   if (lw === 'chip') { lkPick = lkPick === lq.dataset.k ? null : lq.dataset.k; renderSettings(); return; }
-  if (lw === 'c') { pickColour(lq.dataset.k, lq.dataset.c); peekArm(e); return; }
-  if (lw === 'pal') { pickPalette(lq.dataset.k); peekArm(e); return; }
+  if (lw === 'c') { pickColour(lq.dataset.k, lq.dataset.c); return; }
+  if (lw === 'pal') { pickPalette(lq.dataset.k); return; }
   if (lkPick && !e.target.closest('.lk-pop')) { lkPick = null; renderSettings(); }   // (a click anywhere else closes the open chip)
 });
+// (a slider of the look: seen at once while dragged, one undo step and a save when let go)
+$('setbody').addEventListener('input', e => {
+  const r = e.target.closest('.lk-rng'); if (!r) return;
+  if (lkDrag == null) lkDrag = snapOf();
+  const v = +r.value, k = r.dataset.k;
+  if (k === 'op') S.look.op = v; else { const f = S.look.fades.find(x => x.at === bgSel); if (!f) return; f[k] = v; }
+  r.style.setProperty('--v', ((v - +r.min) / (+r.max - +r.min) * 100) + '%'); if (r.nextElementSibling) r.nextElementSibling.textContent = v + '%';
+  applyLook();
+});
 $('setbody').addEventListener('change', e => {
-  if (e.target.matches('.lk-any input, .lk-hex')) { const v = e.target.value.trim(), c = /^#?[0-9a-f]{6}$/i.test(v) ? (v[0] === '#' ? v : '#' + v) : null; if (c) { pickColour(e.target.dataset.k, c); lookAt = Date.now(); } else if (e.target.matches('.lk-hex')) renderSettings(); return; }   // (any colour: the picker closed on one, or a hex typed; not a colour: as it was)
+  if (e.target.matches('.lk-rng')) { const b = lkDrag; lkDrag = null; if (b != null && snapOf() !== b) { S.look.changed = true; pushUndo(b); saveState(); syncUndo(); } renderSettings(); return; }
+  if (e.target.matches('.lk-any input, .lk-hex')) { const v = e.target.value.trim(), c = /^#?[0-9a-f]{6}$/i.test(v) ? (v[0] === '#' ? v : '#' + v) : null; if (c) { pickColour(e.target.dataset.k, c); } else if (e.target.matches('.lk-hex')) renderSettings(); return; }   // (any colour: the picker closed on one, or a hex typed; not a colour: as it was)
   const id = e.target.id;
   if (id === 'sGameMerge') {   // (0 to 240 minutes; empty or not a number: as it was)
     delete e.target.dataset.dirty;

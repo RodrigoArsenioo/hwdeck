@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.4.0 (2026-11-05)
+
+- Themes: Settings > Look starts with eight themes to pick from: Classic, OLED, Soft, Warm, Slate, Aurora, Sunset and Neon. Classic is the look of earlier versions; OLED and Soft, before choices under Cards, are themes now.
+- Background: a base colour and a soft fade from any edge or corner, each with its own colour, size and strength.
+- Cells: their fill colour, how see-through they are, an outline or none, and sharp, normal or round corners.
+- Spectrum has a new palette, Match, that takes its colours from the background's fades, so the two always go together.
+- Popups, Settings and the side panels take the theme's colours.
+- Your look carries over: Standard opens as Classic, OLED and Soft as their themes, with the colours you had.
+- Settings no longer turns see-through while you pick a colour.
+
 ## 2.3.0 (2026-11-05)
 
 - With Animations on Full, a popup opened by a click grows out of the tile or button you clicked.

@@ -17,7 +17,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }
 html { font-size: 13px; }
-html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--fg); }
+html, body { height: 100%; overflow: hidden; background: var(--bgi, var(--bg)); color: var(--fg); }
 body { font-family: var(--f-body); line-height: 1.4; }
 button { font-family: inherit; }
 :focus-visible { outline: none; }   /* (no rings from the keyboard: Tab doesn't walk the buttons either, his call 11-02; fields keep their :focus border) */
@@ -599,7 +599,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
          opacity: 0; pointer-events: none; visibility: hidden; transition: opacity 150ms ease-in, visibility 0s 150ms; font-size: 15px; }
 .modal.open { opacity: 1; pointer-events: auto; visibility: visible; transition: opacity 280ms cubic-bezier(0.16, 1, 0.3, 1), visibility 0s; }
 #cmodal { z-index: 110; background: rgba(0,0,0,0.45); }
-.mcard { width: min(640px, 92vw); max-height: 88vh; overflow-y: auto; background: #151515; border: 1px solid #2c2c2c; border-radius: 14px; padding: 20px 22px 18px; position: relative;
+.mcard { width: min(640px, 92vw); max-height: 88vh; overflow-y: auto; background: var(--pop, #151515); border: 1px solid var(--pop-line, #2c2c2c); border-radius: 14px; padding: 20px 22px 18px; position: relative;
          box-shadow: 0 24px 60px rgba(0,0,0,0.55); transform: translateY(26px) scale(0.94); transition: transform 150ms ease-in; }
 /* a popup taller than the window scrolls inside its card, with a thin scrollbar so it's clear it does */
 .mcard { scrollbar-width: thin; scrollbar-color: #343434 transparent; overscroll-behavior: contain; }
@@ -607,6 +607,12 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 /* a popup over another (2.2): the one on top a light dim and no second blur, the one under steps back (stackModals) */
 .modal.over, #cmodal.over { background: rgba(0,0,0,0.3); backdrop-filter: none; }
 .modal.open.under .mcard { transform: scale(0.965); opacity: 0.6; transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms ease-out; }
+/* a card with a panel docked beside it (.mwrap, 11-05: the dashboard's Controls and its TV remote): the two come in, step
+   back and go as one, the card's own movement passed to the pair */
+.mwrap { transform: translateY(26px) scale(0.94); transition: transform 150ms ease-in; }
+.modal.open .mwrap { transform: none; transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms ease-out; will-change: transform, opacity; }
+.modal.open.under .mwrap { transform: scale(0.965); opacity: 0.6; transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms ease-out; }
+.mwrap > .mcard, .modal.open .mwrap > .mcard, .modal.open.under .mwrap > .mcard { transform: none; opacity: 1; transition: none; }
 :is(#gmodal, #wmodal) .mcard { width: min(1000px, 94vw); padding: 22px 26px 22px; }
 /* (Sessions grows as its bar and rows open: its top stays where a full one's is, so nothing jumps under the pointer and
    quick clicks land on the same thing) */
@@ -837,6 +843,8 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .cbtns button.yes { border-color: #6b2020; color: #e5484d; } .cbtns button.yes:hover { background: #3a1a1d; color: #fff; }
 .modal.calm .cbtns button.yes { border-color: #3a4f75; color: #c9dafa; } .modal.calm .cbtns button.yes:hover { background: #1b2436; }
 .mhead > svg.ci-calm, .modal.calm .mhead > svg.ci-danger { display: none; } .modal.calm .mhead > svg.ci-calm { display: block; }
+/* (a question that isn't about deleting says so with its own icon: switching off, cleaning; 11-05, his "why is the icon a bin") */
+.mhead > svg.ci-power, .mhead > svg.ci-clean, .modal[data-ci] .mhead > svg.ci-danger, .modal[data-ci] .mhead > svg.ci-calm { display: none; } .modal[data-ci="power"] .mhead > svg.ci-power, .modal[data-ci="clean"] .mhead > svg.ci-clean { display: block; }
 
 /* saves */
 /* (11-02, his "give depth to the rows": each slot a block of its own with a gap, a faint light on its top edge and a
@@ -882,7 +890,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .kbd { font-family: var(--f-mono); font-size: 11px; border: 1px solid var(--line2); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--muted); white-space: nowrap; justify-self: start; }
 
 /* hover preview: the popup's graph, next to the cell under the pointer */
-#hprev { position: fixed; left: 0; top: 0; z-index: 105; width: 360px; background: #161616; border: 1px solid #2e2e2e; border-radius: 12px; padding: 11px 14px 9px; box-shadow: 0 18px 44px rgba(0,0,0,0.55);
+#hprev { position: fixed; left: 0; top: 0; z-index: 105; width: 360px; background: var(--pop2, #161616); border: 1px solid var(--pop2-line, #2e2e2e); border-radius: 12px; padding: 11px 14px 9px; box-shadow: 0 18px 44px rgba(0,0,0,0.55);
          pointer-events: none; opacity: 0; font-size: 13px; transition: opacity 150ms ease, transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1); will-change: transform, opacity; }
 #hprev.on { opacity: 1; }
 #hprev .ph { display: flex; align-items: center; gap: 8px; }
@@ -1017,7 +1025,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 /* Settings in sections: a header, then its rows in a block, with room between the blocks */
 .setsec { margin: 0 0 18px; } .setsec:first-child { margin-top: 10px; } .setsec:last-child { margin-bottom: 2px; }
 .setsec > h3 { margin: 0 0 7px 3px; font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em; color: #8c8c8c; }   /* (its own case: HWiNFO stays HWiNFO) */
-.setbox { background: #191919; border: 1px solid #242424; border-radius: 11px; padding: 0 15px; }
+.setbox { background: var(--box, #191919); border: 1px solid var(--line, #242424); border-radius: 11px; padding: 0 15px; }
 .setbox .setrow { padding: 12px 0; }
 #setmodal .mcard { width: min(900px, 94vw); }   /* (wider, his ask 11-02: the rows as they were, more room for their text) */
 /* Customize: greys only (11-02, his "way too blue"); Done is the light one */
@@ -1047,13 +1055,10 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 @media (max-width: 760px) { #gmodal .gx-s5 { grid-template-columns: 1fr 1fr; } #gmodal .gx-s5 > div { border-left: 0; border-top: 1px solid #242424; } #gcz .gz { grid-template-columns: 1fr; } #gcz .gz-list { height: 280px; } }
 
 /* ---------- the look (Settings > Look, 11-02): a look only sets tokens; the rules above read them ----------
-   Cards: Standard (the rules' own greys), OLED (true black behind, darker cards), Outline (lines only), Soft (no lines,
-   a lighter grey lifted by a shadow, rounder). Colour: Mono (greys), Accent (one blue on what you pick), Spectrum (each
+   The theme, the background and the cells (11-05) set their tokens from the page (--bg, --bgi, --tile, --pop, ...;
+   deck.js lookVars). Colour: Mono (greys), Accent (one blue on what you pick), Spectrum (each
    category its part's colour, set by the page as --cc on it, on its name and icons; its graphs take it in deck.js).
    :where() keeps a look's rules at the plain rules' weight: a warning, a hover, a selected category still win */
-:root[data-cards="oled"] { --bg: #000; --side: #050505; --tile: transparent; --tile-solid: #000; --tile-line: #262626; --card-line: #262626; --rule: #1a1a1a; --nav: transparent; --nav-line: #262626; }   /* (true black, lines only: his pick 11-02) */
-:root[data-cards="soft"] { --bg: #101010; --tile: #1a1a1a; --tile-solid: #1a1a1a; --tile-line: transparent; --card-line: transparent; --tile-r: 1.05rem; --card-r: 1.2rem; --rule: transparent; --nav: #1a1a1a; --nav-line: transparent;
-                           --tile-sh: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 6px 18px rgba(0, 0, 0, 0.35); }
 :root[data-tint="accent"], :root[data-tint="spectrum"] { --pill: color-mix(in srgb, var(--acc, #7fa6e8) 22%, transparent); --seg-on: color-mix(in srgb, var(--acc, #7fa6e8) 22%, transparent); --pill-fg: color-mix(in srgb, var(--acc, #7fa6e8) 25%, #fff);
                            --tog-on: color-mix(in srgb, var(--acc, #7fa6e8) 42%, #1c1c1c); --tog-knob: var(--acc, #7fa6e8); }
 :where(:root[data-tint="spectrum"]) .blk h2 { color: var(--cc, #747474); }
@@ -1066,7 +1071,8 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
    hex field, the full picker and Auto. The names and words stay quiet so the colours do the talking */
 .setbox .lk-head { cursor: pointer; }
 .lk-prev { display: inline-flex; align-items: center; padding-left: 4px; }
-.lk-prev i { width: 13px; height: 13px; border-radius: 50%; background: var(--c); margin-left: -4px; box-shadow: 0 0 0 2px #191919; }
+.lk-prev i { width: 13px; height: 13px; border-radius: 50%; background: var(--c); margin-left: -4px; box-shadow: 0 0 0 2px var(--box, #191919); }
+.lk-prev i.dk { box-shadow: 0 0 0 2px var(--box, #191919), inset 0 0 0 1px rgba(255, 255, 255, 0.22); }   /* (a background's or a cell's colour: dark, ringed) */
 .lk-chev { width: 11px; height: 11px; margin-left: 12px; stroke: #7a7a7a; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform 250ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .lk-head.open .lk-chev { transform: rotate(90deg); stroke: #cfcfcf; }
 .lk-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
@@ -1097,8 +1103,6 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 /* (a pick, then the pointer still: Settings goes see-through so the change shows on the view behind it) */
 #setmodal.open { transition: opacity 280ms cubic-bezier(0.16, 1, 0.3, 1), visibility 0s, background-color 240ms, backdrop-filter 240ms; }
 #setmodal.open .mcard { transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1), opacity 240ms ease-out; }
-#setmodal.peek { background-color: transparent; backdrop-filter: none; }
-#setmodal.peek .mcard { opacity: 0.06; }
 /* ---------- the Warning history in the Sessions popup's design (11-02): the Sessions rules above take #wmodal too;
    these are its own bits ---------- */
 /* (its columns: warning, peak, lasted, times, its lines, level; the cells' table: cell, share, times, red, worst, last) */
@@ -1169,3 +1173,38 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
    through --fc, the cell popup and the hover preview draw theirs in it) */
 :where(:root[data-tint="spectrum"]) :is(#gmodal, #wmodal) .gx-rw[style*="--cc"] .n::before,
 :where(:root[data-tint="spectrum"]) #wmodal .gx-sess[style*="--cc"] .gx-gn::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--cc); margin-right: 8px; vertical-align: 1px; }
+
+/* the theme, the background and the cells (Settings > Look, 11-05): a card per theme with its background, three cells
+   and their graph colour; the background as a small screen with a point on each edge and corner; sliders */
+.setrow.th-row { display: block; }
+.th-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.th-b { display: flex; flex-direction: column; gap: 8px; background: #151515; border: 1px solid #252525; border-radius: 10px; padding: 7px 7px 8px; color: #a8a8a8; font: inherit; font-size: 12.5px; cursor: pointer; text-align: left; transition: border-color 150ms, background 150ms, color 150ms; }
+.th-b:hover { border-color: #3a3a3a; color: #fff; } .th-b.on { border-color: #8a8a8a; background: #1f1f1f; color: #fff; }
+.th-pv { position: relative; display: block; height: 62px; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+.th-pv i { position: absolute; top: 15px; height: 32px; width: 25%; border-radius: var(--r); background: var(--t); box-shadow: inset 0 0 0 1px var(--l); }
+.th-pv i:nth-child(1) { left: 8%; } .th-pv i:nth-child(2) { left: 37.5%; } .th-pv i:nth-child(3) { left: 67%; }
+.th-pv i::before { content: ''; position: absolute; left: 6px; top: 6px; width: 40%; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.55); }
+.th-pv i::after { content: ''; position: absolute; left: 6px; right: 6px; bottom: 7px; height: 2px; border-radius: 1px; background: var(--g); }
+.th-n { padding: 0 3px; }
+.bg-ed { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 26px; padding: 4px 0 6px; align-items: start; }
+.bg-fr { padding: 10px; }
+.bg-mini { position: relative; width: 300px; aspect-ratio: 1313 / 809; border-radius: 10px; box-shadow: inset 0 0 0 1px #2c2c2c; }
+.bg-gh { position: absolute; inset: 16% 7% 9%; display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, 1fr); gap: 6px; pointer-events: none; }
+.bg-gh i { border-radius: 4px; background: var(--t); box-shadow: inset 0 0 0 1px var(--l); }
+.bg-tb { position: absolute; left: 7%; right: 7%; top: 5%; height: 5%; border-radius: 3px; background: rgba(255, 255, 255, 0.05); pointer-events: none; }
+.bg-h { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: #121212; box-shadow: 0 0 0 1px #3a3a3a; display: grid; place-items: center; cursor: pointer; padding: 0; border: 0; transition: box-shadow 120ms; }
+.bg-h svg { width: 8px; height: 8px; stroke: #777; stroke-width: 1.6; stroke-linecap: round; fill: none; }
+.bg-h:hover { box-shadow: 0 0 0 1px #8a8a8a; } .bg-h:hover svg { stroke: #fff; }
+.bg-h.f { background: var(--c); box-shadow: 0 0 0 2px var(--box, #191919), 0 0 0 3px #555; } .bg-h.f.on { box-shadow: 0 0 0 2px var(--box, #191919), 0 0 0 3.5px #e6e6e6; }
+.bg-side { min-width: 0; padding-top: 4px; } .bg-side > .lk-row:first-child, .ce-in > .lk-row:first-child { border-top: 0; }
+.bg-fh { display: flex; align-items: center; gap: 10px; padding: 13px 0 5px; margin-top: 6px; border-top: 1px solid #262626; }
+.bg-fh .lk-name { color: #fff; } .bg-fh i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
+.bg-x { margin-left: auto; width: 26px; height: 26px; border-radius: 7px; border: 0; background: none; display: grid; place-items: center; cursor: pointer; }
+.bg-x svg { width: 12px; height: 12px; stroke: #8a8a8a; stroke-width: 1.7; stroke-linecap: round; fill: none; } .bg-x:hover { background: #242424; } .bg-x:hover svg { stroke: #fff; }
+.lk-chip i { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }
+.lk-row .seg.seg3 { width: auto; }
+.lk-rng { -webkit-appearance: none; appearance: none; width: 190px; height: 18px; margin: 0; background: transparent; cursor: pointer; flex: none; }
+.lk-rng::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(#8a8a8a, #8a8a8a) 0 / var(--v, 50%) 100% no-repeat, #262626; }
+.lk-rng::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: #e6e6e6; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); }
+.lk-rng:focus { outline: none; }
+.lk-v { width: 36px; text-align: right; color: #8a8a8a; font-size: 11.5px; font-variant-numeric: tabular-nums; flex: none; }

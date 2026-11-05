@@ -1,5 +1,7 @@
-// The look (Settings > Look, 11-02): the cards' surface (Standard, OLED: true black with the cards as lines only, Soft)
-// and the colour (Mono, Accent, Spectrum), switched live, saved, kept after a reload. Accent's colour is yours (a
+// The look (Settings > Look, 11-02; the themes 11-05): a theme to start from (Classic, OLED: true black with the cells
+// as lines only, Soft, and five with colour), the background (a base, a fade on any edge or corner), the cells (fill,
+// opacity, outline, corners) and the colour (Mono, Accent, Spectrum; Match from the background), switched live, saved,
+// kept after a reload; a look saved before the themes opens as its theme. Accent's colour is yours (a
 // swatch or any colour); Spectrum gives each category its part's colour (a mix stays grey) or yours (kept with the
 // layout, undone like any change, Auto takes it back), on its name, icons and graphs, in all three views; a warning
 // still shows through every look. Also: Tab walks nothing, no focus rings, and every hover text is the page's own tip
@@ -34,7 +36,10 @@ const css = (sel, prop, pseudo) => ev(`(() => { const e = document.querySelector
 const asColour = c => ev(`(() => { const d = document.createElement('div'); d.style.backgroundColor = ${JSON.stringify(c)}; document.body.appendChild(d); const v = getComputedStyle(d).backgroundColor; d.remove(); return v; })()`);
 const rgb = h => 'rgb(' + [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).join(', ') + ')';
 const pick = async (row, v) => { await click('#' + row + ' button[data-v="' + v + '"]'); await p.sleep(250); };
-const look = () => ev('document.documentElement.dataset.cards + "/" + document.documentElement.dataset.tint');
+const look = () => ev('S.look.theme + "/" + document.documentElement.dataset.tint');
+const th = k => '#setbody .th-b[data-k="' + k + '"]';
+const thOn = () => ev('(() => { const b = document.querySelector("#setbody .th-b.on"); return b ? b.dataset.k : ""; })()');
+const foldsShut = () => ev('(() => { lkBg = lkCells = false; renderSettings(); return 1; })()');
 // Spectrum's colours, by Starter's categories: the game, the GPU, the CPU, memory, drives, fans
 const WANT = ['#a99bdc', '#74c69d', '#7fa6e8', '#4fb8ad', '#8fa0c8', '#6cc8d8'];
 const ccs = () => ev('S.L.cats.map(c => { const e = document.querySelector("#view .dcat[data-cat=\\"" + c.id + "\\"]"); return e ? e.style.getPropertyValue("--cc") : "?"; }).join()');
@@ -52,42 +57,77 @@ const clickAt = async expr => { const c = await p.centerOf(expr); if (!c) return
 ok('the readings come', await until('READ.length > 300 && feed.got', 10000), await ev('READ.length'));
 await ev('(() => { loadStarter(); setEdit(false); return 1; })()'); await p.sleep(800);
 ok('(Starter loaded: six categories, in view mode)', await ev('S.L.cats.length === 6 && !S.edit'), await ev('S.L.cats.map(c => c.name).join()'));
-ok('a new view: Standard cards, Mono, nothing saved for it', await look() === 'standard/none' && await css('#view .tile', 'backgroundColor') === 'rgb(21, 21, 21)' && !!state() && state().look === undefined);
+ok('a new view: Classic, Mono, nothing saved for it', await look() === 'classic/none' && await css('#view .tile', 'backgroundColor') === 'rgb(21, 21, 21)' && !!state() && state().look === undefined);
 const r0 = parseFloat(await css('#view .tile', 'borderTopLeftRadius'));
 
 // ---- Settings: Look, its rows ----
 await click('#setBtn');
-ok('Settings has Look: Cards (Standard, OLED, Soft) and Colour (Mono, Accent, Spectrum), the ones on marked', await ev('[...document.querySelectorAll("#sCards button")].map(b => b.textContent).join() === "Standard,OLED,Soft" && [...document.querySelectorAll("#sTint button")].map(b => b.textContent).join() === "Mono,Accent,Spectrum" && $("sCards").querySelector(".on").dataset.v === "standard" && $("sTint").querySelector(".on").dataset.v === "none"'));
-ok('Mono: no colour to pick', await ev('!document.querySelector("#setbody .lk-head")'));
+ok('Settings has Look: Theme (eight, Classic on), Background and Cells folded, Colour (Mono, Accent, Spectrum), no Cards', await ev('[...document.querySelectorAll("#setbody .th-b")].map(b => b.textContent).join() === "Classic,OLED,Soft,Warm,Slate,Aurora,Sunset,Neon" && !!document.querySelector("#setbody .lk-head[data-f=bg]:not(.open)") && !!document.querySelector("#setbody .lk-head[data-f=cells]:not(.open)") && [...document.querySelectorAll("#sTint button")].map(b => b.textContent).join() === "Mono,Accent,Spectrum" && $("sTint").querySelector(".on").dataset.v === "none" && !document.getElementById("sCards")') && await thOn() === 'classic');
+ok('Mono: no colour to pick', await ev('!document.querySelector("#setbody .lk-head[data-f=col]")'));
 ok('Mono: a switch that is on is light on dark, no blue', await css('#sClock', 'backgroundColor') === 'rgb(208, 208, 208)' && await css('#sClock', 'backgroundColor', '::after') === 'rgb(22, 22, 22)', await css('#sClock', 'backgroundColor') + ' ' + await css('#sClock', 'backgroundColor', '::after'));
 
-// ---- the cards ----
-await pick('sCards', 'oled');
-ok('OLED: true black, the cards drawn as lines only, at once', await look() === 'oled/none' && await css('body', 'backgroundColor') === 'rgb(0, 0, 0)' && await css('#view .tile', 'backgroundColor') === 'rgba(0, 0, 0, 0)' && await css('#view .tile', 'borderTopColor') === 'rgb(38, 38, 38)', await css('#view .tile', 'backgroundColor'));
+// ---- the themes ----
+await click(th('oled'));
+ok('OLED: true black, the cells drawn as lines only, at once', await look() === 'oled/none' && await css('body', 'backgroundColor') === 'rgb(0, 0, 0)' && await css('#view .tile', 'backgroundColor') === 'rgba(0, 0, 0, 0)' && await css('#view .tile', 'borderTopColor') === 'rgb(38, 38, 38)', await css('#view .tile', 'backgroundColor') + ' ' + await css('#view .tile', 'borderTopColor'));
 await p.key('z', 'KeyZ', 90, 2); await p.sleep(300);
-ok('Ctrl+Z with Settings open: Standard again, its button marked', await look() === 'standard/none' && await ev('$("sCards").querySelector(".on").dataset.v === "standard"'), await look());
+ok('Ctrl+Z with Settings open: Classic again, its card marked', await look() === 'classic/none' && await thOn() === 'classic', await look());
 await p.key('y', 'KeyY', 89, 2); await p.sleep(300);
-ok('Ctrl+Y: OLED again', await look() === 'oled/none' && await ev('$("sCards").querySelector(".on").dataset.v === "oled"'), await look());
-ok('OLED: its text says what it is, the button marked', await ev('/true black/i.test($("sCards").closest(".setrow").textContent) && $("sCards").querySelector(".on").dataset.v === "oled"'));
+ok('Ctrl+Y: OLED again', await look() === 'oled/none' && await thOn() === 'oled');
+ok('OLED: the Theme row says it', await ev('/OLED/.test(document.querySelector("#setbody .th-row small").textContent)'));
 await p.sleep(700);
-ok('saved with the view', !!state() && state().look && state().look.cards === 'oled' && state().look.tint === 'none', JSON.stringify(state() && state().look));
-ok('a look saved as Outline (the first afternoon) opens as OLED', await ev('cleanLook({ cards: "outline", tint: "accent" }).cards === "oled" && cleanLook({ cards: "nope" }).cards === "standard" && cleanLook({ acc: "red" }).acc === ACC0'));
-await pick('sCards', 'soft');
-ok('Soft: no line, a lighter card, a shadow, rounder', await look() === 'soft/none' && await css('#view .tile', 'borderTopColor') === 'rgba(0, 0, 0, 0)' && await css('#view .tile', 'backgroundColor') === 'rgb(26, 26, 26)' && await css('#view .tile', 'boxShadow') !== 'none' && parseFloat(await css('#view .tile', 'borderTopLeftRadius')) > r0, r0 + ' ' + await css('#view .tile', 'borderTopLeftRadius'));
-// a warning shows through every look (the yellow and red borders beat a look's line)
-const warnBorders = await ev(`(() => { const t = document.querySelector('#view .tile'), out = {}; t.style.transition = 'none';
-  for (const k of ['standard', 'oled', 'soft']) { document.documentElement.dataset.cards = k; t.classList.add('yellow'); out[k] = getComputedStyle(t).borderTopColor; t.classList.remove('yellow'); t.classList.add('red'); out[k] += ' ' + getComputedStyle(t).borderTopColor; t.classList.remove('red'); }
-  document.documentElement.dataset.cards = S.look.cards; t.style.transition = ''; return JSON.stringify(out); })()`);
-ok('a yellow or red tile keeps its border in every look', Object.values(JSON.parse(warnBorders)).every(v => v === 'rgb(92, 79, 29) rgb(107, 32, 32)'), warnBorders);
+ok('saved with the view', !!state() && state().look && state().look.theme === 'oled' && state().look.tint === 'none', JSON.stringify(state() && state().look));
+ok('a look saved before the themes opens as its theme with its colour (Outline as OLED, Soft, Standard as Classic)', await ev('cleanLook({ cards: "outline", tint: "accent" }).theme === "oled" && cleanLook({ cards: "outline", tint: "accent" }).tint === "accent" && cleanLook({ cards: "soft" }).theme === "soft" && cleanLook({ cards: "nope" }).theme === "classic" && cleanLook({ acc: "red" }).acc === ACC0 && (l => l.theme === "classic" && l.base === "#0d0d0d" && l.cell === "#151515" && l.op === 100 && l.acc === "#82664a" && l.pal === "fire" && !l.changed)(cleanLook({ cards: "standard", tint: "none", acc: "#82664a", pal: "fire" }))'));
+await click(th('soft'));
+ok('Soft: no line, a lighter cell, a shadow, rounder', await look() === 'soft/none' && await css('#view .tile', 'borderTopColor') === 'rgba(0, 0, 0, 0)' && await css('#view .tile', 'backgroundColor') === 'rgb(26, 26, 26)' && await css('#view .tile', 'boxShadow') !== 'none' && parseFloat(await css('#view .tile', 'borderTopLeftRadius')) > r0, r0 + ' ' + await css('#view .tile', 'borderTopLeftRadius'));
+// a warning shows through every theme (the yellow and red borders beat a theme's line)
+const warnBorders = await ev(`(() => { const t = document.querySelector('#view .tile'), out = {}, was = S.look; t.style.transition = 'none';
+  for (const k of Object.keys(THEME_PRESETS)) { S.look = cleanLook({ theme: k }); applyLook(); t.classList.add('yellow'); out[k] = getComputedStyle(t).borderTopColor; t.classList.remove('yellow'); t.classList.add('red'); out[k] += ' ' + getComputedStyle(t).borderTopColor; t.classList.remove('red'); }
+  S.look = was; applyLook(); t.style.transition = ''; return JSON.stringify(out); })()`);
+ok('a yellow or red tile keeps its border in every theme', Object.values(JSON.parse(warnBorders)).every(v => v === 'rgb(92, 79, 29) rgb(107, 32, 32)'), warnBorders);
+
+// ---- the background and the cells (11-05) ----
+await click(th('classic'));
+await click('#setbody .lk-head[data-f="bg"]');
+ok('Background opens: a small screen with a point on each edge and corner, the base on its chip, no fade yet', await until('!!document.querySelector("#setbody .lk-head[data-f=bg].open")', 2000) && await ev('document.querySelectorAll("#setbody .bg-h").length === 8 && !document.querySelector("#setbody .bg-h.f") && !document.querySelector("#setbody .bg-fh")') && await chipC('base') === '#0d0d0d');
+await click('#setbody .bg-h[data-at="b"]');
+ok('a point clicked: a fade there, picked, on the view at once, the theme now changed', await ev('S.look.fades.length === 1 && S.look.fades[0].at === "b" && S.look.changed && document.querySelector("#setbody .bg-h[data-at=b]").classList.contains("on") && !!document.querySelector("#setbody .bg-fh")') && /radial-gradient/.test(await css('body', 'backgroundImage')) && await ev('/Classic, changed/.test(document.querySelector("#setbody .th-row small").textContent)'), await css('body', 'backgroundImage'));
+const u1 = await ev('undoStack.length');
+await ev('(() => { const r = document.querySelector("#setbody .lk-rng[data-k=a]"); r.value = 60; r.dispatchEvent(new Event("input", { bubbles: true })); r.value = 62; r.dispatchEvent(new Event("input", { bubbles: true })); r.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()'); await p.sleep(300);
+ok('its strength dragged: taken, one undo step for the whole drag', await ev('S.look.fades[0].a === 62') && await ev('undoStack.length') === u1 + 1, await ev('S.look.fades[0].a'));
+await ev('undo(); 1'); await p.sleep(300);
+ok('undo: the strength before', await ev('S.look.fades[0].a === 30'));
+await openChip('fade');
+await clickAt(tonesIn + '[2]');
+ok('the fade\'s colour from its chip', await ev('S.look.fades[0].c === TONES.flat()[2]'), await ev('S.look.fades[0].c'));
+await click('#setbody .bg-x');
+ok('the fade removed: the plain base again', await ev('S.look.fades.length === 0') && !/radial-gradient/.test(await css('body', 'backgroundImage')));
+await click('#setbody .lk-head[data-f="cells"]');
+ok('Cells opens: the fill on its chip, opacity, outline, corners', await until('!!document.querySelector("#setbody .lk-head[data-f=cells].open")', 2000) && await chipC('cell') === '#151515' && await ev('!!document.querySelector("#setbody .lk-rng[data-k=op]") && !!document.querySelector("#setbody [data-lk=line].on") && document.querySelectorAll("#setbody [data-lk=cor]").length === 3'));
+await ev('(() => { const r = document.querySelector("#setbody .lk-rng[data-k=op]"); r.value = 40; r.dispatchEvent(new Event("input", { bubbles: true })); r.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()'); await p.sleep(300);
+ok('opacity 40%: the cells see-through', await css('#view .tile', 'backgroundColor') === 'rgba(21, 21, 21, 0.4)', await css('#view .tile', 'backgroundColor'));
+await click('#setbody [data-lk="line"]');
+ok('outline off: no line', await css('#view .tile', 'borderTopColor') === 'rgba(0, 0, 0, 0)' && await ev('S.look.line === false'));
+await click('#setbody [data-lk="cor"][data-v="sharp"]');
+ok('sharp corners', parseFloat(await css('#view .tile', 'borderTopLeftRadius')) < r0, await css('#view .tile', 'borderTopLeftRadius'));
+await openChip('cell');
+ok('the fill\'s chip: dark tones (greys first), no Auto', await ev(tonesIn + '.length === 24 && ' + tonesIn + '[0].dataset.c === "#000000" && !document.querySelector("#setbody .lk-pop .lk-auto")'));
+await clickAt(tonesIn + '[9]');
+ok('a dark tone picked: the fill', await ev('S.look.cell === DARK.flat()[9]'), await ev('S.look.cell'));
+ok('the same tone again: no undo step (the review 11-05)', await ev('(() => { const u = undoStack.length; pickColour("cell", S.look.cell); return undoStack.length === u; })()'));
+ok('the Classic card line as before (#232323), in the tokens', await ev('(() => { const v = lookVars(cleanLook({ theme: "classic" })); return v["--card-line"] === "#232323" && v["--tile-line"] === "#242424" && v["--rule"] === "#222222" && v["--line2"] === "#333333"; })()'));
+await click(th('aurora'));
+ok('Aurora: its background, see-through cells, Spectrum with Match: the categories in colours made from its fades', await look() === 'aurora/spectrum' && await ev('S.look.pal === "match"') && /radial-gradient/.test(await css('body', 'backgroundImage')) && await until(`(() => { const c = S.L.cats.map(c => { const e = document.querySelector('#view .dcat[data-cat="' + c.id + '"]'); return e ? e.style.getPropertyValue('--cc') : ''; }); return c.filter(Boolean).length >= 4 && c.every(x => !x || !${JSON.stringify(WANT)}.includes(x)) && c.filter(Boolean).every(x => Object.values(PALETTES.match[1]).includes(x)); })()`, 3000), await ccs());
+await click(th('classic'));
+await foldsShut();
+ok('Classic again: as it was', await look() === 'classic/none' && await css('#view .tile', 'backgroundColor') === 'rgb(21, 21, 21)' && await ev('!S.look.changed && S.look.fades.length === 0'));
 
 // ---- Accent: one colour, yours ----
-await pick('sCards', 'standard');
 await pick('sTint', 'accent');
-ok('Accent: the view tabs\' pill and the picked buttons in its colour (blue to start), the cards as they were', await look() === 'standard/accent' && await css('#tabind', 'backgroundColor') === await asColour('color-mix(in srgb, #7fa6e8 22%, transparent)') && await css('#sTint .ind', 'backgroundColor') === await asColour('color-mix(in srgb, #7fa6e8 22%, transparent)') && await css('#view .tile', 'backgroundColor') === 'rgb(21, 21, 21)', await css('#tabind', 'backgroundColor'));
+ok('Accent: the view tabs\' pill and the picked buttons in its colour (blue to start), the cells as they were', await look() === 'classic/accent' && await css('#tabind', 'backgroundColor') === await asColour('color-mix(in srgb, #7fa6e8 22%, transparent)') && await css('#sTint .ind', 'backgroundColor') === await asColour('color-mix(in srgb, #7fa6e8 22%, transparent)') && await css('#view .tile', 'backgroundColor') === 'rgb(21, 21, 21)', await css('#tabind', 'backgroundColor'));
 ok('Accent: the switches in it too', await css('#sClock', 'backgroundColor', '::after') === rgb('#7fa6e8'), await css('#sClock', 'backgroundColor', '::after'));
 ok('Accent: no category colours', (await ccs()).replace(/,/g, '') === '');
 ok('Accent: its colour in Colours, folded, Blue to start, no palettes, no Auto', await ev('!!document.querySelector("#setbody .lk-head") && !document.querySelector("#setbody .lk-head.open") && !document.querySelector("#setbody .lk-pres") && !document.querySelector("#setbody .lk-auto")') && await chipC('acc') === '#7fa6e8', await chipC('acc'));
-await click('#setbody .lk-head');
+await click('#setbody .lk-head[data-f="col"]');
 ok('Colours opens', await until('!!document.querySelector("#setbody .lk-head.open") && !!document.querySelector("#setbody .lk-body.open")', 2000));
 ok('its chip opens the tones (24), a hex field and the full picker', await openChip('acc') && await ev(tonesIn + '.length === 24 && !!document.querySelector("#setbody .lk-pop .lk-hex") && !!document.querySelector("#setbody .lk-pop .lk-any input[type=color]")'));
 const tone = await ev(tonesIn + '[1].dataset.c');
@@ -126,11 +166,11 @@ await ev('$("gmodal").classList.remove("open"); 1'); await p.sleep(300);
 ok('Spectrum: the pills and switches in the accent', await css('#tabind', 'backgroundColor') === await asColour('color-mix(in srgb, #7fa6e8 22%, transparent)') && await css('#sClock', 'backgroundColor', '::after') === rgb('#7fa6e8'), await css('#tabind', 'backgroundColor'));
 const ids = await ev('S.L.cats.map(c => c.id)');
 const chipCs = async () => { const o = []; for (const k of ids) o.push(await chipC(k)); return o; };
-ok('Colours lists the palettes, Muted on, and a chip per category in its colour, auto', await ev('document.querySelectorAll("#setbody .lk-pres button").length === Object.keys(PALETTES).length && document.querySelector("#setbody .lk-pres button.on").dataset.k === "muted" && document.querySelectorAll("#setbody .lk-chip").length === 7 && [...document.querySelectorAll("#setbody .lk-tag")].slice(1).every(t => t.textContent === "auto")') && JSON.stringify(await chipCs()) === JSON.stringify(WANT), JSON.stringify(await chipCs()));
+ok('Colours lists the palettes, Muted on, and a chip per category in its colour, auto', await ev('document.querySelectorAll("#setbody .lk-pres button").length === Object.keys(PALETTES).length && document.querySelector("#setbody .lk-pres button.on").dataset.k === "muted" && document.querySelectorAll("#setbody .lk-cols .lk-chip").length === 7 && [...document.querySelectorAll("#setbody .lk-cols .lk-tag")].slice(1).every(t => t.textContent === "auto")') && JSON.stringify(await chipCs()) === JSON.stringify(WANT), JSON.stringify(await chipCs()));
 await openChip(ids[1]);
 const rose = await ev(tonesIn + '[7].dataset.c');
 await clickAt(tonesIn + '[7]');
-ok('the GPU\'s colour picked: its name, its graphs, its chip says yours, kept with the layout', await until('S.L.cats[1].col === ' + JSON.stringify(rose), 2000) && await ccOf(1) === rose && await graphsOf(1, rose) && await chipC(ids[1]) === rose && await ev('[...document.querySelectorAll("#setbody .lk-tag")][2].textContent === "yours"'), await ev('JSON.stringify(S.L.cats.map(c => c.col || ""))'));
+ok('the GPU\'s colour picked: its name, its graphs, its chip says yours, kept with the layout', await until('S.L.cats[1].col === ' + JSON.stringify(rose), 2000) && await ccOf(1) === rose && await graphsOf(1, rose) && await chipC(ids[1]) === rose && await ev('[...document.querySelectorAll("#setbody .lk-cols .lk-tag")][2].textContent === "yours"'), await ev('JSON.stringify(S.L.cats.map(c => c.col || ""))'));
 await p.sleep(700);
 ok('saved with the view', !!state() && state().L.cats[1].col === rose, JSON.stringify(state() && state().L.cats.map(c => c.col || '')));
 await ev('undo(); 1'); await p.sleep(500);
@@ -148,16 +188,10 @@ ok('the palette in use, nothing of yours on it: no undo step', await ev('undoSta
 const fb = await p.center('#setbody .lk-pres button[data-k="fire"]');
 await click('#setbody .lk-pres button[data-k="fire"]');
 ok('a palette (Fire): each category its part\'s colour from it, the accent its own', await until(JSON.stringify(FIRE.join()) + ' === ' + ccList, 3000) && await ev('S.look.pal === "fire" && S.look.acc === "#ff9f43"'), await ccs());
-// (the pointer held still after a pick: Settings goes see-through so the view shows; folded, it doesn't)
-await p.sleep(1000);
-ok('resting after a pick, Colours open: Settings goes see-through', await ev('$("setmodal").classList.contains("peek")'));
-await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: fb.x + 30, y: fb.y }); await p.sleep(250);
-ok('a move ends it', await ev('!$("setmodal").classList.contains("peek")'));
-await p.sleep(1000);
-ok('resting again within its 10 seconds: see-through again', await ev('$("setmodal").classList.contains("peek")'));
-await click('#setbody .lk-head');
-await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: fb.x + 10, y: fb.y + 10 }); await p.sleep(1000);
-ok('Colours folded: not see-through, even resting again', await ev('!$("setmodal").classList.contains("peek") && !document.querySelector("#setbody .lk-head.open")'));
+// (11-05: Settings stays as it is while the look changes: no see-through, no eye, no moving aside)
+await p.sleep(1200);
+ok('after a pick, resting: Settings as it was, centred and dimmed', await ev('!$("setmodal").classList.contains("dock") && !$("setmodal").classList.contains("peek") && !document.getElementById("setPeek")') && await css('#setmodal', 'backgroundColor') !== 'rgba(0, 0, 0, 0)' && await css('#setmodal .mcard', 'opacity') === '1', await ev('setmodal.className'));
+await click('#setbody .lk-head[data-f="col"]');
 await ev('undo(); 1'); await p.sleep(500);
 ok('undo: Muted and Blue again', await ev('S.look.pal === "muted" && S.look.acc === "#7fa6e8"') && await until(JSON.stringify(WANT.join()) + ' === ' + ccList, 3000), await ccs());
 
@@ -179,7 +213,7 @@ ok('a mix (a GPU, a CPU and a drive reading) and an even split stay grey; two GP
 await ev(`(() => { snap(); S.L.cats = S.L.cats.filter(c => !['Mix', 'Mostly GPU', 'Even'].includes(c.name)); afterChange(); return 1; })()`); await p.sleep(600);
 
 // ---- kept after a reload (a category's own colour too) ----
-await ev('(() => { S.look = { cards: "oled", tint: "spectrum", acc: ACC0, pal: "muted" }; applyLook(); S.L.cats[0].col = "#c79ad6"; afterChange(); return 1; })()'); await p.sleep(800);
+await ev('(() => { S.look = cleanLook({ theme: "oled", tint: "spectrum", acc: ACC0, pal: "muted" }); applyLook(); S.L.cats[0].col = "#c79ad6"; afterChange(); return 1; })()'); await p.sleep(800);
 const WANT2 = ['#c79ad6'].concat(WANT.slice(1));
 ok('after a reload: OLED and Spectrum, the colours back on, the one picked kept', await reload() && await look() === 'oled/spectrum' && await until(`${JSON.stringify(WANT2)}.join() === S.L.cats.map(c => { const e = document.querySelector('#view .dcat[data-cat="' + c.id + '"]'); return e ? e.style.getPropertyValue('--cc') : '?'; }).join()`, 4000), await ccs());
 await ev('(() => { delete S.L.cats[0].col; afterChange(); return 1; })()'); await p.sleep(400);
@@ -187,10 +221,10 @@ await ev('(() => { delete S.L.cats[0].col; afterChange(); return 1; })()'); awai
 // ---- back to Mono and Standard: as before, nothing left behind ----
 await click('#setBtn');
 await pick('sTint', 'none');
-await pick('sCards', 'standard');
-ok('Mono again: no category colours, the names grey', await look() === 'standard/none' && (await ccs()).replace(/,/g, '') === '' && await ev('getComputedStyle(document.querySelector("#view .blk h2")).color === "rgb(116, 116, 116)"'));
+await click(th('classic'));
+ok('Mono again: no category colours, the names grey', await look() === 'classic/none' && (await ccs()).replace(/,/g, '') === '' && await ev('getComputedStyle(document.querySelector("#view .blk h2")).color === "rgb(116, 116, 116)"'));
 ok('Mono again: the graphs grey', await until(`${graphsIn}.flat().every(x => !${JSON.stringify(WANT)}.includes(x))`, 4000), await ev(`JSON.stringify(${graphsIn})`));
-ok('Standard again: the cards as they were', await css('#view .tile', 'backgroundColor') === 'rgb(21, 21, 21)' && await css('body', 'backgroundColor') === 'rgb(13, 13, 13)');
+ok('Classic again: the cells as they were', await css('#view .tile', 'backgroundColor') === 'rgb(21, 21, 21)' && await css('body', 'backgroundColor') === 'rgb(13, 13, 13)');
 await p.sleep(700);
 ok('the default saves as nothing', !!state() && state().look === undefined, JSON.stringify(state() && state().look));
 
