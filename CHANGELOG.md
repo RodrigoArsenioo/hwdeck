@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.0 (2026-11-05)
+
+- With Animations on Full, a popup opened by a click grows out of the tile or button you clicked.
+- A popup opened over another one: the one underneath steps back, and the view behind is no longer darkened and blurred twice.
+- With Animations on Minimal, layout edits slide into place too (a short slide, no fades).
+- Moving the pointer from one tile to the next switches the hover preview at once, however slowly you cross the gap between them.
+- The side panels slide at the same speed as popups, and colour changes share one timing.
+
 ## 2.2.0 (2026-11-05)
 
 - A tile's size in Tiles is now a share of its row, shown as a %, and a height in rows. It stays the same at any window size and text size, and the size settings no longer show pixels or steps of quarters and thirds: a width in % with 25, 33, 50, 67, 75 and 100%, and a height in rows with 0.5, 1, 1.5 and 2. Dragging a tile's corner snaps to those widths, and Ctrl+arrows change the width by 1% (with Shift, to the next of those widths).

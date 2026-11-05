@@ -1111,8 +1111,41 @@ function settleReel(rl) {
 // a popup is open: the view under its blur holds still (no spins, rolls or slides; its values still change every second),
 // the popup itself moves as usual (2.1, the motion audit 11-04)
 let modalUp = false;
-const modalObs = new MutationObserver(() => { const was = modalUp; modalUp = !!document.querySelector('.modal.open'); if (was && !modalUp && motionOn()) motionRun(); });   // (closed: the fans turn again at once, in Full only)
-const watchModal = m => modalObs.observe(m, { attributes: true, attributeFilter: ['class'] });
+// a popup opened by a click grows out of what was clicked (a tile, a title bar button), in Full; Minimal and Off as before
+// (2.2, his autopilot list 11-05: "popups grow from the click")
+let lastPress = null;
+document.addEventListener('pointerdown', e => { lastPress = { el: e.target, t: performance.now(), x: e.clientX, y: e.clientY }; }, true);
+document.addEventListener('keydown', () => { lastPress = null; }, true);   // (a popup a key opened grows as before, not out of the last click)
+function growFrom(m) {
+  const card = m.querySelector(':scope > .mcard');
+  if (!card || !motionOn() || !lastPress || performance.now() - lastPress.t > 700 || m.contains(lastPress.el) || !lastPress.el.isConnected) return;
+  const src = lastPress.el.closest('.tile, .row, .bcell, .gx-row, .card, button, .ib') || lastPress.el, r = src.getBoundingClientRect();
+  const w = card.offsetWidth, h = card.offsetHeight; if (!w || !h) return;
+  const cx = card.offsetLeft + w / 2, cy = card.offsetTop + h / 2;   // (where it sits open, its transform aside)
+  const has = r.width > 0 && r.height > 0, sx = has ? r.left + r.width / 2 : lastPress.x, sy = has ? r.top + r.height / 2 : lastPress.y;
+  const s = Math.max(0.12, Math.min(0.9, has ? Math.min(r.width / w, r.height / h) : 0.12));
+  card.animate([{ transform: 'translate(' + (sx - cx).toFixed(1) + 'px, ' + (sy - cy).toFixed(1) + 'px) scale(' + s.toFixed(3) + ')', opacity: 0.2 }, { transform: 'none', opacity: 1 }], { duration: 340, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+}
+// popups over popups (Controls, then a device's own; 2.2): the one on top has a light dim and no second blur, the ones
+// under it step back (deck.css .modal.over / .under). On top: the highest, then the one opened last
+function stackModals() {
+  const open = [...document.querySelectorAll('.modal.open')], z = m => parseInt(getComputedStyle(m).zIndex, 10) || 0;
+  let top = null; for (const m of open) if (!top || z(m) > z(top) || (z(m) === z(top) && (m._openAt || 0) > (top._openAt || 0))) top = m;
+  for (const m of document.querySelectorAll('.modal')) {
+    const on = open.length > 1 && m.classList.contains('open');
+    // (one closing from on top keeps its light dim while it fades, 150 ms, so the one under doesn't flash darker)
+    if (!m.classList.contains('open') && m.classList.contains('over')) { clearTimeout(m._overT); m._overT = setTimeout(() => { if (!m.classList.contains('open')) m.classList.remove('over'); }, 200); }
+    else m.classList.toggle('over', on && m === top);
+    m.classList.toggle('under', on && m !== top);
+  }
+}
+const modalObs = new MutationObserver(rs => {
+  const was = modalUp; modalUp = !!document.querySelector('.modal.open');
+  for (const r of rs) { const m = r.target; if (m.classList.contains('open') && !/(^|\s)open(\s|$)/.test(r.oldValue || '')) { m._openAt = performance.now(); growFrom(m); } }
+  stackModals();
+  if (was && !modalUp && motionOn()) motionRun();   // (closed: the fans turn again at once, in Full only)
+});
+const watchModal = m => modalObs.observe(m, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
 for (const m of document.querySelectorAll('.modal')) watchModal(m);
 // (a build's own popup, made after the page: Controls in the fork's extras.js; the motion audit 11-04 found the view kept
 // moving under it, and Full stuck still after a popup over it closed first)
@@ -1650,14 +1683,17 @@ function catRects() {
   return m;
 }
 function playFlip(was) {
-  const dur = motionOn() ? 280 : 0;
+  // (Minimal: a short glide, where it goes only, no fades: an edit is a reply to a click, as drawers and toggles are;
+  // his autopilot list 11-05, "edits glide in Minimal", 2.2. Off: none)
+  const mode = motionMode(), full = mode === 'full', dur = full ? 280 : mode === 'minimal' ? 180 : 0;
   if (!dur || S.screen === 'grid') return;
+  const half = full ? 0.5 : 1;   // (a new size, from its old middle: half seen in Full, whole in Minimal)
   const moved = new Set();   // (the categories that glide: their cells go with them)
   for (const el of document.querySelectorAll('#view .dcat')) {
     const a = was.get(el.dataset.cat); if (!a) continue;
     const b = el.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
     // (a new width or height: from its old middle, half seen, so its tiles packed anew never show mid-jump; 11-02)
-    if (Math.abs(a.width - b.width) > 8 || Math.abs(a.height - b.height) > 8) { moved.add(el); el.animate([{ transform: 'translate(' + (a.left + a.width / 2 - b.left - b.width / 2) + 'px, ' + (a.top + a.height / 2 - b.top - b.height / 2) + 'px)', opacity: 0.5 }, { transform: 'none', opacity: 1 }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); }
+    if (Math.abs(a.width - b.width) > 8 || Math.abs(a.height - b.height) > 8) { moved.add(el); el.animate([{ transform: 'translate(' + (a.left + a.width / 2 - b.left - b.width / 2) + 'px, ' + (a.top + a.height / 2 - b.top - b.height / 2) + 'px)', opacity: half }, { transform: 'none', opacity: 1 }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); }
     else if (Math.abs(dx) + Math.abs(dy) > 1) { moved.add(el); el.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); }
   }
   // the cells an edit moved glide from where they were, a new one comes in; not those whose category glides with them
@@ -1665,12 +1701,12 @@ function playFlip(was) {
   for (const el of document.querySelectorAll('#view .dc[data-cid]')) {
     const c = el.closest('.dcat'); if (c && moved.has(c)) continue;
     const a = was.cells.get(el.dataset.cid);
-    if (!a) { el.animate([{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'ease-out' }); continue; }
+    if (!a) { if (full) el.animate([{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'ease-out' }); continue; }
     const b = el.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
     // (a new size, a size button or a wider row: from its old middle, half seen, as a category; it snapped while its
     // neighbours glided: the motion audit 11-04)
-    if (Math.abs(a.width - b.width) > 8 || Math.abs(a.height - b.height) > 8) { el.animate([{ transform: 'translate(' + (a.left + a.width / 2 - b.left - b.width / 2) + 'px, ' + (a.top + a.height / 2 - b.top - b.height / 2) + 'px)', opacity: 0.5 }, { transform: 'none', opacity: 1 }], { duration: 240, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); continue; }
-    if (Math.abs(dx) + Math.abs(dy) > 1) el.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }], { duration: 240, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    if (Math.abs(a.width - b.width) > 8 || Math.abs(a.height - b.height) > 8) { el.animate([{ transform: 'translate(' + (a.left + a.width / 2 - b.left - b.width / 2) + 'px, ' + (a.top + a.height / 2 - b.top - b.height / 2) + 'px)', opacity: half }, { transform: 'none', opacity: 1 }], { duration: full ? 240 : dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); continue; }
+    if (Math.abs(dx) + Math.abs(dy) > 1) el.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }], { duration: full ? 240 : dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
   }
 }
 
@@ -4589,29 +4625,35 @@ hprev.innerHTML = '<div class="ph"><span class="pi"></span><span class="pt"></sp
 document.body.appendChild(hprev);
 const HP = { cid: null, el: null, timer: 0, shown: false, rev0: 0, raf: 0, ext: false };
 const anyModalOpen = () => [...document.querySelectorAll('.modal')].some(m => m.classList.contains('open'));
+// the gap between two cells: the preview stays a moment before it goes, so the next cell's shows at once, gliding there,
+// however slowly the pointer crosses (his NVIDIA clip 11-05: a slow move hid it in the gap, then the next one waited its
+// 330 ms; a quick one jumped the gap and went straight on. 2.2)
+let hpGrace = 0;
+const hideSoon = () => { clearTimeout(hpGrace); if (!HP.shown) return; hpGrace = setTimeout(() => { if (!HP.cid) hidePrev(); }, 220); };
 sectionsEl.addEventListener('pointerover', e => {
   const n = S.edit || drag ? null : e.target.closest('#view .dc');
   const cid = n && !n.classList.contains('missing') ? n.dataset.cid : null;
   if (cid === HP.cid) return;
-  HP.cid = cid; HP.el = n; clearTimeout(HP.timer);
-  if (!cid || anyModalOpen()) { hidePrev(); return; }
+  HP.cid = cid; HP.el = n; clearTimeout(HP.timer); clearTimeout(hpGrace);
+  if (anyModalOpen()) { hidePrev(); return; }
+  if (!cid) { hideSoon(); return; }
   if (HP.shown) showPrev(true);
   else HP.timer = setTimeout(() => { if (HP.cid === cid && !anyModalOpen()) showPrev(false); }, 330);
 });
-sectionsEl.addEventListener('pointerleave', () => { HP.cid = null; clearTimeout(HP.timer); hidePrev(); });
+sectionsEl.addEventListener('pointerleave', () => { HP.cid = null; clearTimeout(HP.timer); clearTimeout(hpGrace); hidePrev(); });
 // an extras build's own boxes (its Controls popup's devices, 2.1) show the same preview: a box with data-prev-key, over
 // the popup it sits in (a popup opened over that one hides it); a reading with no cell in the layout uses one kept
 // aside (cellAt)
 const prevBlocked = n => [...document.querySelectorAll('.modal.open')].some(m => !m.contains(n));
-const prevOff = () => { if (HP.ext) { HP.ext = false; HP.cid = null; clearTimeout(HP.timer); hidePrev(); } };
+const prevOff = () => { if (HP.ext) { HP.ext = false; HP.cid = null; clearTimeout(HP.timer); clearTimeout(hpGrace); hidePrev(); } };
 document.addEventListener('pointerover', e => {
   const n = S.edit || drag || !e.target.closest ? null : e.target.closest('[data-prev-key]');
-  if (!n) { prevOff(); return; }
+  if (!n) { if (HP.ext) { HP.ext = false; HP.cid = null; clearTimeout(HP.timer); hideSoon(); } return; }   // (a gap between two boxes: as between cells)
   const key = n.dataset.prevKey;
   let cid = Object.keys(S.L.cells).find(id => S.L.cells[id].key === key);
   if (!cid) { cid = 't:' + key; if (!TCELL[cid]) TCELL[cid] = { key, name: n.dataset.prevName || '' }; }
   if (cid === HP.cid && HP.el === n) return;
-  HP.cid = cid; HP.el = n; HP.ext = true; clearTimeout(HP.timer);
+  HP.cid = cid; HP.el = n; HP.ext = true; clearTimeout(HP.timer); clearTimeout(hpGrace);
   if (prevBlocked(n)) { hidePrev(); return; }
   if (HP.shown) showPrev(true);
   else HP.timer = setTimeout(() => { if (HP.cid === cid && HP.el === n && !prevBlocked(n)) showPrev(false); }, 330);

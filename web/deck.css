@@ -3,6 +3,8 @@
    Colors follow the tailored dashboard (dark only). */
 :root {
   color-scheme: dark;
+  /* one set of timings (2.2, the motion audit's mixed durations): a hover, a state's colour, something that moves */
+  --t-quick: 140ms; --t-state: 300ms; --t-move: 280ms; --e-move: cubic-bezier(0.2, 0.8, 0.2, 1);
   --bg: #0d0d0d; --panel: #151515; --side: #0f0f0f; --raise: #1c1c1c; --line: #242424; --line2: #333;
   --fg: #e0e0e0; --hi: #fff; --muted: #8c8c8c; --dim: #737373;
   --edit: #7fa6e8; --edit-soft: rgba(127, 166, 232, 0.14);
@@ -99,12 +101,12 @@ nav#screens .ind.still { transition: none; }
    behind a tab on each edge until the pointer rests on the tab (or one is pinned, or the settings have a selection) */
 .app.editing .panes { box-shadow: inset 0 1px 0 var(--line); }
 .storage, .insp { position: absolute; top: 0; bottom: 0; z-index: 30; max-width: 85%; visibility: hidden;
-                  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s 200ms; }
+                  transition: transform var(--t-move) var(--e-move), visibility 0s var(--t-move); }   /* (as popups move, not quicker: 2.2) */
 .storage { left: 0; width: 300px; transform: translateX(-102%); box-shadow: 16px 0 40px rgba(0,0,0,0.55); }
 .insp { right: 0; width: 310px; transform: translateX(102%); box-shadow: -16px 0 40px rgba(0,0,0,0.55); }
 .insp.left { right: auto; left: 0; transform: translateX(-102%); z-index: 31; border-left: 0; border-right: 1px solid var(--line); box-shadow: 16px 0 40px rgba(0,0,0,0.55); }
 .storage.right { left: auto; right: 0; transform: translateX(102%); border-right: 0; border-left: 1px solid var(--line); box-shadow: -16px 0 40px rgba(0,0,0,0.55); }   /* (moved to the other side: 11-02) */
-.storage.open, .insp.open { transform: none; visibility: visible; transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s; }
+.storage.open, .insp.open { transform: none; visibility: visible; transition: transform var(--t-move) var(--e-move), visibility 0s; }
 .app.boot .storage, .app.boot .insp { transition: none; }   /* (a cold start: pinned ones are just there) */
 /* (edit mode turned on with a drawer pinned: it slides in from its edge like one opened from the strip, 11-02; a cold
    start stays still, and Off has no transitions) */
@@ -181,7 +183,7 @@ html[data-motion="off"] .viewwrap { transition: none; }
 .od.roll .odh { visibility: hidden; } .od.roll .odr { visibility: visible; }
 .spw, .lbl i.spw { display: inline-flex; flex: none; font-style: normal; }   /* (not .lbl i's block: its line box sat the fan 1px off the turn's centre) */
 .yellow { color: var(--yellow); } .red { color: var(--red); } .grey { color: #555; }
-.val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; transition: color 350ms; }
+.val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; transition: color var(--t-state); }
 .val small { color: #666; font-weight: 400; font-size: 0.88rem; margin-left: 0.15rem; }
 .lbl { color: #9a9a9a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; line-height: 1.25; }
 .lbl i { display: block; font-style: normal; color: #767676; font-size: 0.81rem; overflow: hidden; text-overflow: ellipsis; transition: color 300ms; }
@@ -268,7 +270,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .tn > .tq { margin-left: auto; padding-left: 0.5rem; flex: 0 100 auto; font-size: max(0.88rem, 10px); color: #7b7b7b; }
 .tn > .tq:empty { display: none; }
 .tn svg, .gname svg, .ch svg, .nm svg { width: 0.92rem; height: 0.92rem; stroke: #5a5a5a; fill: none; stroke-width: 1.7; flex: none; }
-.tv { flex: none; font-family: var(--f-num); font-size: 2.15rem; font-weight: 600; line-height: 1.15; margin-top: 0.23rem; white-space: nowrap; font-variant-numeric: tabular-nums; transition: color 350ms; color: #e8e8e8; }
+.tv { flex: none; font-family: var(--f-num); font-size: 2.15rem; font-weight: 600; line-height: 1.15; margin-top: 0.23rem; white-space: nowrap; font-variant-numeric: tabular-nums; transition: color var(--t-state); color: #e8e8e8; }
 .tv small { font-size: 0.88rem; color: #666; font-weight: 400; margin-left: 0.23rem; }
 .tc { flex: none; font-size: max(0.88rem, 10px); color: #7b7b7b; margin-top: 0.08rem; margin-bottom: 0.46rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 300ms; min-height: 1.2em; }
 .tile canvas { flex: 1 1 0; height: auto; min-height: 1.6rem; max-height: 3.23rem; width: 100%; display: block; margin-top: auto; contain: size; }   /* its bitmap never sizes the tile */
@@ -288,7 +290,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .hero { display: grid; grid-template-columns: minmax(0, auto) minmax(40%, 1fr); align-items: end; gap: 1.08rem; padding-bottom: 0.62rem; cursor: pointer; border-bottom: 1px solid #232323; }
 .hero .nm { font-size: 0.92rem; color: #8a8a8a; margin-bottom: 0.2rem; display: flex; align-items: center; gap: 0.4rem; white-space: nowrap; overflow: hidden; max-width: 16rem; }
 .hero .nm > span { overflow: hidden; text-overflow: ellipsis; }
-.hv { font-family: var(--f-num); font-size: 2.31rem; font-weight: 600; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; transition: color 350ms; color: #e8e8e8; }
+.hv { font-family: var(--f-num); font-size: 2.31rem; font-weight: 600; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; transition: color var(--t-state); color: #e8e8e8; }
 .hv small { font-size: 1.08rem; color: #666; font-weight: 400; margin-left: 0.23rem; }
 .tv.yellow, .hv.yellow { color: var(--yellow); } .tv.red, .hv.red { color: var(--red); } .tv.grey, .hv.grey { color: #555; }
 .tv.past, .hv.past, .val.past { color: #a3a3a3; }   /* a past reading (2.1: the last game session while no game runs) */
@@ -325,7 +327,7 @@ table.gt { width: 100%; border-collapse: collapse; font-size: 0.96rem; table-lay
 .gt td.gname { text-align: left; color: #9c9c9c; }
 .gt td.gname svg { vertical-align: -0.1rem; margin-right: 0.54rem; }
 .gt td.gname .spw { vertical-align: -0.1rem; margin-right: 0.54rem; } .gt td.gname .spw svg { margin-right: 0; }
-.gt td.gval { font-weight: 600; color: #e8e8e8; transition: color 350ms, background 150ms; }
+.gt td.gval { font-weight: 600; color: #e8e8e8; transition: color var(--t-state), background 150ms; }
 .gt td.gval .v { display: inline-block; min-width: 3.3rem; text-align: right; }
 .gt td.gval .gu { display: inline-block; width: 2.3rem; margin-left: 0.3rem; text-align: left; color: #666; font-weight: 400; font-size: 0.85rem; }
 .gt td.gval.yellow { color: var(--yellow); } .gt td.gval.red { color: var(--red); } .gt td.gval.grey { color: #555; } .gt td.gval.past { color: #a3a3a3; }
@@ -601,7 +603,10 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
          box-shadow: 0 24px 60px rgba(0,0,0,0.55); transform: translateY(26px) scale(0.94); transition: transform 150ms ease-in; }
 /* a popup taller than the window scrolls inside its card, with a thin scrollbar so it's clear it does */
 .mcard { scrollbar-width: thin; scrollbar-color: #343434 transparent; overscroll-behavior: contain; }
-.modal.open .mcard { transform: none; transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1); will-change: transform, opacity; }
+.modal.open .mcard { transform: none; transition: transform 340ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms ease-out; will-change: transform, opacity; }
+/* a popup over another (2.2): the one on top a light dim and no second blur, the one under steps back (stackModals) */
+.modal.over, #cmodal.over { background: rgba(0,0,0,0.3); backdrop-filter: none; }
+.modal.open.under .mcard { transform: scale(0.965); opacity: 0.6; transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms ease-out; }
 :is(#gmodal, #wmodal) .mcard { width: min(1000px, 94vw); padding: 22px 26px 22px; }
 /* (Sessions grows as its bar and rows open: its top stays where a full one's is, so nothing jumps under the pointer and
    quick clicks land on the same thing) */
