@@ -74,11 +74,12 @@ ok('Grid: at most 3 tables and one row, the rest goes into the last table', cl.v
 cl = await J(`cleanLayout(Object.assign(${BUILD}, { views: {
   tiles: { gap: 'huge', cat: { gpu: { per: 0, size: 'short', title: 'hide', lead: 'cpu0', style: 'band' }, cpu: { per: 3, lead: 'cpu2' } }, cell: { gpu0: { size: 'huge', name: '  ' }, gpu1: { size: 'wide', name: 'Hot' }, gone: { name: 'x' } } },
   overview: { gap: 'tight', cat: { fans: { style: 'band', size: 'short', per: 4 } } } } }))`);
-ok('looks: per out of range, a lead from another category, a style in Tiles and a bad gap are dropped', !cl.views.tiles.gap && JSON.stringify(cl.views.tiles.cat) === '{"gpu":{"size":"short","title":"hide"},"cpu":{"per":3,"lead":"cpu2"}}', JSON.stringify(cl.views.tiles.cat));
-ok('cell looks: a bad size, a blank name and a missing cell are dropped', JSON.stringify(cl.views.tiles.cell) === '{"gpu1":{"size":"wide","name":"Hot"}}', JSON.stringify(cl.views.tiles.cell));
+ok('looks: per out of range, a lead from another category, a style in Tiles and a bad gap are dropped; tiles per row read as shares (2.2)', !cl.views.tiles.gap && JSON.stringify(cl.views.tiles.cat) === '{"gpu":{"size":"short","title":"hide"},"cpu":{"lead":"cpu2"}}', JSON.stringify(cl.views.tiles.cat));
+const cc = cl.views.tiles.cell, cpuIds = Object.keys(cc).filter(k => k !== 'gpu1');
+ok('cell looks: a bad size, a blank name and a missing cell are dropped; 3 per row = each 33.33% of its row', JSON.stringify(cc.gpu1) === '{"size":"wide","name":"Hot"}' && cpuIds.length > 0 && cpuIds.every(k => /^cpu/.test(k) && JSON.stringify(cc[k]) === '{"f":0.3333}'), JSON.stringify(cc));
 ok('Overview keeps only its own looks', JSON.stringify(cl.views.overview) === '{"gap":"tight","cat":{"fans":{"style":"band"}}}', JSON.stringify(cl.views.overview));
 cl = await J(`(() => { const L = ${BUILD}; L.cats[0].id = 'bad id!'; L.views = { tiles: { rows: [{ cols: [{ stack: ['cpu'] }, { stack: ['bad id!'] }] }], cat: { 'bad id!': { per: 2 } } } }; return cleanLayout(L); })()`);
-ok('a category with an unsafe id gets a new one and the views follow it', /^c/.test(cl.cats[0].id) && cl.views.tiles.rows[0].cols[1].stack[0] === cl.cats[0].id && cl.views.tiles.cat[cl.cats[0].id].per === 2, cl.cats[0].id);
+ok('a category with an unsafe id gets a new one and the views follow it (its 2 per row: each tile 50%)', /^c/.test(cl.cats[0].id) && cl.views.tiles.rows[0].cols[1].stack[0] === cl.cats[0].id && cl.cats[0].cells.every(x => cl.views.tiles.cell[x] && cl.views.tiles.cell[x].f === 0.5), cl.cats[0].id);
 
 // ---- Automatic stays exactly as before ----
 ok('Automatic Tiles: balanced columns, nothing of its own kept, no handles', !(await rows('tiles')) && await E('!!document.querySelector("#view.arr.auto") && document.querySelectorAll("#view .lcol > .blk").length === 7 && !document.querySelector("#view .ldiv, #view .lrs")'));
@@ -194,8 +195,7 @@ await click(`${cat('gpu')} .cn`);
 // 11-03, they went away once past it, as if the pointer had been in them and left)
 await p.sleep(800);
 ok('the settings slide across under a pointer at rest and stay open', await E('DR.R.el.classList.contains("open") && DR.R.el.classList.contains("left")'), await E('DR.R.el.className'));
-await E(`(() => { const s = document.querySelector('#insp select[data-lay="per"]'); s.value = '2'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`); await p.sleep(300);
-ok('Tiles per row from the panel', (await J('S.L.views.tiles.cat.gpu')).per === 2);
+ok('no Tiles per row in the panel (2.2: a tile\'s width is a share of its row)', await E('!document.querySelector("#insp select[data-lay=per]") && !!document.querySelector("#insp input[data-csz=f]")'));
 await click('#insp .seg[data-lay="size"] button[data-v="short"]');
 ok('Tile style Short from the panel', await until('!!S.L.views.tiles.cat && !!S.L.views.tiles.cat.gpu && S.L.views.tiles.cat.gpu.size === "short"', 3000) && await until(`document.querySelector('${cat('gpu')} .tile').classList.contains('short')`, 3000));
 await click('#insp .seg[data-lay="title"] button[data-v="hide"]');
@@ -203,16 +203,17 @@ await click('#insp button[data-lay="reset"]');
 ok('Reset its look', await until('!(S.L.views.tiles.cat && S.L.views.tiles.cat.gpu)', 3000));
 // a tile's size and its corner
 await click('#view .dc[data-cid="gpu1"]');
-await click('#insp .seg[data-lay="cw"] button[data-v="2"]'); await click('#insp .seg[data-lay="ch"] button[data-v="2"]');
-ok('a cell\'s size from its settings', (await J('S.L.views.tiles.cell.gpu1')).size === 'big');
+await click('#insp .seg[data-lay="cf"] button[data-v="50"]'); await click('#insp .seg[data-lay="ch"] button[data-v="2"]');
+const cz = await J('S.L.views.tiles.cell.gpu1');
+ok('a cell\'s size from its settings: 50% of its row, 2 rows', cz.f === 0.5 && cz.h === 2, JSON.stringify(cz));
 await click('#view .dc[data-cid="gpu1"]');
 const cn = await rect('#view .dc[data-cid="gpu1"] .corner'), tile = await rect('#view .dc[data-cid="gpu1"]');
 await p.drag({ x: cn.x, y: cn.y }, { x: cn.x, y: cn.y - tile.h * 0.5 }); await p.sleep(400);
-if ((await J('S.L.views.tiles.cell.gpu1')).size !== 'wide') console.log('corner debug', JSON.stringify({ cn, tile, sel: await E('sel'), hit: await E(`(() => { const e = document.elementFromPoint(${cn.x}, ${cn.y}); return e && (e.className.baseVal !== undefined ? 'svg ' + e.closest('[class]').className : e.className); })()`) }));
+if ((await J('S.L.views.tiles.cell.gpu1')).f !== 0.5) console.log('corner debug', JSON.stringify({ cn, tile, sel: await E('sel'), hit: await E(`(() => { const e = document.elementFromPoint(${cn.x}, ${cn.y}); return e && (e.className.baseVal !== undefined ? 'svg ' + e.closest('[class]').className : e.className); })()`) }));
 // (Wide, or as tall as ends level with a column beside it, which wins a near tie: which one depends on the window's
 // size, so on the screen the test runs on)
-const c1 = await J('S.L.views.tiles.cell.gpu1'), wh1 = c1.size ? ({ wide: [2, 1], tall: [1, 2], big: [2, 2] })[c1.size] || [1, 1] : [c1.w, c1.h];
-ok('dragging a tile\'s corner up makes Big into Wide (or level with the column beside it)', wh1[0] === 2 && wh1[1] >= 0.9 && wh1[1] <= 1.1, JSON.stringify(c1));
+const c1 = await J('S.L.views.tiles.cell.gpu1');
+ok('dragging a tile\'s corner up: its width stays 50%, about a row less tall (or level with the column beside it)', c1.f === 0.5 && (c1.h || 1) >= 0.9 && (c1.h || 1) <= 1.1, JSON.stringify(c1));
 await click('#view .dc[data-cid="gpu1"]');   // clicking it again brings its settings back
 await click('#insp button[data-lay="vname-on"]');
 await E(`(() => { const i = $('lvName'); i.value = 'Hot spot'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`); await p.sleep(200);

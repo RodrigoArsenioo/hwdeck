@@ -493,7 +493,7 @@ function cleanGames(g) {
 //   h        a row's share of the window height, 0.5 to 6 (none: the row fits its content); in a stack, the
 //            category's share of its column
 //   w        a column's share of its row, 1 to 12 (none on every column: equal widths)
-//   looks    category: tiles { per: 1-8 tiles per row, size: short, title: hide, lead }, overview { style: small|list|
+//   looks    category: tiles { size: short, title: hide, lead } (per: tiles per row, before 2.2: read as shares, see TILE_MIN), overview { style: small|list|
 //            band, title: hide, lead }, grid { lead } (lead: the cell shown first); cell: tiles { size: wide|tall|big,
 //            name }, overview and grid { name } (name: its name in that view only)
 //   Grid has exactly one row: its columns are the tables
@@ -506,6 +506,15 @@ const clone = x => JSON.parse(JSON.stringify(x));
 // a tile's size in Tiles: w and h in tiles (a normal tile is 1 x 1), each 0.25 to 2 (quarter steps and thirds, 2.1). The sizes that have a name keep it
 // (wide 2 x 1, tall 1 x 2, big 2 x 2), so an older HW Deck still draws those; it draws any other size as a normal tile
 const SZ = { wide: [2, 1], tall: [1, 2], big: [2, 2] };
+// 2.2 (his ask 11-04: "the pixel measurement in the app is goofy ... the scalling .25 or 1/3 ... is a bit redundant, so
+// we need a better system"): a tile you size in Tiles is a share of its row (f, 0.05 to 1, shown as a %) and h rows tall
+// (1 = a normal tile), the same at any window size and text size; one you haven't sized is a normal tile its category
+// places (Auto). No tile is drawn narrower than TILE_MIN (rem): where a row is too narrow for that, its tiles take fewer
+// a line, in even lines (his pick: 200 px at his text size). Tiles per row went: a category with it set gets its tiles as
+// shares of its row, as it drew them (cleanViews). PCTS: the widths a drag snaps to, RQ: the heights to pick from
+const TILE_MIN = 11.6, PCTS = [25, 100 / 3, 50, 200 / 3, 75, 100], RQ = [0.5, 1, 1.5, 2];
+const fNum = x => { if (typeof x !== 'number' || !isFinite(x) || x <= 0) return null; const f = Math.min(1, Math.max(0.05, x)), q = PCTS.find(p => Math.abs(p / 100 - f) < 0.0015); return Math.round((q ? q / 100 : f) * 1e4) / 1e4; };
+const pctTxt = f => Math.round(f * 100) + '%';
 // (a size a hair off a quarter step or a third, a third of a pixel or less, from a snap or a px step, is that step: 0.9999
 // is 1, so four tiles of 0.75 and one of 1 still fill a row of 4; 1.3333 is 4/3, so three of them fill it too)
 const SNAPQ = 0.002;
@@ -519,7 +528,11 @@ function sizeLook(w, h, tol, tolH) {
   for (const k of Object.keys(SZ)) if (SZ[k][0] === w && SZ[k][1] === h) return { size: k };
   return w === 1 && h === 1 ? {} : { w, h };
 }
-const cleanSize = x => typeof x.w === 'number' || typeof x.h === 'number' ? sizeLook(x.w, x.h, 1.5e-4) : isSz(x.size) ? { size: x.size } : {};
+const cleanSize = x => {
+  const f = fNum(x.f);
+  if (f) { const e = { f }, h = typeof x.h === 'number' ? szNum(x.h, 1.5e-4) : 1; if (h !== 1) e.h = h; return e; }   // (2.2: a share of its row)
+  return typeof x.w === 'number' || typeof x.h === 'number' ? sizeLook(x.w, x.h, 1.5e-4) : isSz(x.size) ? { size: x.size } : {};
+};
 // ids and catIds map what the file calls a cell or a category to what it is called here; anything that points at
 // nothing, or is out of range, goes; a category no row places gets a row of its own at the bottom (Grid: the last table)
 function cleanViews(V, L, ids, catIds) {
@@ -595,6 +608,20 @@ function cleanViews(V, L, ids, catIds) {
       }
       if (Object.keys(cell).length) o.cell = cell;
     }
+    if (vn === 'tiles' && o.cat) {   // (2.2: tiles per row went; its tiles keep the widths they had, as shares of the row)
+      for (const cid of Object.keys(o.cat)) {
+        const per = o.cat[cid].per; if (!per) continue;
+        const cat = L.cats.find(c => c.id === cid);
+        for (const x of cat ? cat.cells : []) {
+          const e = (o.cell || (o.cell = {}))[x] || {}, z = isSz(e.size) ? { w: SZ[e.size][0], h: SZ[e.size][1] } : { w: e.f ? null : e.w || 1, h: e.h || 1 };
+          if (z.w === null) continue;
+          delete e.size; delete e.w; delete e.h; e.f = fNum(Math.min(z.w, per) / per); if (z.h !== 1) e.h = z.h;
+          o.cell[x] = e;
+        }
+        delete o.cat[cid].per; if (!Object.keys(o.cat[cid]).length) delete o.cat[cid];
+      }
+      if (!Object.keys(o.cat).length) delete o.cat;
+    }
     if (Object.keys(o).length) out[vn] = o;
   }
   return Object.keys(out).length ? out : null;
@@ -613,6 +640,7 @@ const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: nul
 function renderTitle() {
   setText($('title'), (S.title && S.title.trim()) || feed.pc || feed.brand || 'HW Deck');
   $('clock').hidden = !S.clock;
+  titleFit();
 }
 // animations, in Settings: Full (all of it), Minimal (nothing keeps moving: numbers just change, fans stand still,
 // graphs step; popups and views still slide), Off (nothing moves). Not chosen yet: Full, or Off when Windows asks apps
@@ -855,6 +883,7 @@ function evalCell0(cid, c, peek, quick) {
       out.txt = b.call ? BN[b.call][0] : '--'; out.utxt = b.call ? BN[b.call][1] : ''; out.strip = b; out.past = bnPast(L); out.col = 'past'; out.tag = 'last session';
       out.tsub = b.tot ? bnSplit(b) : 'no calls in ' + L.game; out.sub = b.tot ? 'last session: ' + bnSplit(b) : 'last session: ' + out.tsub;
       out.tsubS = b.tot ? bnSplit(b).split(', ').slice(0, 2).join(', ') : 'no calls';   // (a narrow tile: its two biggest, as a game shows them; "last: " didn't fit, 2.1.1)
+      out.subS = { of: out.sub, s: out.tsubS };   // (anywhere its caption is cut, 2.2)
       return out;
     }
     const b = bnStrip(), w = BN[v] ? BN[bnNow() || v] : null, lw = !w && feed.game && BN[feed.bnl] ? BN[feed.bnl] : null;
@@ -864,6 +893,7 @@ function evalCell0(cid, c, peek, quick) {
     // (a narrow tile: the two biggest shares, shorter words; his "make the little subtitle under it fit", 11-04)
     out.tsub = out.sub;
     out.tsubS = w ? (feed.bnb === 1 && v !== 3 ? 'vsync caps only' : feed.bnb === 2 ? 'fps caps unseen' : bnSplit(b).split(', ').slice(0, 2).join(', ')) : !bnInputs() ? 'needs GPU and CPU usage' : out.sub;
+    out.subS = { of: out.sub, s: out.tsubS };
     return out;
   }
   // the game session so far, as a length (its lines in minutes, like the host's); with no game: --
@@ -874,7 +904,7 @@ function evalCell0(cid, c, peek, quick) {
     if (L) {   // (no game: the last session's length, what it was and when it ended; the 24 h's play in the corner)
       const ago = agoShort(Math.max(0, nowTs - L.end)), day = dayPlay(L);
       out.txt = durTxt(L.secs > 0 ? L.secs : L.end - L.start); out.utxt = ''; out.col = 'past'; out.tag = day || 'last session'; out.tagS = 'last session';
-      out.tsub = L.game + ', ended ' + ago; out.tsubS = 'ended ' + ago; out.sub = out.tsub + (day ? ', ' + day : '');   // (a narrow tile: when it ended; "Deadlock, 1h 04m ago" was cut, 2.1.1)
+      out.tsub = L.game + ', ended ' + ago; out.tsubS = 'ended ' + ago; out.sub = out.tsub + (day ? ', ' + day : ''); out.subS = { of: out.sub, s: out.tsubS };   // (a narrow tile: when it ended; "Deadlock, 1h 04m ago" was cut, 2.1.1)
       out.past = playDay(L); out.pspan = 86400; out.yn = true;   // (its graph: the 24 h, Yes / No a minute, 2.1.1)
       return out;
     }
@@ -891,6 +921,7 @@ function evalCell0(cid, c, peek, quick) {
     out.tsub = !has ? 'no fps counted in ' + L.game : gk === 'fps' ? 'avg, ' + L.game : 'avg' + (pc ? ', ' + pc : '');
     out.tsubS = !has ? 'no fps counted' : gk === 'fps' ? 'last avg, ' + L.game : 'last avg' + (pc ? ', ' + pc.replace(' of the fps', ' of fps') : '');   // (a narrow tile: "last" here, no corner note)
     out.sub = !has ? 'last session: ' + out.tsub : 'last session avg, ' + (gk === 'fps' ? L.game : pc || L.game);
+    out.subS = { of: out.sub, s: out.tsubS };
     return out;
   }
   if (v == null) {
@@ -955,9 +986,11 @@ function evalCell0(cid, c, peek, quick) {
   else if (out.curve) {
     const d = Math.round(out.curve.dev);
     out.sub = Math.abs(out.curve.dev) <= c.curve.tol ? 'on curve, expects ' + fmt(out.curve.exp, 0) : Math.abs(d) + '% ' + (d < 0 ? 'under' : 'over') + ' its curve';
+    if (/^on curve, /.test(out.sub)) out.subS = { of: out.sub, s: 'on curve' };
   } else if (c.pred) {
     const src = BYKEY.get(c.curve.src);
     out.sub = src ? 'from ' + src.label + ' ' + fmt(src.v, decFor(src)) + (src.unit ? ' ' + src.unit : '') : 'its temperature is missing';
+    if (src) out.subS = { of: out.sub, s: 'from ' + fmt(src.v, decFor(src)) + (src.unit ? ' ' + src.unit : '') };   // (where cut, 2.2)
   } else if (memPair(r) && memPair(r).v != null && v > 0) {   // memory: how much of it is in use
     const size = memSize((v + memPair(r).v) / 1024);
     out.sub = Math.round(v / 1024 / size * 100) + '% of ' + size + ' GB';
@@ -967,7 +1000,7 @@ function evalCell0(cid, c, peek, quick) {
     // (its 1% low: how far under the fps of the same 10 s it sits, and its lowest of the last 15 min)
     const f = gfPair(r), pc = f > 0 ? Math.min(100, Math.round(v / f * 100)) : null; let lo = Infinity; for (const x of series(r.key, HLEN)) if (x != null && x > 0 && x < lo) lo = x;
     out.sub = [pc !== null ? pc + '% of the fps' : '', isFinite(lo) ? '15 min low ' + fmt(lo, 0) : ''].filter(Boolean).join(', ');
-    out.tsub = out.sub; out.tsubS = [pc !== null ? pc + '% of fps' : '', isFinite(lo) ? 'low ' + fmt(lo, 0) : ''].filter(Boolean).join(', ');   // (a narrow tile: "14% of the fps, 15 min low 10" was cut, 2.1.1)
+    out.tsub = out.sub; out.tsubS = [pc !== null ? pc + '% of fps' : '', isFinite(lo) ? 'low ' + fmt(lo, 0) : ''].filter(Boolean).join(', '); out.subS = { of: out.sub, s: out.tsubS };   // (a narrow tile: "14% of the fps, 15 min low 10" was cut, 2.1.1)
   } else if (r && !quick && !isYN(r)) {
     let mx = -Infinity; for (const x of series(r.key, HLEN)) if (x > mx) mx = x;
     out.sub = isFinite(mx) ? '15 min max ' + fl(mx) + (unitOf(r) ? ' ' + unitOf(r) : '') : '';
@@ -1301,6 +1334,7 @@ const isMissing = c => !c.pred && READ.length > 0 && !BYKEY.has(c.key);
 // a missing reading whose sensor is here was dropped by HWiNFO for now (hidden, device idle); else it's from another PC
 const sensorHere = c => !!c.key && SENS.some(sn => c.key.startsWith(sn.key + '/'));
 const missingTxt = c => sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now' : 'not on this PC: ' + (c.match ? c.match.split('|')[0] : c.key);
+const missingShort = c => sensorHere(c) ? 'not shared by HWiNFO' : 'not on this PC';   // (where those are cut, 2.2)
 const isFanCell = c => c.pred || isFanR(BYKEY.get(c.key));
 function catHead(cat, inner) {
   return '<span class="grip" title="Drag to move the category: onto another one\'s edge to put them side by side or stack them">' + ICONS.grip + '</span>' + (inner || '') +   // (no collapse button: categories always show, his call 11-02)
@@ -1319,7 +1353,7 @@ const stored = vn => S.L.views && S.L.views[vn] || null;
 const isCustom = vn => { const v = viewOf(vn); return !!(v && v.rows); };
 const catLook = (id, vn) => { const v = viewOf(vn || S.screen); return v && v.cat && v.cat[id] || {}; };
 const cellLook = (id, vn) => { const v = viewOf(vn || S.screen); return v && v.cell && v.cell[id] || {}; };
-const cellSize = id => { const l = cellLook(id, 'tiles'); return isSz(l.size) ? { w: SZ[l.size][0], h: SZ[l.size][1] } : { w: l.w || 1, h: l.h || 1 }; };
+const cellSize = id => { const l = cellLook(id, 'tiles'), f = fNum(l.f); return isSz(l.size) ? { w: SZ[l.size][0], h: SZ[l.size][1], f: null } : { w: f ? 1 : l.w || 1, h: l.h || 1, f }; };
 // a category's cells in this view: its lead (the reading it shows first) moves to the front
 function idsIn(cat) {
   const ids = cellsOf(cat), lead = catLook(cat.id).lead, i = lead ? ids.indexOf(lead) : -1;
@@ -1340,10 +1374,10 @@ function tileHtml(cid, lk, pre) {
   const graph = xb != null ? xb : c.graph === false ? '' : short ? (sg ? '<canvas class="sg"></canvas>' : '') : '<canvas></canvas>';
   const nog = xb == null && (miss || c.graph === false || (short && !sg));
   return '<div class="tile dc' + (c.pred ? ' pred' : '') + (short ? ' short' : '') + (miss ? ' missing' : '') + (nog ? ' nog' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + (pre ? pre[1] : '') + anim() + (pre ? ';' + pre[0] : '') + '" data-cid="' + esc(cid) + '" data-k="tile" tabindex="0"' +
-    (z.w !== 1 ? ' data-w="' + z.w + '"' : '') + (z.h !== 1 ? ' data-h="' + z.h + '"' : '') + (cellLook(cid, 'tiles').nl ? ' data-nl="1"' : '') + '>' +
+    (z.f ? ' data-f="' + z.f + '"' : z.w !== 1 ? ' data-w="' + z.w + '"' : '') + (z.h !== 1 ? ' data-h="' + z.h + '"' : '') + (cellLook(cid, 'tiles').nl ? ' data-nl="1"' : '') + '>' +
     '<div class="tn">' + iconOf(c, r) + '<span data-full="1">' + esc(nm) + '</span><span class="tq"></span></div>' +   // (a name cut short shows whole on hover: see the tips)
     '<div class="tv"><span class="v"></span><small class="u">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small></div><div class="tc"></div>' +
-    (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit ? '<span class="corner" title="Drag to size it: it snaps to quarter steps, to the edges of other tiles and to the bottom of the columns beside it. Hold Alt for any size, double-click for a normal tile">' + ICONS.corner + '</span>' : '') + '</div>';
+    (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit ? '<span class="corner" title="Drag to size it, double-click for a normal tile">' + ICONS.corner + '</span>' : '') + '</div>';
 }
 // Tiles: a block per category, a tile per cell (auto: blocks past 6 cells take the whole width)
 function blkHtml(cat, inRows) {
@@ -1403,7 +1437,7 @@ function colMin(c) {
   for (const s of c.stack) {
     const cat = catById(sid(s)), lk = catLook(cat.id), n = cellsOf(cat).length;
     let b;
-    if (S.screen === 'tiles') { if (lk.per) { const k = Math.max(1, Math.min(lk.per, n || 1)); b = k * 8.5 + (k - 1) * 0.62 * sp; } else b = lk.size === 'short' ? 15 : 10.5; }
+    if (S.screen === 'tiles') { if (lk.per) { const k = Math.max(1, Math.min(lk.per, n || 1)); b = k * 8.5 + (k - 1) * 0.62 * sp; } else b = lk.size === 'short' ? 15 : TILE_MIN; }
     else b = 22;   // a card, a list, a band (it wraps its cells when narrow)
     m = Math.max(m, b);
   }
@@ -1445,8 +1479,8 @@ function autoRows(vn) {
     if (cat.collapsed) return 2.4;
     const ids = cellsOf(cat), lk = catLook(cat.id, vn);
     if (vn === 'tiles') {
-      const short = lk.size === 'short', k = Math.max(1, lk.per ? Math.min(lk.per, Math.floor((colW + g) / (8.5 + g))) : Math.floor((colW + g) / ((short ? 15 : 10.5) + g)));
-      const area = ids.reduce((a, id) => { const z = cellSize(id); return a + Math.min(z.w, k) * z.h; }, 0);
+      const short = lk.size === 'short', k = Math.max(1, lk.per ? Math.min(lk.per, Math.floor((colW + g) / (8.5 + g))) : Math.floor((colW + g) / ((short ? 15 : TILE_MIN) + g)));
+      const area = ids.reduce((a, id) => { const z = cellSize(id); return a + Math.min(z.f ? z.f * k : z.w, k) * z.h; }, 0);
       return 2.2 + Math.max(1, Math.ceil(area / k - 1e-6)) * ((short ? 3.4 : 8.6) + g);
     }
     if (lk.style === 'band') return 5;
@@ -1599,10 +1633,9 @@ function renderView(enter) {
 // the selected tile's px size fields follow its drawn size (a resize, the banner, a remeasure): in place, not the
 // field being typed in (a whole renderInsp would drop a paste box, the scroll, half-typed curve cells)
 function pxFresh() {
-  if (!S.edit || !sel || !document.querySelector('#insp input[data-sz="pw"]')) return;
-  const z = cellSize(sel), G = tileGeo(tileEl(sel)); if (!G) return;
-  const px = { pw: Math.round(pxW(G, z.w)), ph: Math.round(G.at(Math.min(z.w, G.k), z.h).th) };
-  for (const k of ['pw', 'ph']) { const b = document.querySelector('#insp input[data-sz="' + k + '"]'); if (b && b !== document.activeElement) b.value = px[k]; }
+  const b = S.edit && sel ? document.querySelector('#insp input[data-sz="f"]') : null; if (!b || b === document.activeElement) return;
+  const z = cellSize(sel), G = z.f ? null : tileGeo(tileEl(sel)); if (z.f || !G) return;   // (a share of yours stays as you set it)
+  b.value = Math.round(Math.min(G.s.w, G.k) / G.k * 1000) / 10;
 }
 let flipNext = false;
 // (a drop: the cell or category glides from where it was let go, not from its old slot, still there under the ghost)
@@ -1670,7 +1703,8 @@ function capSet(el, full, short) {
 const capRange = document.createRange();
 function capCut(el) {
   if (!el.isConnected || !el.firstChild) return false;
-  const w = el.getBoundingClientRect().width; if (!(w > 0)) return false;
+  const cs = getComputedStyle(el), w = el.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth);   // (its text's room: a Grid cell has padding, 2.2)
+  if (!(w > 0)) return false;
   capRange.selectNodeContents(el); return capRange.getBoundingClientRect().width > w + 0.05;
 }
 function capMeasure() {
@@ -1696,7 +1730,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     const c = S.L.cells[cid]; if (!c) continue;
     if (feed.lgWait && isGameCell(c)) { if (performance.now() - feed.lgWait < 1500) continue; feed.lgWait = 0; }   // (as they were, until the summary of the game that just ended is in)
     const rd = c.key ? BYKEY.get(c.key) : null, vis = seen.get(cid);
-    if (isMissing(c)) { if (!peek) calmGone(cid); odo(r.v, '--'); setText(r.cap, missingTxt(c)); continue; }
+    if (isMissing(c)) { if (!peek) calmGone(cid); odo(r.v, '--'); capSet(r.cap, missingTxt(c), missingShort(c)); continue; }
     const e = evalCell(cid, c, !!peek, !vis);
     const cat = catOf(cid); if (cat) cardLvl[cat.id] = Math.max(cardLvl[cat.id] || 0, e.lvl);
     const dec = decOfCell(c, rd);
@@ -1713,7 +1747,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     const nq = r.kind === 'tile' && r.root.classList.contains('nq');
     if (r.cap) {
       const full = r.kind === 'tile' && e.tsub != null ? (nq && e.tsubS ? e.tsubS : e.tsub) : e.sub;
-      capSet(r.cap, full, r.kind === 'tile' && e.subS && e.subS.of === full ? e.subS.s : null);   // (cut: its shorter words, 2.1.2)
+      capSet(r.cap, full, e.subS && e.subS.of === full ? e.subS.s : r.kind === 'tile' && e.tsubS && full === e.tsub && e.tsubS !== full ? e.tsubS : null);   // (cut: its shorter words; 2.1.2 tiles, 2.2 everywhere)
       r.cap.classList.toggle('y', e.lvl === 1); r.cap.classList.toggle('r', e.lvl === 2);
     }
     if (r.tq) setText(r.tq, e.tsub != null && e.tag && !nq ? e.tag : '');   // (a narrow tile: none, its name keeps the room; his ask 11-04)
@@ -1775,9 +1809,28 @@ const fits = () => { layoutPass(); return sectionsEl.scrollHeight <= sectionsEl.
 // sub-columns, a band too narrow for its cells wraps them, a wide tile in a single column stays one wide
 const spOf = v => v.classList.contains('gap-tight') ? 0.6 : v.classList.contains('gap-roomy') ? 1.5 : 1;
 // a tile's size as drawn (see SZ), and how many tile places some tiles take at k per row
-const szOf = t => ({ w: +t.dataset.w || 1, h: +t.dataset.h || 1, nl: t.dataset.nl === '1' });
+// (2.2: a share of its row, f, is f x k places; auto: a normal tile you haven't sized, which the category places)
+const szOf = (t, k) => { const f = +t.dataset.f || 0; k = k || 1; return { w: f ? Math.min(k, f * k) : +t.dataset.w || 1, h: +t.dataset.h || 1, nl: t.dataset.nl === '1', f, auto: !f && !t.dataset.w }; };
 const tileKids = tg => [...tg.children].filter(x => x.classList.contains('tile'));
-const tileArea = (tiles, k) => tiles.reduce((a, t) => { const s = szOf(t); return a + Math.min(s.w, k) * s.h; }, 0);
+const tileArea = (tiles, k) => tiles.reduce((a, t) => { const s = szOf(t, k); return a + Math.min(s.w, k) * s.h; }, 0);
+// the minimum (TILE_MIN): a tile that would be drawn narrower, and the tiles sharing its rows with it (beside it, or
+// beside a taller one there), split those rows evenly over fewer a line: four of 25% where three fit go two and two,
+// 58% two rows high beside two of 42% go half and half where only two fit, so no hole is left. W, g in px
+function floorSz(sz, k, W, g, fs, short) {
+  if (!(W > 0)) return sz;
+  const min = (short ? 15 : TILE_MIN) * fs, p = (W + g) / k, kmax = Math.max(1, Math.floor((W + g) / (min + g) + 1e-6));   // (short tiles: their name and value side by side, 15rem as in Auto)
+  const low = sz.map(s => !s.auto && Math.min(s.w, k) * p - g < min - 0.5);
+  if (!low.some(Boolean)) return sz;
+  const { pos } = packTiles(sz, k), out = sz.map(s => Object.assign({}, s)), done = new Set();
+  sz.forEach((s, i) => {
+    if (!low[i] || done.has(i)) return;
+    const grp = new Set([i]); let y0 = pos[i].y, y1 = pos[i].y + pos[i].h, grew = true;
+    while (grew) { grew = false; pos.forEach((q, j) => { if (!grp.has(j) && q.y < y1 - PE && q.y + q.h > y0 + PE) { grp.add(j); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y + q.h); grew = true; } }); }   // (normal tiles there too: the order stays)
+    const cols = new Set([...grp].map(j => Math.round(pos[j].x * 1000))).size, per = Math.min(kmax, Math.ceil(cols / Math.ceil(cols / kmax)));
+    for (const j of grp) { out[j].w = k / per; done.add(j); }
+  });
+  return out;
+}
 // a category's tiles, k places to a row: each goes to the highest, then leftmost, spot where it fits, so a hole left
 // (a tile that starts a new row (nl) goes under all the tiles before it, and the ones after it stay there too)
 // beside a bigger tile takes a later one that fits it (all normal tiles: a plain grid in reading order). Sizes and
@@ -1785,12 +1838,12 @@ const tileArea = (tiles, k) => tiles.reduce((a, t) => { const s = szOf(t); retur
 const PE = 1e-6, inRect = (a, b) => a.x >= b.x - PE && a.y >= b.y - PE && a.x + a.w <= b.x + b.w + PE && a.y + a.h <= b.y + b.h + PE;
 function packTiles(sz, k) {
   let free = [{ x: 0, y: 0, w: k, h: Infinity }], H = 0;
-  const pos = [];
+  const pos = [], mw = Math.min(0.25, ...sz.map(s => Math.min(s.w, k))), tq = SNAPQ * Math.max(1, k / 2);   // (a share can be under a quarter place; shares kept to 4 decimals add up a hair over the row: six of 16.67%, 2.2)
   for (const s of sz) {
     const w = Math.min(s.w, k), h = s.h;
     if (s.nl && H > PE) free = free.map(f => f.y >= H - PE ? f : f.y + f.h > H + PE ? { x: f.x, y: H, w: f.w, h: f.y + f.h - H } : null).filter(Boolean);
     let b = null;
-    for (const f of free) if (w <= f.w + SNAPQ && h <= f.h + SNAPQ && (!b || f.y < b.y - PE || (f.y <= b.y + PE && f.x < b.x))) b = f;
+    for (const f of free) if (w <= f.w + tq && h <= f.h + SNAPQ && (!b || f.y < b.y - PE || (f.y <= b.y + PE && f.x < b.x))) b = f;
     const p = { x: b.x, y: b.y, w, h };
     pos.push(p); H = Math.max(H, p.y + h);
     // the free room it takes splits into what is left around it; room inside other room goes
@@ -1802,7 +1855,7 @@ function packTiles(sz, k) {
       if (p.y > f.y + PE) nf.push({ x: f.x, y: f.y, w: f.w, h: p.y - f.y });
       if (p.y + h < f.y + f.h - PE) nf.push({ x: f.x, y: p.y + h, w: f.w, h: f.y + f.h - p.y - h });
     }
-    const big = nf.filter(f => f.w >= 0.25 - PE && f.h >= 0.25 - PE);   // (no tile is smaller than 0.25 x 0.25)
+    const big = nf.filter(f => f.w >= mw - PE && f.h >= 0.25 - PE);   // (no tile is narrower than the narrowest here, or under 0.25 high)
     free = big.filter((a, i) => !big.some((c, j) => j !== i && inRect(a, c) && (!inRect(c, a) || j < i)));
   }
   return { pos, H: Math.round(H * 1e6) / 1e6 };
@@ -1841,16 +1894,21 @@ function measureUnits(tgs, fs) {
 // category fills the width (his call 11-04: four tiles over three look as a category of four over one of three per row
 // did). Drawn wider (dx, dw); placed as they are (x, w: what a drag, a size and the heights go by)
 function fillRows(sz, pos, k) {
-  if (!pos.some(p => p.x + p.w >= k - SNAPQ)) return;
+  const tq = SNAPQ * Math.max(1, k / 2);
+  if (!pos.some(p => p.x + p.w >= k - tq)) return;
+  const grid = sz.length > 0 && sz.every(s => s.auto === false && s.h === 1 && Math.abs(s.w - sz[0].w) < 1e-6);   // (every tile one share, one row high)
   const nb = Math.ceil(Math.max(0, ...pos.map(p => p.y + p.h)) - PE);
   for (let r = 0; r < nb; r++) {
     const ids = []; let ok = true;
-    pos.forEach((p, i) => { if (p.y < r + 1 - PE && p.y + p.h > r + PE) { if (Math.abs(p.y - r) > PE || Math.abs(p.h - 1) > PE || sz[i].w !== 1 || sz[i].h !== 1) ok = false; ids.push(i); } });
+    pos.forEach((p, i) => { if (p.y < r + 1 - PE && p.y + p.h > r + PE) { if (Math.abs(p.y - r) > PE || Math.abs(p.h - 1) > PE || sz[i].h !== 1 || !(grid || (sz[i].auto !== false && sz[i].w === 1))) ok = false; ids.push(i); } });
     if (!ok || !ids.length) continue;
     ids.sort((a, b) => pos[a].x - pos[b].x);
-    if (!ids.every((i, j) => Math.abs(pos[i].x - j) < PE) || ids.length >= k - SNAPQ) continue;   // (from the left with no hole, room at the end)
+    // (all one width u: normal tiles, or a category whose tiles are all one share, as its tiles per row became in 2.2, so
+    // 4 x 25% over 3 x 25% draws the 3 as it did; from the left with no hole, room at the end)
+    const u = sz[ids[0]].w;
+    if (!ids.every((i, j) => Math.abs(sz[i].w - u) < 1e-6 && Math.abs(pos[i].x - j * u) < PE) || ids.length * u >= k - tq) continue;
     const f = k / ids.length;
-    for (const i of ids) { pos[i].dx = pos[i].x * f; pos[i].dw = f; }
+    ids.forEach((i, j) => { pos[i].dx = j * f; pos[i].dw = f; });
   }
 }
 const drawnX = p => p.dx != null ? p.dx : p.x, drawnW = p => p.dw != null ? p.dw : p.w;
@@ -1876,9 +1934,10 @@ function packTg(t, k) {
   const tiles = tileKids(t);
   if (!tiles.length) { t.classList.remove('pk'); t._H = 0; t._L = null; return 0; }
   const short = t.classList.contains('shorts'), G = 0.62 * spOf($('view')), nat = tiles.map(x => natOf(x, short)), even = !short && !!t.closest('.lrow[data-fill]');
-  const key = k + ':' + G + ':' + even + ':' + tiles.map((x, j) => (x.dataset.w || 1) + 'x' + (x.dataset.h || 1) + (x.dataset.nl ? '/' : '') + '@' + nat[j].toFixed(3)).join(',');
+  const fs = parseFloat(document.documentElement.style.fontSize) || 13, sz = floorSz(tiles.map(x => szOf(x, k)), k, t._tw || t.clientWidth, G * fs, fs, short);
+  const key = k + ':' + G + ':' + even + ':' + sz.map((z, j) => Math.round(z.w * 1e4) / 1e4 + 'x' + z.h + (z.nl ? '/' : '') + '@' + nat[j].toFixed(3)).join(',');
   if (t._pk !== key) {
-    const L = placeTiles(tiles.map(szOf), nat, k, G, even);
+    const L = placeTiles(sz, nat, k, G, even);
     tiles.forEach((x, j) => {
       const s = x.style, p = L.pos[j];
       s.setProperty('--x', drawnX(p)); s.setProperty('--w', drawnW(p)); s.setProperty('--y', p.y); s.setProperty('--h', p.h);
@@ -1927,17 +1986,18 @@ function naturals(view, fs) {
 // lowest tallest column. Returns false when the row has to fold
 function balanceRow(row, cols, W, cg, fs, g, nat) {
   const C = cols.length, rg = parseFloat(getComputedStyle(cols[0]).rowGap) || 0;
-  const desc = cols.map(c => [...c.children].filter(e => e.classList.contains('dcat')).map(b => {
+  // (an empty category, shown only in edit mode, takes no part: edit mode shows the view as it is, 2.2)
+  const desc = cols.map(c => [...c.children].filter(e => e.classList.contains('dcat') && !e.classList.contains('isempty')).map(b => {
     const tg = b.querySelector('.tg'), dg = b.querySelector('.dgrid');
     const tiles = tg ? tileKids(tg) : [];
     const short = !!tg && tg.classList.contains('shorts');
-    return { tg, tiles, sz: tiles.map(szOf), nat: tiles.map(x => natOf(x, short)), packs: new Map(), collapsed: b.classList.contains('collapsed'), short: !!tg && tg.classList.contains('shorts'),
+    return { tg, tiles, nat: tiles.map(x => natOf(x, short)), packs: new Map(), collapsed: b.classList.contains('collapsed'), short: !!tg && tg.classList.contains('shorts'),
       per: tg && tg.classList.contains('per') ? +tg.style.getPropertyValue('--per') || 0 : 0, band: b.classList.contains('band'), hero: !!b.querySelector('.hero'),
       rows: b.querySelectorAll('.dgrid > .row').length, n: dg ? dg.children.length : 0 };
   }));
   const stackH = (i, f) => desc[i].reduce((a, d) => a + f(d), 0) + (desc[i].length - 1) * rg;
   if (S.screen === 'tiles') {
-    const m0 = 10.5 * fs, K0 = Math.floor((W - (C - 1) * cg + C * g) / (m0 + g) + 1e-6);
+    const m0 = TILE_MIN * fs, K0 = Math.floor((W - (C - 1) * cg + C * g) / (m0 + g) + 1e-6);
     if (K0 < C) return false;
     // tracks of at least m wide: each column starts at what its categories need (short tiles want two tracks), then
     // the tallest that gets shorter within the next 3 tracks takes them; gives the tracks and the tallest column
@@ -1946,8 +2006,9 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
         if (d.collapsed) return nat.H;
         if (!d.tiles.length) return nat.H + 5 * fs;   // an empty category (edit mode)
         const w = n * m + (n - 1) * g, kk = d.per ? Math.max(1, Math.min(d.per, Math.floor((w + g) / (8.5 * fs + g)))) : d.short ? Math.max(1, Math.floor((w + g) / (15 * fs + g))) : n;
-        if (!d.packs.has(kk)) d.packs.set(kk, placeTiles(d.sz, d.nat, kk, g / fs, !d.short && !!row.dataset.fill).TH);
-        return nat.H + d.packs.get(kk) * fs;
+        const pk = kk + '@' + Math.round(w);
+        if (!d.packs.has(pk)) d.packs.set(pk, placeTiles(floorSz(d.tiles.map(t => szOf(t, kk)), kk, w, g, fs, d.short), d.nat, kk, g / fs, !d.short && !!row.dataset.fill).TH);
+        return nat.H + d.packs.get(pk) * fs;
       };
       const colH = (i, n) => stackH(i, d => catH(d, n));
       const k = cols.map(c => Math.max(1, Math.ceil(((+c.dataset.min || 0) * fs + g) / (m + g) - 1e-6)));
@@ -1966,7 +2027,7 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
     let a = alloc(K0, m0);
     if (!a) return false;
     const m1 = (W - (C - 1) * cg - (K0 + 1 - C) * g) / (K0 + 1);
-    if (m1 >= 9.5 * fs) { const b = alloc(K0 + 1, m1); if (b && b.top < a.top - 0.5) a = b; }
+    if (m1 >= TILE_MIN * fs) { const b = alloc(K0 + 1, m1); if (b && b.top < a.top - 0.5) a = b; }   // (2.2: never tracks under the minimum)
     const k = a.k;
     const used = k.reduce((a, b) => a + b, 0), t = (W - (C - 1) * cg - (used - C) * g) / used;
     row.style.setProperty('--cols', k.map(n => 'minmax(0, ' + (n * t + (n - 1) * g).toFixed(1) + 'fr)').join(' '));
@@ -2003,10 +2064,10 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
 }
 // Tiles per row, Auto: as many as fit, evened out over the rows (3 tiles where 5 fit = 3 wider ones, no empty places)
 function balancedK(tg, W, fs, g) {
-  const tiles = tileKids(tg), min = (tg.classList.contains('shorts') ? 15 : 10.5) * fs;
+  const tiles = tileKids(tg), min = (tg.classList.contains('shorts') ? 15 : TILE_MIN) * fs;
   const kmax = Math.max(1, Math.floor((W + g) / (min + g) + 1e-6)), a = tileArea(tiles, kmax), rows = Math.max(1, Math.ceil(a / kmax - PE));
   let k = Math.min(kmax, Math.max(1, Math.ceil(a / rows - PE)));
-  const mw = tiles.reduce((m, t) => Math.max(m, szOf(t).w), 1);   // a wide tile gets its width where there is room
+  const mw = tiles.reduce((m, t) => Math.max(m, szOf(t, kmax).w), 1);   // a wide tile gets its width where there is room
   if (kmax > 1 && mw > 1) k = Math.max(k, Math.min(kmax, Math.ceil(mw - PE)));
   return k;
 }
@@ -2018,6 +2079,36 @@ function naturalsNow(view, fs) {
   const fit = app.classList.contains('fitting');
   if (natMemo && natMemo.view === view && natMemo.gen === layGen && natMemo.fit === fit) { const k = fs / natMemo.fs, o = {}; for (const x in natMemo.n) o[x] = natMemo.n[x] * k; return o; }
   const n = naturals(view, fs); natMemo = { view, gen: layGen, fit, fs, n }; return n;
+}
+// a name (a tile's, a row's, a category's) cut in its place gets a little smaller text, down to 85%, so it fits whole
+// (his ask 11-04: "a limit to tittle, maybe smaller text, dont keep ... not 2lines"); all put back, then all read, then
+// all set, after every layout
+const NAMESEL = '#view .tn > span[data-full], #view .row .nm > span, #view td.gname > span, #view .dch .cn, #view .ch .cn';
+const NAME_MAX = 24;   // (a name you type: his longest, "GPU fans: centre + rear", is 23)
+let nameFitQ = 0;
+const nameFitSoon = () => { if (!nameFitQ) nameFitQ = requestAnimationFrame(() => { nameFitQ = 0; nameFit(); }); };   // (once a frame: a fit tries several layouts)
+function nameFit() {
+  const els = [...document.querySelectorAll(NAMESEL)];
+  for (const e of els) if (e.style.fontSize) e.style.fontSize = '';
+  const rg = document.createRange(), ks = els.map(e => {
+    if (!e.firstChild || !e.isConnected) return 1;
+    const w = e.getBoundingClientRect().width; if (!(w > 0)) return 1;
+    rg.selectNodeContents(e); const need = rg.getBoundingClientRect().width;
+    return need > w + 0.05 ? Math.max(0.85, Math.floor(w / need * 100) / 100) : 1;
+  });
+  const f0 = els.map((e, i) => ks[i] < 1 ? parseFloat(getComputedStyle(e).fontSize) : 0);
+  els.forEach((e, i) => { if (ks[i] < 1) e.style.fontSize = (f0[i] * ks[i]).toFixed(2) + 'px'; });
+  titleFit();
+}
+// the PC's name in the title bar: a little smaller too, or not shown where even that doesn't fit (the smallest window,
+// edit mode's buttons); again whenever it changes
+function titleFit() {
+  const tt = document.getElementById('title'), rg = document.createRange();
+  if (tt) {
+    tt.style.fontSize = ''; tt.style.visibility = '';
+    const w = tt.getBoundingClientRect().width; rg.selectNodeContents(tt); const need = rg.getBoundingClientRect().width;
+    if (tt.firstChild && need > w + 0.05) { const k = w / need; if (k >= 0.85) tt.style.fontSize = (parseFloat(getComputedStyle(tt).fontSize) * Math.floor(k * 100) / 100).toFixed(2) + 'px'; else tt.style.visibility = 'hidden'; }
+  }
 }
 function layoutPass() {
   const fs = parseFloat(document.documentElement.style.fontSize) || 13, view = $('view');
@@ -2054,10 +2145,11 @@ function layoutPass() {
       const nw = (tw[i] - (k - 1) * g) / k < 12 * fs;
       if (nw !== t.classList.contains('narrow')) { t.classList.toggle('narrow', nw); flipped.push([t, k, tw[i]]); return; }
     }
+    t._tw = tw[i];   // (the minimum goes by its width)
     packTg(t, k);
     tileFit(t, tw[i], k, g, fs);
   });
-  if (flipped.length) { measureUnits(flipped.map(f => f[0]), fs); for (const [t, k, w] of flipped) { packTg(t, k); tileFit(t, w, k, g, fs); } }
+  if (flipped.length) { measureUnits(flipped.map(f => f[0]), fs); for (const [t, k, w] of flipped) { t._tw = w; packTg(t, k); tileFit(t, w, k, g, fs); } }
   vs.forEach((d, i) => {
     const n = d.querySelectorAll(':scope > .row').length, sc = subCols(vw[i], n, fs);
     d.classList.toggle('sub', sc > 1);
@@ -2065,6 +2157,7 @@ function layoutPass() {
   });
   bands.forEach((b, i) => { const n = b.querySelectorAll('.bcell').length; b.classList.toggle('bfold', bw[i] + 1 < (8.5 + Math.max(1, n) * 10.5) * fs); });   // a band cell needs about 10.5rem
   placeDividers(view);
+  nameFitSoon();
 }
 // the handles between columns sit in the middle of the gap, wherever the widths came from
 function placeDividers(view) {
@@ -2576,11 +2669,19 @@ function setLook(kind, id, key, val, vn) {
   if (!Object.keys(e).length) delete m[id];
   if (!Object.keys(m).length) delete v[kind];
 }
-// a tile's size (in tiles, see SZ); 1 x 1 takes it away
-function setSize(id, w, h, tol) {
+// a tile's size: a share of its row and its rows (2.2, see TILE_MIN)
+function setShare(id, f, h, tol) {
+  const v = vset('tiles'), m = v.cell || (v.cell = {}), e = m[id] || (m[id] = {});
+  delete e.size; delete e.w; delete e.h;
+  e.f = fNum(f); const hh = szNum(h, tol === undefined ? SNAPQ : tol); if (hh !== 1) e.h = hh;
+}
+// k given: w in places of k (a drag, Ctrl+arrows), kept as its share of the row; else in tiles (1 x 1: a normal tile
+// again, its category places it)
+function setSize(id, w, h, tol, k) {
+  if (k) { setShare(id, w / k, h, tol); return; }
   const z = cellSize(id), keep = x => Math.abs(x) < 1e-9 ? 1.5e-4 : tol;   // (a side not changed keeps its size as stored)
   const v = vset('tiles'), m = v.cell || (v.cell = {}), e = m[id] || (m[id] = {});
-  delete e.size; delete e.w; delete e.h; Object.assign(e, sizeLook(w, h, keep(w - z.w), keep(h - z.h)));
+  delete e.size; delete e.w; delete e.h; delete e.f; Object.assign(e, sizeLook(w, h, keep(w - z.w), keep(h - z.h)));
   if (!Object.keys(e).length) delete m[id];
   if (!Object.keys(m).length) delete v.cell;
 }
@@ -2784,9 +2885,10 @@ function tileGeo(tile) {
   const kids = tileKids(tg), j = kids.indexOf(tile); if (j < 0) return null;
   const k = +tg.style.getPropertyValue('--k') || 1, fs = parseFloat(document.documentElement.style.fontSize) || 13, g = 0.62 * fs * spOf($('view')), short = tg.classList.contains('shorts');
   const row = tg.closest('.lrow'), grNow = () => row && row.classList.contains('grow') && !short ? parseFloat(row.style.getPropertyValue('--gr')) || 0 : 0;
-  const sz = kids.map(szOf), nat = kids.map(x => natOf(x, short)), tr = tg.getBoundingClientRect();
-  const at = (w, h) => { const s = sz.slice(); s[j] = { w, h, nl: sz[j].nl }; const L = placeTiles(s, nat, k, g / fs, !short && !!row && !!row.dataset.fill), p = L.pos[j], gr = grNow(); return { th: p.th * fs + p.h * gr, TH: L.TH * fs + L.H * gr, x: p.x, y: p.y }; };
-  return { tg, j, k, g, fs, tw: tr.width, p: (tr.width + g) / k, at, r: tile.getBoundingClientRect(), s: sz[j] };
+  const sz = kids.map(x => szOf(x, k)), nat = kids.map(x => natOf(x, short)), tr = tg.getBoundingClientRect(), p = (tr.width + g) / k;
+  const at = (w, h) => { const s = sz.slice(); s[j] = { w, h, nl: sz[j].nl, f: w / k, auto: false }; const L = placeTiles(floorSz(s, k, tr.width, g, fs, short), nat, k, g / fs, !short && !!row && !!row.dataset.fill), q = L.pos[j], gr = grNow(); return { th: q.th * fs + q.h * gr, TH: L.TH * fs + L.H * gr, x: q.x, y: q.y }; };
+  // (wmin: the minimum, in places)
+  return { tg, j, k, g, fs, tw: tr.width, p, at, r: tile.getBoundingClientRect(), s: sz[j], wmin: Math.min(k, (TILE_MIN * fs + g) / p) };
 }
 const tileEl = cid => document.querySelector('#view .tile[data-cid="' + CSS.escape(cid) + '"]');
 const pxW = (G, w) => Math.min(w, G.k) * G.p - G.g;
@@ -2816,7 +2918,7 @@ function colEnds(blk) {
   return { own, cols, row };
 }
 const nearest = (xs, v, thr) => { let b = null; for (const x of xs) if (Math.abs(x - v) <= thr && (b === null || Math.abs(x - v) < Math.abs(b - v))) b = x; return b; };
-const setTileSz = (t, w, h) => { if (w !== 1) t.dataset.w = w; else delete t.dataset.w; if (h !== 1) t.dataset.h = h; else delete t.dataset.h; };
+const setTileSz = (t, w, h, k) => { delete t.dataset.w; t.dataset.f = String(Math.round(Math.min(1, w / k) * 1e4) / 1e4); if (h !== 1) t.dataset.h = h; else delete t.dataset.h; };
 const fmtSz = n => String(Math.round(n * 100) / 100);
 const r4 = n => Math.round(n * 1e4) / 1e4;
 // the lines a size snapped to
@@ -2831,8 +2933,9 @@ function guides(lines) {
     else { const a = l.from != null ? l.from : vr.left, b = l.to != null ? l.to : vr.right; Object.assign(d.style, { left: a + 'px', top: Math.round(l.y) + 'px', width: (b - a) + 'px', height: '1px' }); }
   });
 }
-// dragging the corner: its top-left stays, only its category is placed again until it is let go. Snaps to quarter
-// steps, to the edges of the other tiles and to the bottom of the columns beside it; Alt: any size, to the pixel
+// dragging the corner: its top-left stays, only its category is placed again until it is let go. Its width snaps to 25,
+// 33, 50, 67, 75 and 100% of its row and to the edges of the other tiles, never under the minimum; its height to quarter
+// rows and to the bottom of the columns beside it; Alt: any size
 function startCorner(tile) {
   const G = tileGeo(tile); if (!G) return false;
   const xs = [], ys = [], kids = tileKids(G.tg), pos = G.tg._L ? G.tg._L.pos : [], tgL = G.tg.getBoundingClientRect().left;
@@ -2850,12 +2953,12 @@ function startCorner(tile) {
   // pointer)
   const pd = pos[G.j];
   if (pd && pd.dw != null) { const r = G.r, left = placed(pd)[0]; G.r = { left, top: r.top, right: r.right, bottom: r.bottom, width: r.right - left, height: r.height }; }
-  const w0 = pd && pd.dw != null ? Math.min(2, G.k, Math.max(0.25, r4((G.r.width + G.g) / G.p))) : Math.min(G.s.w, G.k), a0 = G.at(w0, G.s.h);
+  const w0 = pd && pd.dw != null ? Math.min(G.k, Math.max(G.wmin, r4((G.r.width + G.g) / G.p))) : Math.min(pd ? pd.w : G.s.w, G.k), a0 = G.at(w0, G.s.h);   // (held to the minimum: from what it is drawn at)
   Object.assign(rs, G, { kind: 'corner', tile, cid: tile.dataset.cid, w0, h0: G.s.h, w: G.s.w, h: G.s.h, th0: a0.th, TH0: a0.TH, sx: a0.x, sy: a0.y, xs, ys, ends: colEnds(tile.closest('.dcat')) });
   return true;
 }
 function moveCorner(ev) {
-  const R = rs, maxW = Math.min(2, R.k), thr = 7, lines = [], seen = new Map(), at0 = R.at;
+  const R = rs, maxW = R.k, thr = 7, lines = [], seen = new Map(), at0 = R.at;
   R.at = (w, h) => { const key = w + '|' + h; if (!seen.has(key)) seen.set(key, at0(w, h)); return seen.get(key); };   // each size placed once per move
   try { moveCorner0(ev, R, maxW, thr, lines); } finally { R.at = at0; }
 }
@@ -2863,13 +2966,14 @@ function moveCorner0(ev, R, maxW, thr, lines) {
   R.last = { clientX: ev.clientX, clientY: ev.clientY };
   // a side the pointer hasn't moved along keeps its size as it is (a wide tile in a one-per-row category stays wide)
   const dx = ev.clientX - R.x0, dy = ev.clientY - R.y0, mx = Math.abs(dx) >= 3, my = Math.abs(dy) >= 3;
-  let w = mx ? Math.min(maxW, Math.max(0.25, R.w0 + dx / R.p)) : R.s.w, level = false;
-  // the snap nearest to where the pointer is wins: a quarter step, another tile's edge, (height) a column beside it
-  // ending level, which wins a near tie
+  let w = mx ? Math.min(maxW, Math.max(R.wmin, R.w0 + dx / R.p)) : R.s.w, level = false;
+  // the snap nearest to where the pointer is wins: one of the shares, another tile's edge, (height) a quarter row, a
+  // column beside it ending level, which wins a near tie
   const best = cs => cs.reduce((a, c) => c && (!a || c[0] < a[0]) ? c : a, null);
   if (!ev.altKey && mx) {
-    const at = R.r.left + pxW(R, w), wq = Math.min(maxW, Math.max(0.25, Math.round(w * 4) / 4)), nx = nearest(R.xs, at, thr), wx = nx === null ? null : (nx - R.r.left + R.g) / R.p;
-    const c = best([[Math.abs(R.r.left + pxW(R, wq) - at), wq], wx !== null && wx >= 0.25 - PE && wx <= maxW + PE ? [Math.abs(nx - at), wx, { x: nx }] : null]);
+    const us = PCTS.map(q => q / 100 * R.k).filter(u => u >= R.wmin - PE), wq = us.length ? us.reduce((a, u) => Math.abs(u - w) < Math.abs(a - w) ? u : a) : maxW;
+    const at = R.r.left + pxW(R, w), nx = nearest(R.xs, at, thr), wx = nx === null ? null : (nx - R.r.left + R.g) / R.p;
+    const c = best([[Math.abs(R.r.left + pxW(R, wq) - at), wq], wx !== null && wx >= R.wmin - PE && wx <= maxW + PE ? [Math.abs(nx - at), wx, { x: nx }] : null]);
     w = c[1]; if (c[2]) lines.push(c[2]);
   }
   if (w >= maxW - PE && R.s.w > maxW) w = R.s.w;   // (a wide tile held to the row's width keeps its own)
@@ -2900,51 +3004,30 @@ function moveCorner0(ev, R, maxW, thr, lines) {
     else { w = R.s.w; h = R.h0; }
   }
   R.w = r4(w); R.h = r4(h);
-  setTileSz(R.tile, R.w, R.h);
+  setTileSz(R.tile, R.w, R.h, R.k);
   packTg(R.tg, R.k); tileFit(R.tg, R.tw, R.k, R.g, R.fs);
   if (R.tg.closest('.lrow.grow')) growPass();   // a Fill row shares its spare room again
   guides(lines);
-  const pw = Math.round(pxW(R, R.w)), ph = Math.round(th(R.h));
-  if (sel === R.cid) for (const [k, v] of [['w', R.w], ['h', R.h], ['pw', pw], ['ph', ph]]) { const b = document.querySelector('#insp input[data-sz="' + k + '"]'); if (b) b.value = v; }
-  pill(fmtSz(R.w) + ' x ' + fmtSz(R.h) + ' tiles, ' + pw + ' x ' + ph + ' px' + (level ? ', level with the column beside it' : '') + (full ? ', as far as it goes in its place' : ''), ev.clientX + 14, ev.clientY + 10);
+  if (sel === R.cid) for (const [k, v] of [['f', Math.round(R.w / R.k * 1000) / 10], ['h', R.h]]) { const b = document.querySelector('#insp input[data-sz="' + k + '"]'); if (b) b.value = v; }
+  pill(pctTxt(R.w / R.k) + ' x ' + fmtSz(R.h) + ' rows' + (level ? ', level with the column beside it' : '') + (full ? ', as far as it goes in its place' : ''), ev.clientX + 14, ev.clientY + 10);
 }
-// the numbers in a tile's settings: in tiles, or in px at this window size
+// the numbers in a tile's settings: its width as a % of its row, its height in rows
 function sizeInput(cid, which, v) {
   if (nudge) flushNudge();   // (a Ctrl+arrow just before: its side counts)
   const z = cellSize(cid);
   if (!isFinite(v) || v <= 0) { renderInsp(); return; }
-  let w = z.w, h = z.h, tol = SNAPQ;
-  if (which === 'w') w = v; else if (which === 'h') h = v;
-  else {
-    const G = tileGeo(tileEl(cid)); if (!G) return;
-    tol = snapAt(G);
-    if (which === 'pw') w = (v + G.g) / G.p; else h = solveSize(hh => G.at(Math.min(w, G.k), hh).th, v);
-  }
-  const off = x => x < 0.25 - 1e-3 || x > 2 + 1e-3;
-  if (off(w) || off(h)) toast('A tile is 0.25 to 2 tiles each way: this one is as close as it gets');
-  mutate(() => setSize(cid, w, h, tol));
-  if (which === 'pw' || which === 'ph') exactPx(cid, which, v);
+  if (which === 'f') mutate(() => setShare(cid, v / 100, z.h));
+  else if (which === 'h') mutate(() => z.f ? setShare(cid, z.f, v) : setSize(cid, z.w, v));
 }
-// a size typed in px: the view may find a new text size for it (a taller tile can make everything a little smaller),
-// so it is measured again and set once or twice more, in the same undo step
-function exactPx(cid, which, v) {
-  for (let i = 0; i < 2; i++) {
-    const G = tileGeo(tileEl(cid)), z = cellSize(cid); if (!G) return;
-    const now = which === 'pw' ? pxW(G, z.w) : G.at(Math.min(z.w, G.k), z.h).th;
-    if (Math.abs(now - v) <= 0.5) return;
-    const w = which === 'pw' ? (v + G.g) / G.p : z.w, h = which === 'ph' ? solveSize(hh => G.at(Math.min(w, G.k), hh).th, v) : z.h, tol = snapAt(G), was = JSON.stringify(sizeLook(z.w, z.h, tol));
-    if (JSON.stringify(sizeLook(w, h, tol)) === was) return;
-    setSize(cid, w, h, tol); afterChange();
-  }
-}
-// Ctrl+arrows: a pixel wider, narrower, taller or shorter; with Shift to the next quarter step. Shown at once on its
+// Ctrl+arrows: 1% of its row wider or narrower, a pixel taller or shorter; with Shift the next share (25, 33, 50, 67,
+// 75, 100%) or quarter row. Shown at once on its
 // category only; kept (one undo step, the view fitted again) once the keys rest, so a held key never queues redraws
 let nudge = null, nudgeT = 0;
 function flushNudge() {
   clearTimeout(nudgeT);
   const n = nudge; nudge = null; lpill.classList.remove('on');
   if (!n || !S.L.cells[n.cid]) return;
-  keyLayout(() => mutate(() => setSize(n.cid, n.w, n.h, n.tol)));
+  keyLayout(() => mutate(() => setSize(n.cid, n.w, n.h, n.tol, n.wk ? n.k : undefined)));
   const inSz = !!(document.activeElement && document.activeElement.matches && document.activeElement.matches('#insp input[data-sz]'));   // (pressed in a size field: the redraw gave it back its focus, it keeps it)
   const e = tileEl(n.cid); if (e && n.cid === sel && !inSz) e.focus({ preventScroll: true });
 }
@@ -2955,22 +3038,23 @@ function nudgeQuiet() {
   if (!nudge) return;
   clearTimeout(nudgeT); const n = nudge; nudge = null; lpill.classList.remove('on');
   if (!S.L.cells[n.cid]) return;
-  const before = snapOf(); setSize(n.cid, n.w, n.h, n.tol); tidyViews(S.L);
+  const before = snapOf(); setSize(n.cid, n.w, n.h, n.tol, n.wk ? n.k : undefined); tidyViews(S.L);
   if (snapOf() !== before) { pushUndo(before); saveState(); syncUndo(); syncSaves(); }
 }
 function nudgeSize(cid, dx, dy, quarter) {
   if (nudge && nudge.cid !== cid) flushNudge();
   const t = tileEl(cid), G = tileGeo(t); if (!G) return;
-  const z = nudge && nudge.cid === cid ? { w: nudge.w, h: nudge.h } : cellSize(cid);
-  const pd = (!nudge || nudge.cid !== cid) && G.tg._L ? G.tg._L.pos[G.j] : null;   // (drawn wider, see fillRows: a width step goes from what you see)
-  const q = (v, d) => (d > 0 ? Math.floor(v * 4 + PE) + 1 : Math.ceil(v * 4 - PE) - 1) / 4, w0 = Math.min(dx && pd && pd.dw != null ? r4(pd.dw) : z.w, G.k), lim = (v, mx) => r4(Math.min(mx, Math.max(0.25, v)));
-  // (only the side the arrow moves changes: a wide tile in a one-per-row category stays wide)
-  const w = !dx || (dx > 0 && z.w >= G.k - PE) ? z.w : lim(quarter ? q(w0, dx) : (pxW(G, w0) + dx + G.g) / G.p, Math.min(2, G.k));   // (a wide tile held to the row stays wide)
+  const z = nudge && nudge.cid === cid ? { w: nudge.w, h: nudge.h } : { w: Math.min(G.s.w, G.k), h: G.s.h };
+  const pd = (!nudge || nudge.cid !== cid) && G.tg._L ? G.tg._L.pos[G.j] : null;   // (drawn wider, or held to the minimum: a width step goes from what you see)
+  const q = (v, d) => (d > 0 ? Math.floor(v * 4 + PE) + 1 : Math.ceil(v * 4 - PE) - 1) / 4, w0 = Math.min(dx && pd ? r4(drawnW(pd)) : z.w, G.k), lim = (v, mx) => r4(Math.min(mx, Math.max(0.25, v)));
+  const us = PCTS.map(p => p / 100 * G.k), next = (v, d) => d > 0 ? (us.find(u => u > v + 1e-3) || G.k) : ([...us].reverse().find(u => u < v - 1e-3) || G.wmin);
+  // (only the side the arrow moves changes)
+  const w = !dx ? z.w : r4(Math.min(G.k, Math.max(G.wmin, quarter ? next(w0, dx) : w0 + dx * G.k / 100)));
   const h = !dy ? z.h : lim(quarter ? q(z.h, dy) : solveSize(hh => G.at(w0, hh).th, G.at(w0, z.h).th + dy, z.h), 2);
-  nudge = { cid, w, h, tol: quarter ? SNAPQ : snapAt(G) };
-  setTileSz(t, w, h); packTg(G.tg, G.k); tileFit(G.tg, G.tw, G.k, G.g, G.fs);
+  nudge = { cid, w, h, k: G.k, tol: quarter ? SNAPQ : snapAt(G), wk: !!G.s.f || !!dx || !!(nudge && nudge.cid === cid && nudge.wk) };   // (wk: its width set: kept as a share)
+  setTileSz(t, w, h, G.k); packTg(G.tg, G.k); tileFit(G.tg, G.tw, G.k, G.g, G.fs);
   const r = t.getBoundingClientRect();
-  pill(fmtSz(w) + ' x ' + fmtSz(h) + ' tiles, ' + Math.round(r.width) + ' x ' + Math.round(r.height) + ' px', r.right + 6, r.bottom + 6);
+  pill(pctTxt(w / G.k) + ' x ' + fmtSz(h) + ' rows', r.right + 6, r.bottom + 6);
   clearTimeout(nudgeT);
   nudgeT = setTimeout(function later() { if (rs || dragPt || (drag && drag.started)) { nudgeT = setTimeout(later, 350); return; } flushNudge(); }, 350);   // (not under a drag: the redraw would leave it on the old tiles)
 }
@@ -2978,22 +3062,21 @@ function nudgeSize(cid, dx, dy, quarter) {
 // enough that its column ends level with the tallest one beside it
 function catSizeInput(id, which, v) {
   const cat = catById(id); if (!cat || !isFinite(v) || v <= 0) { renderInsp(); return; }
-  if (v < 0.25 - 1e-3 || v > 2 + 1e-3) toast('A tile is 0.25 to 2 tiles each way: these are as close as it gets');
-  mutate(() => { for (const c of cellsOf(cat)) { const z = cellSize(c); setSize(c, which === 'w' ? v : z.w, which === 'h' ? v : z.h); } });
+  mutate(() => { for (const c of cellsOf(cat)) { const z = cellSize(c); if (which === 'f') setShare(c, v / 100, z.h); else if (z.f) setShare(c, z.f, v); else setSize(c, z.w, v); } });
 }
 function fitRow(id) {
   const blk = document.querySelector('#view .blk[data-cat="' + CSS.escape(id) + '"]'), tg = blk && blk.querySelector('.tg.pk'), tiles = tg ? tileKids(tg) : [];
   const E = blk ? colEnds(blk) : null, G = tiles.length ? tileGeo(tiles[0]) : null;
   if (!G || !E.cols.length) { toast('Nothing beside it to line up with'); return; }
-  const short = tg.classList.contains('shorts'), target = Math.max(...E.cols), base = tiles.map(szOf), nat = tiles.map(x => natOf(x, short));
+  const short = tg.classList.contains('shorts'), target = Math.max(...E.cols), base = tiles.map(x => szOf(x, G.k)), nat = tiles.map(x => natOf(x, short));
   const row = tg.closest('.lrow'), gr = row && row.classList.contains('grow') && !short ? parseFloat(row.style.getPropertyValue('--gr')) || 0 : 0;
   const hs = f => base.map(s => r4(Math.min(2, Math.max(0.25, s.h * f))));
-  const TH = f => { const h = hs(f), L = placeTiles(base.map((s, i) => ({ w: s.w, h: h[i], nl: s.nl })), nat, G.k, G.g / G.fs, !short && !!row && !!row.dataset.fill); return L.TH * G.fs + L.H * gr; };
+  const TH = f => { const h = hs(f), L = placeTiles(floorSz(base.map((s, i) => Object.assign({}, s, { h: h[i] })), G.k, G.tw, G.g, G.fs, short), nat, G.k, G.g / G.fs, !short && !!row && !!row.dataset.fill); return L.TH * G.fs + L.H * gr; };
   const TH1 = TH(1), end = f => E.own + TH(f) - TH1;
   let lo = 0.125, hi = 8;
   for (let i = 0; i < 24; i++) { const m = Math.sqrt(lo * hi); if (end(m) < target) lo = m; else hi = m; }
   const f = Math.abs(end(lo) - target) < Math.abs(end(hi) - target) ? lo : hi, miss = Math.round(Math.abs(end(f) - target)), h = hs(f);
-  mutate(() => tiles.forEach((t, i) => setSize(t.dataset.cid, base[i].w, h[i])), miss > 1 ? 'As close as it gets: ' + miss + ' px off. A tile stays between 0.25 and 2 tiles tall' : 'Its column now ends level with the tallest beside it');
+  mutate(() => tiles.forEach((t, i) => base[i].f ? setShare(t.dataset.cid, base[i].f, h[i]) : setSize(t.dataset.cid, base[i].w, h[i])), miss > 1 ? 'As close as it gets: ' + miss + ' px off. A tile stays 0.25 to 2 rows tall' : 'Its column now ends level with the tallest beside it');
 }
 function startHandle(ev, el) {
   const v = stored(S.screen);
@@ -3043,7 +3126,7 @@ function endHandle(cancel) {
   const before = snapOf();
   if (h.kind === 'split') mutate(() => { const row = stored(S.screen).rows[h.ri]; row.cols.forEach((c, i) => { c.w = h.w[i]; }); });
   else if (h.kind === 'rowh') mutate(() => { const row = stored(S.screen).rows[h.ri]; if (h.h) row.h = 1; else delete row.h; });
-  else mutate(() => setSize(h.cid, h.w, h.h, snapAt(h)));
+  else mutate(() => setSize(h.cid, h.w, h.h, snapAt(h), h.s.f || Math.abs(h.w - h.s.w) > 1e-4 ? h.k : undefined));   // (its width as it was: a normal tile stays one, 2.2)
   if (snapOf() === before) { renderView(false); renderInsp(); }   // back where it started: draw it as it was
 }
 const rsOwn = ev => !rs || rs.pid == null || ev.pointerId === rs.pid;   // (only the pointer that started it)
@@ -3141,7 +3224,7 @@ function templateRows(kind) {
   const vn = S.screen;
   if (kind === 'copy') { const o = stored(vn === 'tiles' ? 'overview' : 'tiles'); return o && o.rows ? clone(o.rows) : null; }
   const n = kind === 'two' ? 2 : kind === 'three' ? 3 : 1, rows = [];
-  const big = c => vn === 'tiles' ? cellsOf(c).length > (n === 2 ? 6 : 9) || (catLook(c.id, vn).per || 0) >= 5 : catLook(c.id, vn).style === 'band';
+  const big = c => vn === 'tiles' ? cellsOf(c).length > (n === 2 ? 6 : 9) || (catLook(c.id, vn).per || 0) >= 5 || cellsOf(c).some(x => { const f = cellSize(x).f; return !!f && f <= 0.2; }) : catLook(c.id, vn).style === 'band';
   let cur = null;
   for (const c of S.L.cats) {
     if (n === 1 || big(c)) { rows.push({ cols: [{ stack: [c.id] }] }); cur = null; continue; }
@@ -3404,7 +3487,7 @@ function renameCat(catEl) {
   if (!catEl || !S.edit) return;
   const c = S.L.cats.find(x => x.id === catEl.dataset.cat), cn = catEl.querySelector('.cn');
   if (!c || !cn) return;
-  const inp = document.createElement('input'); inp.className = 'cn-in'; inp.value = c.name; inp.setAttribute('aria-label', 'Category name');
+  const inp = document.createElement('input'); inp.className = 'cn-in'; inp.maxLength = NAME_MAX; inp.value = c.name; inp.setAttribute('aria-label', 'Category name');
   cn.replaceWith(inp); inp.focus(); inp.select();
   let done = false;
   // quiet: the view is being rebuilt anyway (a catalog arrived mid-rename), so no render of its own
@@ -3542,7 +3625,7 @@ function renderInsp() {
   let h = '<div class="src">' + (c.pred ? '<span>Predicted fan: no sensor, its rpm comes from the curve below.</span>'
     : r ? '<span>' + esc(sen.name) + '</span><span style="color:var(--fg)" title="' + esc(r.key) + '">' + esc(r.label) + '</span>'
     : '<span style="color:#e08a8d">' + (sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now' : 'Not on this PC' + (c.match ? ': ' + esc(c.match.replace('|', ', ')) : '')) + '</span><span class="k">' + esc(c.key) + '</span>') + '</div>';
-  h += '<label class="fld"><span>Name</span><input id="iName" value="' + esc(c.name || '') + '" placeholder="' + esc(r ? r.label : c.pred ? 'Predicted fan' : '') + '"></label>';
+  h += '<label class="fld"><span>Name</span><input id="iName" maxlength="' + NAME_MAX + '" value="' + esc(c.name || '') + '" placeholder="' + esc(r ? r.label : c.pred ? 'Predicted fan' : '') + '"></label>';
   h += cellLayHtml(sel, c);
   const bn = isBneck(c), gsel = '<select id="iGraph"><option value="1"' + (c.graph !== false ? ' selected' : '') + '>Show</option><option value="0"' + (c.graph === false ? ' selected' : '') + '>Hide</option></select>';
   // the bottleneck is a call, not a number: no decimals, no lines
@@ -3922,7 +4005,7 @@ function catPanel(cat) {
   const vn = S.screen, V = VNAME[vn], lk = catLook(cat.id), v = stored(vn), own = !!(v && v.rows), ids = cellsOf(cat);
   const leadOpts = '<option value="">' + (ids.length ? 'The first one, ' + esc(nameIn(ids[0])) : 'The first one') + '</option>' +
     ids.slice(1).map(id => '<option value="' + esc(id) + '"' + (lk.lead === id ? ' selected' : '') + '>' + esc(nameIn(id)) + '</option>').join('');
-  let h = '<label class="fld"><span>Name</span><input id="lName" value="' + esc(cat.name) + '"></label><div class="fgrp"><span class="sub">In ' + V + '</span>';
+  let h = '<label class="fld"><span>Name</span><input id="lName" maxlength="' + NAME_MAX + '" value="' + esc(cat.name) + '"></label><div class="fgrp"><span class="sub">In ' + V + '</span>';
   if (vn !== 'grid') {
     const rows = rowsNow(vn), p = posIn(rows, cat.id), alone = !p || p.row.cols.length < 2;
     h += '<span class="row3">' + (own && p ? 'Row ' + (p.ri + 1) + ' of ' + rows.length + (alone ? ', alone in its row at full width' : ', column ' + (p.ci + 1) + ' of ' + p.row.cols.length) + (p.col.stack.length > 1 ? ', stacked ' + (p.k + 1) + ' of ' + p.col.stack.length : '')
@@ -3940,10 +4023,9 @@ function catPanel(cat) {
   }
   h += '</div>';
   if (vn === 'tiles')
-    h += '<div class="fgrp"><span class="lab">Look in Tiles</span><div class="two"><label class="fld"><span>Tiles per row</span><select data-lay="per"><option value="">Auto</option>' +
-      [1, 2, 3, 4, 5, 6, 7, 8].map(n => '<option' + (lk.per === n ? ' selected' : '') + '>' + n + '</option>').join('') + '</select></label>' + segL('Tile style', 'size', [['', 'Normal'], ['short', 'Short']], lk.size || '') + '</div>' +
-      '<span class="hint">Short: no graph; the name over its 15 min max on the left, the value on the right. Wider tiles, so fewer to a row.</span><div class="two">' + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') +
-      '<label class="fld"><span>Shown first</span><select data-lay="lead">' + leadOpts + '</select></label></div>' + catSizeHtml(cat, ids) + '</div>';
+    h += '<div class="fgrp"><span class="lab">Look in Tiles</span><div class="two">' + segL('Tile style', 'size', [['', 'Normal'], ['short', 'Short']], lk.size || '') + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') + '</div>' +
+      '<span class="hint">Short: no graph; the name over its 15 min max on the left, the value on the right. Wider tiles, so fewer to a row.</span>' +
+      '<label class="fld"><span>Shown first</span><select data-lay="lead">' + leadOpts + '</select></label>' + catSizeHtml(cat, ids) + '</div>';
   else if (vn === 'overview') {
     const st = lk.style || '';
     h += '<div class="fgrp"><span class="lab">Look in Overview</span><div class="looks" data-lay="style">' + LOOKS.map(([k, t, rects]) => '<button class="look' + (st === k ? ' on' : '') + '" data-v="' + k + '"><span class="pic">' +
@@ -3958,35 +4040,26 @@ function catPanel(cat) {
 // Tiles: the size of every tile in a category at once (empty when they differ), and Line up the bottom
 function catSizeHtml(cat, ids) {
   if (!ids.length) return '';
-  const zs = ids.map(cellSize), same = k => zs.every(z => z[k] === zs[0][k]) ? zs[0][k] : '', blk = document.querySelector('#view .blk[data-cat="' + CSS.escape(cat.id) + '"]');
-  const num = k => '<label><input type="number" data-csz="' + k + '" value="' + same(k) + '" placeholder="mixed" min="0.25" max="2" step="0.05"><i>' + (k === 'w' ? 'wide' : 'tall') + '</i></label>';
-  return '<div class="fld"><span>Size of all its tiles</span><div class="szin">' + num('w') + num('h') + '</div></div>' +
+  const zs = ids.map(cellSize), fs = zs.map(z => z.f ? Math.round(z.f * 1000) / 10 : null), hs = zs.map(z => z.h), blk = document.querySelector('#view .blk[data-cat="' + CSS.escape(cat.id) + '"]');
+  const same = a => a[0] != null && a.every(x => x === a[0]) ? a[0] : '';
+  const num = (k, v, u) => '<label><input type="number" data-csz="' + k + '" value="' + v + '" placeholder="mixed" min="0" step="any"><i>' + u + '</i></label>';
+  return '<div class="fld"><span>Size of all its tiles</span><div class="szin">' + num('f', same(fs), '%') + num('h', same(hs), 'rows') + '</div></div>' +
     '<div class="btnrow"><button class="btn" data-lay="fitrow"' + (blk && colEnds(blk).cols.length ? '' : ' disabled') + '>Line up the bottom</button></div>' +
     '<span class="hint">Its tiles get a little taller or shorter, so its column ends level with the tallest column beside it.</span>';
 }
-// a tile's width or height in one click: quarter steps from 0.25 to 2, and thirds under them (his ask 11-04: three of
-// 4/3 fill a row of four) (no wider than its row of tiles)
-const QSZ = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2], TSZ = [[1 / 3, '1/3'], [2 / 3, '2/3'], [4 / 3, '4/3'], [5 / 3, '5/3']];
-const qbtn = (v, t, cur, per) => '<button data-v="' + v + '"' + (per && v > per ? ' disabled' : '') + ' class="' + (Math.abs(v - cur) < 1e-6 ? 'on' : '') + '">' + t + '</button>';
-const qsizes = (label, key, cur, per) => '<div class="fld"><span>' + label + '</span><div class="seg qs" data-lay="' + key + '">' +
-  QSZ.map(v => qbtn(v, String(v).replace(/^0\./, '.'), cur, per)).join('') + '</div><div class="seg qs qt" data-lay="' + key + '">' + TSZ.map(([v, t]) => qbtn(v, t, cur, per)).join('') + '</div></div>';
+// a tile's width or height in one click: the shares (25, 33, 50, 67, 75, 100% of its row) and heights in rows
+const qpick = (key, vals, cur, txt, tol) => '<div class="seg qs" data-lay="' + key + '">' + vals.map(v => '<button data-v="' + v + '" class="' + (cur != null && Math.abs(v - cur) < tol ? 'on' : '') + '">' + txt(v) + '</button>').join('') + '</div>';
 function cellLayHtml(cid, c) {
   const vn = S.screen, V = VNAME[vn], cl = cellLook(cid), cat = catOf(cid), lk = cat ? catLook(cat.id) : {};
   let h = '<div class="fgrp"><span class="sub">In ' + V + '</span>';
-  h += cl.name != null ? '<div class="fld"><span>Name in ' + V + '</span><div class="vname"><input id="lvName" value="' + esc(cl.name) + '" placeholder="' + esc(cellName(c)) + '"><button class="ib" data-lay="vname-x" title="The same name as in the other views">' + ICONS.x + '</button></div></div>'
+  h += cl.name != null ? '<div class="fld"><span>Name in ' + V + '</span><div class="vname"><input id="lvName" maxlength="' + NAME_MAX + '" value="' + esc(cl.name) + '" placeholder="' + esc(cellName(c)) + '"><button class="ib" data-lay="vname-x" title="The same name as in the other views">' + ICONS.x + '</button></div></div>'
     : '<button class="linkbtn" data-lay="vname-on" style="align-self:flex-start">Different name in ' + V + '</button>';
   if (vn === 'tiles') {
-    const z = cellSize(cid), G = tileGeo(tileEl(cid)), pd = G && G.tg._L ? G.tg._L.pos[G.j] : null, dw = pd && pd.dw != null ? pd.dw : null;   // (dw: drawn wider, its row fills)
-    const px = G ? [Math.round(pxW(G, dw != null ? dw : z.w)), Math.round(G.at(Math.min(z.w, G.k), z.h).th)] : null, num = (k, v, min, max, step, u) => '<label><input type="number" data-sz="' + k + '" value="' + v + '"' +
-      (min != null ? ' min="' + min + '" max="' + max + '"' : ' title="At this window size"') + ' step="' + step + '"><i>' + u + '</i></label>';
-    h += '<div class="fld"><span>Size: a normal tile is 1 x 1</span><div class="szin">' + num('w', r4(z.w), 0.25, 2, 'any', 'wide') + num('h', r4(z.h), 0.25, 2, 'any', 'tall') + '</div>' +
-      (px ? '<div class="szin">' + num('pw', px[0], null, null, 1, 'px') + num('ph', px[1], null, null, 1, 'px') + '</div>' : '') + '</div>' +
-      qsizes('Width', 'cw', z.w, lk.per) + qsizes('Height', 'ch', z.h) +
-      (dw != null ? '<span class="hint">Drawn ' + fmtSz(dw) + ' wide: a row of normal tiles shares out the room left at its end. A size of its own keeps it as you set it.</span>' : '') +
-      '<label class="chk"><input type="checkbox" data-lay="nl"' + (cl.nl ? ' checked' : '') + '> Starts a new row</label>' +
-      '<span class="hint">This tile and the ones after it start a new row, so the row before ends early: say, four tiles of 0.75, then the rest together on their own row.</span>' +
-      '<span class="hint">Or drag its corner: it snaps to quarter steps and to other tiles. Hold Alt for any size. Ctrl+arrows: 1 px, or a quarter step with Shift.' +
-      (lk.per === 1 ? ' One tile per row: it can\'t be wider than the row.' : '') + '</span>';
+    const z = cellSize(cid), G = tileGeo(tileEl(cid)), pct = z.f ? z.f * 100 : G ? Math.min(G.s.w, G.k) / G.k * 100 : null;   // (a normal tile: the share it is drawn at)
+    const num = (k, v, u) => '<label><input type="number" data-sz="' + k + '" value="' + v + '" step="any" min="0"><i>' + u + '</i></label>';
+    h += '<div class="fld"><span>Width</span><div class="szin">' + num('f', pct == null ? '' : Math.round(pct * 10) / 10, '%') + '</div>' + qpick('cf', PCTS.map(r4), z.f ? z.f * 100 : null, v => Math.round(v) + '%', 0.5) + '</div>' +
+      '<div class="fld"><span>Height</span><div class="szin">' + num('h', r4(z.h), 'rows') + '</div>' + qpick('ch', RQ, z.h, v => String(v), 0.01) + '</div>' +
+      '<label class="chk"><input type="checkbox" data-lay="nl"' + (cl.nl ? ' checked' : '') + '> Starts a new row</label>';
   } else if (cat) {
     const first = idsIn(cat)[0] === cid, big = vn === 'overview' && lk.style !== 'list' && lk.style !== 'band';
     h += '<button class="btn" data-lay="lead-me" style="align-self:flex-start"' + (first ? ' disabled' : '') + '>' + (first ? (big ? 'This is the big reading' : 'It is shown first') : big ? 'Make it the big reading' : vn === 'grid' ? 'List it first' : 'Show it first') + '</button>';
@@ -4022,7 +4095,7 @@ function layoutAct(key, v) {
   else if (key === 'size' || key === 'title' || key === 'style') mutate(() => setLook('cat', id, key, v));
   else if (key === 'reset') mutate(() => { const w = vset(vn); if (w.cat) delete w.cat[id]; });
   else if (key === 'remove') removeCat(id);
-  else if (key === 'cw' || key === 'ch') { if (nudge) flushNudge(); const z = cellSize(sel); mutate(() => setSize(sel, key === 'cw' ? +v : z.w, key === 'ch' ? +v : z.h)); }
+  else if (key === 'cf' || key === 'ch') { if (nudge) flushNudge(); const z = cellSize(sel); mutate(() => key === 'cf' ? setShare(sel, +v / 100, z.h) : z.f ? setShare(sel, z.f, +v) : setSize(sel, z.w, +v)); }
   else if (key === 'fitrow') fitRow(id);
   else if (key === 'vname-on') { mutate(() => setLook('cell', sel, 'name', cellName(S.L.cells[sel]))); const f = $('lvName'); if (f) { f.focus(); f.select(); } }
   else if (key === 'vname-x') mutate(() => setLook('cell', sel, 'name', ''));
@@ -4061,7 +4134,7 @@ insp.addEventListener('input', e => {   // a name in this view, as it's typed (t
   setLook('cell', sel, 'name', t.value.trim() ? t.value.slice(0, 200) : '');
   tidyViews(S.L); saveState(); syncSaves();
   const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
-  if (el) el.textContent = nameIn(sel);
+  if (el) { el.textContent = nameIn(sel); nameFitSoon(); }
 });
 insp.addEventListener('keydown', e => { if (e.target.id === 'lName' && e.key === 'Escape') { const cat = catById(selCat); if (cat) e.target.value = cat.name; e.target.blur(); } });
 // a template shows itself while the pointer rests on it

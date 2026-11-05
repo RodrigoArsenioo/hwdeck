@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0 (2026-11-05)
+
+- A tile's size in Tiles is now a share of its row, shown as a %, and a height in rows. It stays the same at any window size and text size, and the size settings no longer show pixels or steps of quarters and thirds: a width in % with 25, 33, 50, 67, 75 and 100%, and a height in rows with 0.5, 1, 1.5 and 2. Dragging a tile's corner snaps to those widths, and Ctrl+arrows change the width by 1% (with Shift, to the next of those widths).
+- Tiles per row is no longer a category setting. Layouts that used it look as they did: each tile's width becomes its share of the row.
+- No tile is drawn narrower than a minimum that fits its name and caption. Where a window is too narrow for that, the tiles in those rows split evenly over fewer per row (four tiles of 25% become two and two) instead of cutting their text.
+- A caption that doesn't fit uses shorter words wherever it appears (tiles, Overview rows and Grid), for example "max 51.0 W" or "not shared by HWiNFO". A name that doesn't fit gets slightly smaller text instead of being cut, and names you type are limited to 24 characters.
+- A Grid caption a few pixels too long for its cell is now noticed as cut.
+
 ## 2.1.2 (2026-11-04)
 
 - A "15 min max" caption that doesn't fit its tile says just "max", for example "max 1,049 RPM", instead of being cut. It is checked only when its text or the tile's size changes.

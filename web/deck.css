@@ -295,7 +295,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .hc { font-size: max(0.92rem, 10px); color: #7b7b7b; margin-top: 0.38rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16rem; transition: color 300ms; min-height: 1.2em; }
 .hero canvas { width: 100%; height: 4.9rem; display: block; }
 .card { container-type: inline-size; }
-.row { display: grid; grid-template-columns: minmax(min(8rem, 45%), 1fr) minmax(0, 9.85rem) 7.1rem; align-items: center; gap: 0.77rem; padding: calc(0.46rem * (0.6 + 0.4 * var(--sp, 1))) 0.62rem; margin: 0 -0.62rem; border-radius: 0.55rem; background: var(--rowline); cursor: pointer; transition: background 150ms; }
+.row { display: grid; grid-template-columns: minmax(min(10.5rem, 60%), 1fr) minmax(0, 9.85rem) 7.1rem; align-items: center; gap: 0.77rem; padding: calc(0.46rem * (0.6 + 0.4 * var(--sp, 1))) 0.62rem; margin: 0 -0.62rem; border-radius: 0.55rem; background: var(--rowline); cursor: pointer; transition: background 150ms; }
 /* a row reaches 0.62rem past its text on both sides (padding, then the same back as margin: the text stays where it
    was), so its hover light has room around the icon and the words; its line under it is only as wide as the text */
 .row { --rowline: linear-gradient(#1c1c1c, #1c1c1c) 50% 100% / calc(100% - 1.24rem) 1px no-repeat; }
