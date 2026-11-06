@@ -189,7 +189,7 @@ ok('undo: the column back where it was', cb[1] < cb[0] - 50, JSON.stringify(cb))
 await click('#view .dcat[data-cat="b"] .cn');
 ok('a category: no tiles per row, all its tiles in % and rows (50 and 1 now)', await E(`!document.querySelector('#insp select[data-lay="per"]') && document.querySelector('#insp input[data-csz="f"]').value === '50' && document.querySelector('#insp input[data-csz="h"]').value === '1'`));
 await E(`(() => { const i = document.querySelector('#insp input[data-csz="h"]'); i.value = '0.8'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`); await p.sleep(600);
-ok('height 0.8 for all its tiles, their share kept', JSON.stringify(await look('b0')) === '{"f":0.5,"h":0.8,"fx":true}' && JSON.stringify(await look('b1')) === '{"f":0.5,"h":0.8,"fx":true}', JSON.stringify([await look('b0'), await look('b1')]));
+ok('height 0.8 for all its tiles, their share kept (and whether it was set by hand: a height alone pins no width, 11-06)', JSON.stringify(await look('b0')) === '{"f":0.5,"h":0.8}' && JSON.stringify(await look('b1')) === '{"f":0.5,"h":0.8}', JSON.stringify([await look('b0'), await look('b1')]));
 await click('#view .dcat[data-cat="b"] .cn');
 await click('#insp button[data-lay="fitrow"]'); await p.sleep(500);
 cb = await colBottoms();

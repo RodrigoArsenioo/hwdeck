@@ -11,6 +11,16 @@
 - Switching off Selected in the editing bar also deselects the cell or category.
 - Fill the window no longer makes the view smaller than All fit when there is little room left: the text keeps the size All fit gives it.
 - A number in a colour (a warning, the last game session's grey) no longer flashes white when the view is drawn again, for example on a Height switch.
+- The lists in the settings (Decimals, Graph, Shown first, a fan curve's source) open a menu in the app's own look, like the game history's All Games, with the arrow keys, Enter and Escape.
+- Fill the window is a setting of the view: it no longer makes an automatic Tiles view your own, and Automatic keeps it. A row of yours can still fill on its own.
+- Undo and redo go back to the view where the change was made and select again what was selected.
+- Delete or Backspace with the focus on a settings button no longer removes the selected category or cell.
+- Ctrl+Z in a settings field undoes the last change when nothing is typed in it; Tab moves between the settings' fields.
+- A tile's width field and its chips always show the same width, also after the view is drawn again; a typed 33 or 67 is the third its chip gives; changing only a tile's height no longer pins its width.
+- Grid offers no more tables than categories, and changing the count keeps each category in its table.
+- Width in row offers only the widths that fit the row; Reset its look in Tiles also gives its tiles their own size back.
+- Remove from view is now Remove cell (it leaves every view) and the settings show its category after.
+- Selected stays lit while something is selected; Starts a new row is not offered on a category's first tile.
 
 ## 2.4.0 (2026-11-05)
 

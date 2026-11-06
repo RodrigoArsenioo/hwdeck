@@ -581,6 +581,9 @@ function cleanViews(V, L, ids, catIds) {
       }
     }
     if (vn !== 'grid' && (v.gap === 'tight' || v.gap === 'roomy')) o.gap = v.gap;
+    // (Fill the window: the view's, so Automatic keeps it; every row of yours filled is the same thing. A row of yours
+    // can still fill on its own while the view fits: the panel audit 11-06, Fill made Automatic your own)
+    if (vn === 'tiles' && (v.fill === true || (o.rows && o.rows.length && o.rows.every(r => r.h)))) { o.fill = true; if (o.rows) for (const r of o.rows) delete r.h; }
     if (isObj(v.cat)) {
       const cat = {};
       for (const k of Object.keys(v.cat)) {
@@ -812,7 +815,22 @@ function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(
 function saveSlot(i) { send({ t: 'save', file: 'slots/slot' + (i + 1), data: S.slots[i] }); }
 // undo steps hold the layout and which slot it came from, so Clear then Undo is exactly where you were
 let undoStack = [], redoStack = [];
-const snapOf = () => JSON.stringify({ L: S.L, active: S.active, look: S.look });   // (the look too: a colour, a palette, the cards undo like any change, 11-02)
+// (each step also remembers the view it was made in and what was selected: undo and redo go back there and select it
+// again, so what they change is seen; the panel audit 11-06, an undo in a view out of sight looked like it did nothing)
+const stepMeta = new Map();
+const snapOf = () => {   // (the look too: a colour, a palette, the cards undo like any change, 11-02)
+  const s = JSON.stringify({ L: S.L, active: S.active, look: S.look });
+  stepMeta.delete(s); stepMeta.set(s, { screen: S.screen, sel, selCat }); if (stepMeta.size > 24) stepMeta.delete(stepMeta.keys().next().value);
+  return s;
+};
+const atStep = (s, at) => at && typeof s === 'string' && s.startsWith('{"L":') && s.endsWith('}') ? s.slice(0, -1) + ',"__at":' + JSON.stringify(at) + '}' : s;
+const stepAt = e => { const i = typeof e === 'string' ? e.lastIndexOf(',"__at":{') : -1; if (i < 0) return null; try { return JSON.parse(e.slice(i + 8, -1)); } catch (x) { return null; } };
+const bareStep = e => { const i = typeof e === 'string' ? e.lastIndexOf(',"__at":{') : -1; return i < 0 ? e : e.slice(0, i) + '}'; };
+function goAt(at) {
+  if (!at || !S.edit) return;
+  sel = at.sel && S.L.cells[at.sel] ? at.sel : null; selCat = !sel && at.selCat && S.L.cats.some(c => c.id === at.selCat) ? at.selCat : null;
+  if (at.screen && at.screen !== S.screen && VIEWS.includes(at.screen)) showScreen(at.screen);
+}
 // folding a category is how you look at it, not a change: undo keeps the folds as they are
 function restore(json) {
   const o = JSON.parse(json), was = new Map(S.L.cats.map(c => [c.id, c.collapsed]));
@@ -821,7 +839,7 @@ function restore(json) {
   for (const c of S.L.cats) if (was.has(c.id)) c.collapsed = was.get(c.id);
 }
 let undoSeq = 0;   // (counts every step: the stack's length stops changing at its cap)
-function pushUndo(before) { undoStack.push(before); undoSeq++; if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
+function pushUndo(before) { undoStack.push(atStep(before, stepMeta.get(before))); undoSeq++; if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
 function snap() { pushUndo(snapOf()); }
 // a change that changes nothing (Alt+arrow at the end of a list) leaves no undo step
 function mutate(fn, msg) { if (nudge) flushNudge(); const before = snapOf(); fn(); tidyViews(S.L); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); flipNext = true; afterChange(); if (msg) toast(msg, true); }
@@ -841,11 +859,11 @@ function bootCheck(force) {
 function bootArm() { if (app.classList.contains('boot') && !document.hidden && !boot.t) boot.t = setTimeout(() => bootCheck(true), 2500); }
 document.addEventListener('visibilitychange', bootArm);
 let onLayout = null;   // (the sessions popup: Customize and the open sessions drawn again)
-function afterChange() { tidyViews(S.L); fixSel(); if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); if (onLayout) onLayout(); }
+function afterChange() { preview = null; tidyViews(S.L); fixSel(); if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); if (onLayout) onLayout(); }
 // (a step the host does, a Restore in Settings: undone and redone by the host, its log, not the layout: 11-02)
 const hostStep = e => { if (e[2] !== 'h') return null; try { const o = JSON.parse(e); return o.host ? o : null; } catch (x) { return null; } };
-function undo() { if (nudge) flushNudge(); keyStep.t = 0; if (!undoStack.length) return; retireToastUndo(); const e = undoStack.pop(), h = hostStep(e); if (h) { redoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } redoStack.push(snapOf()); restore(e); fixSel(); flipNext = true; afterChange(); }   // (it glides back the way it went)
-function redo() { if (nudge) flushNudge(); keyStep.t = 0; if (!redoStack.length) return; retireToastUndo(); const e = redoStack.pop(), h = hostStep(e); if (h) { undoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); undoSeq++; send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } undoStack.push(snapOf()); restore(e); fixSel(); flipNext = true; afterChange(); }
+function undo() { if (nudge) flushNudge(); keyStep.t = 0; if (!undoStack.length) return; retireToastUndo(); const e = undoStack.pop(), h = hostStep(e); if (h) { redoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } const at = stepAt(e); redoStack.push(atStep(snapOf(), at)); restore(e); fixSel(); goAt(at); flipNext = true; afterChange(); }   // (it glides back the way it went)
+function redo() { if (nudge) flushNudge(); keyStep.t = 0; if (!redoStack.length) return; retireToastUndo(); const e = redoStack.pop(), h = hostStep(e); if (h) { undoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); undoSeq++; send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } const at = stepAt(e); undoStack.push(atStep(snapOf(), at)); restore(e); fixSel(); goAt(at); flipNext = true; afterChange(); }
 function syncUndo() { $('undo').disabled = $('undoE').disabled = !undoStack.length; $('redo').disabled = $('redoE').disabled = !redoStack.length; }   // (the title bar's and the editing strip's)
 function fixSel() { if (sel && !S.L.cells[sel]) sel = null; if (selCat && !S.L.cats.some(c => c.id === selCat)) selCat = null; }
 const layoutSig = L => JSON.stringify(L, (k, v) => k === 'collapsed' ? undefined : v);
@@ -887,6 +905,7 @@ function subscribe() {
 }
 
 // ---------- a cell's value and state: gates (with their hold), fan curve, warming toward yellow ----------
+let dselOpen = null;   // (a settings list's open menu: { s: the select, b: its button, m: the menu }; see dselShow)
 let sel = null, selCat = null, relinkFor = null;   // the selected cell, or the selected category (never both)
 const holdSince = {}, cellEp = {};
 // a second with no value (or a reading gone): a calm one for the cell's episode, as the log counts it, and the end of a
@@ -1551,7 +1570,7 @@ function arrHtml(cls, v, block, auto) {
   let h = '';
   for (const r of rows) {
     const manual = manualRow(r);
-    h += '<div class="lrow" data-r="' + r.i + '"' + (manual ? '' : ' data-auto="1"') + (tiles && r.h ? ' data-fill="1"' : '') + ' style="--cols:' + colTracks(manual ? r.cols : r.cols.map(() => ({}))) + '">';
+    h += '<div class="lrow" data-r="' + r.i + '"' + (manual ? '' : ' data-auto="1"') + (tiles && (r.h || fillAll('tiles')) ? ' data-fill="1"' : '') + ' style="--cols:' + colTracks(manual ? r.cols : r.cols.map(() => ({}))) + '">';
     for (const c of r.cols) h += '<div class="lcol" data-c="' + c.i + '" data-min="' + colMin(c) + '">' + c.stack.map(s => block(catById(sid(s)), true)).join('') + '</div>';
     if (S.edit && !auto) {   // (Automatic has no handles: a drop makes it your own first)
       for (let k = 0; k < r.cols.length - 1; k++) h += '<span class="ldiv" data-k="' + k + '" title="Drag to change the widths, double-click to let them follow what each column holds"></span>';
@@ -1731,9 +1750,18 @@ function renderView(enter) {
 // the selected tile's px size fields follow its drawn size (a resize, the banner, a remeasure): in place, not the
 // field being typed in (a whole renderInsp would drop a paste box, the scroll, half-typed curve cells)
 function pxFresh() {
-  const b = S.edit && sel ? document.querySelector('#insp input[data-sz="f"]') : null; if (!b || b === document.activeElement) return;
-  const z = cellSize(sel), G = z.f ? null : tileGeo(tileEl(sel)); if (z.f || !G) return;   // (a share of yours stays as you set it)
-  b.value = Math.round(Math.min(G.s.w, G.k) / G.k * 1000) / 10;
+  const b = S.edit && sel ? document.querySelector('#insp input[data-sz="f"]') : null; if (!b) return;
+  const pct = cellPct(sel); if (pct == null) return;   // (the panel's own readout: field and chips agree, 11-06 audit)
+  if (b !== document.activeElement) b.value = Math.round(pct * 10) / 10;
+  for (const x of document.querySelectorAll('#insp [data-lay="cf"] button')) x.classList.toggle('on', Math.abs(+x.dataset.v - pct) < 0.5);
+}
+// a tile's width as the panel shows it, in % of its row: the share it is drawn at (a row of tiles you haven't sized spreads
+// out to fill its width, three of 25% drawn at a third each, his 11-06 "showing 25% but it should show 33%"; one you sized
+// is drawn as set), else its own; null when it isn't drawn
+function cellPct(cid) {
+  const z = cellSize(cid), G = tileGeo(tileEl(cid)), own = z.f ? z.f * 100 : G ? Math.min(G.s.w, G.k) / G.k * 100 : null;
+  const drawn = G && G.tw > 0 ? Math.min(100, (G.r.width + G.g) / (G.tw + G.g) * 100) : null;
+  return drawn == null ? own : own != null && Math.abs(drawn - own) < 1 ? own : (PCTS.find(q => Math.abs(q - drawn) < 1) || drawn);
 }
 let flipNext = false;
 // (a drop: the cell or category glides from where it was let go, not from its old slot, still there under the ghost)
@@ -2001,11 +2029,12 @@ function measureUnits(tgs, fs) {
 function fillRows(sz, pos, k) {
   const tq = SNAPQ * Math.max(1, k / 2);
   if (!pos.some(p => p.x + p.w >= k - tq)) return;
-  const grid = sz.length > 0 && sz.every(s => s.auto === false && s.h === 1 && Math.abs(s.w - sz[0].w) < 1e-6);   // (every tile one share, one row high)
-  const nb = Math.ceil(Math.max(0, ...pos.map(p => p.y + p.h)) - PE);
+  const hh = sz.length && sz.every(s => Math.abs(s.h - sz[0].h) < 1e-6) ? sz[0].h : 1;   // (one height for all its tiles: its rows that tall, 11-06 audit: a height alone changed the widths)
+  const grid = sz.length > 0 && sz.every(s => s.auto === false && Math.abs(s.h - hh) < 1e-6 && Math.abs(s.w - sz[0].w) < 1e-6);   // (every tile one share, one row high)
+  const nb = Math.ceil((Math.max(0, ...pos.map(p => p.y + p.h)) - PE) / hh);
   for (let r = 0; r < nb; r++) {
-    const ids = []; let ok = true;
-    pos.forEach((p, i) => { if (p.y < r + 1 - PE && p.y + p.h > r + PE) { if (Math.abs(p.y - r) > PE || Math.abs(p.h - 1) > PE || sz[i].h !== 1 || sz[i].fx || !(grid || (sz[i].auto !== false && sz[i].w === 1))) ok = false; ids.push(i); } });   // (a tile sized by hand: its row as set)
+    const ids = [], y0 = r * hh; let ok = true;
+    pos.forEach((p, i) => { if (p.y < y0 + hh - PE && p.y + p.h > y0 + PE) { if (Math.abs(p.y - y0) > PE || Math.abs(p.h - hh) > PE || Math.abs(sz[i].h - hh) > 1e-6 || sz[i].fx || !(grid || (sz[i].auto !== false && sz[i].w === 1))) ok = false; ids.push(i); } });   // (a tile sized by hand: its row as set)
     if (!ok || !ids.length) continue;
     ids.sort((a, b) => pos[a].x - pos[b].x);
     // (all one width u: normal tiles, or a category whose tiles are all one share, as its tiles per row became in 2.2, so
@@ -2342,7 +2371,7 @@ function rememberFit(key, f) {
 // The text is now fitted without them, so Fill and All fit get the same size; they are kept only if they still fit
 let fitNoEven = false;
 const fillEven = el => !fitNoEven && !!el && !!el.closest('.lrow[data-fill]');
-const fitView = v => v && Array.isArray(v.rows) ? Object.assign({}, v, { rows: v.rows.map(r => { const o = Object.assign({}, r); delete o.h; return o; }) }) : v;   // (Fill or not: one size)
+const fitView = v => { if (!v) return v; const o = Object.assign({}, v); delete o.fill; if (Array.isArray(v.rows)) o.rows = v.rows.map(r => { const x = Object.assign({}, r); delete x.h; return x; }); return o; };   // (Fill or not: one size)
 // (the cells too: a name, a graph turned on or off, a missing reading change what fits)
 const fitKey = target => hashKey(JSON.stringify([S.screen, target, !!EXT.ready, sectionsEl.clientWidth, sectionsEl.clientHeight, S.L.cats.map(c => [c.id, cellsOf(c).length, c.collapsed]),
   fitView(viewOf(S.screen)), S.L.cells, Object.keys(S.L.cells).filter(id => isMissing(S.L.cells[id]))]));
@@ -2784,10 +2813,10 @@ function setLook(kind, id, key, val, vn) {
   if (!Object.keys(m).length) delete v[kind];
 }
 // a tile's size: a share of its row and its rows (2.2, see TILE_MIN)
-function setShare(id, f, h, tol) {
+function setShare(id, f, h, tol, fx) {   // (fx: false for a height alone on a width not set by hand)
   const v = vset('tiles'), m = v.cell || (v.cell = {}), e = m[id] || (m[id] = {});
   delete e.size; delete e.w; delete e.h;
-  e.f = fNum(f); e.fx = true; const hh = szNum(h, tol === undefined ? SNAPQ : tol); if (hh !== 1) e.h = hh;   // (fx: set by hand, drawn as set; his 11-06 "if set to 25% they should SHOW at 25%")
+  e.f = fNum(f); if (fx === false) delete e.fx; else e.fx = true; const hh = szNum(h, tol === undefined ? SNAPQ : tol); if (hh !== 1) e.h = hh;   // (fx: set by hand, drawn as set; his 11-06 "if set to 25% they should SHOW at 25%")
 }
 // k given: w in places of k (a drag, Ctrl+arrows), kept as its share of the row; else in tiles (1 x 1: a normal tile
 // again, its category places it)
@@ -3130,8 +3159,8 @@ function sizeInput(cid, which, v) {
   if (nudge) flushNudge();   // (a Ctrl+arrow just before: its side counts)
   const z = cellSize(cid);
   if (!isFinite(v) || v <= 0) { renderInsp(); return; }
-  if (which === 'f') mutate(() => setShare(cid, v / 100, z.h));
-  else if (which === 'h') mutate(() => z.f ? setShare(cid, z.f, v) : setSize(cid, z.w, v));
+  if (which === 'f') { const q = PCTS.find(x => Math.abs(x - v) < 0.5); mutate(() => setShare(cid, (q || v) / 100, z.h)); }   // (a typed 33 or 67: the third its chip gives)
+  else if (which === 'h') mutate(() => z.f ? setShare(cid, z.f, v, undefined, z.fx) : setSize(cid, z.w, v));
 }
 // Ctrl+arrows: 1% of its row wider or narrower, a pixel taller or shorter; with Shift the next share (25, 33, 50, 67,
 // 75, 100%) or quarter row. Shown at once on its
@@ -3176,7 +3205,8 @@ function nudgeSize(cid, dx, dy, quarter) {
 // enough that its column ends level with the tallest one beside it
 function catSizeInput(id, which, v) {
   const cat = catById(id); if (!cat || !isFinite(v) || v <= 0) { renderInsp(); return; }
-  mutate(() => { for (const c of cellsOf(cat)) { const z = cellSize(c); if (which === 'f') setShare(c, v / 100, z.h); else if (z.f) setShare(c, z.f, v); else setSize(c, z.w, v); } });
+  const q = which === 'f' ? PCTS.find(x => Math.abs(x - v) < 0.5) : null;
+  mutate(() => { for (const c of cellsOf(cat)) { const z = cellSize(c); if (which === 'f') setShare(c, (q || v) / 100, z.h); else if (z.f) setShare(c, z.f, v, undefined, z.fx); else setSize(c, z.w, v); } });
 }
 function fitRow(id) {
   const blk = document.querySelector('#view .blk[data-cat="' + CSS.escape(id) + '"]'), tg = blk && blk.querySelector('.tg.pk'), tiles = tg ? tileKids(tg) : [];
@@ -3203,7 +3233,7 @@ function startHandle(ev, el) {
       const base = widthsNow(ri, row.cols), cols = [...rowEl.children].filter(c => c.classList.contains('lcol'));
       const W = cols.reduce((a, c) => a + c.getBoundingClientRect().width, 0), T = base.reduce((a, b) => a + b, 0);
       Object.assign(rs, { kind: 'split', rowEl, ri, k: +el.dataset.k, base, w: base.slice(), T, unit: W / T });
-    } else Object.assign(rs, { kind: 'rowh', ri, h0: row.h || 0, h: row.h || 0 });
+    } else { const h0 = row.h || fillAll(S.screen) ? 1 : 0; Object.assign(rs, { kind: 'rowh', ri, h0, h: h0 }); }
   }
   el.classList.add('on');
 }
@@ -3239,7 +3269,7 @@ function endHandle(cancel) {
   if (cancel) { renderView(false); renderInsp(); return; }
   const before = snapOf();
   if (h.kind === 'split') mutate(() => { const row = stored(S.screen).rows[h.ri]; row.cols.forEach((c, i) => { c.w = h.w[i]; }); });
-  else if (h.kind === 'rowh') mutate(() => { const row = stored(S.screen).rows[h.ri]; if (h.h) row.h = 1; else delete row.h; });
+  else if (h.kind === 'rowh') mutate(() => { const row = stored(S.screen).rows[h.ri]; rowFill(S.screen, row, !!h.h); });
   else mutate(() => setSize(h.cid, h.w, h.h, snapAt(h), h.s.f || Math.abs(h.w - h.s.w) > 1e-4 ? h.k : undefined));   // (its width as it was: a normal tile stays one, 2.2)
   if (snapOf() === before) { renderView(false); renderInsp(); }   // back where it started: draw it as it was
 }
@@ -3251,7 +3281,7 @@ function handleDblclick(el) {
   if (el.classList.contains('corner')) { mutate(() => setSize(el.closest('.tile').dataset.cid, 1, 1)); return; }
   const v = stored(S.screen), ri = +el.closest('.lrow').dataset.r, row = v && v.rows && v.rows[ri]; if (!row) return;
   if (el.classList.contains('ldiv')) mutate(() => { for (const c of row.cols) delete c.w; });
-  else mutate(() => { delete row.h; });
+  else mutate(() => rowFill(S.screen, row, false));
 }
 
 // ---------- moving and sizing a selected category (the buttons in its settings and the keys do the same) ----------
@@ -3311,9 +3341,17 @@ function nudgeWidth(id, d) {
   });
   announce(id);
 }
+// a Tiles row's Fill: the view's Fill the window fills every row (Automatic too); a row of yours can fill on its own while
+// the view fits. A row set to fit while the whole view fills: every other row keeps filling, on its own
+const fillAll = vn => vn === 'tiles' && !!(viewOf('tiles') && viewOf('tiles').fill);
+function rowFill(vn, row, on) {   // (inside a change, on the stored rows)
+  const t = vset(vn);
+  if (t.fill) { if (on) return; delete t.fill; for (const r of t.rows || []) r.h = 1; }
+  if (on) row.h = 1; else delete row.h;
+}
 function setRowHeight(id, h) {
-  if (!h && !isCustom(S.screen)) return;   // Automatic rows already fit
-  layoutChange(() => { const rows = ownRows(), q = posIn(rows, id); if (!q) return; if (h) q.row.h = 1; else delete q.row.h; });
+  if (h ? fillAll(S.screen) : !isCustom(S.screen) && !fillAll(S.screen)) return;   // (filling already; Automatic rows already fit)
+  layoutChange(() => { const rows = ownRows(), q = posIn(rows, id); if (!q) return; rowFill(S.screen, q.row, !!h); });
   announce(id);
 }
 // the category nearest to it on screen in a direction (for Alt+arrow)
@@ -3355,6 +3393,29 @@ function templateView(kind) {
   return v;
 }
 // Grid: the categories in reading order cut into n tables of about the same length
+// your Grid's tables to n, each category kept in its table (11-06 audit: a new count cut every table again by length):
+// more, the longest table splits at its middle category; fewer, the last table joins the one before it
+let tablesWere = null;   // (the tables before the last count change: straight back to that count gives them as they were)
+function retable(cols, n) {
+  const was = JSON.stringify(cols);
+  if (tablesWere && tablesWere.after === was && tablesWere.n === n) return JSON.parse(tablesWere.before);
+  const sz = x => { const c = catById(sid(x)); return (c ? cellsOf(c).length : 0) + 1; }, len = c => c.stack.reduce((a, x) => a + sz(x), 0);
+  cols = cols.map(c => ({ stack: c.stack.slice() }));
+  while (cols.length > Math.max(1, n)) {   // (the smallest table joins its smaller neighbour)
+    let i = 0; cols.forEach((c, j) => { if (len(c) < len(cols[i])) i = j; });
+    const j = i === 0 ? 1 : i === cols.length - 1 ? i - 1 : len(cols[i - 1]) <= len(cols[i + 1]) ? i - 1 : i + 1;
+    if (j < i) cols[j].stack.push(...cols[i].stack); else cols[j].stack.unshift(...cols[i].stack);
+    cols.splice(i, 1);
+  }
+  while (cols.length < n) {
+    let i = -1; cols.forEach((c, j) => { if (c.stack.length > 1 && (i < 0 || len(c) > len(cols[i]))) i = j; }); if (i < 0) break;
+    const c = cols[i], half = len(c) / 2; let acc = 0, k = 1;
+    for (let j = 0; j < c.stack.length - 1; j++) { acc += sz(c.stack[j]); k = j + 1; if (acc >= half) break; }
+    cols.splice(i + 1, 0, { stack: c.stack.splice(k) });
+  }
+  tablesWere = { before: was, after: JSON.stringify(cols), n: JSON.parse(was).length };
+  return cols;
+}
 function gridTables(n) {
   const order = rowsNow('grid').flatMap(r => r.cols.flatMap(c => c.stack.map(sid))), len = id => cellsOf(catById(id)).length + 1;
   const total = order.reduce((a, id) => a + len(id), 0), cols = [];
@@ -3415,7 +3476,7 @@ function drawerOpen(k) {
   if (drag && drag.started) return d.hover;
   if (k === 'R' && dragPt) return true;   // (a fan curve point held: the drawer stays under it)
   const a = document.activeElement, typing = !!a && d.el.contains(a) && a.matches('input:not([type=checkbox]), select, textarea');
-  if (d.hover || d.pinned || typing) return true;
+  if (d.hover || d.pinned || typing || (dselOpen && d.el.contains(dselOpen.b))) return true;   // (a list of its open)
   return k === 'L' ? !!relinkFor || (!S.L.cats.length && READ.length > 0) : d.byPick && (!!sel || !!selCat);
 }
 // the settings open on the side away from what you selected (pinned or from their tab: the right). His rule 11-04: the
@@ -3463,14 +3524,14 @@ function syncDrawers() {
       if (was) d.el.classList.toggle(cls, side);   // (out already: it slides across, slideDrawers)
       else { d.el.style.transition = 'none'; d.el.classList.toggle(cls, side); void d.el.offsetWidth; d.el.style.transition = ''; }
     }
-    d.el.classList.toggle('open', o); d.tab.classList.toggle('on', o); $(k === 'L' ? 'ebStore' : 'ebSel').classList.toggle('on', o);
+    d.el.classList.toggle('open', o); d.tab.classList.toggle('on', o); $(k === 'L' ? 'ebStore' : 'ebSel').classList.toggle('on', o || (k === 'R' && S.edit && !!(sel || selCat)));   // (Selected: lit while something is, the settings out or not; 11-06 audit)
     if (d.pin) { d.pin.classList.toggle('on', d.pinned); d.pin.setAttribute('aria-pressed', d.pinned); }   // (Storage has no pin since 2.4.1: its button in the editing strip opens and shuts it, his 11-06)
   }
   slideDrawers(before);
 }
 for (const k of ['L', 'R']) {
   const d = DR[k];
-  const inside = e => !!e.relatedTarget && (d.el.contains(e.relatedTarget) || d.tab.contains(e.relatedTarget));
+  const inside = e => !!e.relatedTarget && (d.el.contains(e.relatedTarget) || d.tab.contains(e.relatedTarget) || !!(e.relatedTarget.closest && e.relatedTarget.closest('.dsel-m')));   // (its list's menu hangs from the page)
   // (a drawer sliding across under a pointer at rest is not the pointer going into it: 11-03, the settings passed under it
   // on their way to the other side and went away once past, as if the pointer had been in them and left. Its leave goes too)
   const enter = e => { if (d.sliding && e.currentTarget === d.el) { d.ghost = true; return; } d.ghost = false; clearTimeout(d.t); if (!d.hover) d.t = setTimeout(() => { d.hover = true; syncDrawers(); }, d.el.classList.contains('open') ? 0 : 90); };
@@ -3712,6 +3773,81 @@ $('relinkCancel').onclick = () => { endRelink(); renderView(false); };
 // ---------- the right panel: a cell's settings, a category's, or the view's ----------
 // the field that had the focus gets it back after the panel is drawn again (a size typed, then Tab or the arrows)
 // a control in the settings found again after a redraw: by its id, its size field, its list or button by group
+// ---------- a list to pick from, in the All Games menu's look (his 11-06 "the dropdowns in select are not using the correct
+// dropdown, it should look like the dropdown in all games"): the <select> stays, hidden, with its handlers; a button shows
+// its pick and opens the menu; a pick sets it and sends its change ----------
+function dselClose(refocus) {
+  const d = dselOpen; if (!d) return; dselOpen = null;
+  d.m.remove(); d.b.classList.remove('on');
+  if (refocus && d.b.isConnected) d.b.focus({ preventScroll: true });
+}
+function dselUp(box) {
+  if (dselOpen && !dselOpen.b.isConnected) dselClose(false);
+  for (const s of box.querySelectorAll('select:not(.dsel-n)')) {
+    s.classList.add('dsel-n'); s.tabIndex = -1;
+    const b = document.createElement('button'), o = s.options[s.selectedIndex];
+    b.type = 'button'; b.className = 'dsel'; b.id = (s.id || 'ds-' + (s.dataset.lay || 'list')) + 'Dd';   // (an id: a redraw puts the focus back on it)
+    b.innerHTML = '<span>' + esc(o ? o.textContent : '') + '</span>' + '<svg class="gx-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg>';
+    if (s.title) b.title = s.title;
+    b.disabled = s.disabled; b._sel = s; s.after(b);
+  }
+}
+function dselShow(b) {
+  const s = b._sel; if (!s || !s.isConnected || b.disabled) return;
+  const same = dselOpen && dselOpen.b === b; dselClose(false); if (same) return;
+  const m = document.createElement('div'); m.className = 'smenu dsel-m';
+  m.innerHTML = [...s.options].map((o, i) => '<button type="button" data-n="' + i + '"' + (i === s.selectedIndex ? ' class="on"' : '') + (o.disabled ? ' disabled' : '') + '>' + esc(o.textContent) + '</button>').join('');
+  document.body.appendChild(m);
+  const r = b.getBoundingClientRect(), below = innerHeight - r.bottom - 10, above = r.top - 10, up = m.offsetHeight > below && above > below;
+  m.style.maxHeight = Math.max(120, Math.min(330, up ? above : below)) + 'px';
+  m.style.minWidth = r.width + 'px';
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + 'px';
+  m.style.top = (up ? r.top - 4 - m.offsetHeight : r.bottom + 4) + 'px';
+  b.classList.add('on'); dselOpen = { s, b, m };
+  const on = m.querySelector('.on') || m.querySelector('button:not(:disabled)'); if (on) { on.scrollIntoView({ block: 'nearest' }); on.focus({ preventScroll: true }); }
+}
+function dselPick(n) {
+  const d = dselOpen; if (!d) return;
+  const { s, b } = d; dselClose(true);
+  if (n === s.selectedIndex || !s.options[n] || s.options[n].disabled) return;
+  s.selectedIndex = n; b.firstChild.textContent = s.options[n].textContent;
+  s._ptr = true; s.dispatchEvent(new Event('change', { bubbles: true }));   // (picked with the pointer: as a list's, see ptrPick)
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest ? e.target : e.target.parentElement; if (!t) return;
+  const mb = t.closest('.dsel-m button'); if (mb) { dselPick(Number(mb.dataset.n)); return; }
+  const b = t.closest('.dsel'); if (b) { e.preventDefault(); dselShow(b); }
+});
+document.addEventListener('pointerdown', e => { const d = dselOpen; if (d && !d.m.contains(e.target) && !d.b.contains(e.target)) dselClose(false); }, true);
+document.addEventListener('keydown', e => {
+  const d = dselOpen;
+  if (!d) { if (/^Arrow(Down|Up)$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && e.target.classList && e.target.classList.contains('dsel')) { e.preventDefault(); dselShow(e.target); } return; }
+  const items = [...d.m.querySelectorAll('button:not(:disabled)')], i = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); dselClose(true); }
+  else if (e.key === 'Tab') dselClose(true);
+  else if (/^Arrow(Down|Up)$|^Home$|^End$/.test(e.key)) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    const j = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : Math.max(0, Math.min(items.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+    if (items[j]) { items[j].focus({ preventScroll: true }); items[j].scrollIntoView({ block: 'nearest' }); }
+  }
+  else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopImmediatePropagation(); if (i >= 0) dselPick(Number(items[i].dataset.n)); }
+  else if (!e.ctrlKey && !e.metaKey && !e.altKey) {   // (every other key is the menu's while it is open: a letter goes to the first option it starts)
+    e.preventDefault(); e.stopImmediatePropagation();
+    const ch = e.key.length === 1 ? e.key.toLowerCase() : ''; if (!ch) return;
+    const order = items.slice(i + 1).concat(items.slice(0, i + 1)), hit = order.find(x => x.textContent.trim().toLowerCase().startsWith(ch));
+    if (hit) { hit.focus({ preventScroll: true }); hit.scrollIntoView({ block: 'nearest' }); }
+  }
+}, true);
+addEventListener('resize', () => dselClose(false));
+document.addEventListener('scroll', e => { if (dselOpen && !dselOpen.m.contains(e.target)) dselClose(false); }, true);
+// Tab and Shift+Tab: the next or last field in the settings (not their buttons: his 11-02 call); the one left applies first
+function tabField(ev) {
+  const f = ev.target; if (!f || !f.matches || !f.matches('#insp input:not([type=checkbox]):not([type=radio]), #insp textarea')) return;
+  const all = [...insp.querySelectorAll('input:not([type=checkbox]):not([type=radio]), textarea')].filter(x => !x.disabled && x.offsetParent);
+  const n = all[all.indexOf(f) + (ev.shiftKey ? -1 : 1)]; if (!n) return;
+  const q = ctlSel(n, insp); f.blur();
+  setTimeout(() => { const m = (q && insp.querySelector(q)) || (n.isConnected ? n : null); if (m) { m.focus({ preventScroll: false }); if (m.select) m.select(); } }, 0);
+}
 function ctlSel(a, box) {
   const grp = a.parentElement && a.parentElement.closest('[id], [data-lay]'), gq = grp && box.contains(grp) ? (grp.id ? '#' + CSS.escape(grp.id) : '[data-lay="' + CSS.escape(grp.dataset.lay) + '"]') : null;
   const q = a.id ? '#' + CSS.escape(a.id) : a.dataset.sz ? '[data-sz="' + a.dataset.sz + '"]' : a.dataset.csz ? '[data-csz="' + a.dataset.csz + '"]' :
@@ -3734,8 +3870,8 @@ function renderInsp() {
   setText($('inspTitle'), c ? 'Cell' : cat ? 'Category' : S.screen === 'overview' ? 'Overview' : VNAME[S.screen] + ' view');
   $('inspBack').classList.toggle('none', !c && !cat);
   if (!S.edit) return;
-  if (cat) { box.innerHTML = catPanel(cat); refocus(); return; }
-  if (!c) { box.innerHTML = viewPanel(); refocus(); return; }
+  if (cat) { box.innerHTML = catPanel(cat); dselUp(box); refocus(); return; }
+  if (!c) { box.innerHTML = viewPanel(); dselUp(box); refocus(); return; }
   const r = c.key ? BYKEY.get(c.key) : null, sen = r ? SENS[r.s] : null;
   const g = c.gates || { mode: 'none', dir: 'above', y: NaN, r: NaN, hold: 3 };
   const unit = c.pred ? 'RPM' : unitOf(r), lk = c.pred ? 1 : gbK(r);
@@ -3798,9 +3934,9 @@ function renderInsp() {
     h += '</div>';
   }
   h += '<div class="fgrp"><div style="display:flex;gap:8px;flex-wrap:wrap">' + (isMissing(c) ? '<button class="btn" id="iRelink">Re-link</button>' : '') +
-    '<button class="btn" id="iOpen">Open graphs</button><button class="btn warn" id="iRemove">Remove from view</button></div></div>';
+    '<button class="btn" id="iOpen">Open graphs</button><button class="btn warn" id="iRemove">Remove cell</button></div></div>';
   box.innerHTML = h;
-  refocus();
+  dselUp(box); refocus();
   tickInsp();
 }
 // new lines start a little past where the value is now, on its bad side, at the cell's decimals (nothing without a value)
@@ -3963,6 +4099,7 @@ insp.addEventListener('input', e => {
 insp.addEventListener('change', e => {
   const t = e.target, c = S.L.cells[sel]; if (!c) return;
   if (t.id === 'cTol' || t.id === 'cHold') t.value = c.curve[t.id === 'cTol' ? 'tol' : 'hold'];   // what it keeps, not what was typed
+  if (t.id === 'iHold' && c.gates && isFinite(c.gates.hold)) t.value = c.gates.hold;
   if (t.id === 'iDec') { setCell(c => { c.dec = Number(t.value); }, true); updateView(false, true); }
   if (t.id === 'iGraph') { setCell(c => { c.graph = t.value === '1'; }, true); renderView(false); }
   if (t.id === 'iSrc') { setCell(c => { c.curve.src = t.value; }, true); subscribe(); renderInsp(); updateView(false, true); }
@@ -4016,7 +4153,7 @@ insp.addEventListener('click', e => {
     renderInsp(); updateView(false, true);
   }
   if (e.target.closest('#iPreset')) { const p = presetFor(BYKEY.get(c.key)); setCell(c => { c.gates = Object.assign({}, p.g); }, true); renderInsp(); updateView(false, true); }
-  if (e.target.closest('#iRemove') && e.detail < 2) { inspGoneAt = performance.now(); removeCell(sel); }
+  if (e.target.closest('#iRemove') && e.detail < 2) { inspGoneAt = performance.now(); const c = catOf(sel); removeCell(sel); if (c && !sel && S.L.cats.includes(c)) selectCat(c.id); }
   if (e.target.closest('#iRelink')) startRelink(sel);
   if (e.target.closest('#iOpen')) openDetail(sel);
   if (e.target.closest('#cAdd')) {
@@ -4106,13 +4243,13 @@ function viewPanel() {
       h += '<div class="fgrp"><span class="lab">Start from</span><div class="tpls">' + TPLS.map(([k, t, gc, gr, areas]) => '<button class="tpl" data-tpl="' + k + '"' + (k === 'copy' && !canCopy ? ' disabled title="' + VNAME[ov] + ' is placed automatically: there is nothing to copy"' : '') + '>' +
         '<span class="pic" style="grid-template-columns:' + gc + ';grid-template-rows:' + gr + '">' + areas.map(a => '<i style="grid-area:' + a + '"></i>').join('') + '</span>' + (k === 'copy' ? 'Copy from ' + VNAME[ov] : t) + '</button>').join('') + '</div>' +
         '<span class="hint">Rest the pointer on one to see it with your categories, click to use it. Undo brings yours back.</span></div>';
-      const hv = !own || !v.rows.some(r => r.h) ? 'fit' : v.rows.every(r => r.h) ? 'fill' : '';   // (its hint says what the one picked does, his 11-06)
+      const hv = v && v.fill ? 'fill' : own && v.rows.some(r => r.h) ? 'some' : 'fit';   // (its hint says what is in effect, his 11-06)
       h += '<div class="fgrp">' + (vn === 'tiles' ? segL('Height', 'fill', [['fit', 'All fit'], ['fill', 'Fill the window']], hv) +
-        '<span class="hint">' + (hv === 'fit' ? 'All fit: the tiles keep their own height, and any room left under them stays empty.' : 'Fill the window: room left under the tiles makes them taller and their graphs bigger, up to twice their size.') + '</span>' : '') +
+        '<span class="hint">' + (hv === 'fit' ? 'All fit: the tiles keep their own height, and any room left under them stays empty.' : hv === 'fill' ? 'Fill the window: room left under the tiles makes them taller and their graphs bigger, up to twice their size.' : 'Some rows fill, set in their categories. All fit or Fill the window sets every row.') + '</span>' : '') +
         segL('Spacing', 'gap', [['tight', 'Tight'], ['', 'Normal'], ['roomy', 'Roomy']], v && v.gap || '') + '<span class="hint">The gaps between categories and between their ' + (vn === 'tiles' ? 'tiles' : 'rows') + '.</span></div>';
     } else {
       const n = own ? v.rows[0].cols.length : document.querySelectorAll('#view .gtable').length;
-      h += '<div class="fgrp">' + segL('Tables', 'tables', [[1, 'One'], [2, 'Two'], [3, 'Three']], n) + '</div>';
+      h += '<div class="fgrp">' + segL('Tables', 'tables', [[1, 'One'], [2, 'Two'], [3, 'Three']].slice(0, Math.max(1, n, Math.min(3, S.L.cats.length))), n) + '</div>';   // (no more tables than categories)
     }
     if (own) h += '<div class="fgrp"><span class="lab">Outline</span>' + outlineHtml(v.rows) + '<span class="hint">Click a box to select that category.</span></div>';
   }
@@ -4122,6 +4259,9 @@ function viewPanel() {
     (own ? '<span><button class="linkbtn" data-lay="auto">Back to automatic</button></span>' : '') + '</div></div>';
   return h;
 }
+// a tile of the category with a size or a new row of yours in Tiles (what Reset its look in Tiles also takes back)
+const TILE_KEYS = ['f', 'fx', 'w', 'h', 'size', 'nl'];
+const tileSet = id => { const t = stored('tiles'), e = t && t.cell && t.cell[id]; return !!e && TILE_KEYS.some(k => e[k] !== undefined); };
 function catPanel(cat) {
   const vn = S.screen, V = VNAME[vn], lk = catLook(cat.id), v = stored(vn), own = !!(v && v.rows), ids = cellsOf(cat);
   const leadOpts = '<option value="">' + (ids.length ? 'The first one, ' + esc(nameIn(ids[0])) : 'The first one') + '</option>' +
@@ -4132,15 +4272,16 @@ function catPanel(cat) {
     h += '<span class="row3">' + (own && p ? 'Row ' + (p.ri + 1) + ' of ' + rows.length + (alone ? ', alone in its row at full width' : ', column ' + (p.ci + 1) + ' of ' + p.row.cols.length) + (p.col.stack.length > 1 ? ', stacked ' + (p.k + 1) + ' of ' + p.col.stack.length : '')
       : 'Placed automatically. Changing where it goes or how wide it is gives ' + V + ' your own arrangement, starting from what you see.') + '</span>';
     const mine = !alone && p.row.cols.every(c => c.w), b = mine ? p.row.cols.map(c => c.w) : [1], tw = alone ? '' : mine ? Math.round(b[p.ci] / b.reduce((x, y) => x + y, 0) * 1200) / 100 : 'auto';
-    h += segL('Width in row', 'width', [['auto', 'Auto', alone], [3, '1/4', alone], [4, '1/3', alone], [6, '1/2', alone], [8, '2/3', alone], [9, '3/4', alone]], tw);
+    const mxw = alone ? 0 : 12 - (p.row.cols.length - 1);   // (the most a column can take: the others keep a twelfth each)
+    h += segL('Width in row', 'width', [['auto', 'Auto'], [3, '1/4'], [4, '1/3'], [6, '1/2'], [8, '2/3'], [9, '3/4']].map(([x, t]) => [x, t, alone || (x !== 'auto' && x > mxw)]), tw);
     h += '<span class="hint">' + (alone ? 'Alone in its row, so it takes the whole width. Put another category beside it to share the row.'
       : tw === 'auto' ? 'Auto: the widths follow what each column holds, so the columns end about together.' : 'Yours. Auto, or a double-click on the line between columns, lets them follow the content again.') + '</span>';
-    if (vn === 'tiles') h += segL('Row height', 'rowh', [[0, 'Fit'], [1, 'Fill']], own && p && p.row.h ? 1 : 0) + '<span class="hint">Fill: when the view leaves room below, this row\'s tiles grow taller to use it.</span>';
+    if (vn === 'tiles') h += segL('Row height', 'rowh', [[0, 'Fit'], [1, 'Fill']], (v && v.fill) || (own && p && p.row.h) ? 1 : 0) + '<span class="hint">Fill: when the view leaves room below, this row\'s tiles grow taller to use it.</span>';
     const mo = moveOptions(cat.id), mb = [['row', 'Own row', 'R'], ['beside', 'Beside the row above', 'B'], ['stack', 'Stack under the left one', 'S'], ['unstack', 'Unstack', 'U']].filter(m => mo[m[0]]);
     if (mb.length) h += '<div class="fld"><span>Move</span><div class="btnrow">' + mb.map(m => '<button class="btn" data-lay="move" data-v="' + m[0] + '">' + m[1] + '<span class="kb">' + m[2] + '</span></button>').join('') + '</div></div>';
   } else {
     const rows = rowsNow('grid'), p = posIn(rows, cat.id), n = rows.length ? rows[0].cols.length : 1;
-    h += segL('Table', 'table', [...Array(Math.min(3, n + 1))].map((_, i) => [i, i < n ? String(i + 1) : 'New table']), p ? p.ci : 0);
+    h += segL('Table', 'table', [...Array(Math.min(3, n + 1))].map((_, i) => [i, i < n ? String(i + 1) : 'New table', i >= n && !!p && p.ci === n - 1 && p.col.stack.length === 1]), p ? p.ci : 0);   // (alone in the last table: a new one would be the same)
   }
   h += '</div>';
   if (vn === 'tiles')
@@ -4153,7 +4294,7 @@ function catPanel(cat) {
       rects.map(q => '<i style="left:' + q[0] + '%;top:' + q[1] + '%;width:' + q[2] + '%;height:' + q[3] + '%"></i>').join('') + '</span>' + t + '</button>').join('') + '</div><span class="hint">' + LOOK_HINT[st] + '</span>' +
       '<div class="two">' + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') + '<label class="fld"><span>' + (st === '' || st === 'small' ? 'Big reading' : 'Shown first') + '</span><select data-lay="lead">' + leadOpts + '</select></label></div></div>';
   } else h += '<div class="fgrp"><span class="lab">Look in Grid</span><label class="fld"><span>Listed first</span><select data-lay="lead">' + leadOpts + '</select></label></div>';
-  h += '<div class="fgrp"><div class="btnrow"><button class="btn" data-lay="reset"' + (Object.keys(lk).length ? '' : ' disabled') + '>Reset its look in ' + V + '</button><button class="btn warn" data-lay="remove">Remove category</button></div>' +
+  h += '<div class="fgrp"><div class="btnrow"><button class="btn" data-lay="reset"' + (Object.keys(lk).length || (vn === 'tiles' && ids.some(tileSet)) ? '' : ' disabled') + '>Reset its look in ' + V + '</button><button class="btn warn" data-lay="remove">Remove category</button></div>' +
     '<span class="hint">' + (vn === 'grid' ? 'Drag its handle onto the left or right edge of a table for a new table there, or over and under other categories.'
       : 'Drag its handle onto another category: the left or right edge puts them side by side, the top or bottom stacks them, the middle swaps them, the gap between two rows gives it a row of its own.') + '</span></div>';
   return h;
@@ -4178,13 +4319,11 @@ function cellLayHtml(cid, c) {
   if (vn === 'tiles') {
     // (the share it is drawn at: a row of tiles you haven't sized spreads out to fill its width, three of 25% drawn at a
     // third each, his 11-06 "showing 25% but it should show 33%"; one you size is drawn as you set it)
-    const z = cellSize(cid), G = tileGeo(tileEl(cid)), own = z.f ? z.f * 100 : G ? Math.min(G.s.w, G.k) / G.k * 100 : null;
-    const drawn = G && G.tw > 0 ? Math.min(100, (G.r.width + G.g) / (G.tw + G.g) * 100) : null;
-    const pct = drawn == null ? own : own != null && Math.abs(drawn - own) < 1 ? own : (PCTS.find(q => Math.abs(q - drawn) < 1) || drawn);
+    const z = cellSize(cid), pct = cellPct(cid);
     const num = (k, v, u) => '<label><input type="number" data-sz="' + k + '" value="' + v + '" step="any" min="0"><i>' + u + '</i></label>';
     h += '<div class="fld"><span>Width</span><div class="szin">' + num('f', pct == null ? '' : Math.round(pct * 10) / 10, '%') + '</div>' + qpick('cf', PCTS.map(r4), pct, v => Math.round(v) + '%', 0.5) + '</div>' +
       '<div class="fld"><span>Height</span><div class="szin">' + num('h', r4(z.h), 'rows') + '</div>' + qpick('ch', RQ, z.h, v => String(v), 0.01) + '</div>' +
-      '<label class="chk"><input type="checkbox" data-lay="nl"' + (cl.nl ? ' checked' : '') + '> Starts a new row</label>';
+      (cat && idsIn(cat)[0] === cid ? '' : '<label class="chk"><input type="checkbox" data-lay="nl"' + (cl.nl ? ' checked' : '') + '> Starts a new row</label>');
   } else if (cat) {
     const first = idsIn(cat)[0] === cid, big = vn === 'overview' && lk.style !== 'list' && lk.style !== 'band';
     h += '<button class="btn" data-lay="lead-me" style="align-self:flex-start"' + (first ? ' disabled' : '') + '>' + (first ? (big ? 'This is the big reading' : 'It is shown first') : big ? 'Make it the big reading' : vn === 'grid' ? 'List it first' : 'Show it first') + '</button>';
@@ -4196,7 +4335,7 @@ function removeCat(id) {
   mutate(() => { for (const x of c.cells) delete S.L.cells[x]; S.L.cats = S.L.cats.filter(x => x !== c); fixSel(); }, 'Removed "' + c.name + '"');
 }
 function applyTemplate(k) {
-  preview = null;
+  preview = null; tplUsed = k;
   const v = templateView(k); if (!v) return;
   layoutChange(() => { const vv = vset(S.screen); if (!vv.rows) froze = true; vv.rows = v.rows; });
 }
@@ -4204,11 +4343,14 @@ function layoutAct(key, v) {
   const vn = S.screen, id = selCat;
   if (key === 'arr' && v === 'own') layoutChange(() => ownRows());
   else if ((key === 'arr' && v === 'auto') || key === 'auto') { if (stored(vn) && stored(vn).rows) mutate(() => { delete vset(vn).rows; }, VNAME[vn] + ' is placed automatically again'); }
-  else if (key === 'fill' && v !== 'fill' && !(stored(vn) && stored(vn).rows && stored(vn).rows.some(r => r.h))) return;   // (All fit already: an automatic view stays automatic)
-  else if (key === 'fill') layoutChange(() => { const rows = ownRows(); if (v === 'fill') autoHeights(vn, rows); else for (const r of rows) delete r.h; });
+  else if (key === 'fill') {   // (the view's: an automatic view stays automatic, 11-06)
+    const t = stored(vn) || {}, on = v === 'fill', some = (t.rows || []).some(r => r.h);
+    if (!some && !!t.fill === on) return;
+    mutate(() => { const w = vset(vn); if (on) w.fill = true; else delete w.fill; for (const r of w.rows || []) delete r.h; });
+  }
   else if (key === 'gap') mutate(() => { if (v) vset(vn).gap = v; else delete vset(vn).gap; });
   else if (key === 'tables' && +v === (stored('grid') && stored('grid').rows ? (stored('grid').rows[0] || { cols: [] }).cols.length : document.querySelectorAll('#view .gtable').length)) return;   // (the count already lit: nothing cut again)
-  else if (key === 'tables') layoutChange(() => { const g = vset('grid'); if (!g.rows) froze = true; g.rows = gridTables(+v); });
+  else if (key === 'tables') layoutChange(() => { const g = vset('grid'); if (!g.rows) { froze = true; g.rows = gridTables(+v); } else g.rows = [{ cols: retable(g.rows[0].cols, +v) }]; });
   else if (key === 'width') setWidth(id, v === 'auto' ? 0 : +v);
   else if (key === 'rowh') setRowHeight(id, +v);
   else if (key === 'move') moveCat(id, v);
@@ -4218,9 +4360,9 @@ function layoutAct(key, v) {
     vset('grid').rows = placeCat(rows, id, t >= rows[0].cols.length ? { zone: 'right', table: rows[0].cols.length - 1 } : { zone: 'into', table: t });
   });
   else if (key === 'size' || key === 'title' || key === 'style') mutate(() => setLook('cat', id, key, v));
-  else if (key === 'reset') mutate(() => { const w = vset(vn); if (w.cat) delete w.cat[id]; });
+  else if (key === 'reset') mutate(() => { const w = vset(vn), cat = catById(id); if (w.cat) delete w.cat[id]; if (vn === 'tiles' && w.cell && cat) for (const c of cellsOf(cat)) { const e = w.cell[c]; if (!e) continue; for (const k of TILE_KEYS) delete e[k]; if (!Object.keys(e).length) delete w.cell[c]; } });
   else if (key === 'remove') removeCat(id);
-  else if (key === 'cf' || key === 'ch') { if (nudge) flushNudge(); const z = cellSize(sel); mutate(() => key === 'cf' ? setShare(sel, +v / 100, z.h) : z.f ? setShare(sel, z.f, +v) : setSize(sel, z.w, +v)); }
+  else if (key === 'cf' || key === 'ch') { if (nudge) flushNudge(); const z = cellSize(sel); mutate(() => key === 'cf' ? setShare(sel, +v / 100, z.h) : z.f ? setShare(sel, z.f, +v, undefined, z.fx) : setSize(sel, z.w, +v)); }
   else if (key === 'fitrow') fitRow(id);
   else if (key === 'vname-on') { mutate(() => setLook('cell', sel, 'name', cellName(S.L.cells[sel]))); const f = $('lvName'); if (f) { f.focus(); f.select(); } }
   else if (key === 'vname-x') mutate(() => setLook('cell', sel, 'name', ''));
@@ -4228,7 +4370,7 @@ function layoutAct(key, v) {
 }
 // the second press of a double-click on a remove button lands on the panel drawn in its place: it does nothing there
 let inspGoneAt = -1e9;
-insp.addEventListener('click', e => { if (e.detail > 1 && e.target.closest && e.target.closest('#insp button, #insp .pt')) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);   // (a redraw may have put another button there)
+insp.addEventListener('click', e => { if (e.detail > 1 && e.target.closest && e.target.closest('#insp button, #insp .pt') && !e.target.closest('.dsel')) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);   // (a redraw may have put another button there)
 insp.addEventListener('click', e => { if (e.detail > 1 && performance.now() - inspGoneAt < 700) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
 insp.addEventListener('click', e => {
   if (!S.edit) return;
@@ -4263,7 +4405,7 @@ insp.addEventListener('input', e => {   // a name in this view, as it's typed (t
 });
 insp.addEventListener('keydown', e => { if (e.target.id === 'lName' && e.key === 'Escape') { const cat = catById(selCat); if (cat) e.target.value = cat.name; e.target.blur(); } });
 // a template shows itself while the pointer rests on it
-let tplT = 0;
+let tplT = 0, tplUsed = null;   // (tplUsed: the one just used, not previewed again until the pointer leaves it)
 insp.addEventListener('pointerdown', e => { const l = e.target.closest && e.target.closest('select'); if (l) l._ptr = true; }, true);
 const listKey = e => e.altKey || /^(Arrow|Page|Home$|End$|Enter$| $|F4$)/.test(e.key || '');   // (what a list takes from the keyboard)
 insp.addEventListener('keydown', e => { if (e.target.tagName === 'SELECT' && listKey(e)) e.target._ptr = false; }, true);
@@ -4291,13 +4433,13 @@ insp.addEventListener('change', e => {   // (after the handlers above: a redraw 
   ptrPick = false; t._ptr = false; const a = document.activeElement; if (a && a.tagName === 'SELECT' && insp.contains(a)) a.blur();
 });
 insp.addEventListener('mouseover', e => {
-  const b = e.target.closest('.tpl'); if (!b || b.disabled || (preview && preview.k === b.dataset.tpl)) return;
+  const b = e.target.closest('.tpl'); if (!b || b.disabled || (preview && preview.k === b.dataset.tpl) || b.dataset.tpl === tplUsed) return;
   clearTimeout(tplT);
   tplT = setTimeout(() => { if (!b.isConnected) return; const v = templateView(b.dataset.tpl); if (!v) return; preview = { vn: S.screen, view: v, k: b.dataset.tpl }; renderView(false); }, 180);
 });
 insp.addEventListener('mouseout', e => {
   const b = e.target.closest('.tpl'); if (!b || (e.relatedTarget && b.contains(e.relatedTarget))) return;
-  clearTimeout(tplT);
+  clearTimeout(tplT); tplUsed = null;
   // (onto the next template: it takes over from this preview, no stop at the real view between them)
   if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.tpl')) return;
   if (preview) { preview = null; renderView(false); }
@@ -4324,7 +4466,7 @@ function keyLayout(fn) {
   if (merge && undoSeq === n0 + 1) undoStack.pop();   // (the press's own step: the burst stays one)
   if (undoSeq === n0 && !merge) keyStep.t = 0;   // (a key that changed nothing starts no burst: the next one isn't merged into an earlier change)
   else keyStep = { t: Date.now(), n: undoSeq };
-  if (merge && undoStack.length && undoStack[undoStack.length - 1] === snapOf()) { undoStack.pop(); keyStep.t = 0; }   // (the burst came back where it started: no step that changes nothing)
+  if (merge && undoStack.length && bareStep(undoStack[undoStack.length - 1]) === snapOf()) { undoStack.pop(); keyStep.t = 0; }   // (the burst came back where it started: no step that changes nothing)
   syncUndo();
 }
 function focusCat(id) { const h = document.querySelector('#view .dcat[data-cat="' + id + '"] .dch'); if (h) h.focus({ preventScroll: false }); }
@@ -6809,7 +6951,7 @@ document.addEventListener('keydown', ev => {
   ev.preventDefault(); ev.stopPropagation();
 }, true);
 document.addEventListener('keydown', ev => {
-  if (ev.key === 'Tab') { ev.preventDefault(); return; }   // (Tab doesn't walk the buttons: his call 11-02)
+  if (ev.key === 'Tab') { ev.preventDefault(); tabField(ev); return; }   // (Tab doesn't walk the buttons: his call 11-02; the settings' fields, yes)
   if (drag && drag.started) { if (ev.key === 'Escape') { cancelPid = drag.pid; endDrag(true); editPress = null; } ev.preventDefault(); return; }   // nothing else mid-drag
   if (rs) {
     if (ev.key === 'Escape') { cancelPid = rs.pid; endHandle(true); }
@@ -6839,7 +6981,7 @@ document.addEventListener('keydown', ev => {
     return;
   }
   // (a list keeps the focus after a pick, for its arrows and letters; it has no undo of its own, so Ctrl+Z / Ctrl+Y go through)
-  if (typing && !(ctrl && ev.key.startsWith('Arrow') && ev.target.dataset && ev.target.dataset.sz) && !(ctrl && (k === 'z' || k === 'y') && ev.target.tagName === 'SELECT')) return;
+  if (typing && !(ctrl && ev.key.startsWith('Arrow') && ev.target.dataset && ev.target.dataset.sz) && !(ctrl && (k === 'z' || k === 'y') && ev.target.tagName === 'SELECT') && !(ctrl && (k === 'z' || k === 'y') && !ev.target._typed && ev.target.closest('#insp'))) return;   // (a settings field with nothing typed: the layout's undo)
   if (ctrl && (k === 'z' || k === 'y')) { ev.preventDefault(); if (cmodal.classList.contains('open')) return; k === 'y' || ev.shiftKey ? redo() : undo(); return; }
   if (ctrl && S.edit && sel && S.screen === 'tiles' && !preview && !anyModalOpen() && ev.key.startsWith('Arrow')) {
     ev.preventDefault();
@@ -6859,6 +7001,7 @@ document.addEventListener('keydown', ev => {
   if (ev.key === 'e' || ev.key === 'E') { setEdit(!S.edit); return; }
   if (!ev.altKey && ['1', '2', '3'].includes(ev.key)) { requestScreen(['tiles', 'overview', 'grid'][+ev.key - 1]); return; }
   if (S.edit && selCat && !sel && preview) { preview = null; renderView(false); }   // keys act on yours, not on a template being previewed
+  if ((ev.key === 'Delete' || ev.key === 'Backspace') && ev.target.closest && ev.target.closest('#insp, .dsel-m')) return;   // (a key on a settings button never removes what is selected: 11-06 audit)
   if (S.edit && selCat && !sel) {   // a selected category: arrows with Alt move it, with Shift+Alt size it, R B S U place it
     const id = selCat, k = ev.key, dx = k === 'ArrowLeft' ? -1 : k === 'ArrowRight' ? 1 : 0, dy = k === 'ArrowUp' ? -1 : k === 'ArrowDown' ? 1 : 0;
     if (k === 'Delete' || k === 'Backspace') { ev.preventDefault(); removeCat(id); return; }

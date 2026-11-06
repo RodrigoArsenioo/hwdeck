@@ -143,7 +143,7 @@ await E("document.querySelectorAll('.toast.show').forEach(t => t.classList.remov
 const st = await rect('#view .lrow[data-r="3"] .lrs');
 await p.drag({ x: st.x, y: st.y }, { x: st.x, y: st.y + 60 }); await p.sleep(400);
 r = await rows('tiles');
-ok('dragging the strip under a row down: Fill', r[3].h === 1, JSON.stringify(r[3]) + ' strip ' + JSON.stringify(st) + ' hit ' + await E(`(() => { const e = document.elementFromPoint(${st.x}, ${st.y}); return e ? e.className : 'none'; })()`) + ' sections ' + await E('[sectionsEl.scrollTop, sectionsEl.scrollHeight, sectionsEl.clientHeight, sectionsEl.getBoundingClientRect().bottom]'));
+ok('dragging the strip under a row down: Fill (the last row of four: every row fills, so the view is Fill the window)', r[3].h === 1 || (await J('S.L.views.tiles.fill')) === true, JSON.stringify(r[3]) + ' strip ' + JSON.stringify(st) + ' hit ' + await E(`(() => { const e = document.elementFromPoint(${st.x}, ${st.y}); return e ? e.className : 'none'; })()`) + ' sections ' + await E('[sectionsEl.scrollTop, sectionsEl.scrollHeight, sectionsEl.clientHeight, sectionsEl.getBoundingClientRect().bottom]'));
 await p.dblclick(st.x, (await rect('#view .lrow[data-r="3"] .lrs')).y); await p.sleep(400);
 ok('double-click on the strip: the row fits again', (await rows('tiles'))[3].h === undefined);
 // widths that follow content: the column with more tiles gets more tracks, and the tiles in both are one width
@@ -199,8 +199,12 @@ ok('no Tiles per row in the panel (2.2: a tile\'s width is a share of its row)',
 await click('#insp .seg[data-lay="size"] button[data-v="short"]');
 ok('Tile style Short from the panel', await until('!!S.L.views.tiles.cat && !!S.L.views.tiles.cat.gpu && S.L.views.tiles.cat.gpu.size === "short"', 3000) && await until(`document.querySelector('${cat('gpu')} .tile').classList.contains('short')`, 3000));
 await click('#insp .seg[data-lay="title"] button[data-v="hide"]');
+const gpuSz = await E('JSON.stringify(cellsOf(catById("gpu")).map(id => [id, S.L.views.tiles.cell && S.L.views.tiles.cell[id] || null]))');
 await click('#insp button[data-lay="reset"]');
 ok('Reset its look', await until('!(S.L.views.tiles.cat && S.L.views.tiles.cat.gpu)', 3000));
+// (11-06: it also takes back the sizes of its tiles, shown in the same group; put back after, for the steps below)
+ok('Reset its look in Tiles: its tiles back to their own size too', /"f"/.test(gpuSz) && await E('cellsOf(catById("gpu")).every(id => { const e = S.L.views.tiles.cell && S.L.views.tiles.cell[id]; return !e || (e.f === undefined && e.size === undefined && e.h === undefined); })'), gpuSz);
+await E(`(() => { const v = S.L.views.tiles, c = v.cell || (v.cell = {}); for (const [id, e] of ${gpuSz}) if (e) c[id] = e; renderView(false); return 1; })()`); await p.sleep(400);
 // a tile's size and its corner
 await click('#view .dc[data-cid="gpu1"]');
 await click('#insp .seg[data-lay="cf"] button[data-v="50"]'); await click('#insp .seg[data-lay="ch"] button[data-v="2"]');
@@ -236,7 +240,7 @@ r = await rows('tiles');
 ok('clicking "2 columns" uses it (one undo step)', r.every(x => x.cols.length <= 2) && await E('undoStack.length') === undos + 1, flat(r));
 await click('#insp .seg[data-lay="fill"] button[data-v="fill"]');
 r = await rows('tiles');
-ok('Height: Fill the window makes every row Fill', r.every(x => x.h === 1), JSON.stringify(r.map(x => x.h)));
+ok('Height: Fill the window is the view setting (kept in Automatic), every row Fill', (await J('S.L.views.tiles.fill')) === true && r.every(x => !x.h) && await E('[...document.querySelectorAll("#view > .lrow")].every(r => r.dataset.fill)'), JSON.stringify(r.map(x => x.h)));
 const gaps = () => E(`(() => { const r = document.querySelector('#view .lrow:not(.fold)'), t = document.querySelector('#view .tg'); return [parseFloat(getComputedStyle(r).columnGap), parseFloat(getComputedStyle(t).columnGap)]; })()`);
 await click('#insp .seg[data-lay="gap"] button[data-v="tight"]');
 const gt = await gaps();

@@ -559,6 +559,21 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .fld > span, .fgrp > .lab { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
 .fld input, .fld select { background: var(--panel); border: 1px solid var(--line2); color: var(--fg); font: inherit; border-radius: 7px; padding: 5px 8px; min-width: 0; width: 100%; }
 .fld input:focus, .fld select:focus { border-color: var(--edit); outline: none; }
+/* a list to pick from, the All Games menu's look (11-06): the <select> hidden, a button with its pick and the chevron, its
+   options in a menu under it (over it near the bottom of the window) */
+select.dsel-n { display: none; }
+.dsel { display: flex; align-items: center; justify-content: space-between; gap: 9px; width: 100%; min-width: 0; min-height: 30px; background: var(--panel); border: 1px solid var(--line2); border-radius: 7px; color: var(--fg); font: inherit; padding: 4px 10px 4px 8px; cursor: pointer; text-align: left; transition: border-color 150ms; }
+.dsel > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsel .gx-chev { flex: none; width: 10px; height: 10px; stroke: #5a5a5a; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transform: rotate(90deg); transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), stroke 150ms; }
+.dsel:hover .gx-chev, .dsel.on .gx-chev { stroke: #9a9a9a; }
+.dsel.on .gx-chev { transform: rotate(-90deg); }
+.dsel.on, .dsel:focus-visible { border-color: var(--edit); outline: none; }
+.dsel:disabled { opacity: 0.5; cursor: default; }
+.smenu.dsel-m { position: fixed; z-index: 80; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #343434 transparent; }
+.dsel-m button { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dsel-m button.on { background: #262626; color: #fff; }
+.dsel-m button:focus-visible { outline: none; background: #262626; }
+.dsel-m button:disabled { opacity: 0.45; cursor: default; }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 8px; padding: 2px; background: var(--panel); width: 100%; }
 .seg button { flex: 1; background: none; border: 0; color: var(--muted); font-size: 12.5px; padding: 4px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
