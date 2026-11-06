@@ -3451,7 +3451,7 @@ function syncDrawers() {
       else { d.el.style.transition = 'none'; d.el.classList.toggle(cls, side); void d.el.offsetWidth; d.el.style.transition = ''; }
     }
     d.el.classList.toggle('open', o); d.tab.classList.toggle('on', o); $(k === 'L' ? 'ebStore' : 'ebSel').classList.toggle('on', o);
-    d.pin.classList.toggle('on', d.pinned); d.pin.setAttribute('aria-pressed', d.pinned);
+    if (d.pin) { d.pin.classList.toggle('on', d.pinned); d.pin.setAttribute('aria-pressed', d.pinned); }   // (Storage has no pin since 2.4.1: its button in the editing strip opens and shuts it, his 11-06)
   }
   slideDrawers(before);
 }
@@ -3464,7 +3464,7 @@ for (const k of ['L', 'R']) {
   const leave = e => { if (inside(e)) return; if (d.ghost) { d.ghost = false; return; } clearTimeout(d.t); d.t = setTimeout(() => { if (d.hover) d.byPick = false; d.hover = false; syncDrawers(); }, drag && drag.started ? 0 : 380); };
   for (const el of [d.el, d.tab]) { el.addEventListener('mouseenter', enter); el.addEventListener('mouseleave', leave); }
   d.tab.addEventListener('click', () => { d.pinned = true; d.hover = true; syncDrawers(); saveState(); });
-  d.pin.addEventListener('click', () => { d.pinned = !d.pinned; if (!d.pinned) d.placed = false; syncDrawers(); saveState(); });   // (unpinned: back to opening away from the selection)
+  if (d.pin) d.pin.addEventListener('click', () => { d.pinned = !d.pinned; if (!d.pinned) d.placed = false; syncDrawers(); saveState(); });   // (unpinned: back to opening away from the selection)
   // (to the other side: Storage there already, or the settings pinned there, trade places with it, both sliding across)
   $('swap' + k).addEventListener('click', () => {
     const o = DR[k === 'L' ? 'R' : 'L'], cur = k === 'R' ? (d.el.classList.contains('left') ? 'l' : 'r') : d.side, to = cur === 'l' ? 'r' : 'l';   // (the settings: the side they show on)

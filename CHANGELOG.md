@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.1 (2026-11-06)
+
+- Storage no longer has a pin button: the Storage button in the editing bar opens and closes it.
+
 ## 2.4.0 (2026-11-05)
 
 - Themes: Settings > Look starts with eight themes to pick from: Classic, OLED, Soft, Warm, Slate, Aurora, Sunset and Neon. Classic is the look of earlier versions; OLED and Soft, before choices under Cards, are themes now.
