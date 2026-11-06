@@ -58,6 +58,7 @@ nav#screens .ind.still { transition: none; }
 .ib .bdot.on { opacity: 1; scale: 1; }
 .ib .bdot.live { background: var(--ok); }
 .ib .bdot.upd { background: var(--edit); }
+.ib .bdot.r { background: var(--red); }   /* the warning history's unseen crossings, one of them red (11-06) */
 /* the title bar's right side (11-02, his pick F): undo and redo quiet by the icons, then Edit, Save, the rest; while
    editing, a strip of its own (Editing, Category, Storage, Selected, undo, redo, Done), centred between the reset button
    and Save by a spacer on each side, and Edit, undo and redo there instead */

@@ -1967,7 +1967,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     }
     if (r.fan) spinIcon(r.fan, e.v);
     const xk = xkOf(rd); if (xk && xk.update) xk.update(r.root, rd, e, cid);
-    if (r._lvl !== undefined && e.lvl > r._lvl && !catchUp) { glow(r, e.lvl); live.textContent = nameIn(cid) + (e.sub ? ', ' + e.sub : ''); }   // (said too, 11-06)
+    if (r._lvl !== undefined && e.lvl > r._lvl && !catchUp) { glow(r, e.lvl); wPeekRise(); live.textContent = nameIn(cid) + (e.sub ? ', ' + e.sub : ''); }   // (said too, 11-06)
     r._lvl = e.lvl;
     if (r.canvas && sight.get(cid)) graphFeed(r.canvas, c, graphCol(e, r.kind === 'hero', cat && S.look.tint === 'spectrum' ? catTint(cat) : ''), e.past);
   }
@@ -5394,7 +5394,28 @@ document.addEventListener('click', e => { if (e.target.closest('#starterBtn')) l
 // ---------- the warning log: merged episodes from alerts.log, last 7 days ----------
 const wmodal = $('wmodal');
 let lastLogCount = 0;
-$('logBtn').onclick = () => { pkMode('w', null, true); wmodal.classList.add('open'); wShow = 300; WX.open = false; WX.cell = null; WX.menu = false; wxWait.clear(); $('wsum').innerHTML = ''; $('wlist').innerHTML = '<div class="wempty">loading...</div>'; if (host) send({ t: 'alerts' }); else renderWarnings(''); };
+// a dot on the history button for crossings that started since it was last opened (his pick 11-06: a dot only), red
+// when one of them went red. The page reads the log for it at its start, when the window shows again and a few seconds
+// after a reading crosses a line (the host writes the log every second); when it was last opened stays in the page's
+// own storage
+const WSEEN = 'hwdeck.warnSeen';
+let wSeen = (() => { try { return +localStorage.getItem(WSEEN) || 0; } catch (e) { return 0; } })(), wPeekT = 0, wRiseT = 0, wRiseT2 = 0, wPeek = false;
+function wDot(lv) { const d = $('logDot'); if (!d) return; d.classList.toggle('on', !!lv); d.classList.toggle('r', lv === 'RED'); }
+function wSeenNow() { wSeen = Date.now(); try { localStorage.setItem(WSEEN, String(wSeen)); } catch (e) { } wDot(null); }
+function wPeekSoon(ms) { if (!host) return; clearTimeout(wPeekT); wPeekT = setTimeout(() => { if (wmodal.classList.contains('open')) return; wPeek = true; send({ t: 'alerts' }); }, ms); }
+// (5 s after a rise and again at 35 s, a line with a hold logs its crossing only once it held; a reading that keeps
+// crossing doesn't push them back)
+function wPeekRise() { if (!wRiseT) wRiseT = setTimeout(() => { wRiseT = 0; wPeekSoon(0); }, 5000); if (!wRiseT2) wRiseT2 = setTimeout(() => { wRiseT2 = 0; wPeekSoon(0); }, 35000); }
+function wPeekRead(log) {
+  wPeek = false;
+  if (!wSeen) { wSeenNow(); return; }   // (the first start: what the log already holds isn't new)
+  const eps = wxParse(log).filter(ep => ep.when.getTime() > wSeen);
+  wDot(eps.some(ep => ep.level === 'RED') ? 'RED' : eps.length ? 'YELLOW' : null);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) wPeekSoon(1500); });
+setTimeout(() => wPeekSoon(0), 6000);
+setInterval(() => { if (!document.hidden) wPeekSoon(0); }, 120000);   // (and every 2 minutes while it shows: a build's own checks have no cell to rise)
+$('logBtn').onclick = () => { wSeenNow(); pkMode('w', null, true); wmodal.classList.add('open'); wShow = 300; WX.open = false; WX.cell = null; WX.menu = false; wxWait.clear(); $('wsum').innerHTML = ''; $('wlist').innerHTML = '<div class="wempty">loading...</div>'; if (host) send({ t: 'alerts' }); else renderWarnings(''); };
 function fmtDur(ms) { const s = Math.max(0, Math.round(ms / 1000)); if (s < 60) return s + 's'; const m = Math.round(s / 60); return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; }
 // ---- the warning history in the Sessions popup's design (11-02): a summary bar (the last 7 days, the red ones, the
 // cell that warned most, a week strip split yellow and red) that opens like Sessions' to a period, one cell or all, a
@@ -7454,7 +7475,7 @@ function onHost(m) {
     const again = bigHist && bigHist.key === m.key && bigHist.range === m.range;   // (the same graph a minute on: no new draw-in, one under way goes on)
     bigHist = m;
     if (modalCid && histReady()) { if (!again && !modalOwn) { bigRevMs = 450; bigRev0 = motionOn() ? performance.now() : 0; } refreshModal(); if (bigRev0 && !again) bigLoop(); }
-  } else if (m.t === 'alerts') { if (wmodal.classList.contains('open')) renderWarnings(m.log); }   // (one that comes in after a close isn't drawn)
+  } else if (m.t === 'alerts') { if (wmodal.classList.contains('open')) { wSeenNow(); renderWarnings(m.log); } else if (wPeek) wPeekRead(m.log); }   // (one that comes in after a close isn't drawn)
   else if (m.t === 'gamesBin') gbRender(m.log);
   else if (m.t === 'alertsBin') wbRender(m.log);
   else if (m.t === 'lastGame') { feed.lg = m.s || null; if (feed.lgWait) { feed.lgWait = 0; if (feed.got) updateView(true, true); } }   // (the last game session, for the Game cells while no game runs; one that just ended is drawn at once)
