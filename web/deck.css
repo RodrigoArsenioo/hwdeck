@@ -773,6 +773,8 @@ select.dsel-n { display: none; }
 :is(#gmodal, #wmodal) .gx-gtab { margin: 18px -6px 0; padding-top: 6px; border-top: 1px solid #242424; }   /* (not .gx-gt: that is the name of the session in progress, 11-02 bug) */
 :is(#gmodal, #wmodal) .gx-gh, :is(#gmodal, #wmodal) .gx-gr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, 190px) 76px 62px 70px 48px 86px; gap: 0 18px; align-items: center; padding: 0 10px; }
 :is(#gmodal, #wmodal) .gx-gh { font-size: 10.5px; color: #555; text-transform: uppercase; letter-spacing: 0.09em; padding-top: 10px; padding-bottom: 8px; }
+#gmodal .gx-gh .gx-sk { cursor: pointer; white-space: nowrap; transition: color 140ms ease-out; } #gmodal .gx-gh .gx-sk:hover { color: #8a8a8a; } #gmodal .gx-gh .gx-sk.on { color: #c8c8c8; }   /* the game table sorts by a column (11-06) */
+#gmodal .gx-gh .gx-sk svg { width: 8px; height: 8px; margin-left: 5px; vertical-align: 1px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 :is(#gmodal, #wmodal) .gx-gr { min-height: 40px; font-size: 12.5px; color: #c4c4c4; font-variant-numeric: tabular-nums; border-radius: 8px; cursor: pointer; transition: background 150ms; }
 :is(#gmodal, #wmodal) .gx-gr:hover { background: #1e1e1e; }
 :is(#gmodal, #wmodal) .gx-gr.on { background: #222; box-shadow: inset 0 0 0 1px #2e2e2e; }

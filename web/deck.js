@@ -6460,7 +6460,7 @@ function gxByDay(ss) {
 // spans) and each game's share. The periods go as far back as Keep sessions keeps: 7, 30 and 90 days under it, then the
 // days kept, or "all" when they are kept forever; one alone (5 days kept, or 7): no switch. The list under it shows the
 // picked game's sessions; closing the bar shows them all again
-const GX = { open: false, period: 7, game: null, menu: false, slide: null };   // (slide: a pick's direction, -1 / 1, while it is drawn)
+const GX = { open: false, period: 7, game: null, menu: false, slide: null, sort: { k: 't', d: -1 } };   // (slide: a pick's direction, -1 / 1, while it is drawn)
 let gxLc = null;   // the opened bar's chart: its points and scale, for the read-out
 let gxAll = [];   // every session (the list: gxSs, the picked game's)
 function gxPeriods() { const K = feed.gameDays || Infinity, o = [7, 30, 90].filter(q => q < K); o.push(K === Infinity ? 'all' : K); return o; }
@@ -6475,7 +6475,10 @@ function gxSumOpen(all) {
   for (let i = 0; i < nd; i++) { const s = gxMid(a0.getFullYear(), a0.getMonth(), a0.getDate() + i), e = gxMid(a0.getFullYear(), a0.getMonth(), a0.getDate() + i + 1); days.push([rec.reduce((p, x) => p + gxPlayIn(x, s, e), 0), new Date(s * 1000)]); }
   const per = Object.create(null);
   for (const x of games) { if (x.end <= a) continue; const o = per[x.game] || (per[x.game] = { t: 0, n: 0, fs: 0, fn: 0, last: 0 }); o.t += gxPlayIn(x, a, Infinity); o.n++; if (x.fps > 0) { o.fs += x.fps; o.fn++; } o.last = Math.max(o.last, x.end); }
-  const names = Object.keys(per).sort((p, q) => per[q].t - per[p].t);
+  // the games in the order of the column picked (his pick 11-06): most played first until then; a game with no fps
+  // last, whichever way
+  const sv = { game: k => k.toLowerCase(), t: k => per[k].t, share: k => per[k].t, n: k => per[k].n, avg: k => per[k].t / per[k].n, fps: k => per[k].fn ? per[k].fs / per[k].fn : null, last: k => per[k].last }[GX.sort.k] || (k => per[k].t);
+  const names = Object.keys(per).sort((p, q) => { const a = sv(p), b = sv(q); if (a === null || b === null) return a === b ? 0 : a === null ? 1 : -1; return (a < b ? -1 : a > b ? 1 : 0) * GX.sort.d || per[q].t - per[p].t; });
   // the games to pick from: every game in the log, most played first
   let menu = '';
   if (GX.menu) {
@@ -6509,7 +6512,8 @@ function gxSumOpen(all) {
   h += '<div class="gx-lcg"><span></span><div class="gx-lcx">' + pts.map((o, i) => { const t = xl(o, i); return t ? '<span style="left:' + X(i) + '%">' + t + '</span>' : ''; }).join('') + (n > 7 && !pts[n - 1].w ? '<span class="e">today</span>' : '') + '</div><span></span></div></div>';
   // each game's part of the period; a row picks that game (again: all games)
   const sum = names.reduce((p, k) => p + per[k].t, 0) || 1, ago = u => { const k = Math.round((gxMid(td.getFullYear(), td.getMonth(), td.getDate()) - gxMid(new Date(u * 1000).getFullYear(), new Date(u * 1000).getMonth(), new Date(u * 1000).getDate())) / 86400); return k <= 0 ? 'today' : k === 1 ? 'yesterday' : k + ' days ago'; };
-  if (names.length) h += '<div class="gx-gtab"><div class="gx-gh"><span>game</span><span>share of the time</span><span class="gx-r">played</span><span class="gx-r">sessions</span><span class="gx-r">average</span><span class="gx-r">fps</span><span class="gx-r">last played</span></div>' +
+  const sh = (k, t, r) => '<span class="gx-sk' + (r ? ' gx-r' : '') + (GX.sort.k === k ? ' on' : '') + '" data-sort="' + k + '" role="columnheader" aria-sort="' + (GX.sort.k === k ? (GX.sort.d > 0 ? 'ascending' : 'descending') : 'none') + '">' + t + (GX.sort.k === k ? '<svg viewBox="0 0 10 10"><path d="' + (GX.sort.d > 0 ? 'M2 6.5l3-3 3 3' : 'M2 3.5l3 3 3-3') + '"/></svg>' : '') + '</span>';
+  if (names.length) h += '<div class="gx-gtab"><div class="gx-gh">' + sh('game', 'game') + sh('share', 'share of the time') + sh('t', 'played', 1) + sh('n', 'sessions', 1) + sh('avg', 'average', 1) + sh('fps', 'fps', 1) + sh('last', 'last played', 1) + '</div>' +
     names.map(k => { const o = per[k]; return '<div class="gx-gr' + (k === GX.game ? ' on' : '') + '" data-game="' + esc(k) + '" tabindex="0" role="button" aria-pressed="' + (k === GX.game) + '"><span class="gx-gnm">' + esc(k) + '</span><span class="gx-gbar"><span style="width:' + (o.t / sum * 100).toFixed(1) + '%"></span></span><span class="gx-r">' + durTxt(o.t) + '</span><span class="gx-r">' + o.n + '</span><span class="gx-r">' + durTxt(o.t / o.n) + '</span><span class="gx-r">' + (o.fn ? Math.round(o.fs / o.fn) : '--') + '</span><span class="gx-r gx-ago">' + ago(o.last) + '</span></div>'; }).join('') + '</div>';
   return { head, body: h };
 }
@@ -6615,6 +6619,7 @@ $('gsum').addEventListener('click', e => {
   const mb = t.closest('.gx-menu button'); if (mb) { gxSet({ game: mb.dataset.game || null, menu: false }); return; }
   if (t.closest('.gx-dd')) { gxSet({ menu: !GX.menu }); return; }
   const pb = t.closest('.gx-per button'); if (pb) { gxSet({ period: pb.dataset.p === 'all' ? 'all' : +pb.dataset.p, menu: false }); return; }
+  const sk = t.closest('.gx-sk'); if (sk) { const k = sk.dataset.sort; gxSet({ sort: { k, d: GX.sort.k === k ? -GX.sort.d : k === 'game' ? 1 : -1 }, menu: false }); return; }   // (a column again: the other way, 11-06)
   const gr = t.closest('.gx-gr'); if (gr && !pk) { gxSet({ game: GX.game === gr.dataset.game ? null : gr.dataset.game, menu: false }); return; }
   if (GX.menu) gxSet({ menu: false });
 });
