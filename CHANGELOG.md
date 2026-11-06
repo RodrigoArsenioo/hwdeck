@@ -21,6 +21,14 @@
 - Width in row offers only the widths that fit the row; Reset its look in Tiles also gives its tiles their own size back.
 - Remove from view is now Remove cell (it leaves every view) and the settings show its category after.
 - Selected stays lit while something is selected; Starts a new row is not offered on a category's first tile.
+- The settings panel is redrawn, shorter and with one line of help at most:
+  - Its title is the name of what you selected. The pin is gone: Selected in the editing bar keeps the panel open.
+  - The view's settings: the outline right under Arrangement, marking the rows that fill; templates named 2 a row, 3 a row and 1 a row; Height is Fit or Fill; one line of counts at the bottom.
+  - Grid: one Tables row, Auto, 1, 2 or 3, instead of Arrangement and Tables.
+  - A category: Column width as a % field and % chips; Its row, Fit or Fill; the four moves always shown, greyed out where they can't go, each with its key; Width of all and Height of all as chips with Auto, and Level to line up its column.
+  - A cell: one Name field, for all views or only this one; Width and Height chips with Auto and 0.75; First and New row buttons (First replaces the category's Shown first in Tiles); Decimals, with Auto, and Graph as chips; Hold, fade and the other side folded under one line in Lines.
+  - Remove category and Remove cell show their key, Del. The chips and the fold tell a screen reader whether they are on or open.
+- A Yes/No graph counts a minute with nothing recorded as No: in a popup its line drops to No there, and pointing at it reads No, also in a warning's chart (it showed a gap and --).
 
 ## 2.4.0 (2026-11-05)
 

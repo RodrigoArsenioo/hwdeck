@@ -123,6 +123,7 @@ nav#screens .ind.still { transition: none; }
 .pane-h .back { margin: -4px -4px -4px -6px; } .pane-h .back.none { display: none; }   /* (a cell's settings back to its category's, a category's back to the view's, his 11-06) */
 .pane-h h3 { font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .pane-h .grow { flex: 1; }
+.pane-h h3 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* (the item's own name, his pick 11-06: a long one cut) */
 
 /* Storage: every reading HWiNFO shares; a virtual list (only the rows in sight exist) */
 .storage { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--side); font-size: 13px; }
@@ -585,6 +586,24 @@ select.dsel-n { display: none; }
 .fgrp { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
 .fgrp > .hint { font-size: 12px; color: var(--dim); }
 .err { color: #e08a8d; font-size: 12px; } .err:empty { display: none; }
+/* the settings panels as redrawn 11-06 (his pick): a counts line, the rows that fill marked in the outline, the moves
+   two by two, two toggles side by side, a row of chips with a button, the Lines fold */
+.insp .foot { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.outline .orow.fill { box-shadow: inset 2px 0 0 var(--edit); padding-left: 6px; border-radius: 2px; }
+.btnrow.mv { display: grid; grid-template-columns: 1fr 1fr; }
+.btnrow.mv .btn { display: flex; justify-content: space-between; align-items: center; gap: 6px; min-width: 0; }
+.btn .kb { pointer-events: none; color: var(--muted); }   /* (4.5:1 on the panel, 11-06 audit) */
+.seg.tog { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: none; border: 0; padding: 0; }
+.seg.tog button { border: 1px solid var(--line2); border-radius: 7px; padding: 5px 6px; }
+.seg.tog button:disabled, .seg button:disabled { opacity: 0.4; cursor: default; }
+.segrow { display: flex; gap: 8px; align-items: stretch; } .segrow > .seg { flex: 1; min-width: 0; } .segrow > .btn { flex: none; }
+.fld > .seg { margin-top: 1px; }
+.more { display: flex; align-items: center; gap: 7px; align-self: flex-start; background: none; border: 0; padding: 2px 0; font: inherit; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.more:hover, .more:focus-visible { color: var(--fg); }
+.more svg { width: 10px; height: 10px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.more.open svg { transform: rotate(90deg); }
+:root[data-motion="off"] .more svg { transition: none; }
+.morebox { display: flex; flex-direction: column; gap: 8px; }
 .gate-y input { border-color: #5c4f1d; } .gate-r input { border-color: #5a2a2c; }
 .scale { position: relative; height: 34px; margin-top: 12px; }
 .scale .bar { position: absolute; left: 0; right: 0; top: 10px; height: 8px; border-radius: 4px; overflow: hidden; display: flex; background: #1e1e1e; }

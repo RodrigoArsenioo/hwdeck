@@ -512,7 +512,7 @@ const SZ = { wide: [2, 1], tall: [1, 2], big: [2, 2] };
 // places (Auto). No tile is drawn narrower than TILE_MIN (rem): where a row is too narrow for that, its tiles take fewer
 // a line, in even lines (his pick: 200 px at his text size). Tiles per row went: a category with it set gets its tiles as
 // shares of its row, as it drew them (cleanViews). PCTS: the widths a drag snaps to, RQ: the heights to pick from
-const TILE_MIN = 11.6, PCTS = [25, 100 / 3, 50, 200 / 3, 75, 100], RQ = [0.5, 1, 1.5, 2];
+const TILE_MIN = 11.6, PCTS = [25, 100 / 3, 50, 200 / 3, 75, 100], RQ = [0.5, 0.75, 1, 1.5, 2];
 const fNum = x => { if (typeof x !== 'number' || !isFinite(x) || x <= 0) return null; const f = Math.min(1, Math.max(0.05, x)), q = PCTS.find(p => Math.abs(p / 100 - f) < 0.0015); return Math.round((q ? q / 100 : f) * 1e4) / 1e4; };
 const pctTxt = f => Math.round(f * 100) + '%';
 // (a size a hair off a quarter step or a third, a third of a pixel or less, from a snap or a px step, is that step: 0.9999
@@ -905,6 +905,7 @@ function subscribe() {
 }
 
 // ---------- a cell's value and state: gates (with their hold), fan curve, warming toward yellow ----------
+const moreOpen = new Map();   // (a cell's Hold, fade, also bad fold, opened or shut by hand this session)
 let dselOpen = null;   // (a settings list's open menu: { s: the select, b: its button, m: the menu }; see dselShow)
 let sel = null, selCat = null, relinkFor = null;   // the selected cell, or the selected category (never both)
 const holdSince = {}, cellEp = {};
@@ -1753,7 +1754,8 @@ function pxFresh() {
   const b = S.edit && sel ? document.querySelector('#insp input[data-sz="f"]') : null; if (!b) return;
   const pct = cellPct(sel); if (pct == null) return;   // (the panel's own readout: field and chips agree, 11-06 audit)
   if (b !== document.activeElement) b.value = Math.round(pct * 10) / 10;
-  for (const x of document.querySelectorAll('#insp [data-lay="cf"] button')) x.classList.toggle('on', Math.abs(+x.dataset.v - pct) < 0.5);
+  const z = cellSize(sel), au = !z.f && z.w === 1;
+  for (const x of document.querySelectorAll('#insp [data-lay="cf"] button')) { const on = x.dataset.v === 'auto' ? au : !au && Math.abs(+x.dataset.v - pct) < 0.5; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); }
 }
 // a tile's width as the panel shows it, in % of its row: the share it is drawn at (a row of tiles you haven't sized spreads
 // out to fill its width, three of 25% drawn at a third each, his 11-06 "showing 25% but it should show 33%"; one you sized
@@ -3593,7 +3595,7 @@ sectionsEl.addEventListener('pointerdown', ev => {
     // (a field with something typed in it: it applies first, its change redraws, so this press starts nothing and the
     // next one drags; a field that only has the focus lets go and the drag starts at once)
     const a = document.activeElement;
-    if (a && a._typed && a.matches && a.matches('#insp input[data-sz], #insp input[data-csz], #lName')) { blurInsp(); ev.preventDefault(); return; }
+    if (a && a._typed && a.matches && a.matches('#insp input[data-sz], #insp input[data-csz], #insp input[data-cw], #lName')) { blurInsp(); ev.preventDefault(); return; }
     blurInsp();
     startHandle(ev, hd); ev.preventDefault(); return;
   }
@@ -3778,7 +3780,7 @@ $('relinkCancel').onclick = () => { endRelink(); renderView(false); };
 // its pick and opens the menu; a pick sets it and sends its change ----------
 function dselClose(refocus) {
   const d = dselOpen; if (!d) return; dselOpen = null;
-  d.m.remove(); d.b.classList.remove('on');
+  d.m.remove(); d.b.classList.remove('on'); d.b.setAttribute('aria-expanded', 'false');
   if (refocus && d.b.isConnected) d.b.focus({ preventScroll: true });
 }
 function dselUp(box) {
@@ -3787,6 +3789,8 @@ function dselUp(box) {
     s.classList.add('dsel-n'); s.tabIndex = -1;
     const b = document.createElement('button'), o = s.options[s.selectedIndex];
     b.type = 'button'; b.className = 'dsel'; b.id = (s.id || 'ds-' + (s.dataset.lay || 'list')) + 'Dd';   // (an id: a redraw puts the focus back on it)
+    const lb = s.closest('label'), ls = lb && lb.querySelector(':scope > span');   // (its field's name, for a screen reader: the hidden list had it)
+    b.setAttribute('aria-haspopup', 'listbox'); b.setAttribute('aria-expanded', 'false'); if (ls) b.setAttribute('aria-label', ls.textContent + ', ' + (o ? o.textContent : ''));
     b.innerHTML = '<span>' + esc(o ? o.textContent : '') + '</span>' + '<svg class="gx-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg>';
     if (s.title) b.title = s.title;
     b.disabled = s.disabled; b._sel = s; s.after(b);
@@ -3795,15 +3799,15 @@ function dselUp(box) {
 function dselShow(b) {
   const s = b._sel; if (!s || !s.isConnected || b.disabled) return;
   const same = dselOpen && dselOpen.b === b; dselClose(false); if (same) return;
-  const m = document.createElement('div'); m.className = 'smenu dsel-m';
-  m.innerHTML = [...s.options].map((o, i) => '<button type="button" data-n="' + i + '"' + (i === s.selectedIndex ? ' class="on"' : '') + (o.disabled ? ' disabled' : '') + '>' + esc(o.textContent) + '</button>').join('');
+  const m = document.createElement('div'); m.className = 'smenu dsel-m'; m.setAttribute('role', 'listbox');
+  m.innerHTML = [...s.options].map((o, i) => '<button type="button" role="option" aria-selected="' + (i === s.selectedIndex) + '" data-n="' + i + '"' + (i === s.selectedIndex ? ' class="on"' : '') + (o.disabled ? ' disabled' : '') + '>' + esc(o.textContent) + '</button>').join('');
   document.body.appendChild(m);
   const r = b.getBoundingClientRect(), below = innerHeight - r.bottom - 10, above = r.top - 10, up = m.offsetHeight > below && above > below;
   m.style.maxHeight = Math.max(120, Math.min(330, up ? above : below)) + 'px';
   m.style.minWidth = r.width + 'px';
   m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + 'px';
   m.style.top = (up ? r.top - 4 - m.offsetHeight : r.bottom + 4) + 'px';
-  b.classList.add('on'); dselOpen = { s, b, m };
+  b.classList.add('on'); b.setAttribute('aria-expanded', 'true'); dselOpen = { s, b, m };
   const on = m.querySelector('.on') || m.querySelector('button:not(:disabled)'); if (on) { on.scrollIntoView({ block: 'nearest' }); on.focus({ preventScroll: true }); }
 }
 function dselPick(n) {
@@ -3850,7 +3854,7 @@ function tabField(ev) {
 }
 function ctlSel(a, box) {
   const grp = a.parentElement && a.parentElement.closest('[id], [data-lay]'), gq = grp && box.contains(grp) ? (grp.id ? '#' + CSS.escape(grp.id) : '[data-lay="' + CSS.escape(grp.dataset.lay) + '"]') : null;
-  const q = a.id ? '#' + CSS.escape(a.id) : a.dataset.sz ? '[data-sz="' + a.dataset.sz + '"]' : a.dataset.csz ? '[data-csz="' + a.dataset.csz + '"]' :
+  const q = a.id ? '#' + CSS.escape(a.id) : a.dataset.sz ? '[data-sz="' + a.dataset.sz + '"]' : a.dataset.cw ? 'input[data-cw]' : a.dataset.csz ? '[data-csz="' + a.dataset.csz + '"]' :
     a.dataset.lay ? a.tagName.toLowerCase() + '[data-lay="' + CSS.escape(a.dataset.lay) + '"]' + (a.dataset.v != null ? '[data-v="' + CSS.escape(a.dataset.v) + '"]' : '') :
     a.tagName === 'BUTTON' && a.dataset.v != null && gq ? gq + ' button[data-v="' + CSS.escape(a.dataset.v) + '"]' :
     a.dataset.i != null && a.dataset.j != null ? '#cTab input[data-i="' + CSS.escape(a.dataset.i) + '"][data-j="' + CSS.escape(a.dataset.j) + '"]' :   // (a fan curve point's field)
@@ -3861,13 +3865,24 @@ function inspFocus(box) {
   const a = document.activeElement;
   if (!a || !box.contains(a)) return () => {};
   const q = ctlSel(a, box);
-  return () => { const e = q && box.querySelector(q); if (e && e !== document.activeElement) e.focus({ preventScroll: true }); };
+  return () => {
+    let e = q && box.querySelector(q);
+    if (e && e.disabled) e = [...(e.closest('.btnrow, .seg, .fld') || box).querySelectorAll('button:not(:disabled), input:not(:disabled)')][0] || $('inspClose');   // (Own row, Reset, Level: off once done, 11-06 audit)
+    if (e && e !== document.activeElement) e.focus({ preventScroll: true });
+  };
+}
+// the panel's title: the item's own name (his pick 11-06: "RAM STICK 2", not "Cell"), what it is said first to a screen
+// reader; a name cut short whole in its tip
+function inspTitle(kind, name) {
+  const t = $('inspTitle'), k = kind + '|' + name;
+  if (t._k !== k) { t._k = k; t.innerHTML = (kind ? '<span class="sr">' + kind + ', </span>' : '') + esc(name); }
+  t.title = t.scrollWidth > t.clientWidth + 1 ? name : '';
 }
 function renderInsp() {
   const box = $('insp'), refocus = inspFocus(box);
   const c = sel && S.L.cells[sel], cat = !c && selCat ? catById(selCat) : null;
   syncDrawers();
-  setText($('inspTitle'), c ? 'Cell' : cat ? 'Category' : S.screen === 'overview' ? 'Overview' : VNAME[S.screen] + ' view');
+  inspTitle(c ? 'Cell' : cat ? 'Category' : '', c ? nameIn(sel) : cat ? cat.name : S.screen === 'overview' ? 'Overview' : VNAME[S.screen]);
   $('inspBack').classList.toggle('none', !c && !cat);
   if (!S.edit) return;
   if (cat) { box.innerHTML = catPanel(cat); dselUp(box); refocus(); return; }
@@ -3879,31 +3894,37 @@ function renderInsp() {
   let h = '<div class="src">' + (c.pred ? '<span>Predicted fan: no sensor, its rpm comes from the curve below.</span>'
     : r ? '<span>' + esc(sen.name) + '</span><span style="color:var(--fg)" title="' + esc(r.key) + '">' + esc(r.label) + '</span>'
     : '<span style="color:#e08a8d">' + (sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now' : 'Not on this PC' + (c.match ? ': ' + esc(c.match.replace('|', ', ')) : '')) + '</span><span class="k">' + esc(c.key) + '</span>') + '</div>';
-  h += '<label class="fld"><span>Name</span><input id="iName" maxlength="' + NAME_MAX + '" value="' + esc(c.name || '') + '" placeholder="' + esc(r ? r.label : c.pred ? 'Predicted fan' : '') + '"></label>';
+  // its name: one field, for every view or for this one only (his pick 11-06: was a "Different name in" link)
+  const cl = cellLook(sel), V = VNAME[S.screen], vnm = cl.name != null;
+  h += '<div class="fld"><span>Name</span>' + (vnm ? '<input id="lvName" aria-label="Name in ' + V + '" maxlength="' + NAME_MAX + '" value="' + esc(cl.name) + '" placeholder="' + esc(cellName(c)) + '">'
+    : '<input id="iName" aria-label="Name" maxlength="' + NAME_MAX + '" value="' + esc(c.name || '') + '" placeholder="' + esc(r ? r.label : c.pred ? 'Predicted fan' : '') + '">') +
+    chipsH('nscope', [['all', 'All views'], ['one', 'Only ' + V]], x => x === (vnm ? 'one' : 'all'), '', 'Name for') + '</div>';
   h += cellLayHtml(sel, c);
-  const bn = isBneck(c), gsel = '<select id="iGraph"><option value="1"' + (c.graph !== false ? ' selected' : '') + '>Show</option><option value="0"' + (c.graph === false ? ' selected' : '') + '>Hide</option></select>';
-  // the bottleneck is a call, not a number: no decimals, no lines
-  if (bn) h += '<div class="two"><label class="fld"><span>15 min bar</span>' + gsel + '</label><span></span></div>' +
-    '<div class="fgrp"><span class="hint">Checked by ' + esc(feed.brand || 'HW Deck') + ' every second while a game runs. GPU bound: the GPU almost fully busy (95% or more). FPS capped: the GPU has time to spare and the frames come at a steady rhythm, so an fps limit, vsync or Reflex holds them. CPU bound: the GPU has time to spare and the rhythm keeps changing. Spotting a cap needs Accurate game fps. Without it, or in a Vulkan or OpenGL game, only a cap at the screen\'s refresh rate shows.</span></div>';
-  else h += '<div class="two"><label class="fld"><span>Decimals</span><select id="iDec">' + [0, 1, 2, 3].map(d => '<option' + (decOfCell(c, r) === d ? ' selected' : '') + '>' + d + '</option>').join('') + '</select></label>' +
-       '<label class="fld"><span>Graph</span>' + gsel + '</label></div>';
+  // decimals and the graph as chips (were lists); the bottleneck is a call, not a number: no decimals, no lines
+  const bn = isBneck(c);
+  h += '<div class="fgrp"><span class="lab">Display</span>' + (bn ? '' : segL('Decimals', 'dec', [['', 'Auto'], [0, '0'], [1, '1'], [2, '2'], [3, '3']], c.dec == null ? '' : c.dec, 'qs')) +
+    segL(bn ? '15 min bar' : 'Graph', 'graph', [[1, 'Show'], [0, 'Hide']], c.graph === false ? 0 : 1) + '</div>';
   if (!c.pred && !bn) {
-    h += '<div class="fgrp"><span class="lab">Lines</span><div class="seg" id="iMode">' + [['none', 'None'], ['y', 'Yellow'], ['yr', 'Yellow + Red']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.mode === v ? 'on' : '') + '">' + t + '</button>').join('') + '</div>';
+    h += '<div class="fgrp"><span class="lab">Lines</span><div class="seg" id="iMode" role="group" aria-label="Lines">' + [['none', 'None'], ['y', 'Yellow'], ['yr', 'Yellow + Red']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.mode === v ? 'on' : '') + '" aria-pressed="' + (g.mode === v) + '">' + t + '</button>').join('') + '</div>';
     if (g.mode !== 'none') {
-      h += '<div class="seg" id="iDir">' + [['above', 'Bad when above'], ['below', 'Bad when below']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.dir === v ? 'on' : '') + '">' + t + '</button>').join('') + '</div>';
+      h += '<div class="seg" id="iDir" role="group" aria-label="Bad when">' + [['above', 'Bad when above'], ['below', 'Bad when below']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.dir === v ? 'on' : '') + '" aria-pressed="' + (g.dir === v) + '">' + t + '</button>').join('') + '</div>';
       const o = g.other && typeof g.other === 'object' ? g.other : null, osd = g.dir === 'below' ? 'above' : 'below', side = (d, t) => o ? (d === 'below' ? 'Low: ' + t.toLowerCase() : 'High: ' + t.toLowerCase()) : t;
       h += '<div class="two"><label class="fld gate-y"><span>' + side(g.dir, 'Yellow') + ' ' + esc(unit) + '</span><input id="iY" type="number" step="any" value="' + numL(g.y) + '"></label>' +
            (g.mode === 'yr' ? '<label class="fld gate-r"><span>' + side(g.dir, 'Red') + ' ' + esc(unit) + '</span><input id="iR" type="number" step="any" value="' + numL(g.r) + '"></label>' : '<span></span>') + '</div>';
-      h += '<label class="chk"><input type="checkbox" id="iOther"' + (o ? ' checked' : '') + '> Also bad when ' + osd + '</label>';
-      if (o) h += '<div class="two"><label class="fld gate-y"><span>' + side(osd, 'Yellow') + ' ' + esc(unit) + '</span><input id="iOY" type="number" step="any" placeholder="none" value="' + numL(o.y) + '"></label>' +
-        '<label class="fld gate-r"><span>' + side(osd, 'Red') + ' ' + esc(unit) + '</span><input id="iOR" type="number" step="any" placeholder="none" value="' + numL(o.r) + '"></label></div>';
-      h += '<label class="fld"><span>Hold before it changes colour, in seconds</span><input id="iHold" type="number" min="0" step="1" value="' + num(g.hold) + '"></label>';
-      h += '<label class="fld"><span>Fade in before a line ' + esc(unit) + '</span><input id="iFade" type="number" min="0" step="any" placeholder="auto" value="' + (Number.isFinite(g.fade) ? numL(g.fade) : '') + '"></label>' +
-           '<span class="hint">How far before its yellow line, and its red one, the cell starts to take on that colour. Empty: the last 12%. 0: no fade.</span>';
       h += '<div class="err" id="gErr"></div><div class="scale" id="gScale"></div>';
+      // hold, fade and the other side folded under one line (his pick 11-06); open while the other side or a fade is set
+      const more = moreOpen.has(sel) ? moreOpen.get(sel) : !!o || Number.isFinite(g.fade);
+      h += '<button class="more' + (more ? ' open' : '') + '" id="iMore" aria-expanded="' + more + '"' + (more ? ' aria-controls="iMoreBox"' : '') + '><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 2l3 3-3 3"/></svg>Hold, fade, also bad when ' + osd + '</button>';
+      if (more) {
+        h += '<div class="morebox" id="iMoreBox"><label class="chk"><input type="checkbox" id="iOther"' + (o ? ' checked' : '') + '> Also bad when ' + osd + '</label>';
+        if (o) h += '<div class="two"><label class="fld gate-y"><span>' + side(osd, 'Yellow') + ' ' + esc(unit) + '</span><input id="iOY" type="number" step="any" placeholder="none" value="' + numL(o.y) + '"></label>' +
+          '<label class="fld gate-r"><span>' + side(osd, 'Red') + ' ' + esc(unit) + '</span><input id="iOR" type="number" step="any" placeholder="none" value="' + numL(o.r) + '"></label></div>';
+        h += '<label class="fld"><span>Hold before it changes colour, in seconds</span><input id="iHold" type="number" min="0" step="1" value="' + num(g.hold) + '"></label>';
+        h += '<label class="fld"><span>Fade in before a line ' + esc(unit) + '</span><input id="iFade" type="number" min="0" step="any" placeholder="auto" value="' + (Number.isFinite(g.fade) ? numL(g.fade) : '') + '"></label></div>';
+      }
     } else if (r) {
-      const pre = presetFor(r);
-      h += '<span class="hint">' + (c.key === 'hwdeck.0/12v' ? 'No lines: only its pins\' balance turns it yellow.' : 'No lines: the cell never turns yellow or red.') + (pre ? ' Suggestion: <button class="linkbtn" id="iPreset">' + esc(pre.txt) + '</button>' : '') + '</span>';
+      const pre = presetFor(r), pins = c.key === 'hwdeck.0/12v';
+      if (pre || pins) h += '<span class="hint">' + (pins ? 'Only its pins\' balance turns it yellow.' + (pre ? ' ' : '') : '') + (pre ? 'Suggestion: <button class="linkbtn" id="iPreset">' + esc(pre.txt) + '</button>' : '') + '</span>';
     }
     h += '</div>';
   }
@@ -3933,8 +3954,8 @@ function renderInsp() {
     }
     h += '</div>';
   }
-  h += '<div class="fgrp"><div style="display:flex;gap:8px;flex-wrap:wrap">' + (isMissing(c) ? '<button class="btn" id="iRelink">Re-link</button>' : '') +
-    '<button class="btn" id="iOpen">Open graphs</button><button class="btn warn" id="iRemove">Remove cell</button></div></div>';
+  h += '<div class="fgrp"><div class="btnrow">' + (isMissing(c) ? '<button class="btn" id="iRelink">Re-link</button>' : '') +
+    '<button class="btn" id="iOpen">Open graphs</button><button class="btn warn" id="iRemove">Remove cell<span class="kb">Del</span></button></div></div>';
   box.innerHTML = h;
   dselUp(box); refocus();
   tickInsp();
@@ -4085,7 +4106,7 @@ insp.addEventListener('input', e => {
   if (!editSnap && t.id !== 'cPasteIn' && t.type !== 'checkbox' && t.tagName !== 'SELECT' && !(t.dataset && (t.dataset.sz || t.dataset.lay))) { nudgeQuiet(); snap(); syncUndo(); editSnap = true; }
   else if (t.dataset && t.dataset.sz) nudgeQuiet();   // (a size takes its own step on change, from the nudged size: no redraw under the typing)
   if (t.id === 'iName') {
-    setCell(c => { c.name = t.value.trim() || undefined; });
+    setCell(c => { c.name = t.value.trim() || undefined; }); inspTitle('Cell', nameIn(sel));
     const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
     if (el) el.textContent = nameIn(sel);
   }
@@ -4100,8 +4121,6 @@ insp.addEventListener('change', e => {
   const t = e.target, c = S.L.cells[sel]; if (!c) return;
   if (t.id === 'cTol' || t.id === 'cHold') t.value = c.curve[t.id === 'cTol' ? 'tol' : 'hold'];   // what it keeps, not what was typed
   if (t.id === 'iHold' && c.gates && isFinite(c.gates.hold)) t.value = c.gates.hold;
-  if (t.id === 'iDec') { setCell(c => { c.dec = Number(t.value); }, true); updateView(false, true); }
-  if (t.id === 'iGraph') { setCell(c => { c.graph = t.value === '1'; }, true); renderView(false); }
   if (t.id === 'iSrc') { setCell(c => { c.curve.src = t.value; }, true); subscribe(); renderInsp(); updateView(false, true); }
   if (t.id === 'cWarn') { setCell(c => { if (t.checked) delete c.curve.warn; else c.curve.warn = false; }, true); renderInsp(); updateView(false, true); }
   if (t.id === 'iOther') { setCell(c => { if (t.checked) c.gates.other = c.gates.other || {}; else delete c.gates.other; }, true); renderInsp(); updateView(false, true); }
@@ -4152,6 +4171,7 @@ insp.addEventListener('click', e => {
     }, true);
     renderInsp(); updateView(false, true);
   }
+  if (e.target.closest('#iMore')) { moreOpen.set(sel, $('iMore').getAttribute('aria-expanded') !== 'true'); renderInsp(); return; }
   if (e.target.closest('#iPreset')) { const p = presetFor(BYKEY.get(c.key)); setCell(c => { c.gates = Object.assign({}, p.g); }, true); renderInsp(); updateView(false, true); }
   if (e.target.closest('#iRemove') && e.detail < 2) { inspGoneAt = performance.now(); const c = catOf(sel); removeCell(sel); if (c && !sel && S.L.cats.includes(c)) selectCat(c.id); }
   if (e.target.closest('#iRelink')) startRelink(sel);
@@ -4216,117 +4236,116 @@ insp.addEventListener('focusout', e => {
 insp.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.closest && e.target.closest('#cTab')) e.target.blur(); });
 
 // ---------- the right panel for a category, for the view, and the layout bits of a cell ----------
-const segL = (label, key, opts, cur) => '<div class="fld"><span>' + label + '</span><div class="seg" data-lay="' + key + '">' +
-  opts.map(([v, t, off]) => '<button data-v="' + v + '"' + (off ? ' disabled' : '') + ' class="' + (String(v) === String(cur) ? 'on' : '') + '">' + t + '</button>').join('') + '</div></div>';
-const TPLS = [['two', '2 columns', '1fr 1fr', '1fr 1fr 1fr', ['1/1', '1/2', '2/1', '2/2', '3/1/4/3']], ['three', '3 columns', '1fr 1fr 1fr', '1fr 1fr', ['1/1', '1/2', '1/3', '2/1/3/4']],
-  ['one', 'One per row', '1fr', '1fr 1fr 1fr', ['1/1', '2/1', '3/1']], ['copy', 'Copy', '1fr 1fr 1fr', '1fr 0.6fr 1fr', ['1/1', '1/2', '1/3', '2/1/3/4', '3/1', '3/2', '3/3']]];
+// a row of chips: one button each, the one in effect lit (and pressed, for a screen reader); lit(v) says which
+const chipsH = (key, opts, lit, cls, label) => '<div class="seg' + (cls ? ' ' + cls : '') + '" data-lay="' + key + '" role="group"' + (label ? ' aria-label="' + esc(label) + '"' : '') + '>' +
+  opts.map(([v, t, off]) => { const on = !!lit(v); return '<button data-v="' + v + '"' + (off ? ' disabled' : '') + ' class="' + (on ? 'on' : '') + '" aria-pressed="' + on + '">' + t + '</button>'; }).join('') + '</div>';
+const segL = (label, key, opts, cur, cls) => '<div class="fld"><span>' + label + '</span>' + chipsH(key, opts, v => String(v) === String(cur), cls, label) + '</div>';
+const TPLS = [['two', '2 a row', '1fr 1fr', '1fr 1fr 1fr', ['1/1', '1/2', '2/1', '2/2', '3/1/4/3']], ['three', '3 a row', '1fr 1fr 1fr', '1fr 1fr', ['1/1', '1/2', '1/3', '2/1/3/4']],
+  ['one', '1 a row', '1fr', '1fr 1fr 1fr', ['1/1', '2/1', '3/1']], ['copy', 'Copy', '1fr 1fr 1fr', '1fr 0.6fr 1fr', ['1/1', '1/2', '1/3', '2/1/3/4', '3/1', '3/2', '3/3']]];
 const LOOKS = [['', 'Card', [[6, 8, 40, 38], [52, 14, 42, 26], [6, 58, 88, 12], [6, 78, 88, 12]]], ['small', 'Small card', [[6, 8, 30, 24], [42, 12, 52, 16], [6, 42, 88, 12], [6, 62, 88, 12], [6, 82, 88, 12]]],
   ['list', 'List', [[6, 8, 88, 14], [6, 30, 88, 14], [6, 52, 88, 14], [6, 74, 88, 14]]], ['band', 'Band', [[4, 20, 14, 60], [22, 20, 16, 60], [41, 20, 16, 60], [60, 20, 16, 60], [79, 20, 16, 60]]]];
 const LOOK_HINT = { '': 'Card: its first reading large with a graph, the rest as rows.', small: 'Small card: a card with a smaller big reading.', list: 'List: every reading as a row, none large.',
   band: 'Band: the name on the left and every reading side by side in one strip, each with a small graph. Best on a row of its own.' };
 const otherView = vn => vn === 'tiles' ? 'overview' : 'tiles';
-function outlineHtml(rows) {
-  return '<div class="outline">' + rows.map(r => '<div class="orow" style="grid-template-columns:' + r.cols.map(c => (c.w || 1) + 'fr').join(' ') + '">' +
+function outlineHtml(rows, vn) {
+  const fa = vn === 'tiles' && fillAll('tiles');   // (a row that fills: marked, his pick 11-06)
+  return '<div class="outline">' + rows.map(r => '<div class="orow' + (vn === 'tiles' && (fa || r.h) ? ' fill' : '') + '" style="grid-template-columns:' + r.cols.map(c => (c.w || 1) + 'fr').join(' ') + '">' +
     r.cols.map(c => '<div class="ocol">' + c.stack.map(s => { const id = sid(s), cat = catById(id); return '<button class="obox' + (id === selCat ? ' on' : '') + '" data-ocat="' + esc(id) + '" title="' + esc(cat ? cat.name : '') + '">' + esc(cat ? cat.name : '') + '</button>'; }).join('') + '</div>').join('') + '</div>').join('') + '</div>';
 }
 function viewPanel() {
   const vn = S.screen, v = stored(vn), own = !!(v && v.rows), cells = Object.values(S.L.cells);
-  const nb = (n, one, many) => '<b>' + n + '</b> ' + (n === 1 ? one : many);
   if (!READ.length) return '<div class="none"><span>Nothing to pick from yet: HWiNFO isn\'t sharing its sensors. The steps are in the middle.</span></div>';
   let h = '';
   if (S.L.cats.length) {
-    h += segL('Arrangement', 'arr', [['auto', 'Automatic'], ['own', 'Your own']], own ? 'own' : 'auto') + '<span class="hint">' + (own
-      ? 'Your rows and columns. Drag a category by its handle onto the edge of another one; drag the line between two columns to change their widths.'
-      : esc(feed.brand || 'HW Deck') + ' places the categories for you. Drop a category on the edge of another one, or pick a start below, to arrange them yourself.') + '</span>';
+    // (Grid: how many tables, Auto following the window; one control for its Arrangement and Tables, his pick 11-06)
+    if (vn === 'grid') {
+      const n = own ? v.rows[0].cols.length : document.querySelectorAll('#view .gtable').length;
+      h += segL('Tables', 'tables', [['auto', 'Auto']].concat([[1, '1'], [2, '2'], [3, '3']].slice(0, Math.max(1, n, Math.min(3, S.L.cats.length)))), own ? n : 'auto');   // (no more tables than categories)
+    } else h += segL('Arrangement', 'arr', [['auto', 'Automatic'], ['own', 'Your own']], own ? 'own' : 'auto');
+    h += '<span class="hint">' + (!own ? 'Follows the window.' : vn === 'grid' ? 'Drag a category onto a table edge.' : 'Drag a category by its handle.') + '</span>';
+    h += '<div class="fgrp"><span class="lab">Outline</span>' + outlineHtml(own ? v.rows : rowsNow(vn), vn) + '</div>';
     if (vn !== 'grid') {
       const ov = otherView(vn), canCopy = !!(stored(ov) && stored(ov).rows);
-      h += '<div class="fgrp"><span class="lab">Start from</span><div class="tpls">' + TPLS.map(([k, t, gc, gr, areas]) => '<button class="tpl" data-tpl="' + k + '"' + (k === 'copy' && !canCopy ? ' disabled title="' + VNAME[ov] + ' is placed automatically: there is nothing to copy"' : '') + '>' +
-        '<span class="pic" style="grid-template-columns:' + gc + ';grid-template-rows:' + gr + '">' + areas.map(a => '<i style="grid-area:' + a + '"></i>').join('') + '</span>' + (k === 'copy' ? 'Copy from ' + VNAME[ov] : t) + '</button>').join('') + '</div>' +
-        '<span class="hint">Rest the pointer on one to see it with your categories, click to use it. Undo brings yours back.</span></div>';
-      const hv = v && v.fill ? 'fill' : own && v.rows.some(r => r.h) ? 'some' : 'fit';   // (its hint says what is in effect, his 11-06)
-      h += '<div class="fgrp">' + (vn === 'tiles' ? segL('Height', 'fill', [['fit', 'All fit'], ['fill', 'Fill the window']], hv) +
-        '<span class="hint">' + (hv === 'fit' ? 'All fit: the tiles keep their own height, and any room left under them stays empty.' : hv === 'fill' ? 'Fill the window: room left under the tiles makes them taller and their graphs bigger, up to twice their size.' : 'Some rows fill, set in their categories. All fit or Fill the window sets every row.') + '</span>' : '') +
-        segL('Spacing', 'gap', [['tight', 'Tight'], ['', 'Normal'], ['roomy', 'Roomy']], v && v.gap || '') + '<span class="hint">The gaps between categories and between their ' + (vn === 'tiles' ? 'tiles' : 'rows') + '.</span></div>';
-    } else {
-      const n = own ? v.rows[0].cols.length : document.querySelectorAll('#view .gtable').length;
-      h += '<div class="fgrp">' + segL('Tables', 'tables', [[1, 'One'], [2, 'Two'], [3, 'Three']].slice(0, Math.max(1, n, Math.min(3, S.L.cats.length))), n) + '</div>';   // (no more tables than categories)
+      h += '<div class="fgrp"><span class="lab">Start from</span><div class="tpls">' + TPLS.map(([k, t, gc, gr, areas]) => '<button class="tpl" data-tpl="' + k + '"' + (k === 'copy' && !canCopy ? ' disabled title="' + VNAME[ov] + ' is automatic"' : '') + '>' +
+        '<span class="pic" aria-hidden="true" style="grid-template-columns:' + gc + ';grid-template-rows:' + gr + '">' + areas.map(a => '<i style="grid-area:' + a + '"></i>').join('') + '</span>' + (k === 'copy' ? 'Copy ' + VNAME[ov] : t) + '</button>').join('') + '</div></div>';
+      const hv = v && v.fill ? 'fill' : own && v.rows.some(r => r.h) ? 'some' : 'fit';   // (some rows fill, set in their categories: neither lit, the outline marks them)
+      h += '<div class="fgrp">' + (vn === 'tiles' ? segL('Height', 'fill', [['fit', 'Fit'], ['fill', 'Fill']], hv) : '') + segL('Spacing', 'gap', [['tight', 'Tight'], ['', 'Normal'], ['roomy', 'Roomy']], v && v.gap || '') + '</div>';
     }
-    if (own) h += '<div class="fgrp"><span class="lab">Outline</span>' + outlineHtml(v.rows) + '<span class="hint">Click a box to select that category.</span></div>';
   }
-  h += '<div class="fgrp"><div class="none"><span>Select a cell to set its name, decimals, lines and fan curve, or click a category\'s name to set where it goes and how it looks. Double-click a cell for its graphs, or click it once outside edit mode.</span>' +
-    '<span>' + nb(S.L.cats.length, 'category', 'categories') + ', ' + nb(cells.length, 'cell', 'cells') + ', ' + nb(cells.filter(x => gatesOn(x.gates)).length, 'with lines', 'with lines') + ', ' + nb(cells.filter(x => x.curve).length, 'on a fan curve', 'on a fan curve') + '.</span>' +
-    '<span>Tip: pick a type in Storage, like Temp or Fan, then <b>+ all</b> on a sensor to add all of those readings as one category.</span>' +
-    (own ? '<span><button class="linkbtn" data-lay="auto">Back to automatic</button></span>' : '') + '</div></div>';
+  // (what is in it, one line; the help, the tip and Back to automatic went, his pick 11-06: Automatic is at the top)
+  const nb = (n, one, many) => n.toLocaleString('en-US') + ' ' + (n === 1 ? one : many);
+  h += '<div class="fgrp"><span class="foot">' + nb(S.L.cats.length, 'category', 'categories') + ', ' + nb(cells.length, 'cell', 'cells') + ', ' + cells.filter(x => gatesOn(x.gates)).length + ' with lines, ' + cells.filter(x => x.curve).length + ' on a curve</span>' +
+    (S.L.cats.length ? '' : '<span class="hint">Pick a type in Storage, then <b>+ all</b> on a sensor.</span>') + '</div>';
   return h;
 }
 // a tile of the category with a size or a new row of yours in Tiles (what Reset its look in Tiles also takes back)
 const TILE_KEYS = ['f', 'fx', 'w', 'h', 'size', 'nl'];
 const tileSet = id => { const t = stored('tiles'), e = t && t.cell && t.cell[id]; return !!e && TILE_KEYS.some(k => e[k] !== undefined); };
 function catPanel(cat) {
-  const vn = S.screen, V = VNAME[vn], lk = catLook(cat.id), v = stored(vn), own = !!(v && v.rows), ids = cellsOf(cat);
+  const vn = S.screen, V = VNAME[vn], lk = catLook(cat.id), ids = cellsOf(cat);
   const leadOpts = '<option value="">' + (ids.length ? 'The first one, ' + esc(nameIn(ids[0])) : 'The first one') + '</option>' +
     ids.slice(1).map(id => '<option value="' + esc(id) + '"' + (lk.lead === id ? ' selected' : '') + '>' + esc(nameIn(id)) + '</option>').join('');
   let h = '<label class="fld"><span>Name</span><input id="lName" maxlength="' + NAME_MAX + '" value="' + esc(cat.name) + '"></label><div class="fgrp"><span class="sub">In ' + V + '</span>';
   if (vn !== 'grid') {
-    const rows = rowsNow(vn), p = posIn(rows, cat.id), alone = !p || p.row.cols.length < 2;
-    h += '<span class="row3">' + (own && p ? 'Row ' + (p.ri + 1) + ' of ' + rows.length + (alone ? ', alone in its row at full width' : ', column ' + (p.ci + 1) + ' of ' + p.row.cols.length) + (p.col.stack.length > 1 ? ', stacked ' + (p.k + 1) + ' of ' + p.col.stack.length : '')
-      : 'Placed automatically. Changing where it goes or how wide it is gives ' + V + ' your own arrangement, starting from what you see.') + '</span>';
+    const v = stored(vn), rows = rowsNow(vn), p = posIn(rows, cat.id), alone = !p || p.row.cols.length < 2;
+    if (p) h += '<span class="row3">Row ' + (p.ri + 1) + ' of ' + rows.length + (alone ? ', alone' : ', column ' + (p.ci + 1) + ' of ' + p.row.cols.length) + (p.col.stack.length > 1 ? ', stacked ' + (p.k + 1) + ' of ' + p.col.stack.length : '') + '</span>';
+    // its column's width: a % field and % chips (his pick 11-06: were 1/4, 1/3...); the chips that can't fit are off
     const mine = !alone && p.row.cols.every(c => c.w), b = mine ? p.row.cols.map(c => c.w) : [1], tw = alone ? '' : mine ? Math.round(b[p.ci] / b.reduce((x, y) => x + y, 0) * 1200) / 100 : 'auto';
     const mxw = alone ? 0 : 12 - (p.row.cols.length - 1);   // (the most a column can take: the others keep a twelfth each)
-    h += segL('Width in row', 'width', [['auto', 'Auto'], [3, '1/4'], [4, '1/3'], [6, '1/2'], [8, '2/3'], [9, '3/4']].map(([x, t]) => [x, t, alone || (x !== 'auto' && x > mxw)]), tw);
-    h += '<span class="hint">' + (alone ? 'Alone in its row, so it takes the whole width. Put another category beside it to share the row.'
-      : tw === 'auto' ? 'Auto: the widths follow what each column holds, so the columns end about together.' : 'Yours. Auto, or a double-click on the line between columns, lets them follow the content again.') + '</span>';
-    if (vn === 'tiles') h += segL('Row height', 'rowh', [[0, 'Fit'], [1, 'Fill']], (v && v.fill) || (own && p && p.row.h) ? 1 : 0) + '<span class="hint">Fill: when the view leaves room below, this row\'s tiles grow taller to use it.</span>';
-    const mo = moveOptions(cat.id), mb = [['row', 'Own row', 'R'], ['beside', 'Beside the row above', 'B'], ['stack', 'Stack under the left one', 'S'], ['unstack', 'Unstack', 'U']].filter(m => mo[m[0]]);
-    if (mb.length) h += '<div class="fld"><span>Move</span><div class="btnrow">' + mb.map(m => '<button class="btn" data-lay="move" data-v="' + m[0] + '">' + m[1] + '<span class="kb">' + m[2] + '</span></button>').join('') + '</div></div>';
+    const blk = document.querySelector('#view .dcat[data-cat="' + CSS.escape(cat.id) + '"]'), col = blk && blk.closest('.lcol'), row = col && col.closest('.lrow');
+    const pct = alone ? 100 : mine ? Math.round(b[p.ci] / b.reduce((x, y) => x + y, 0) * 1000) / 10 : col && row && row.getBoundingClientRect().width ? Math.round(col.getBoundingClientRect().width / row.getBoundingClientRect().width * 100) : '';
+    h += '<div class="fld"><span>Column width</span><div class="szin"><label><input type="number" data-cw="1" aria-label="Column width, %" value="' + pct + '" step="any" min="1" max="100"' + (alone ? ' disabled' : '') + '><i>%</i></label></div>' +
+      chipsH('width', [['auto', 'Auto'], [3, '25%'], [4, '33%'], [6, '50%'], [8, '67%'], [9, '75%']].map(([x, t]) => [x, t, alone || (x !== 'auto' && x > mxw)]), x => String(x) === String(tw), 'qs', 'Column width') + '</div>';
+    if (vn === 'tiles') h += segL('Its row', 'rowh', [[0, 'Fit'], [1, 'Fill']], (v && v.fill) || (v && v.rows && p && p.row.h) ? 1 : 0);
+    // the four moves always there, off where they can't go, each with its key (his pick 11-06: only the possible ones showed)
+    const mo = moveOptions(cat.id);
+    h += '<div class="fld"><span>Move</span><div class="btnrow mv">' + [['row', 'Own row', 'R'], ['beside', 'Beside above', 'B'], ['stack', 'Stack left', 'S'], ['unstack', 'Unstack', 'U']].map(m =>
+      '<button class="btn" data-lay="move" data-v="' + m[0] + '" aria-keyshortcuts="' + m[2] + '"' + (mo[m[0]] ? '' : ' disabled') + '>' + m[1] + '<span class="kb">' + m[2] + '</span></button>').join('') + '</div></div>';
   } else {
     const rows = rowsNow('grid'), p = posIn(rows, cat.id), n = rows.length ? rows[0].cols.length : 1;
     h += segL('Table', 'table', [...Array(Math.min(3, n + 1))].map((_, i) => [i, i < n ? String(i + 1) : 'New table', i >= n && !!p && p.ci === n - 1 && p.col.stack.length === 1]), p ? p.ci : 0);   // (alone in the last table: a new one would be the same)
   }
   h += '</div>';
-  if (vn === 'tiles')
-    h += '<div class="fgrp"><span class="lab">Look in Tiles</span><div class="two">' + segL('Tile style', 'size', [['', 'Normal'], ['short', 'Short']], lk.size || '') + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') + '</div>' +
-      '<span class="hint">Short: no graph; the name over its 15 min max on the left, the value on the right. Wider tiles, so fewer to a row.</span>' +
-      '<label class="fld"><span>Shown first</span><select data-lay="lead">' + leadOpts + '</select></label>' + catSizeHtml(cat, ids) + '</div>';
+  if (vn === 'tiles')   // (Shown first went: a cell's own First, his pick 11-06)
+    h += '<div class="fgrp"><span class="lab">Its tiles</span><div class="two">' + segL('Style', 'size', [['', 'Normal'], ['short', 'Short']], lk.size || '') + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') + '</div>' + catSizeHtml(cat, ids) + '</div>';
   else if (vn === 'overview') {
     const st = lk.style || '';
-    h += '<div class="fgrp"><span class="lab">Look in Overview</span><div class="looks" data-lay="style">' + LOOKS.map(([k, t, rects]) => '<button class="look' + (st === k ? ' on' : '') + '" data-v="' + k + '"><span class="pic">' +
+    h += '<div class="fgrp"><span class="lab">Look in Overview</span><div class="looks" data-lay="style" role="group" aria-label="Look">' + LOOKS.map(([k, t, rects]) => '<button class="look' + (st === k ? ' on' : '') + '" data-v="' + k + '" aria-pressed="' + (st === k) + '"><span class="pic" aria-hidden="true">' +
       rects.map(q => '<i style="left:' + q[0] + '%;top:' + q[1] + '%;width:' + q[2] + '%;height:' + q[3] + '%"></i>').join('') + '</span>' + t + '</button>').join('') + '</div><span class="hint">' + LOOK_HINT[st] + '</span>' +
       '<div class="two">' + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') + '<label class="fld"><span>' + (st === '' || st === 'small' ? 'Big reading' : 'Shown first') + '</span><select data-lay="lead">' + leadOpts + '</select></label></div></div>';
   } else h += '<div class="fgrp"><span class="lab">Look in Grid</span><label class="fld"><span>Listed first</span><select data-lay="lead">' + leadOpts + '</select></label></div>';
-  h += '<div class="fgrp"><div class="btnrow"><button class="btn" data-lay="reset"' + (Object.keys(lk).length || (vn === 'tiles' && ids.some(tileSet)) ? '' : ' disabled') + '>Reset its look in ' + V + '</button><button class="btn warn" data-lay="remove">Remove category</button></div>' +
-    '<span class="hint">' + (vn === 'grid' ? 'Drag its handle onto the left or right edge of a table for a new table there, or over and under other categories.'
-      : 'Drag its handle onto another category: the left or right edge puts them side by side, the top or bottom stacks them, the middle swaps them, the gap between two rows gives it a row of its own.') + '</span></div>';
+  h += '<div class="fgrp"><div class="btnrow"><button class="btn" data-lay="reset"' + (Object.keys(lk).length || (vn === 'tiles' && ids.some(tileSet)) ? '' : ' disabled') + '>Reset ' + V + ' look</button>' +
+    '<button class="btn warn" data-lay="remove">Remove category<span class="kb">Del</span></button></div></div>';
   return h;
 }
-// Tiles: the size of every tile in a category at once (empty when they differ), and Line up the bottom
+// Tiles: one width or height for every tile of a category (Auto: none set), and Level: its tiles a little taller or
+// shorter, so its column ends level with the tallest beside it (his pick 11-06: chips, were two number fields)
 function catSizeHtml(cat, ids) {
   if (!ids.length) return '';
-  const zs = ids.map(cellSize), fs = zs.map(z => z.f ? Math.round(z.f * 1000) / 10 : null), hs = zs.map(z => z.h), blk = document.querySelector('#view .blk[data-cat="' + CSS.escape(cat.id) + '"]');
-  const same = a => a[0] != null && a.every(x => x === a[0]) ? a[0] : '';
-  const num = (k, v, u) => '<label><input type="number" data-csz="' + k + '" value="' + v + '" placeholder="mixed" min="0" step="any"><i>' + u + '</i></label>';
-  return '<div class="fld"><span>Size of all its tiles</span><div class="szin">' + num('f', same(fs), '%') + num('h', same(hs), 'rows') + '</div></div>' +
-    '<div class="btnrow"><button class="btn" data-lay="fitrow"' + (blk && colEnds(blk).cols.length ? '' : ' disabled') + '>Line up the bottom</button></div>' +
-    '<span class="hint">Its tiles get a little taller or shorter, so its column ends level with the tallest column beside it.</span>';
+  const t = stored('tiles'), le = id => (t && t.cell && t.cell[id]) || {}, zs = ids.map(cellSize), blk = document.querySelector('#view .blk[data-cat="' + CSS.escape(cat.id) + '"]');
+  const fAuto = zs.every(z => !z.f && z.w === 1), fAll = !fAuto && zs.every(z => z.f && Math.abs(z.f - zs[0].f) < 0.005) ? zs[0].f * 100 : null;   // (Auto as drawn: an old "tall" tile is Auto wide, 11-06 audit)
+  const hAuto = zs.every(z => Math.abs(z.h - 1) < 0.01), hAll = !hAuto && zs.every(z => Math.abs(z.h - zs[0].h) < 0.01) ? zs[0].h : null;
+  return '<div class="fld"><span>Width of all</span>' + chipsH('aw', [['auto', 'Auto'], [25, '25%'], [r4(100 / 3), '33%'], [50, '50%'], [100, '100%']], x => x === 'auto' ? fAuto : fAll != null && Math.abs(x - fAll) < 0.5, 'qs', 'Width of all') + '</div>' +
+    '<div class="fld"><span>Height of all</span><div class="segrow">' + chipsH('ah', [['auto', 'Auto'], [1, '1'], [1.5, '1.5'], [2, '2']], x => x === 'auto' ? hAuto : hAll != null && Math.abs(x - hAll) < 0.01, 'qs', 'Height of all') +
+    '<button class="btn" data-lay="fitrow"' + (blk && colEnds(blk).cols.length ? '' : ' disabled') + '>Level</button></div></div>';
 }
-// a tile's width or height in one click: the shares (25, 33, 50, 67, 75, 100% of its row) and heights in rows
-const qpick = (key, vals, cur, txt, tol) => '<div class="seg qs" data-lay="' + key + '">' + vals.map(v => '<button data-v="' + v + '" class="' + (cur != null && Math.abs(v - cur) < tol ? 'on' : '') + '">' + txt(v) + '</button>').join('') + '</div>';
 function cellLayHtml(cid, c) {
   const vn = S.screen, V = VNAME[vn], cl = cellLook(cid), cat = catOf(cid), lk = cat ? catLook(cat.id) : {};
   let h = '<div class="fgrp"><span class="sub">In ' + V + '</span>';
-  h += cl.name != null ? '<div class="fld"><span>Name in ' + V + '</span><div class="vname"><input id="lvName" maxlength="' + NAME_MAX + '" value="' + esc(cl.name) + '" placeholder="' + esc(cellName(c)) + '"><button class="ib" data-lay="vname-x" title="The same name as in the other views">' + ICONS.x + '</button></div></div>'
-    : '<button class="linkbtn" data-lay="vname-on" style="align-self:flex-start">Different name in ' + V + '</button>';
   if (vn === 'tiles') {
     // (the share it is drawn at: a row of tiles you haven't sized spreads out to fill its width, three of 25% drawn at a
-    // third each, his 11-06 "showing 25% but it should show 33%"; one you size is drawn as you set it)
+    // third each, his 11-06 "showing 25% but it should show 33%"; one you size is drawn as you set it. Auto: none set)
     const z = cellSize(cid), pct = cellPct(cid);
-    const num = (k, v, u) => '<label><input type="number" data-sz="' + k + '" value="' + v + '" step="any" min="0"><i>' + u + '</i></label>';
-    h += '<div class="fld"><span>Width</span><div class="szin">' + num('f', pct == null ? '' : Math.round(pct * 10) / 10, '%') + '</div>' + qpick('cf', PCTS.map(r4), pct, v => Math.round(v) + '%', 0.5) + '</div>' +
-      '<div class="fld"><span>Height</span><div class="szin">' + num('h', r4(z.h), 'rows') + '</div>' + qpick('ch', RQ, z.h, v => String(v), 0.01) + '</div>' +
-      (cat && idsIn(cat)[0] === cid ? '' : '<label class="chk"><input type="checkbox" data-lay="nl"' + (cl.nl ? ' checked' : '') + '> Starts a new row</label>');
-  } else if (cat) {
-    const first = idsIn(cat)[0] === cid, big = vn === 'overview' && lk.style !== 'list' && lk.style !== 'band';
-    h += '<button class="btn" data-lay="lead-me" style="align-self:flex-start"' + (first ? ' disabled' : '') + '>' + (first ? (big ? 'This is the big reading' : 'It is shown first') : big ? 'Make it the big reading' : vn === 'grid' ? 'List it first' : 'Show it first') + '</button>';
+    const num = (k, v, u, lab) => '<label><input type="number" data-sz="' + k + '" aria-label="' + lab + '" value="' + v + '" step="any" min="0"><i>' + u + '</i></label>';
+    h += '<div class="fld"><span>Width</span><div class="szin">' + num('f', pct == null ? '' : Math.round(pct * 10) / 10, '%', 'Width, %') + '</div>' +
+      chipsH('cf', [['auto', 'Auto']].concat(PCTS.map(x => [r4(x), Math.round(x) + '%'])), x => x === 'auto' ? !z.f && z.w === 1 : !(!z.f && z.w === 1) && pct != null && Math.abs(x - pct) < 0.5, 'qs', 'Width') + '</div>' +
+      '<div class="fld"><span>Height</span><div class="szin">' + num('h', r4(z.h), 'x', 'Height') + '</div>' + chipsH('ch', RQ.map(x => [x, String(x)]), x => Math.abs(x - z.h) < 0.01, 'qs', 'Height') + '</div>';
+  }
+  // First (the category's lead) and New row as two toggles (his pick 11-06: were a box and the category's Shown first)
+  if (cat) {
+    const first = idsIn(cat)[0] === cid, natural = cellsOf(cat)[0] === cid && !lk.lead, big = vn === 'overview' && lk.style !== 'list' && lk.style !== 'band', nl = !!cl.nl && !first;
+    h += '<div class="seg tog" role="group" aria-label="In its category"><button data-lay="lead-me" class="' + (first ? 'on' : '') + '" aria-pressed="' + first + '"' + (first && natural ? ' disabled' : '') + '>' + (big ? 'Big reading' : 'First') + '</button>' +
+      (vn === 'tiles' ? '<button data-lay="nl" class="' + (nl ? 'on' : '') + '" aria-pressed="' + nl + '"' + (first ? ' disabled' : '') + '>New row</button>' : '') + '</div>';
   }
   return h + '</div>';
 }
@@ -4342,14 +4361,14 @@ function applyTemplate(k) {
 function layoutAct(key, v) {
   const vn = S.screen, id = selCat;
   if (key === 'arr' && v === 'own') layoutChange(() => ownRows());
-  else if ((key === 'arr' && v === 'auto') || key === 'auto') { if (stored(vn) && stored(vn).rows) mutate(() => { delete vset(vn).rows; }, VNAME[vn] + ' is placed automatically again'); }
+  else if ((key === 'arr' && v === 'auto') || key === 'auto' || (key === 'tables' && v === 'auto')) { if (stored(vn) && stored(vn).rows) mutate(() => { delete vset(vn).rows; }, VNAME[vn] + ' is placed automatically again'); }
   else if (key === 'fill') {   // (the view's: an automatic view stays automatic, 11-06)
     const t = stored(vn) || {}, on = v === 'fill', some = (t.rows || []).some(r => r.h);
     if (!some && !!t.fill === on) return;
     mutate(() => { const w = vset(vn); if (on) w.fill = true; else delete w.fill; for (const r of w.rows || []) delete r.h; });
   }
   else if (key === 'gap') mutate(() => { if (v) vset(vn).gap = v; else delete vset(vn).gap; });
-  else if (key === 'tables' && +v === (stored('grid') && stored('grid').rows ? (stored('grid').rows[0] || { cols: [] }).cols.length : document.querySelectorAll('#view .gtable').length)) return;   // (the count already lit: nothing cut again)
+  else if (key === 'tables' && stored('grid') && stored('grid').rows && +v === (stored('grid').rows[0] || { cols: [] }).cols.length) return;   // (the count already lit: nothing cut again; from Auto a count makes it yours)
   else if (key === 'tables') layoutChange(() => { const g = vset('grid'); if (!g.rows) { froze = true; g.rows = gridTables(+v); } else g.rows = [{ cols: retable(g.rows[0].cols, +v) }]; });
   else if (key === 'width') setWidth(id, v === 'auto' ? 0 : +v);
   else if (key === 'rowh') setRowHeight(id, +v);
@@ -4362,11 +4381,15 @@ function layoutAct(key, v) {
   else if (key === 'size' || key === 'title' || key === 'style') mutate(() => setLook('cat', id, key, v));
   else if (key === 'reset') mutate(() => { const w = vset(vn), cat = catById(id); if (w.cat) delete w.cat[id]; if (vn === 'tiles' && w.cell && cat) for (const c of cellsOf(cat)) { const e = w.cell[c]; if (!e) continue; for (const k of TILE_KEYS) delete e[k]; if (!Object.keys(e).length) delete w.cell[c]; } });
   else if (key === 'remove') removeCat(id);
-  else if (key === 'cf' || key === 'ch') { if (nudge) flushNudge(); const z = cellSize(sel); mutate(() => key === 'cf' ? setShare(sel, +v / 100, z.h) : z.f ? setShare(sel, z.f, +v, undefined, z.fx) : setSize(sel, z.w, +v)); }
+  else if (key === 'cf' || key === 'ch') { if (nudge) flushNudge(); const z = cellSize(sel); mutate(() => key === 'cf' ? (v === 'auto' ? setSize(sel, 1, z.h) : setShare(sel, +v / 100, z.h)) : z.f ? setShare(sel, z.f, +v, undefined, z.fx) : setSize(sel, z.w, +v)); }   // (Auto: no width of its own)
   else if (key === 'fitrow') fitRow(id);
-  else if (key === 'vname-on') { mutate(() => setLook('cell', sel, 'name', cellName(S.L.cells[sel]))); const f = $('lvName'); if (f) { f.focus(); f.select(); } }
-  else if (key === 'vname-x') mutate(() => setLook('cell', sel, 'name', ''));
-  else if (key === 'lead-me') { const c = catOf(sel); if (c) mutate(() => setLook('cat', c.id, 'lead', cellsOf(c)[0] === sel ? '' : sel)); }
+  else if (key === 'lead-me') { const c = catOf(sel); if (c) mutate(() => setLook('cat', c.id, 'lead', idsIn(c)[0] === sel || cellsOf(c)[0] === sel ? '' : sel)); }   // (on again: off, its first one back)
+  else if (key === 'nl') mutate(() => setLook('cell', sel, 'nl', cellLook(sel).nl ? '' : true));
+  else if (key === 'nscope') { const has = cellLook(sel).name != null; if (v === 'one' && !has) { mutate(() => setLook('cell', sel, 'name', cellName(S.L.cells[sel]))); const f = $('lvName'); if (f) { f.focus(); f.select(); } } else if (v === 'all' && has) mutate(() => setLook('cell', sel, 'name', '')); else renderInsp(); }   // (a view name typed away: already All views, drawn so)
+  else if (key === 'dec') mutate(() => { const c = S.L.cells[sel]; if (!c) return; if (v === '') delete c.dec; else c.dec = +v; });
+  else if (key === 'graph') mutate(() => { const c = S.L.cells[sel]; if (c) c.graph = v === '1'; });
+  else if (key === 'aw' || key === 'ah') { const cat = catById(id); if (!cat) return; if (v !== 'auto') catSizeInput(id, key === 'aw' ? 'f' : 'h', +v);
+    else mutate(() => { for (const c of cellsOf(cat)) { const z = cellSize(c); if (key === 'aw') setSize(c, 1, z.h); else if (z.f) setShare(c, z.f, 1, undefined, z.fx); else setSize(c, z.w, 1); } }); }
 }
 // the second press of a double-click on a remove button lands on the panel drawn in its place: it does nothing there
 let inspGoneAt = -1e9;
@@ -4386,12 +4409,13 @@ insp.addEventListener('change', e => {
   const t = e.target;
   if (t.dataset && t.dataset.sz && sel) { const id = sel, k = t.dataset.sz, v = parseFloat(t.value); setTimeout(() => sizeInput(id, k, v), 0); return; }
   if (t.dataset && t.dataset.csz && selCat) { const id = selCat, k = t.dataset.csz, v = parseFloat(t.value); setTimeout(() => catSizeInput(id, k, v), 0); return; }
+  if (t.dataset && t.dataset.cw && selCat) { const id = selCat, v = parseFloat(t.value); setTimeout(() => { if (!isFinite(v) || v <= 0) { renderInsp(); return; } setWidth(id, Math.max(1, Math.round(v * 12 / 100))); renderInsp(); }, 0); return; }   // (its column's width typed, in twelfths of the row)
+  if (t.id === 'lvName' && !t.value.trim()) { renderInsp(); return; }   // (its name typed away: the panel says All views again)
   if (t.id === 'lName') {
     const cat = selCat && catById(selCat), v = t.value.trim().slice(0, 200);
     if (cat && v && v !== cat.name) mutate(() => { cat.name = v; }); else if (cat) t.value = cat.name;
     return;
   }
-  if (t.dataset && t.dataset.lay === 'nl' && sel) { mutate(() => setLook('cell', sel, 'nl', t.checked || '')); return; }
   if (!selCat || !t.dataset || !t.dataset.lay) return;
   if (t.dataset.lay === 'per') mutate(() => setLook('cat', selCat, 'per', t.value ? +t.value : ''));
   if (t.dataset.lay === 'lead') mutate(() => setLook('cat', selCat, 'lead', t.value));
@@ -4399,7 +4423,7 @@ insp.addEventListener('change', e => {
 insp.addEventListener('input', e => {   // a name in this view, as it's typed (the cell's own input listener took the undo step)
   const t = e.target; if (t.id !== 'lvName' || !sel || !S.L.cells[sel]) return;
   setLook('cell', sel, 'name', t.value.trim() ? t.value.slice(0, 200) : '');
-  tidyViews(S.L); saveState(); syncSaves();
+  tidyViews(S.L); saveState(); syncSaves(); inspTitle('Cell', nameIn(sel));
   const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
   if (el) { el.textContent = nameIn(sel); nameFitSoon(); }
 });
@@ -4416,7 +4440,7 @@ let inspPress = null;
 insp.addEventListener('pointerdown', e => {
   inspPress = null;
   const a = document.activeElement;
-  if (!e.isPrimary || e.button !== 0 || !((a && a._typed && a.matches && a.matches('#lName, #insp input[data-sz], #insp input[data-csz]')) || inspFitLater)) return;   // (or a refit's redraw waiting for the field to be left; the main button only)
+  if (!e.isPrimary || e.button !== 0 || !((a && a._typed && a.matches && a.matches('#lName, #insp input[data-sz], #insp input[data-csz], #insp input[data-cw]')) || inspFitLater)) return;   // (or a refit's redraw waiting for the field to be left; the main button only)
   const lb = e.target.closest && e.target.closest('label'), t = (e.target.closest && e.target.closest('button, input, select, textarea')) || (lb && lb.control);   // (a checkbox pressed on its words: its box)
   if (!t || t === a || !insp.contains(t)) return;
   const q = ctlSel(t, insp); if (q) inspPress = { el: t, q, x: e.clientX, y: e.clientY };
@@ -4701,6 +4725,7 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
     return;
   }
   const padL = 58 * dpr, padR = 8 * dpr, padT = 10 * dpr, padB = 36 * dpr, yn = unit === 'Yes/No';
+  if (yn) data = data.map(x => x === null || x === undefined ? 0 : x);   // (an empty minute of a Yes/No graph is No: the line drops to it, his 11-06 "graph still not going up and down")
   let dLo = Math.min(...vals);
   const sc = scaleTop(pvals.length ? vals.concat(pvals) : vals, unit), floor0 = dLo >= 0;
   let dHi = sc.top;
@@ -4836,7 +4861,8 @@ function hoverStep(t) {
   if (!M || (!HV.on && HV.a < 0.02)) { mtip.style.opacity = 0; HV.cx = HV.on ? HV.cx : null; HV.t = 0; return; }
   const plotL = M.padL / dpr, plotR = (M.w - M.padR) / dpr, tx = Math.max(plotL, Math.min(plotR, HV.tx));
   HV.cx = HV.cx === null || snap ? tx : HV.cx + (tx - HV.cx) * kf(0.28);
-  const f = (HV.cx - plotL) / Math.max(1, plotR - plotL) * (M.n - 1), v = valAt(M.data, f), X = HV.cx * dpr;
+  const yn = M.unit === 'Yes/No', f = (HV.cx - plotL) / Math.max(1, plotR - plotL) * (M.n - 1), v0 = valAt(M.data, f), X = HV.cx * dpr;
+  const v = v0 === null && yn ? 0 : v0;   // (a Yes/No graph's empty minute reads No, its dot on the No line: his 11-06)
   ctx.globalAlpha = HV.a; ctx.strokeStyle = 'rgba(232,232,232,0.28)'; ctx.lineWidth = dpr; ctx.setLineDash([3 * dpr, 3 * dpr]);
   ctx.beginPath(); ctx.moveTo(X, M.padT); ctx.lineTo(X, M.h - M.padB); ctx.stroke(); ctx.setLineDash([]);
   let tipY = M.padT / dpr + 8;
@@ -4845,7 +4871,7 @@ function hoverStep(t) {
   ctx.globalAlpha = 1;
   const when = new Date(Date.now() - M.span * (1 - f / Math.max(1, M.n - 1)));
   const hm = ('0' + when.getHours()).slice(-2) + ':' + ('0' + when.getMinutes()).slice(-2), day = M.span >= 2 * 86400000 ? when.toLocaleDateString('en-GB', { weekday: 'short' }) + ' ' : '';
-  const fm = x => x === null ? '--' : M.unit === 'Yes/No' ? (x >= 0.5 ? 'Yes' : 'No') : noNeg0(M.dec ? x.toFixed(M.dec) : Math.round(x).toLocaleString('en-US'));
+  const fm = x => x === null ? (yn ? 'No' : '--') : yn ? (x >= 0.5 ? 'Yes' : 'No') : noNeg0(M.dec ? x.toFixed(M.dec) : Math.round(x).toLocaleString('en-US'));
   const peak = M.maxData ? valAt(M.maxData, f) : null;
   const html = '<b>' + fm(v) + '</b> ' + esc(M.unit === 'Yes/No' ? '' : M.unit || '') + (peak !== null && M.maxData ? '<em>peak ' + fm(peak) + '</em>' : '') + '<em>' + day + hm + '</em>';
   if (mtip._h !== html) { mtip.innerHTML = html; mtip._h = html; mtip._w = mtip.offsetWidth; mtip._hh = mtip.offsetHeight; }   // (its size read when it changes, not every frame)
@@ -5567,7 +5593,7 @@ function wxChart(o, m) {
   for (let t = Math.ceil((A - tz) / 60 / every) * every * 60 + tz; t < B; t += every * 60) { const pc = (t - A) / (B - A) * 100; if (pc > 9 && pc < 91 && hhmm(t) !== hhmm(B)) tk += '<span style="left:' + pc.toFixed(2) + '%">' + hhmm(t) + '</span>'; }
   tk += '<span class="e1">' + hhmm(B) + '</span>';
   const id = ch._wx || (ch._wx = ++wxN);
-  WXC[id] = { pts, step: m.step, lo, top, lines, under, val, name };
+  WXC[id] = { pts, step: m.step, lo, top, lines, under, val, name, yn: isYN(r) };
   const fc = cellTint(w.cid);
   ch.innerHTML = '<div class="gx-tl wx-tl" data-w="' + id + '"' + (fc ? ' style="--fc:' + fc + '"' : '') + '><div class="gx-ch">' + esc(name) + '<span>' + (m.step === 600 ? '10-minute' : '1-minute') + (under ? ' averages' : ' peaks') + ', the time over its lines shaded</span></div>' +
     '<div class="gx-hz wx-hz"><div class="gx-tr f"><span class="l">' + esc(u || 'value') + '</span><span class="gx-plot"><svg class="gx-fpsc" viewBox="0 0 ' + Wd + ' ' + H + '" preserveAspectRatio="none">' + grid + sh + lns + ln + '</svg><i class="gx-gd"></i><i class="gx-dot fp"></i></span><span class="gx-yax">' + yl + '</span></div><div class="gx-tip"></div></div>' +
@@ -5582,11 +5608,11 @@ function wxHover(hz, e) {
   const T = WXC[hz.closest('.wx-tl').dataset.w], plot = hz.querySelector('.gx-plot'); if (!T || !plot) return;
   const pr = plot.getBoundingClientRect(), f = (e.clientX - pr.left) / Math.max(1, pr.width);
   if (f < 0 || f > 1) { hz.classList.remove('hv'); return; }
-  const N = T.pts.length, i = Math.max(0, Math.min(N - 1, Math.floor(f * N))), at = ((i + 0.5) / N * 100).toFixed(3) + '%', [t, v] = T.pts[i];
+  const N = T.pts.length, i = Math.max(0, Math.min(N - 1, Math.floor(f * N))), at = ((i + 0.5) / N * 100).toFixed(3) + '%', t = T.pts[i][0], raw = T.pts[i][1], v = raw === null && T.yn ? 0 : raw;   // (a Yes/No reading's empty minute: No; past no line, 11-06 audit)
   hz.querySelector('.gx-gd').style.left = at;
   const d = hz.querySelector('.gx-dot'); d.style.display = v === null ? 'none' : '';
   if (v !== null) { d.style.left = at; d.style.top = ((1 - (Math.max(T.lo, Math.min(T.top, v)) - T.lo) / (T.top - T.lo)) * 100).toFixed(2) + '%'; }
-  const past = v === null ? [] : T.lines.filter(([lv]) => T.under ? v <= lv : v >= lv).map(x => x[1]);
+  const past = raw === null ? [] : T.lines.filter(([lv]) => T.under ? v <= lv : v >= lv).map(x => x[1]);
   let h = '<b>' + hhmm(t) + (T.step === 600 ? ' to ' + hhmm(t + 600) : '') + '</b>' + (v === null ? '<span>no reading</span>' : '<span>' + esc(T.name) + ' <em>' + esc(T.val(v)) + '</em></span>');
   if (past.length) { const red = past.includes('r'); h += '<span><i class="w' + (red ? 'r' : 'y') + '"></i>' + (T.under ? 'under' : 'over') + ' its ' + (red ? 'red' : 'yellow') + ' line</span>'; }
   const tip = hz.querySelector('.gx-tip');
@@ -6974,7 +7000,7 @@ document.addEventListener('keydown', ev => {
   const typing = tgt.closest && tgt.closest('textarea, select, input:not([type=checkbox]):not([type=radio])');
   const ctrl = ev.ctrlKey || ev.metaKey, k = (ev.key || '').toLowerCase();
   // (a name or a size still being typed goes in first: those apply when the field is left)
-  if (ctrl && k === 's') { ev.preventDefault(); if (cmodal.classList.contains('open')) return; if (nudge) flushNudge(); const a = document.activeElement; if (a && a.matches && a.matches('#lName, #insp input[data-sz], #insp input[data-csz], #gcz .gz-name, #cTab input')) { a.blur(); if (a.isConnected && !a.closest('#cTab')) a.focus(); } setTimeout(() => { if (!cmodal.classList.contains('open')) onSave(); }, 0); return; }   // (a layout field still being typed: left and taken back, which applies it if it changed)
+  if (ctrl && k === 's') { ev.preventDefault(); if (cmodal.classList.contains('open')) return; if (nudge) flushNudge(); const a = document.activeElement; if (a && a.matches && a.matches('#lName, #insp input[data-sz], #insp input[data-csz], #insp input[data-cw], #gcz .gz-name, #cTab input')) { a.blur(); if (a.isConnected && !a.closest('#cTab')) a.focus(); } setTimeout(() => { if (!cmodal.classList.contains('open')) onSave(); }, 0); return; }   // (a layout field still being typed: left and taken back, which applies it if it changed)
   if (ev.key === 'Escape') {
     if (drag) { cancelPid = drag.pid; endDrag(true); editPress = null; return; }   // (a held press let go: its release does nothing)
     if (cmodal.classList.contains('open')) { closeConfirm(); return; }

@@ -122,7 +122,7 @@ await p.shot(join(out, 'layout-tiles-edit.png'));
 
 // selecting a category
 await click(`${cat('cpu')} .cn`);
-ok('clicking a category\'s name selects it: the panel says Category', await E(`selCat === "cpu" && $("inspTitle").textContent === "Category" && document.querySelector(${JSON.stringify(cat('cpu'))}).classList.contains("csel")`));
+ok('clicking a category\'s name selects it: the panel says its name, a category to a screen reader', await E(`selCat === "cpu" && $("inspTitle").querySelector(".sr").textContent === "Category, " && $("inspTitle").textContent === "Category, " + catById("cpu").name && document.querySelector(${JSON.stringify(cat('cpu'))}).classList.contains("csel")`));
 ok('its place is described', (await E('document.querySelector("#insp .row3").textContent')).startsWith('Row 1 of 4, column 2 of 2'), await E('document.querySelector("#insp .row3").textContent'));
 await click('#insp .seg[data-lay="width"] button[data-v="4"]');
 r = await rows('tiles');
@@ -195,7 +195,7 @@ await click(`${cat('gpu')} .cn`);
 // 11-03, they went away once past it, as if the pointer had been in them and left)
 await p.sleep(800);
 ok('the settings slide across under a pointer at rest and stay open', await E('DR.R.el.classList.contains("open") && DR.R.el.classList.contains("left")'), await E('DR.R.el.className'));
-ok('no Tiles per row in the panel (2.2: a tile\'s width is a share of its row)', await E('!document.querySelector("#insp select[data-lay=per]") && !!document.querySelector("#insp input[data-csz=f]")'));
+ok('no Tiles per row in the panel (2.2: a tile\'s width is a share of its row); Width of all as chips (11-06)', await E('!document.querySelector("#insp select[data-lay=per]") && !!document.querySelector("#insp [data-lay=aw]") && !!document.querySelector("#insp [data-lay=ah]")'));
 await click('#insp .seg[data-lay="size"] button[data-v="short"]');
 ok('Tile style Short from the panel', await until('!!S.L.views.tiles.cat && !!S.L.views.tiles.cat.gpu && S.L.views.tiles.cat.gpu.size === "short"', 3000) && await until(`document.querySelector('${cat('gpu')} .tile').classList.contains('short')`, 3000));
 await click('#insp .seg[data-lay="title"] button[data-v="hide"]');
@@ -219,16 +219,16 @@ if ((await J('S.L.views.tiles.cell.gpu1')).f !== 0.5) console.log('corner debug'
 const c1 = await J('S.L.views.tiles.cell.gpu1');
 ok('dragging a tile\'s corner up: its width stays 50%, about a row less tall (or level with the column beside it)', c1.f === 0.5 && (c1.h || 1) >= 0.9 && (c1.h || 1) <= 1.1, JSON.stringify(c1));
 await click('#view .dc[data-cid="gpu1"]');   // clicking it again brings its settings back
-await click('#insp button[data-lay="vname-on"]');
+await click('#insp .seg[data-lay="nscope"] button[data-v="one"]');
 await E(`(() => { const i = $('lvName'); i.value = 'Hot spot'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`); await p.sleep(200);
-ok('Different name in Tiles: typed in the panel, shown on the tile', (await J('S.L.views.tiles.cell.gpu1')).name === 'Hot spot' && await E(`document.querySelector('#view .dc[data-cid="gpu1"] .tn span').textContent === 'Hot spot'`));
+ok('Name, Only Tiles: typed in the panel, shown on the tile', (await J('S.L.views.tiles.cell.gpu1')).name === 'Hot spot' && await E(`document.querySelector('#view .dc[data-cid="gpu1"] .tn span').textContent === 'Hot spot'`));
 
 // the view's settings: templates, height, back to automatic (the settings drawer pinned open)
 await E('clearSel()'); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 600, y: 300 }); await p.sleep(700);
 ok('nothing selected and the pointer away: the settings drawer is tucked away', await E('!document.querySelector(".insp").classList.contains("open")'));
 await click('#ebSel');
 ok('Selected on the editing strip keeps it open (pinned)', await E('DR.R.pinned && document.querySelector(".insp").classList.contains("open")'));
-ok('nothing selected: the panel shows the view\'s settings', (await E('$("inspTitle").textContent')) === 'Tiles view' && await E('!!document.querySelector("#insp .seg[data-lay=arr]")'));
+ok('nothing selected: the panel shows the view\'s settings', (await E('$("inspTitle").textContent')) === 'Tiles' && await E('!!document.querySelector("#insp .seg[data-lay=arr]")'));
 const before = flat(await rows('tiles')), undos = await E('undoStack.length');
 const tp = await p.center('#insp .tpl[data-tpl="three"]');
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: tp.x, y: tp.y }); await p.sleep(400);
@@ -261,8 +261,8 @@ r = await rows('tiles');
 const nc = await E('S.L.cats[S.L.cats.length - 1].id');
 ok('a new category gets a row of its own at the bottom', flat(r).endsWith(nc), flat(r));
 
-await click('.insp .pin'); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 600, y: 300 }); await p.sleep(600);
-ok('the pin again: not pinned any more', await E('!DR.R.pinned'));
+await click('#ebSel'); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 600, y: 300 }); await p.sleep(600);
+ok('Selected again: not pinned any more', await E('!DR.R.pinned'));
 
 // ---- Overview: looks ----
 await E(`(() => { mutate(() => { Object.assign(vset('overview'), { rows: [
@@ -302,7 +302,7 @@ ok('wide again: side by side again', await E('!document.querySelector("#view .lr
 // ---- Grid: your tables ----
 await E(`(() => { setEdit(true); showScreen('grid'); })()`); await p.sleep(700);
 await E('clearSel()'); await p.sleep(200);
-await E('(() => { DR.R.pinned = true; syncDrawers(); return 1; })()'); await p.sleep(300);   // the settings pinned open for the Grid checks
+await E('(() => { DR.R.pinned = true; syncDrawers(); return 1; })()'); await p.sleep(900);   // the settings pinned open for the Grid checks (slid all the way in: its Tables row has 4 chips since 11-06)
 await click('#insp .seg[data-lay="tables"] button[data-v="3"]');
 r = await rows('grid');
 ok('Grid: Tables 3 cuts the categories into three tables', r && r[0].cols.length === 3 && await E('document.querySelectorAll("#view .gtable").length') === 3, flat(r));
@@ -317,10 +317,10 @@ ok('a slot keeps the arrangement exactly', await E('JSON.stringify(cleanSlot({ n
 let saved = {};
 for (let i = 0; i < 20; i++) { await p.sleep(250); try { saved = JSON.parse(readFileSync(join(data, 'state.json'), 'utf8')); } catch (e) { } if (saved.L && saved.L.views && saved.L.views.grid) break; }
 ok('state.json has the views', !!(saved.L && saved.L.views && saved.L.views.grid && saved.L.views.tiles), Object.keys(saved.L.views || {}).join());
-await click('#screens button[data-s="tiles"]'); await p.sleep(500);
-await E('clearSel()'); await p.sleep(200);
-await click('#insp button[data-lay="auto"]');
-ok('Back to automatic', !(await rows('tiles')) && await E('!!document.querySelector("#view.arr.auto")') && !!(await J('S.L.views.tiles.cell')));
+await click('#screens button[data-s="tiles"]'); await until('S.screen === "tiles"', 3000); await p.sleep(400);
+await E('clearSel()'); await p.sleep(300);
+await click('#insp .seg[data-lay="arr"] button[data-v="auto"]');
+ok('Arrangement Automatic: back to automatic', !(await rows('tiles')) && await E('!!document.querySelector("#view.arr.auto")') && !!(await J('S.L.views.tiles.cell')));
 
 // ---- edit mode shows the view at its real size: Storage and the settings are drawers over it ----
 await E(`(() => { setEdit(false); showScreen('tiles'); })()`); await p.sleep(900);
@@ -328,7 +328,7 @@ const real = await E('[...document.querySelectorAll("#view .dcat")].filter(e => 
 await E('setEdit(true)'); await p.sleep(900);
 const inEdit = await E('[...document.querySelectorAll("#view .dcat:not(.isempty)")].map(e => { const r = e.getBoundingClientRect(); return [e.dataset.cat, Math.round(r.left), Math.round(r.width)]; })');
 ok('the categories sit at the same places and widths in edit mode as outside it', JSON.stringify(real) === JSON.stringify(inEdit), JSON.stringify(real.slice(0, 3)) + ' vs ' + JSON.stringify(inEdit.slice(0, 3)));
-await click('.insp .pin'); await E('clearSel()'); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 600, y: 300 }); await p.sleep(700);
+await click('#ebSel'); await E('clearSel()'); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 600, y: 300 }); await p.sleep(700);
 ok('unpinned and nothing selected: both drawers are tucked away', await E('!document.querySelector(".storage").classList.contains("open") && !document.querySelector(".insp").classList.contains("open")'));
 await click('#ebStore'); await p.sleep(400);
 ok('Storage on the editing strip slides Storage out', await E('document.querySelector(".storage").classList.contains("open") && $("ebStore").classList.contains("on")'));
@@ -355,7 +355,7 @@ ok('swapped back: Storage on the left, both shut', await E('DR.L.side === "l" &&
 await click('#ebSel'); await p.sleep(400);
 await click('#swapR'); await p.sleep(400);
 ok('the settings\' swap moves them to the left, pinned, kept there', await E('document.querySelector(".insp").classList.contains("left") && DR.R.placed && DR.R.pinned'));
-await click('#pinR'); await p.sleep(300);
+await click('#ebSel'); await p.sleep(300);   // (Selected off unpins them: the settings' own pin went 11-06, his pick)
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 900, y: 300 }); await p.sleep(900);   // (the pointer on them keeps them out)
 ok('unpinned: the side set by hand ends, they tuck away once the pointer leaves', await E('!DR.R.placed && !DR.R.pinned && !document.querySelector(".insp").classList.contains("open")'));
 await E('(() => { DR.L.side = "l"; DR.R.side = "r"; syncDrawers(); saveState(); return 1; })()'); await p.sleep(300);   // (the sides as they were, for what follows)
@@ -370,9 +370,9 @@ const landX = await E('document.querySelector(".insp").classList.contains("left"
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: landX, y: 500 }); await p.sleep(500);
 await E('$("swapR").click()'); await p.sleep(800);
 ok('the settings stopping under a pointer at rest: it counts as in them', await E('document.querySelector(".insp").classList.contains("open") && DR.R.hover === true && !DR.R.ghost'), await E('JSON.stringify({ cls: DR.R.el.className, hover: DR.R.hover, ghost: DR.R.ghost })'));
-await E('$("pinR").click()'); await p.sleep(300);
+await E('$("ebSel").click()'); await p.sleep(300);   // (no pin since 11-06: Selected off shuts them and selects nothing)
 await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 300 }); await p.sleep(900);
-ok('and once it leaves they go, the selection kept', await E('!document.querySelector(".insp").classList.contains("open") && selCat === "cpu"'), await E('DR.R.el.className + " " + selCat'));
+ok('Selected off: once the pointer leaves they go, nothing selected', await E('!document.querySelector(".insp").classList.contains("open") && !selCat && !DR.R.pinned'), await E('DR.R.el.className + " " + selCat'));
 await p.key('Escape', 'Escape', 27); await p.sleep(400);
 await E('(() => { DR.L.side = "l"; DR.R.side = "r"; syncDrawers(); saveState(); return 1; })()'); await p.sleep(300);
 

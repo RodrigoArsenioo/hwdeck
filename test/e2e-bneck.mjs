@@ -36,6 +36,7 @@ await game(null);   // whatever runs on this PC: from here on the test says what
 await CAPPED();
 
 // ---- Storage: found by search, added like any other reading ----
+await ev('(() => { if (!S.edit) setEdit(true); if (!document.querySelector(".storage").classList.contains("open")) $("ebStore").click(); return 1; })()'); await p.sleep(500);   // (the search lives in Storage, a drawer since 2.0)
 let c = await p.center('#q'); await p.click(c.x, c.y); await p.type('bottleneck');
 ok('a search finds it in Storage, under HW Deck', await until('!!document.querySelector(\'#vspace .vrow.r[data-key="hwdeck.0/bneck"]\') && [...document.querySelectorAll("#vspace .vrow.g .gn")].some(g => g.textContent === "HW Deck")', 3000));
 c = await p.center('#vspace .vrow.r[data-key="hwdeck.0/bneck"] .add'); await p.click(c.x, c.y); await p.sleep(300);
@@ -142,7 +143,7 @@ await ev('showScreen("tiles")'); await p.sleep(500);
 
 // ---- its settings: no decimals, no lines, no fan curve ----
 await ev(`(() => { setEdit(true); selectCell(${JSON.stringify(cid)}); return 1; })()`); await p.sleep(300);
-ok('its settings have no lines, decimals or fan curve, only the bar', await ev('!$("iMode") && !$("iDec") && !$("iCurveOn") && !!$("iGraph") && !!$("iName")'));
+ok('its settings have no lines, decimals or fan curve, only the bar', await ev('!$("iMode") && !document.querySelector("#insp [data-lay=dec]") && !$("iCurveOn") && !!document.querySelector("#insp [data-lay=graph]") && !!$("iName")'));
 await ev('setEdit(false)');
 
 // ---- in the background the call goes on, the report doesn't count it ----

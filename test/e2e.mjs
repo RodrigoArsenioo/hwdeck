@@ -115,7 +115,9 @@ const setv = (id, x) => E(`(() => { const e = $('${id}'); e.value = ${x}; e.disp
 await setv('iY', Math.floor(v) + 50); await setv('iR', Math.floor(v) + 40);
 ok('red on the wrong side of yellow is refused', (await E('$("gErr").textContent')).includes('above yellow'), await E('$("gErr").textContent'));
 const m = Math.max(20, Math.round(Math.abs(v) * 0.2));   // made-up readings wander (a clock moves 100+ MHz a second)
-await setv('iY', Math.floor(v) - 2 * m); await setv('iR', Math.floor(v) + 2 * m); await setv('iHold', 1);
+await setv('iY', Math.floor(v) - 2 * m); await setv('iR', Math.floor(v) + 2 * m);
+await E('(() => { const b = $("iMore"); if (b && b.getAttribute("aria-expanded") !== "true") b.click(); return 1; })()'); await p.sleep(200);   // (Hold sits in the fold since 11-06)
+await setv('iHold', 1);
 ok('past yellow (after the hold) the cell turns yellow', await until(`document.querySelector('#view .dc[data-cid="${k1}"]').classList.contains('yellow')`, 5000));
 await setv('iR', Math.floor(v) - m);
 ok('past red it turns red', await until(`document.querySelector('#view .dc[data-cid="${k1}"]').classList.contains('red')`, 5000));

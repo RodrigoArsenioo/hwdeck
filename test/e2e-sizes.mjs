@@ -147,7 +147,7 @@ ok('undo brings the size back', (await look('a0')).h === 1.5, JSON.stringify(awa
 
 // ---- quick sizes: the shares and the heights in rows ----
 await click('#view .tile[data-cid="a0"]');
-ok('quick sizes: 25 33 50 67 75 100% and 0.5 1 1.5 2 rows (no quarter steps, no thirds)', await E(`[...document.querySelectorAll('#insp .seg.qs[data-lay="cf"] button')].map(b => b.textContent).join(' ') === '25% 33% 50% 67% 75% 100%' && [...document.querySelectorAll('#insp .seg.qs[data-lay="ch"] button')].map(b => b.textContent).join(' ') === '0.5 1 1.5 2' && document.querySelector('#insp .seg[data-lay="cf"] button.on').dataset.v === '50'`));
+ok('quick sizes: Auto 25 33 50 67 75 100% and 0.5 0.75 1 1.5 2 (11-06: Auto and 0.75 added)', await E(`[...document.querySelectorAll('#insp .seg.qs[data-lay="cf"] button')].map(b => b.textContent).join(' ') === 'Auto 25% 33% 50% 67% 75% 100%' && [...document.querySelectorAll('#insp .seg.qs[data-lay="ch"] button')].map(b => b.textContent).join(' ') === '0.5 0.75 1 1.5 2' && document.querySelector('#insp .seg[data-lay="cf"] button.on').dataset.v === '50'`));
 await click('#insp .seg[data-lay="cf"] button[data-v="25"]'); await click('#insp .seg[data-lay="ch"] button[data-v="0.5"]');
 ok('one click each: 25% by 0.5 rows, its buttons on', JSON.stringify(await look('a0')) === '{"f":0.25,"h":0.5,"fx":true}' && await E(`document.querySelector('#insp .seg[data-lay="ch"] button.on').dataset.v === '0.5' && document.querySelector('#insp .seg[data-lay="cf"] button.on').dataset.v === '25'`), JSON.stringify(await look('a0')));
 await click('#insp .seg[data-lay="ch"] button[data-v="1"]');
@@ -187,8 +187,11 @@ ok('undo: the column back where it was', cb[1] < cb[0] - 50, JSON.stringify(cb))
 
 // ---- a category: all its tiles at once, and Fit the row ----
 await click('#view .dcat[data-cat="b"] .cn');
-ok('a category: no tiles per row, all its tiles in % and rows (50 and 1 now)', await E(`!document.querySelector('#insp select[data-lay="per"]') && document.querySelector('#insp input[data-csz="f"]').value === '50' && document.querySelector('#insp input[data-csz="h"]').value === '1'`));
-await E(`(() => { const i = document.querySelector('#insp input[data-csz="h"]'); i.value = '0.8'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`); await p.sleep(600);
+ok('a category: no tiles per row, Width of all 50% lit, Height of all Auto lit (chips, 11-06)', await E(`!document.querySelector('#insp select[data-lay="per"]') && document.querySelector('#insp [data-lay="aw"] button[data-v="50"]').classList.contains('on') && document.querySelector('#insp [data-lay="ah"] button[data-v="auto"]').classList.contains('on')`));
+await click('#insp .seg[data-lay="ah"] button[data-v="1.5"]'); await p.sleep(400);
+ok('Height of all 1.5: each tile, its share kept', JSON.stringify(await look('b0')) === '{"f":0.5,"h":1.5}' && JSON.stringify(await look('b1')) === '{"f":0.5,"h":1.5}' && await E(`document.querySelector('#insp [data-lay="ah"] button[data-v="1.5"]').classList.contains('on')`), JSON.stringify([await look('b0'), await look('b1')]));
+await E('undo()'); await p.sleep(500);
+await E(`catSizeInput('b', 'h', 0.8)`); await p.sleep(600);
 ok('height 0.8 for all its tiles, their share kept (and whether it was set by hand: a height alone pins no width, 11-06)', JSON.stringify(await look('b0')) === '{"f":0.5,"h":0.8}' && JSON.stringify(await look('b1')) === '{"f":0.5,"h":0.8}', JSON.stringify([await look('b0'), await look('b1')]));
 await click('#view .dcat[data-cat="b"] .cn');
 await click('#insp button[data-lay="fitrow"]'); await p.sleep(500);
@@ -197,7 +200,7 @@ ok('Fit the row: Right now ends level with Left', near(cb[0], cb[1], 1), JSON.st
 const fb = await J('[cellSize("b0"), cellSize("b1")]');
 ok('Fit the row: its tiles got taller, the same for both, their share kept', fb[0].h > 1 && fb[0].h === fb[1].h && fb[0].f === 0.5, JSON.stringify(fb));
 await click('#view .dcat[data-cat="b"] .cn');
-await E(`(() => { const i = document.querySelector('#insp input[data-csz="f"]'); i.value = '100'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`); await p.sleep(600);
+await click('#insp .seg[data-lay="aw"] button[data-v="100"]'); await p.sleep(600);
 ok('width 100% for all its tiles: one under the other', (await look('b0')).f === 1 && (await look('b1')).f === 1 && near((await box('b0')).l, (await box('b1')).l, 1), JSON.stringify([await look('b0'), await look('b1')]));
 await E('undo()'); await p.sleep(500);
 
@@ -239,10 +242,11 @@ await p.sleep(800);
 const st = JSON.parse(readFileSync(join(data, 'state.json'), 'utf8'));
 ok('saved: the sizes are in state.json as shares and rows', st.L.views.tiles.cell.a3.f === 0.6667 && st.L.views.tiles.cell.a3.h === 1.3, JSON.stringify(st.L.views.tiles.cell.a3));
 
-// ---- Starts a new row, from a tile's settings: kept, drawn, undone ----
+// ---- New row, from a tile's settings (a toggle since 11-06): kept, drawn, undone ----
 await E(`(() => { setEdit(true); showScreen('tiles', true); return 1; })()`); await p.sleep(900); await E('selectCell("a3")'); await p.sleep(400);
-await E(`(() => { const b = document.querySelector('#insp input[data-lay="nl"]'); b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true })); return 1; })()`); await p.sleep(600);
-ok('Starts a new row: kept in the layout, the tile marked, saved through a reload of the layout', (await look('a3')).nl === true && await E(`document.querySelector('#view .tile[data-cid="a3"]').dataset.nl === '1' && cleanLayout(JSON.parse(JSON.stringify(S.L))).views.tiles.cell.a3.nl === true`), JSON.stringify(await look('a3')));
+await click('#insp button[data-lay="nl"]'); await p.sleep(300);
+await mouse('mouseMoved', await E('innerWidth / 2'), 12); await p.sleep(600);   // (the pointer off the settings, so they tuck away for what follows)
+ok('New row: kept in the layout, the tile marked, saved through a reload of the layout', (await look('a3')).nl === true && await E(`document.querySelector('#view .tile[data-cid="a3"]').dataset.nl === '1' && cleanLayout(JSON.parse(JSON.stringify(S.L))).views.tiles.cell.a3.nl === true`), JSON.stringify(await look('a3')));
 ok('it goes under the tiles before it', await E(`(() => { const t = id => document.querySelector('#view .tile[data-cid="' + id + '"]').getBoundingClientRect(); return t('a3').top >= Math.max(t('a0').bottom, t('a1').bottom, t('a2').bottom) - 1 && Math.abs(t('a3').left - t('a0').left) < 2; })()`));
 await E('undo()'); await p.sleep(500);
 ok('undo takes it away', !(await look('a3')).nl && await E(`!document.querySelector('#view .tile[data-cid="a3"]').dataset.nl`), JSON.stringify(await look('a3')));
