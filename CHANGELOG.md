@@ -28,6 +28,7 @@
   - A category: Column width as a % field and % chips; Its row, Fit or Fill; the four moves always shown, greyed out where they can't go, each with its key; Width of all and Height of all as chips with Auto, and Level to line up its column.
   - A cell: one Name field, for all views or only this one; Width and Height chips with Auto and 0.75; First and New row buttons (First replaces the category's Shown first in Tiles); Decimals, with Auto, and Graph as chips; Hold, fade and the other side folded under one line in Lines.
   - Remove category and Remove cell show their key, Del. The chips and the fold tell a screen reader whether they are on or open.
+- The settings stay out while a cell or category is selected: they no longer slide away when the pointer leaves them or keeps working in the view. Esc, a click on empty space, Selected or the X put them away.
 - A Yes/No graph counts a minute with nothing recorded as No: in a popup its line drops to No there, and pointing at it reads No, also in a warning's chart (it showed a gap and --).
 
 ## 2.4.0 (2026-11-05)

@@ -3537,7 +3537,7 @@ for (const k of ['L', 'R']) {
   // (a drawer sliding across under a pointer at rest is not the pointer going into it: 11-03, the settings passed under it
   // on their way to the other side and went away once past, as if the pointer had been in them and left. Its leave goes too)
   const enter = e => { if (d.sliding && e.currentTarget === d.el) { d.ghost = true; return; } d.ghost = false; clearTimeout(d.t); if (!d.hover) d.t = setTimeout(() => { d.hover = true; syncDrawers(); }, d.el.classList.contains('open') ? 0 : 90); };
-  const leave = e => { if (inside(e)) return; if (d.ghost) { d.ghost = false; return; } clearTimeout(d.t); d.t = setTimeout(() => { if (d.hover) d.byPick = false; d.hover = false; syncDrawers(); }, drag && drag.started ? 0 : 380); };
+  const leave = e => { if (inside(e)) return; if (d.ghost) { d.ghost = false; return; } clearTimeout(d.t); d.t = setTimeout(() => { d.hover = false; syncDrawers(); }, drag && drag.started ? 0 : 380); };   // (the settings stay out while something is selected, left or not: his 11-06 "remove the auto hide ... fully")
   for (const el of [d.el, d.tab]) { el.addEventListener('mouseenter', enter); el.addEventListener('mouseleave', leave); }
   d.tab.addEventListener('click', () => { d.pinned = true; d.hover = true; syncDrawers(); saveState(); });
   if (d.pin) d.pin.addEventListener('click', () => { d.pinned = !d.pinned; if (!d.pinned) d.placed = false; syncDrawers(); saveState(); unhover(d.pin); });   // (unpinned: back to opening away from the selection)
@@ -3549,8 +3549,6 @@ for (const k of ['L', 'R']) {
     syncDrawers(); saveState();   // (it slides across: syncDrawers)
   });
   d.el.addEventListener('focusin', syncDrawers);
-  // settings opened by a selection and not touched while the pointer keeps working in the view: they slide away
-  if (k === 'R') sectionsEl.addEventListener('pointermove', () => { if (d.byPick && !d.hover && !d.pinned && Date.now() - (d.pickT || 0) > 2000 && d.el.classList.contains('open')) { d.byPick = false; syncDrawers(); } });
   d.el.addEventListener('focusout', () => setTimeout(syncDrawers, 0));
 }
 $('undo').onclick = $('undoE').onclick = undo; $('redo').onclick = $('redoE').onclick = redo;

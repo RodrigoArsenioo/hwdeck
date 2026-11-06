@@ -153,7 +153,9 @@ const aw = await E(`(() => [...document.querySelectorAll('#view .lrow')[0].query
 ok('Auto widths: the column with more tiles is wider, the tiles in both are one width', aw[1][0] > aw[0][0] && Math.abs(aw[0][1] - aw[1][1]) <= 2, JSON.stringify(bs) + ' ' + JSON.stringify(aw));
 await E('undo()'); await p.sleep(500);
 
-// drops on a custom arrangement
+// drops on a custom arrangement (nothing selected first: the settings stay out while something is, his 11-06, and would
+// cover the categories these drag)
+await p.key('Escape', 'Escape', 27); await p.sleep(500);
 a = await p.center(grip('home')); b = await rect(cat('fans'));
 await p.drag(a, { x: b.r - 8, y: b.y }); await p.sleep(450);
 ok('drop on the right edge: beside it in its row', flat(await rows('tiles')).includes('fans | home'), flat(await rows('tiles')));
