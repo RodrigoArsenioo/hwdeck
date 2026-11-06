@@ -4385,6 +4385,12 @@ function viewPanel() {
 // a tile of the category with a size or a new row of yours in Tiles (what Reset its look in Tiles also takes back)
 const TILE_KEYS = ['f', 'fx', 'w', 'h', 'size', 'nl'];
 const tileSet = id => { const t = stored('tiles'), e = t && t.cell && t.cell[id]; return !!e && TILE_KEYS.some(k => e[k] !== undefined); };
+// a category's look on every category of the view (his pick 11-06, mockup A): its style and title in Overview, its
+// tiles' style and title in Tiles; not what is shown first, sizes or widths. One step, one Undo. Off when every
+// category already looks like it
+const LOOK_ALL = { tiles: ['size', 'title'], overview: ['style', 'title'] };
+const lookAllSame = (vn, id) => { const ks = LOOK_ALL[vn], a = catLook(id, vn); return S.L.cats.every(c => ks.every(k => (catLook(c.id, vn)[k] || '') === (a[k] || ''))); };
+const lookAllBtn = (vn, id) => LOOK_ALL[vn] ? '<div class="btnrow lkall"><button class="btn" data-lay="lookall"' + (lookAllSame(vn, id) ? ' disabled' : '') + '>Apply this look to all</button></div>' : '';
 function catPanel(cat) {
   const vn = S.screen, V = VNAME[vn], lk = catLook(cat.id), ids = cellsOf(cat);
   const leadOpts = '<option value="">' + (ids.length ? 'The first one, ' + esc(nameIn(ids[0])) : 'The first one') + '</option>' +
@@ -4411,12 +4417,12 @@ function catPanel(cat) {
   }
   h += '</div>';
   if (vn === 'tiles')   // (Shown first went: a cell's own First, his pick 11-06)
-    h += '<div class="fgrp"><span class="lab">Its tiles</span><div class="two">' + segL('Style', 'size', [['', 'Normal'], ['short', 'Short']], lk.size || '') + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') + '</div>' + catSizeHtml(cat, ids) + '</div>';
+    h += '<div class="fgrp"><span class="lab">Its tiles</span><div class="two">' + segL('Style', 'size', [['', 'Normal'], ['short', 'Short']], lk.size || '') + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') + '</div>' + lookAllBtn(vn, cat.id) + catSizeHtml(cat, ids) + '</div>';
   else if (vn === 'overview') {
     const st = lk.style || '';
     h += '<div class="fgrp"><span class="lab">Look in Overview</span><div class="looks" data-lay="style" role="group" aria-label="Look">' + LOOKS.map(([k, t, rects]) => '<button class="look' + (st === k ? ' on' : '') + '" data-v="' + k + '" aria-pressed="' + (st === k) + '"><span class="pic" aria-hidden="true">' +
       rects.map(q => '<i style="left:' + q[0] + '%;top:' + q[1] + '%;width:' + q[2] + '%;height:' + q[3] + '%"></i>').join('') + '</span>' + t + '</button>').join('') + '</div><span class="hint">' + LOOK_HINT[st] + '</span>' +
-      '<div class="two">' + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') + '<label class="fld"><span>' + (st === '' || st === 'small' ? 'Big reading' : 'Shown first') + '</span><select data-lay="lead">' + leadOpts + '</select></label></div></div>';
+      '<div class="two">' + segL('Title', 'title', [['', 'Show'], ['hide', 'Hide']], lk.title || '') + '<label class="fld"><span>' + (st === '' || st === 'small' ? 'Big reading' : 'Shown first') + '</span><select data-lay="lead">' + leadOpts + '</select></label></div>' + lookAllBtn(vn, cat.id) + '</div>';
   } else h += '<div class="fgrp"><span class="lab">Look in Grid</span><label class="fld"><span>Listed first</span><select data-lay="lead">' + leadOpts + '</select></label></div>';
   h += '<div class="fgrp"><div class="btnrow"><button class="btn" data-lay="reset"' + (Object.keys(lk).length || (vn === 'tiles' && ids.some(tileSet)) ? '' : ' disabled') + '>Reset ' + V + ' look</button>' +
     '<button class="btn warn" data-lay="remove" aria-keyshortcuts="Delete">Remove category<span class="kb" aria-hidden="true">Del</span></button></div></div>';
@@ -4483,6 +4489,7 @@ function layoutAct(key, v) {
     vset('grid').rows = placeCat(rows, id, t >= rows[0].cols.length ? { zone: 'right', table: rows[0].cols.length - 1 } : { zone: 'into', table: t });
   });
   else if (key === 'size' || key === 'title' || key === 'style') mutate(() => setLook('cat', id, key, v));
+  else if (key === 'lookall') { const ks = LOOK_ALL[vn], a = Object.assign({}, catLook(id, vn)); if (ks && catById(id)) mutate(() => { for (const c of S.L.cats) for (const k of ks) setLook('cat', c.id, k, a[k], vn); }, 'Same look for all categories'); }
   else if (key === 'reset') mutate(() => { const w = vset(vn), cat = catById(id); if (w.cat) delete w.cat[id]; if (vn === 'tiles' && w.cell && cat) for (const c of cellsOf(cat)) { const e = w.cell[c]; if (!e) continue; for (const k of TILE_KEYS) delete e[k]; if (!Object.keys(e).length) delete w.cell[c]; } });
   else if (key === 'remove') removeCat(id);
   else if (key === 'cf' || key === 'ch') { if (nudge) flushNudge(); const z = cellSize(sel); mutate(() => key === 'cf' ? (v === 'auto' ? setSize(sel, 1, z.h) : setShare(sel, +v / 100, z.h)) : z.f ? setShare(sel, z.f, +v, undefined, z.fx) : setSize(sel, z.w, +v)); }   // (Auto: no width of its own)

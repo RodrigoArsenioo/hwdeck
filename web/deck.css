@@ -518,6 +518,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .seg button:disabled { color: #444; cursor: default; }
 .btnrow { display: flex; flex-wrap: wrap; gap: 6px; }
 .btnrow .btn { padding: 4px 9px; font-size: 12px; }
+.btnrow.lkall { margin-top: 10px; } .btnrow.lkall .btn { flex: 1; padding: 6px 10px; font-size: 12.5px; text-align: left; }   /* Apply this look to all: its own row under the look (his pick 11-06) */
 .kb { font-family: var(--f-mono); font-size: 10.5px; color: var(--dim); margin-left: 2px; }
 .tpls, .looks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .tpl, .look { background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; padding: 6px 5px 5px; display: flex; flex-direction: column; gap: 5px; align-items: center;
