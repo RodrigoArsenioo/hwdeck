@@ -2,34 +2,26 @@
 
 ## 2.4.1 (2026-11-06)
 
+- The settings panel is redrawn, shorter and with one line of help at most:
+  - Its title is the name of what you selected, and a back button goes from a cell to its category and from a category to the view's settings. The pin is gone: Selected in the editing bar keeps the panel open.
+  - The view's settings: the outline right under Arrangement, marking the rows that fill; templates named 2 a row, 3 a row and 1 a row; Height is Fit or Fill; one line of counts at the bottom.
+  - Grid: one Tables row, Auto, 1, 2 or 3, instead of Arrangement and Tables. It offers no more tables than categories, and changing the count keeps each category in its table.
+  - A category: Column width as a % field and % chips, only the widths that fit its row; Its row, Fit or Fill; the four moves always shown, greyed out where they can't go, each with its key; Width of all and Height of all as chips with Auto, and Level to line up its column. Reset Tiles look also gives its tiles their own size back.
+  - A cell: one Name field, for all views or only this one; Width and Height chips with Auto and 0.75; First and New row buttons (First replaces the category's Shown first in Tiles, New row is off on a category's first tile); Decimals, with Auto, and Graph as chips; Hold, fade and the other side folded under one line in Lines.
+  - Remove from view is now Remove cell (it leaves every view), and the settings show its category after. Remove category and Remove cell show their key, Del.
+  - The lists left in the settings (Big reading, Listed first, a fan curve's source) open a menu in the app's own look, like the game history's All Games, with the arrow keys, Enter and Escape.
+  - The chips, the fold and the lists tell a screen reader what they are and whether they are on or open.
+- The settings stay out while a cell or category is selected: they no longer slide away when the pointer leaves them or keeps working in the view. Esc, a click on empty space, Selected or the X put them away.
+- Selected in the editing bar stays lit while something is selected, and switching it off also deselects the cell or category.
 - Storage no longer has a pin button: the Storage button in the editing bar opens and closes it.
 - A button in the editing bar you click to close its panel no longer looks selected while the pointer is still on it.
-- The settings panel has a back button: from a cell to its category, from a category to the view's settings.
-- Height's hint describes the option picked, All fit or Fill the window.
-- A tile you size yourself is drawn at exactly that width, even in a row that would otherwise spread out to fill the width.
-- A tile's width in its settings is the width it is drawn at.
-- Switching off Selected in the editing bar also deselects the cell or category.
-- Fill the window no longer makes the view smaller than All fit when there is little room left: the text keeps the size All fit gives it.
-- A number in a colour (a warning, the last game session's grey) no longer flashes white when the view is drawn again, for example on a Height switch.
-- The lists in the settings (Decimals, Graph, Shown first, a fan curve's source) open a menu in the app's own look, like the game history's All Games, with the arrow keys, Enter and Escape.
-- Fill the window is a setting of the view: it no longer makes an automatic Tiles view your own, and Automatic keeps it. A row of yours can still fill on its own.
+- Fill (was Fill the window) is a setting of the view: it no longer makes an automatic Tiles view your own, and Automatic keeps it. A row of yours can still fill on its own. With little room left, Fill no longer makes the view smaller than Fit: the text keeps the size Fit gives it.
+- A tile you size yourself is drawn at exactly that width, even in a row that would otherwise spread out to fill the width. Its width in the settings is the width it is drawn at, the field and the chips always agree, a typed 33 or 67 is the third its chip gives, and changing only its height no longer pins its width.
 - Undo and redo go back to the view where the change was made and select again what was selected.
 - Delete or Backspace with the focus on a settings button no longer removes the selected category or cell.
 - Ctrl+Z in a settings field undoes the last change when nothing is typed in it; Tab moves between the settings' fields.
-- A tile's width field and its chips always show the same width, also after the view is drawn again; a typed 33 or 67 is the third its chip gives; changing only a tile's height no longer pins its width.
-- Grid offers no more tables than categories, and changing the count keeps each category in its table.
-- Width in row offers only the widths that fit the row; Reset its look in Tiles also gives its tiles their own size back.
-- Remove from view is now Remove cell (it leaves every view) and the settings show its category after.
-- Selected stays lit while something is selected; Starts a new row is not offered on a category's first tile.
-- The settings panel is redrawn, shorter and with one line of help at most:
-  - Its title is the name of what you selected. The pin is gone: Selected in the editing bar keeps the panel open.
-  - The view's settings: the outline right under Arrangement, marking the rows that fill; templates named 2 a row, 3 a row and 1 a row; Height is Fit or Fill; one line of counts at the bottom.
-  - Grid: one Tables row, Auto, 1, 2 or 3, instead of Arrangement and Tables.
-  - A category: Column width as a % field and % chips; Its row, Fit or Fill; the four moves always shown, greyed out where they can't go, each with its key; Width of all and Height of all as chips with Auto, and Level to line up its column.
-  - A cell: one Name field, for all views or only this one; Width and Height chips with Auto and 0.75; First and New row buttons (First replaces the category's Shown first in Tiles); Decimals, with Auto, and Graph as chips; Hold, fade and the other side folded under one line in Lines.
-  - Remove category and Remove cell show their key, Del. The chips and the fold tell a screen reader whether they are on or open.
-- The settings stay out while a cell or category is selected: they no longer slide away when the pointer leaves them or keeps working in the view. Esc, a click on empty space, Selected or the X put them away.
 - A Yes/No graph counts a minute with nothing recorded as No: in a popup its line drops to No there, and pointing at it reads No, also in a warning's chart (it showed a gap and --).
+- A number in a colour (a warning, the last game session's grey) no longer flashes white when the view is drawn again, for example on a Height switch.
 
 ## 2.4.0 (2026-11-05)
 
