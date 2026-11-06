@@ -2034,7 +2034,7 @@ function placeTiles(sz, nat, k, G, even) {
 function packTg(t, k) {
   const tiles = tileKids(t);
   if (!tiles.length) { t.classList.remove('pk'); t._H = 0; t._L = null; return 0; }
-  const short = t.classList.contains('shorts'), G = 0.62 * spOf($('view')), nat = tiles.map(x => natOf(x, short)), even = !short && !!t.closest('.lrow[data-fill]');
+  const short = t.classList.contains('shorts'), G = 0.62 * spOf($('view')), nat = tiles.map(x => natOf(x, short)), even = !short && fillEven(t);
   const fs = parseFloat(document.documentElement.style.fontSize) || 13, sz = floorSz(tiles.map(x => szOf(x, k)), k, t._tw || t.clientWidth, G * fs, fs, short);
   const key = k + ':' + G + ':' + even + ':' + sz.map((z, j) => Math.round(z.w * 1e4) / 1e4 + 'x' + z.h + (z.nl ? '/' : '') + (z.fx ? '!' : '') + '@' + nat[j].toFixed(3)).join(',');
   if (t._pk !== key) {
@@ -2108,7 +2108,7 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
         if (!d.tiles.length) return nat.H + 5 * fs;   // an empty category (edit mode)
         const w = n * m + (n - 1) * g, kk = d.per ? Math.max(1, Math.min(d.per, Math.floor((w + g) / (8.5 * fs + g)))) : d.short ? Math.max(1, Math.floor((w + g) / (15 * fs + g))) : n;
         const pk = kk + '@' + Math.round(w);
-        if (!d.packs.has(pk)) d.packs.set(pk, placeTiles(floorSz(d.tiles.map(t => szOf(t, kk)), kk, w, g, fs, d.short), d.nat, kk, g / fs, !d.short && !!row.dataset.fill).TH);
+        if (!d.packs.has(pk)) d.packs.set(pk, placeTiles(floorSz(d.tiles.map(t => szOf(t, kk)), kk, w, g, fs, d.short), d.nat, kk, g / fs, !d.short && fillEven(row)).TH);
         return nat.H + d.packs.get(pk) * fs;
       };
       const colH = (i, n) => stackH(i, d => catH(d, n));
@@ -2333,13 +2333,20 @@ function rememberFit(key, f) {
   const ks = Object.keys(fitMemo); for (let i = 0; i < ks.length - 60; i++) delete fitMemo[ks[i]];
   clearTimeout(fitSaveT); fitSaveT = setTimeout(() => { try { localStorage.setItem('hwdeck.fit', JSON.stringify(fitMemo)); } catch (e) { /* no storage: fine */ } }, 2000);
 }
+// Fill's rows, all as tall as the tallest (11-06, his "it does nothing but changed and distorted the current view": they
+// made the view taller than it fit, so the text was fitted a step smaller and Fill drew everything smaller than All fit).
+// The text is now fitted without them, so Fill and All fit get the same size; they are kept only if they still fit
+let fitNoEven = false;
+const fillEven = el => !fitNoEven && !!el && !!el.closest('.lrow[data-fill]');
+const fitView = v => v && Array.isArray(v.rows) ? Object.assign({}, v, { rows: v.rows.map(r => { const o = Object.assign({}, r); delete o.h; return o; }) }) : v;   // (Fill or not: one size)
 // (the cells too: a name, a graph turned on or off, a missing reading change what fits)
 const fitKey = target => hashKey(JSON.stringify([S.screen, target, !!EXT.ready, sectionsEl.clientWidth, sectionsEl.clientHeight, S.L.cats.map(c => [c.id, cellsOf(c).length, c.collapsed]),
-  viewOf(S.screen), S.L.cells, Object.keys(S.L.cells).filter(id => isMissing(S.L.cells[id]))]));
+  fitView(viewOf(S.screen)), S.L.cells, Object.keys(S.L.cells).filter(id => isMissing(S.L.cells[id]))]));
 function autofit() {
   if (document.hidden) drawnHidden = true;   // (measured in the tray: again when the window shows)
   const root = document.documentElement, v = $('view');
   if (!S.L.cats.length || v.classList.contains('empty') || v.classList.contains('setup')) { root.style.fontSize = '13px'; fitRatio = 1; layoutPass(); return; }
+  fitNoEven = true;   // (fitted as All fit: see fillEven)
   const target = cssScale(), key = fitKey(target), floor = Math.max(9, target * 0.6);
   // (Automatic Grid: a size per table count)
   const ag = S.screen === 'grid' && !isCustom('grid'), nOn = ag && v.querySelectorAll('.gtable').length > 1 ? 2 : 1, mkey = ag ? key + '/' + nOn : key, memo = fitMemo[mkey];
@@ -2384,7 +2391,9 @@ function autofit() {
   if (ok && !still) for (let i = 0; i < 8; i++) { lo = Math.max(floor, lo - 0.25); if (at(lo) || lo === floor) break; }
   lastFit[S.screen] = lo / target;
   rememberFit(mkey, lo);
-  app.classList.remove('fitting'); layoutPass(); growPass(); markSlots(); rememberPacks();
+  app.classList.remove('fitting'); fitNoEven = false; layoutPass();
+  if (v.querySelector('.lrow[data-fill]') && sectionsEl.scrollHeight > sectionsEl.clientHeight) { fitNoEven = true; layoutPass(); }   // (even rows don't fit: as All fit)
+  growPass(); markSlots(); rememberPacks();
   document.querySelector('.panes').style.setProperty('--sbw', (sectionsEl.offsetWidth - sectionsEl.clientWidth) + 'px');   // the right tab sits left of the scrollbar
   fitRatio = lo / target;
   // Automatic Grid, decided from one table: one that had to go under the size two can have (or that doesn't fit at all)
@@ -2987,7 +2996,7 @@ function tileGeo(tile) {
   const k = +tg.style.getPropertyValue('--k') || 1, fs = parseFloat(document.documentElement.style.fontSize) || 13, g = 0.62 * fs * spOf($('view')), short = tg.classList.contains('shorts');
   const row = tg.closest('.lrow'), grNow = () => row && row.classList.contains('grow') && !short ? parseFloat(row.style.getPropertyValue('--gr')) || 0 : 0;
   const sz = kids.map(x => szOf(x, k)), nat = kids.map(x => natOf(x, short)), tr = tg.getBoundingClientRect(), p = (tr.width + g) / k;
-  const at = (w, h) => { const s = sz.slice(); s[j] = { w, h, nl: sz[j].nl, f: w / k, auto: false, fx: true }; const L = placeTiles(floorSz(s, k, tr.width, g, fs, short), nat, k, g / fs, !short && !!row && !!row.dataset.fill), q = L.pos[j], gr = grNow(); return { th: q.th * fs + q.h * gr, TH: L.TH * fs + L.H * gr, x: q.x, y: q.y }; };
+  const at = (w, h) => { const s = sz.slice(); s[j] = { w, h, nl: sz[j].nl, f: w / k, auto: false, fx: true }; const L = placeTiles(floorSz(s, k, tr.width, g, fs, short), nat, k, g / fs, !short && fillEven(row)), q = L.pos[j], gr = grNow(); return { th: q.th * fs + q.h * gr, TH: L.TH * fs + L.H * gr, x: q.x, y: q.y }; };
   // (wmin: the minimum, in places)
   return { tg, j, k, g, fs, tw: tr.width, p, at, r: tile.getBoundingClientRect(), s: sz[j], wmin: Math.min(k, (TILE_MIN * fs + g) / p) };
 }
@@ -3172,7 +3181,7 @@ function fitRow(id) {
   const short = tg.classList.contains('shorts'), target = Math.max(...E.cols), base = tiles.map(x => szOf(x, G.k)), nat = tiles.map(x => natOf(x, short));
   const row = tg.closest('.lrow'), gr = row && row.classList.contains('grow') && !short ? parseFloat(row.style.getPropertyValue('--gr')) || 0 : 0;
   const hs = f => base.map(s => r4(Math.min(2, Math.max(0.25, s.h * f))));
-  const TH = f => { const h = hs(f), L = placeTiles(floorSz(base.map((s, i) => Object.assign({}, s, { h: h[i] })), G.k, G.tw, G.g, G.fs, short), nat, G.k, G.g / G.fs, !short && !!row && !!row.dataset.fill); return L.TH * G.fs + L.H * gr; };
+  const TH = f => { const h = hs(f), L = placeTiles(floorSz(base.map((s, i) => Object.assign({}, s, { h: h[i] })), G.k, G.tw, G.g, G.fs, short), nat, G.k, G.g / G.fs, !short && fillEven(row)); return L.TH * G.fs + L.H * gr; };
   const TH1 = TH(1), end = f => E.own + TH(f) - TH1;
   let lo = 0.125, hi = 8;
   for (let i = 0; i < 24; i++) { const m = Math.sqrt(lo * hi); if (end(m) < target) lo = m; else hi = m; }

@@ -9,6 +9,7 @@
 - A tile you size yourself is drawn at exactly that width, even in a row that would otherwise spread out to fill the width.
 - A tile's width in its settings is the width it is drawn at.
 - Switching off Selected in the editing bar also deselects the cell or category.
+- Fill the window no longer makes the view smaller than All fit when there is little room left: the text keeps the size All fit gives it.
 
 ## 2.4.0 (2026-11-05)
 
