@@ -1480,7 +1480,7 @@ function idsIn(cat) {
 // kept aside here, never in the layout or saved
 const TCELL = {};
 const cellAt = cid => S.L.cells[cid] || TCELL[cid];
-function openReading(key, name) { const cid = 't:' + key; if (!TCELL[cid]) TCELL[cid] = { key, name: name || '' }; openDetail(cid); subscribe(); }   // (its last 15 min come with the subscription)
+function openReading(key, name, rng) { const cid = 't:' + key; if (!TCELL[cid]) TCELL[cid] = { key, name: name || '' }; openDetail(cid, rng); subscribe(); }   // (its last 15 min come with the subscription)
 const nameIn = cid => cellLook(cid).name || cellName(cellAt(cid));
 const headTab = () => S.edit ? ' tabindex="0"' : '';
 function tileHtml(cid, lk, pre) {
@@ -4497,22 +4497,28 @@ mrng.addEventListener('click', e => {
   setRange(b.dataset.r, false);
   // (one draw-in for one pick, 11-02 motion audit: now when its data is here, else when the host's answer comes, the line
   // before dimmed meanwhile; it drew in twice, the first time on a plot still waiting)
-  const ready = bigRange === '15m' || histReady();
+  const ready = bigRange === '15m' || histReady() || !!ownDayNow();
   bigRevMs = 450; bigRev0 = ready && motionOn() ? performance.now() : 0;
   if (modalCid) { refreshModal(); bigLoop(); }
 });
+// an extras reading that keeps its own day (a device's minutes on, as its hover draws it; 11-06): 1 h to 24 h come from
+// that day, the host keeps no history of it
+const OWN_SPAN = { '1h': 3600, '6h': 21600, '12h': 43200, '24h': 86400 };
+let modalOwn = false;
+const ownDay = (xk, e) => xk && e && e.pspan === 86400 && Array.isArray(e.past) && OWN_SPAN[bigRange] ? e.past.slice(-OWN_SPAN[bigRange] / 60) : null;
+function ownDayNow() { const c = cellAt(modalCid), r = c && c.key ? BYKEY.get(c.key) : null, xk = xkOf(r); return xk ? ownDay(xk, evalCell(modalCid, c, true, true)) : null; }
 const histReady = () => { const c = cellAt(modalCid); return c && bigHist && bigHist.key === histKey(c) && bigHist.range === bigRange; };
 function histOf(c) {   // the host's long history for this cell; a predicted fan's goes through its curve
   if (!c.pred) return bigHist;
   const f = a => a.map(x => x == null ? null : interp(c.curve.pts, x));
   return Object.assign({}, bigHist, { avg: f(bigHist.avg), max: f(bigHist.max) });
 }
-function openDetail(cid) {
+function openDetail(cid, rng) {   // (rng: the range it opens on, 15 min unless said)
   const c = cellAt(cid); if (!c) return;
   hidePrev();
   modalCid = cid; modal.classList.add('open'); lastBig = null; openedAt = performance.now();
   const mv = $('mval'); if (mv._n) mv._n._ot = undefined;
-  setRange('15m', true);
+  setRange(rng || '15m', true);
   refreshModal(true);
   bigRevMs = 700; bigRev0 = motionOn() ? performance.now() : 0; bigLoop();
 }
@@ -4553,10 +4559,12 @@ function refreshModal(full) {
     if (vals.length > 1 && det.y !== undefined) { const hi = Math.max(...vals), spn = Math.max(1.2, hi - Math.min(...vals)); modalGateInView = det.y > hi && det.y < hi + spn * 1.2; }
   }
   const gu = isYN(r) ? 'Yes/No' : unit;
+  const day = ownDay(xk, e); modalOwn = !!day;
   if (bigRange === '15m') lastBig = [mgraph, sp, det, dec, gu, modalGateInView, null, HLEN * 1000];
+  else if (day) lastBig = [mgraph, day, det, dec, gu, modalGateInView, null, OWN_SPAN[bigRange] * 1000];
   else if (histReady()) { const H = histOf(c); lastBig = isYN(r) ? [mgraph, H.max, det, dec, gu, modalGateInView, null, H.span * 1000] : [mgraph, gbArr(H.avg, gk), det, dec, gu, modalGateInView, gbArr(H.max, gk), H.span * 1000]; }
   else lastBig = [mgraph, [], det, dec, gu, modalGateInView, null, 0];
-  mgraph.classList.toggle('loading', bigRange !== '15m' && !histReady());
+  mgraph.classList.toggle('loading', bigRange !== '15m' && !day && !histReady());
   drawBigGraph.apply(null, lastBig);
   const f = x => x == null || !isFinite(x) ? '--' : fmtV(x, dec, r);
   let st, long = false;
@@ -7208,7 +7216,7 @@ function onHost(m) {
   } else if (m.t === 'hist' && !wxTake(m)) {   // (a warning row's chart asked for it: only it, unless the cell popup asked for the same)
     const again = bigHist && bigHist.key === m.key && bigHist.range === m.range;   // (the same graph a minute on: no new draw-in, one under way goes on)
     bigHist = m;
-    if (modalCid && histReady()) { if (!again) { bigRevMs = 450; bigRev0 = motionOn() ? performance.now() : 0; } refreshModal(); if (bigRev0 && !again) bigLoop(); }
+    if (modalCid && histReady()) { if (!again && !modalOwn) { bigRevMs = 450; bigRev0 = motionOn() ? performance.now() : 0; } refreshModal(); if (bigRev0 && !again) bigLoop(); }
   } else if (m.t === 'alerts') { if (wmodal.classList.contains('open')) renderWarnings(m.log); }   // (one that comes in after a close isn't drawn)
   else if (m.t === 'gamesBin') gbRender(m.log);
   else if (m.t === 'alertsBin') wbRender(m.log);
