@@ -1827,6 +1827,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
   const vis = pre || readSight(), seen = new Map(), sight = new Map();
   for (const cid of E.keys()) { const on = !!vis.get(cid); sight.set(cid, on); seen.set(cid, all || on); }
   const cardLvl = {};
+  let fresh = null;
   for (const [cid, r] of E) {
     const c = S.L.cells[cid]; if (!c) continue;
     if (feed.lgWait && isGameCell(c)) { if (performance.now() - feed.lgWait < 1500) continue; feed.lgWait = 0; }   // (as they were, until the summary of the game that just ended is in)
@@ -1842,7 +1843,9 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     if (flip && vis && motionMode() !== 'off') for (const el of [r.vbox, r.cap, r.tq, r.canvas, r.strip]) if (el) el.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: motionOn() ? 320 : 200, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
     if (e.txt != null) setText(r.u, e.utxt);
     const colCls = e.col === 'white' ? '' : e.col;
-    if (r.vbox) { for (const k of ['yellow', 'red', 'grey', 'past']) r.vbox.classList.toggle(k, colCls === k); }
+    // (a number drawn for the first time, a new view or one drawn again (Height, a resize), takes its colour at once, not
+    // through the 300 ms of a change: his 11-06 "flashes the numbers on the game cells", the last session's grey faded in from white)
+    if (r.vbox) { if (r._col === undefined && colCls) { r.vbox.style.transition = 'none'; (fresh || (fresh = [])).push(r.vbox); } r._col = colCls; for (const k of ['yellow', 'red', 'grey', 'past']) r.vbox.classList.toggle(k, colCls === k); }
     // (a tile's caption can be shorter, what it leaves out in the name's corner: tsub and tag; a narrow tile's shorter
     // still: tsubS and tagS, 2.1)
     const nq = r.kind === 'tile' && r.root.classList.contains('nq');
@@ -1887,6 +1890,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     r._lvl = e.lvl;
     if (r.canvas && sight.get(cid)) graphFeed(r.canvas, c, graphCol(e, r.kind === 'hero', cat && S.look.tint === 'spectrum' ? catTint(cat) : ''), e.past);
   }
+  if (fresh) { for (const b of fresh) getComputedStyle(b).color; for (const b of fresh) b.style.transition = ''; }   // (their colour set with no transition, then the transition back)
   for (const k of CARDS) {
     const cat = S.L.cats.find(c => c.id === k.cat); if (!cat) continue;
     const ids = cellsOf(cat), lv = cardLvl[cat.id] || 0;
