@@ -73,6 +73,7 @@ ok('58% two rows high beside two of 42%: half and half where two fit (no hole), 
 ok('normal tiles are their category\'s to place: not changed', await E(`floorSz(${JSON.stringify(N(4).map(s => Object.assign(s, { auto: true })))}, 4, 330, 8, 13).map(s => s.w).join() === '1,1,1,1'`));
 // (the review before 2.2: a row you sized among normal ones is not stretched; a too narrow tile among normal ones keeps
 // the order; shares kept to 4 decimals still fill a row)
+ok('a row of 25% tiles with one you sized by hand (25% too) is drawn as set, not spread out', await E(`(() => { const s = Array.from({ length: 7 }, () => ({ w: 1, h: 1, f: 0.25, auto: false })); s[6].fx = true; const L = placeTiles(s, Array(7).fill(8.6), 4, 0.62); return L.pos.slice(4).every(p => p.dw == null) && placeTiles(s.map(x => Object.assign({}, x, { fx: false })), Array(7).fill(8.6), 4, 0.62).pos[4].dw > 1; })()`));
 ok('a last row you sized yourself is drawn as you sized it (not stretched)', await E(`(() => { const s = [{ w: 1, h: 1 }, { w: 1, h: 1 }, { w: 1, h: 1 }, { w: 1, h: 1, f: 0.3333, auto: false }]; return placeTiles(s, Array(4).fill(8.6), 3, 0.62).pos[3].dw == null; })()`));
 ok('a too narrow tile among normal ones: those rows split evenly with it, the order kept', await E(`(() => { const a = () => ({ w: 1, h: 1, auto: true }), s = [a(), a(), { w: 0.75, h: 1, f: 0.25, auto: false }, a(), a()], o = floorSz(s, 3, 520, 8, 13), L = packTiles(o, 3); return o.map(x => x.w).join() === '1,1,1,1,1' && L.pos[2].y === 0 && L.pos[3].y === 1; })()`));
 ok('six of 16.67% and seven of 14.29% fill one row at any number of places (shares kept to 4 decimals)', await E(`[6, 12, 24].every(k => packTiles(Array.from({ length: 6 }, () => ({ w: 0.1667 * k, h: 1 })), k).H === 1) && [7, 14].every(k => packTiles(Array.from({ length: 7 }, () => ({ w: 0.1429 * k, h: 1 })), k).H === 1)`));
@@ -148,9 +149,9 @@ ok('undo brings the size back', (await look('a0')).h === 1.5, JSON.stringify(awa
 await click('#view .tile[data-cid="a0"]');
 ok('quick sizes: 25 33 50 67 75 100% and 0.5 1 1.5 2 rows (no quarter steps, no thirds)', await E(`[...document.querySelectorAll('#insp .seg.qs[data-lay="cf"] button')].map(b => b.textContent).join(' ') === '25% 33% 50% 67% 75% 100%' && [...document.querySelectorAll('#insp .seg.qs[data-lay="ch"] button')].map(b => b.textContent).join(' ') === '0.5 1 1.5 2' && document.querySelector('#insp .seg[data-lay="cf"] button.on').dataset.v === '50'`));
 await click('#insp .seg[data-lay="cf"] button[data-v="25"]'); await click('#insp .seg[data-lay="ch"] button[data-v="0.5"]');
-ok('one click each: 25% by 0.5 rows, its buttons on', JSON.stringify(await look('a0')) === '{"f":0.25,"h":0.5}' && await E(`document.querySelector('#insp .seg[data-lay="ch"] button.on').dataset.v === '0.5' && document.querySelector('#insp .seg[data-lay="cf"] button.on').dataset.v === '25'`), JSON.stringify(await look('a0')));
+ok('one click each: 25% by 0.5 rows, its buttons on', JSON.stringify(await look('a0')) === '{"f":0.25,"h":0.5,"fx":true}' && await E(`document.querySelector('#insp .seg[data-lay="ch"] button.on').dataset.v === '0.5' && document.querySelector('#insp .seg[data-lay="cf"] button.on').dataset.v === '25'`), JSON.stringify(await look('a0')));
 await click('#insp .seg[data-lay="ch"] button[data-v="1"]');
-ok('1 row: no height kept, its share stays', JSON.stringify(await look('a0')) === '{"f":0.25}', JSON.stringify(await look('a0')));
+ok('1 row: no height kept, its share stays', JSON.stringify(await look('a0')) === '{"f":0.25,"fx":true}', JSON.stringify(await look('a0')));
 await E(`handleDblclick(document.querySelector('#view .tile[data-cid="a0"] .corner'))`); await p.sleep(500);
 ok('a double-click on its corner: a normal tile again (nothing kept)', JSON.stringify(await look('a0')) === '{}', JSON.stringify(await look('a0')));
 await E(`selectCell('a0')`); await p.sleep(300);
@@ -188,7 +189,7 @@ ok('undo: the column back where it was', cb[1] < cb[0] - 50, JSON.stringify(cb))
 await click('#view .dcat[data-cat="b"] .cn');
 ok('a category: no tiles per row, all its tiles in % and rows (50 and 1 now)', await E(`!document.querySelector('#insp select[data-lay="per"]') && document.querySelector('#insp input[data-csz="f"]').value === '50' && document.querySelector('#insp input[data-csz="h"]').value === '1'`));
 await E(`(() => { const i = document.querySelector('#insp input[data-csz="h"]'); i.value = '0.8'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`); await p.sleep(600);
-ok('height 0.8 for all its tiles, their share kept', JSON.stringify(await look('b0')) === '{"f":0.5,"h":0.8}' && JSON.stringify(await look('b1')) === '{"f":0.5,"h":0.8}', JSON.stringify([await look('b0'), await look('b1')]));
+ok('height 0.8 for all its tiles, their share kept', JSON.stringify(await look('b0')) === '{"f":0.5,"h":0.8,"fx":true}' && JSON.stringify(await look('b1')) === '{"f":0.5,"h":0.8,"fx":true}', JSON.stringify([await look('b0'), await look('b1')]));
 await click('#view .dcat[data-cat="b"] .cn');
 await click('#insp button[data-lay="fitrow"]'); await p.sleep(500);
 cb = await colBottoms();

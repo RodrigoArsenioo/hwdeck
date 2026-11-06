@@ -530,7 +530,7 @@ function sizeLook(w, h, tol, tolH) {
 }
 const cleanSize = x => {
   const f = fNum(x.f);
-  if (f) { const e = { f }, h = typeof x.h === 'number' ? szNum(x.h, 1.5e-4) : 1; if (h !== 1) e.h = h; return e; }   // (2.2: a share of its row)
+  if (f) { const e = { f }, h = typeof x.h === 'number' ? szNum(x.h, 1.5e-4) : 1; if (h !== 1) e.h = h; if (x.fx === true) e.fx = true; return e; }   // (2.2: a share of its row; fx: set by hand)
   return typeof x.w === 'number' || typeof x.h === 'number' ? sizeLook(x.w, x.h, 1.5e-4) : isSz(x.size) ? { size: x.size } : {};
 };
 // ids and catIds map what the file calls a cell or a category to what it is called here; anything that points at
@@ -1451,7 +1451,7 @@ const stored = vn => S.L.views && S.L.views[vn] || null;
 const isCustom = vn => { const v = viewOf(vn); return !!(v && v.rows); };
 const catLook = (id, vn) => { const v = viewOf(vn || S.screen); return v && v.cat && v.cat[id] || {}; };
 const cellLook = (id, vn) => { const v = viewOf(vn || S.screen); return v && v.cell && v.cell[id] || {}; };
-const cellSize = id => { const l = cellLook(id, 'tiles'), f = fNum(l.f); return isSz(l.size) ? { w: SZ[l.size][0], h: SZ[l.size][1], f: null } : { w: f ? 1 : l.w || 1, h: l.h || 1, f }; };
+const cellSize = id => { const l = cellLook(id, 'tiles'), f = fNum(l.f); return isSz(l.size) ? { w: SZ[l.size][0], h: SZ[l.size][1], f: null } : { w: f ? 1 : l.w || 1, h: l.h || 1, f, fx: !!(f && l.fx) }; };
 // a category's cells in this view: its lead (the reading it shows first) moves to the front
 function idsIn(cat) {
   const ids = cellsOf(cat), lead = catLook(cat.id).lead, i = lead ? ids.indexOf(lead) : -1;
@@ -1472,7 +1472,7 @@ function tileHtml(cid, lk, pre) {
   const graph = xb != null ? xb : c.graph === false ? '' : short ? (sg ? '<canvas class="sg"></canvas>' : '') : '<canvas></canvas>';
   const nog = xb == null && (miss || c.graph === false || (short && !sg));
   return '<div class="tile dc' + (c.pred ? ' pred' : '') + (short ? ' short' : '') + (miss ? ' missing' : '') + (nog ? ' nog' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + (pre ? pre[1] : '') + anim() + (pre ? ';' + pre[0] : '') + '" data-cid="' + esc(cid) + '" data-k="tile" tabindex="0"' +
-    (z.f ? ' data-f="' + z.f + '"' : z.w !== 1 ? ' data-w="' + z.w + '"' : '') + (z.h !== 1 ? ' data-h="' + z.h + '"' : '') + (cellLook(cid, 'tiles').nl ? ' data-nl="1"' : '') + '>' +
+    (z.f ? ' data-f="' + z.f + '"' + (z.fx ? ' data-fx="1"' : '') : z.w !== 1 ? ' data-w="' + z.w + '"' : '') + (z.h !== 1 ? ' data-h="' + z.h + '"' : '') + (cellLook(cid, 'tiles').nl ? ' data-nl="1"' : '') + '>' +
     '<div class="tn">' + iconOf(c, r) + '<span data-full="1">' + esc(nm) + '</span><span class="tq"></span></div>' +   // (a name cut short shows whole on hover: see the tips)
     '<div class="tv"><span class="v"></span><small class="u">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small></div><div class="tc"></div>' +
     (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit ? '<span class="corner" title="Drag to size it, double-click for a normal tile">' + ICONS.corner + '</span>' : '') + '</div>';
@@ -1911,7 +1911,7 @@ const fits = () => { layoutPass(); return sectionsEl.scrollHeight <= sectionsEl.
 const spOf = v => v.classList.contains('gap-tight') ? 0.6 : v.classList.contains('gap-roomy') ? 1.5 : 1;
 // a tile's size as drawn (see SZ), and how many tile places some tiles take at k per row
 // (2.2: a share of its row, f, is f x k places; auto: a normal tile you haven't sized, which the category places)
-const szOf = (t, k) => { const f = +t.dataset.f || 0; k = k || 1; return { w: f ? Math.min(k, f * k) : +t.dataset.w || 1, h: +t.dataset.h || 1, nl: t.dataset.nl === '1', f, auto: !f && !t.dataset.w }; };
+const szOf = (t, k) => { const f = +t.dataset.f || 0; k = k || 1; return { w: f ? Math.min(k, f * k) : +t.dataset.w || 1, h: +t.dataset.h || 1, nl: t.dataset.nl === '1', f, fx: !!f && t.dataset.fx === '1', auto: !f && !t.dataset.w }; };
 const tileKids = tg => [...tg.children].filter(x => x.classList.contains('tile'));
 const tileArea = (tiles, k) => tiles.reduce((a, t) => { const s = szOf(t, k); return a + Math.min(s.w, k) * s.h; }, 0);
 // the minimum (TILE_MIN): a tile that would be drawn narrower, and the tiles sharing its rows with it (beside it, or
@@ -2001,7 +2001,7 @@ function fillRows(sz, pos, k) {
   const nb = Math.ceil(Math.max(0, ...pos.map(p => p.y + p.h)) - PE);
   for (let r = 0; r < nb; r++) {
     const ids = []; let ok = true;
-    pos.forEach((p, i) => { if (p.y < r + 1 - PE && p.y + p.h > r + PE) { if (Math.abs(p.y - r) > PE || Math.abs(p.h - 1) > PE || sz[i].h !== 1 || !(grid || (sz[i].auto !== false && sz[i].w === 1))) ok = false; ids.push(i); } });
+    pos.forEach((p, i) => { if (p.y < r + 1 - PE && p.y + p.h > r + PE) { if (Math.abs(p.y - r) > PE || Math.abs(p.h - 1) > PE || sz[i].h !== 1 || sz[i].fx || !(grid || (sz[i].auto !== false && sz[i].w === 1))) ok = false; ids.push(i); } });   // (a tile sized by hand: its row as set)
     if (!ok || !ids.length) continue;
     ids.sort((a, b) => pos[a].x - pos[b].x);
     // (all one width u: normal tiles, or a category whose tiles are all one share, as its tiles per row became in 2.2, so
@@ -2036,7 +2036,7 @@ function packTg(t, k) {
   if (!tiles.length) { t.classList.remove('pk'); t._H = 0; t._L = null; return 0; }
   const short = t.classList.contains('shorts'), G = 0.62 * spOf($('view')), nat = tiles.map(x => natOf(x, short)), even = !short && !!t.closest('.lrow[data-fill]');
   const fs = parseFloat(document.documentElement.style.fontSize) || 13, sz = floorSz(tiles.map(x => szOf(x, k)), k, t._tw || t.clientWidth, G * fs, fs, short);
-  const key = k + ':' + G + ':' + even + ':' + sz.map((z, j) => Math.round(z.w * 1e4) / 1e4 + 'x' + z.h + (z.nl ? '/' : '') + '@' + nat[j].toFixed(3)).join(',');
+  const key = k + ':' + G + ':' + even + ':' + sz.map((z, j) => Math.round(z.w * 1e4) / 1e4 + 'x' + z.h + (z.nl ? '/' : '') + (z.fx ? '!' : '') + '@' + nat[j].toFixed(3)).join(',');
   if (t._pk !== key) {
     const L = placeTiles(sz, nat, k, G, even);
     tiles.forEach((x, j) => {
@@ -2774,7 +2774,7 @@ function setLook(kind, id, key, val, vn) {
 function setShare(id, f, h, tol) {
   const v = vset('tiles'), m = v.cell || (v.cell = {}), e = m[id] || (m[id] = {});
   delete e.size; delete e.w; delete e.h;
-  e.f = fNum(f); const hh = szNum(h, tol === undefined ? SNAPQ : tol); if (hh !== 1) e.h = hh;
+  e.f = fNum(f); e.fx = true; const hh = szNum(h, tol === undefined ? SNAPQ : tol); if (hh !== 1) e.h = hh;   // (fx: set by hand, drawn as set; his 11-06 "if set to 25% they should SHOW at 25%")
 }
 // k given: w in places of k (a drag, Ctrl+arrows), kept as its share of the row; else in tiles (1 x 1: a normal tile
 // again, its category places it)
@@ -2782,7 +2782,7 @@ function setSize(id, w, h, tol, k) {
   if (k) { setShare(id, w / k, h, tol); return; }
   const z = cellSize(id), keep = x => Math.abs(x) < 1e-9 ? 1.5e-4 : tol;   // (a side not changed keeps its size as stored)
   const v = vset('tiles'), m = v.cell || (v.cell = {}), e = m[id] || (m[id] = {});
-  delete e.size; delete e.w; delete e.h; delete e.f; Object.assign(e, sizeLook(w, h, keep(w - z.w), keep(h - z.h)));
+  delete e.size; delete e.w; delete e.h; delete e.f; delete e.fx; Object.assign(e, sizeLook(w, h, keep(w - z.w), keep(h - z.h)));
   if (!Object.keys(e).length) delete m[id];
   if (!Object.keys(m).length) delete v.cell;
 }
@@ -2987,7 +2987,7 @@ function tileGeo(tile) {
   const k = +tg.style.getPropertyValue('--k') || 1, fs = parseFloat(document.documentElement.style.fontSize) || 13, g = 0.62 * fs * spOf($('view')), short = tg.classList.contains('shorts');
   const row = tg.closest('.lrow'), grNow = () => row && row.classList.contains('grow') && !short ? parseFloat(row.style.getPropertyValue('--gr')) || 0 : 0;
   const sz = kids.map(x => szOf(x, k)), nat = kids.map(x => natOf(x, short)), tr = tg.getBoundingClientRect(), p = (tr.width + g) / k;
-  const at = (w, h) => { const s = sz.slice(); s[j] = { w, h, nl: sz[j].nl, f: w / k, auto: false }; const L = placeTiles(floorSz(s, k, tr.width, g, fs, short), nat, k, g / fs, !short && !!row && !!row.dataset.fill), q = L.pos[j], gr = grNow(); return { th: q.th * fs + q.h * gr, TH: L.TH * fs + L.H * gr, x: q.x, y: q.y }; };
+  const at = (w, h) => { const s = sz.slice(); s[j] = { w, h, nl: sz[j].nl, f: w / k, auto: false, fx: true }; const L = placeTiles(floorSz(s, k, tr.width, g, fs, short), nat, k, g / fs, !short && !!row && !!row.dataset.fill), q = L.pos[j], gr = grNow(); return { th: q.th * fs + q.h * gr, TH: L.TH * fs + L.H * gr, x: q.x, y: q.y }; };
   // (wmin: the minimum, in places)
   return { tg, j, k, g, fs, tw: tr.width, p, at, r: tile.getBoundingClientRect(), s: sz[j], wmin: Math.min(k, (TILE_MIN * fs + g) / p) };
 }
@@ -3019,7 +3019,7 @@ function colEnds(blk) {
   return { own, cols, row };
 }
 const nearest = (xs, v, thr) => { let b = null; for (const x of xs) if (Math.abs(x - v) <= thr && (b === null || Math.abs(x - v) < Math.abs(b - v))) b = x; return b; };
-const setTileSz = (t, w, h, k) => { delete t.dataset.w; t.dataset.f = String(Math.round(Math.min(1, w / k) * 1e4) / 1e4); if (h !== 1) t.dataset.h = h; else delete t.dataset.h; };
+const setTileSz = (t, w, h, k) => { delete t.dataset.w; t.dataset.f = String(Math.round(Math.min(1, w / k) * 1e4) / 1e4); t.dataset.fx = '1'; if (h !== 1) t.dataset.h = h; else delete t.dataset.h; };
 const fmtSz = n => String(Math.round(n * 100) / 100);
 const r4 = n => Math.round(n * 1e4) / 1e4;
 // the lines a size snapped to
@@ -3480,7 +3480,7 @@ for (const k of ['L', 'R']) {
 $('undo').onclick = $('undoE').onclick = undo; $('redo').onclick = $('redoE').onclick = redo;
 $('editDone').onclick = () => setEdit(false);
 // (the editing strip opens and shuts the drawers, 11-02: the side tabs were easy to miss; open: pinned until shut)
-for (const [b, k] of [['ebStore', 'L'], ['ebSel', 'R']]) $(b).onclick = () => { const d = DR[k]; d.pinned = !d.el.classList.contains('open'); d.hover = false; if (!d.pinned) { d.byPick = false; d.placed = false; } syncDrawers(); saveState(); unhover($(b)); };
+for (const [b, k] of [['ebStore', 'L'], ['ebSel', 'R']]) $(b).onclick = () => { const d = DR[k]; d.pinned = !d.el.classList.contains('open'); d.hover = false; if (!d.pinned) { d.byPick = false; d.placed = false; } if (k === 'R' && !d.pinned && (sel || selCat)) clearSel(); syncDrawers(); saveState(); unhover($(b)); };   // (Selected switched off: nothing stays selected, his 11-06)
 // (a toggle just switched off under the pointer drops its hover look until the pointer leaves: lit by the hover it looked
 // still on, his 11-06 "when i toggle off ... it doesn't look" unselected)
 function unhover(b) { if (!b || b.classList.contains('on')) return; b.classList.add('unhov'); b.addEventListener('mouseleave', () => b.classList.remove('unhov'), { once: true }); }
@@ -4163,8 +4163,8 @@ function cellLayHtml(cid, c) {
   h += cl.name != null ? '<div class="fld"><span>Name in ' + V + '</span><div class="vname"><input id="lvName" maxlength="' + NAME_MAX + '" value="' + esc(cl.name) + '" placeholder="' + esc(cellName(c)) + '"><button class="ib" data-lay="vname-x" title="The same name as in the other views">' + ICONS.x + '</button></div></div>'
     : '<button class="linkbtn" data-lay="vname-on" style="align-self:flex-start">Different name in ' + V + '</button>';
   if (vn === 'tiles') {
-    // (the share it is drawn at: a window too narrow for a tile's own share widens it past it, three of 25% in a row drawn
-    // at a third each, his 11-06 "showing 25% but it should show 33%"; its own when the two are the same)
+    // (the share it is drawn at: a row of tiles you haven't sized spreads out to fill its width, three of 25% drawn at a
+    // third each, his 11-06 "showing 25% but it should show 33%"; one you size is drawn as you set it)
     const z = cellSize(cid), G = tileGeo(tileEl(cid)), own = z.f ? z.f * 100 : G ? Math.min(G.s.w, G.k) / G.k * 100 : null;
     const drawn = G && G.tw > 0 ? Math.min(100, (G.r.width + G.g) / (G.tw + G.g) * 100) : null;
     const pct = drawn == null ? own : own != null && Math.abs(drawn - own) < 1 ? own : (PCTS.find(q => Math.abs(q - drawn) < 1) || drawn);

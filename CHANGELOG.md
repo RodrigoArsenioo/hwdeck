@@ -6,7 +6,9 @@
 - A button in the editing bar you click to close its panel no longer looks selected while the pointer is still on it.
 - The settings panel has a back button: from a cell to its category, from a category to the view's settings.
 - Height's hint describes the option picked, All fit or Fill the window.
-- A tile's width in its settings is the width it is drawn at: one a narrow window widens past its own share shows the wider one.
+- A tile you size yourself is drawn at exactly that width, even in a row that would otherwise spread out to fill the width.
+- A tile's width in its settings is the width it is drawn at.
+- Switching off Selected in the editing bar also deselects the cell or category.
 
 ## 2.4.0 (2026-11-05)
 
