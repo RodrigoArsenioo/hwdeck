@@ -33,7 +33,7 @@ ok('the readings come (made-up, with the pins)', await until('READ.length > 300 
 ok('a new user gets Starter at once, not an empty view', await until('S.L.cats.length > 0', 5000) && await ev('!document.querySelector("#view.empty")'));
 const first = await shape('S.L');
 ok('Starter in his order: the game, the GPU, the CPU, memory, drives, fans, by name', JSON.stringify(first.map(x => x.split(':')[0])) === JSON.stringify(['Game', 'Fake GeForce RTX 5090', 'Fake Ryzen 9 9950X', 'Memory', 'Drives', 'Fans']), JSON.stringify(first));
-ok('the GPU: its temperature, hot spot, memory, usage, power, VRAM and the 12V-2x6 pins', /^Fake GeForce RTX 5090: GPU temperature, GPU hot spot, GPU memory, GPU usage, GPU power, VRAM used, 12V-2x6 pins$/.test(first[1]), first[1]);
+ok('the GPU: its temperature, hot spot, memory, usage, power, VRAM and the 12V-2x6 pins', /^Fake GeForce RTX 5090: GPU temperature, GPU hot spot, GPU memory, GPU usage, GPU power, VRAM used, 12V-2x6$/.test(first[1]), first[1]);
 ok('the CPU: its temperature, usage, power and busiest core', /^Fake Ryzen 9 9950X: CPU temperature, CPU usage, CPU power, Busiest core$/.test(first[2]), first[2]);
 ok('memory: RAM used, its sticks (up to 4); drives: the drive once (by its letter)', /^Memory: RAM used, RAM stick 1(, RAM stick [234])*$/.test(first[3]) && first[4] === 'Drives: Drive C:', first[3] + ' / ' + first[4]);
 ok('the game: fps, 1% low, what limits it, the time', /^Game: FPS, 1% low FPS, Bottleneck, Game time$/.test(first[0]), first[0]);
@@ -111,7 +111,7 @@ await feedCat(
   ['f7067010.0/03000002']);
 const his = await shape('starterLayout()');
 ok('like his PC: game, RTX 5090, Ryzen 7 9800X3D, memory, drives, fans', JSON.stringify(his.map(x => x.split(':')[0])) === JSON.stringify(['Game', 'GeForce RTX 5090', 'Ryzen 7 9800X3D', 'Memory', 'Drives', 'Fans']), JSON.stringify(his));
-ok('its GPU: hot spot found among the temperatures, the pins last', his[1] === 'GeForce RTX 5090: GPU temperature, GPU hot spot, GPU memory, GPU usage, GPU power, VRAM used, 12V-2x6 pins', his[1]);
+ok('its GPU: hot spot found among the temperatures, the pins last', his[1] === 'GeForce RTX 5090: GPU temperature, GPU hot spot, GPU memory, GPU usage, GPU power, VRAM used, 12V-2x6', his[1]);
 ok('its CPU: Tctl/Tdie before the die average', his[2] === 'Ryzen 7 9800X3D: CPU temperature, CPU usage, CPU power, Busiest core' && await ev('(() => { const L = starterLayout(); return BYKEY.get(L.cells[L.cats[2].cells[0]].key).label; })() === "CPU (Tctl/Tdie)"'), his[2]);
 ok('memory: RAM used and its load, both sticks; drives: the system drive first', his[3] === 'Memory: RAM used, RAM usage, RAM stick 1, RAM stick 2' && his[4] === 'Drives: Drive C:, Drive D:', his[3] + ' / ' + his[4]);
 ok('fans: the GPU\'s, then the pump and the CPU fan first; one that never spins left out', his[5] === 'Fans: GPU fan 1, GPU fan 2, AIO Pump, CPU fan, Chassis1 fan', his[5]);

@@ -366,6 +366,7 @@
         const st = load('state') || DEMO_STATE, slots = [0, 1, 2, 3, 4].map(i => { const s = load('slots/slot' + (i + 1)); return s !== undefined ? s : i === 0 ? { v: 1, name: 'Demo layout', layout: DEMO } : null; });
         post({ t: 'state', state: st, slots, fake: true, dataDir: 'Nothing is saved in the demo (only in this tab)', version: VERSION, pc: 'GAMING-PC', nonClient: false, ext: false, brand: 'HW Deck', updatable: false });
         post(settingsMsg());
+        post({ t: 'winMax', max: true });   // (a tab has no edges to resize: no band at them that swallows a press, 11-06)
         post({ t: 'catalog', ver: 1, sensors: SENSORS, readings: R.map(r => [r.s, r.type, r.key, r.label, r.unit, null]), bneck: [key(1, 'GPU Core Load'), key(0, 'Max CPU/Thread Usage'), 0], c12: null });
         clearInterval(timer); setTimeout(() => { tick(); timer = setInterval(tick, 1000); }, 1000 - Date.now() % 1000);
         tick();

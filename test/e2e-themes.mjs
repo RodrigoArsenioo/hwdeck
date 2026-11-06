@@ -92,10 +92,16 @@ ok('Background opens: a small screen with a point on each edge and corner, the b
 await click('#setbody .bg-h[data-at="b"]');
 ok('a point clicked: a fade there, picked, on the view at once, the theme now changed', await ev('S.look.fades.length === 1 && S.look.fades[0].at === "b" && S.look.changed && document.querySelector("#setbody .bg-h[data-at=b]").classList.contains("on") && !!document.querySelector("#setbody .bg-fh")') && /radial-gradient/.test(await css('body', 'backgroundImage')) && await ev('/Classic, changed/.test(document.querySelector("#setbody .th-row small").textContent)'), await css('body', 'backgroundImage'));
 const u1 = await ev('undoStack.length');
-await ev('(() => { const r = document.querySelector("#setbody .lk-rng[data-k=a]"); r.value = 60; r.dispatchEvent(new Event("input", { bubbles: true })); r.value = 62; r.dispatchEvent(new Event("input", { bubbles: true })); r.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()'); await p.sleep(300);
+await ev('(() => { const r = document.querySelector("#setbody .lk-rng[data-k=a]"); r.value = 60; r.dispatchEvent(new Event("input", { bubbles: true })); r.value = 62; r.dispatchEvent(new Event("input", { bubbles: true })); r.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); r.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()'); await p.sleep(300);
 ok('its strength dragged: taken, one undo step for the whole drag', await ev('S.look.fades[0].a === 62') && await ev('undoStack.length') === u1 + 1, await ev('S.look.fades[0].a'));
 await ev('undo(); 1'); await p.sleep(300);
 ok('undo: the strength before', await ev('S.look.fades[0].a === 30'));
+// (by the keys: a change each press, one undo step once they stop, 11-06)
+await p.sleep(200);
+const u2 = await ev('undoStack.length');
+await ev('(() => { const r = document.querySelector("#setbody .lk-rng[data-k=a]"); for (const v of [31, 32, 33]) { r.value = v; r.dispatchEvent(new Event("input", { bubbles: true })); r.dispatchEvent(new Event("change", { bubbles: true })); } return 1; })()'); await p.sleep(900);
+ok('its strength by the keys: one undo step once they stop', await ev('S.look.fades[0].a === 33') && await ev('undoStack.length') === u2 + 1, await ev('[S.look.fades[0].a, undoStack.length]'));
+await ev('undo(); 1'); await p.sleep(300);
 await openChip('fade');
 await clickAt(tonesIn + '[2]');
 ok('the fade\'s colour from its chip', await ev('S.look.fades[0].c === TONES.flat()[2]'), await ev('S.look.fades[0].c'));

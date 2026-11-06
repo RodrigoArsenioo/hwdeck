@@ -678,6 +678,9 @@ class Frames
         set
         {
             if ((gamePid == 0) != (value == 0)) { var t = flushTimer; if (t != null && flushFails < 5) try { if (value == 0) t.Change(System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite); else t.Change(FlushMs, FlushMs); } catch { } }   // (2.1: the flush timer sleeps with no game, the perf audit 11-04)
+            // (11-06: the provider goes off after 10 s with no game, see Second; a game in front turns it on at once)
+            if (gamePid == 0 && value != 0 && provOff && State == "on") try { Enable(); } catch { }
+            if (gamePid != 0 && value == 0) zeroAt = Environment.TickCount;
             gamePid = value;
         }
     }
@@ -688,7 +691,7 @@ class Frames
     public string State = "off";            // off | on | denied (no rights: not admin, not in Performance Log Users) | failed
     public bool On { get { return State == "on"; } }
     public double Fps = double.NaN, Low = double.NaN, Ft = double.NaN;   // this second's, for the game (NaN: no game)
-    public Frames(string name) { this.name = name; cb = OnRecord; stallAt = unchecked(Environment.TickCount - 10000); }
+    public Frames(string name) { this.name = name; cb = OnRecord; stallAt = unchecked(Environment.TickCount - 10000); zeroAt = Environment.TickCount; }
 
     IntPtr Props()
     {
@@ -792,6 +795,8 @@ class Frames
     // presented through DXGI since it came to the front (Vulkan, OpenGL, DirectX 9, or just back from an alt-tab) has
     // no number yet: nothing, not 0 (its sessions take HWiNFO's fps instead, see Games.Feed)
     int stallAt;   // the last time the trace was asked again for frames that stopped coming (TickCount, compared unchecked)
+    int stallWait = 5000, zeroAt;   // (how long till the next ask for a game that never presented; when the last game left the front)
+    volatile bool provOff;          // (the provider turned off: no game in front for 10 s)
     readonly List<long> tsBuf = new List<long>(4096);    // (kept between seconds: no new lists while a game runs; 2.1, the perf audit 11-04)
     readonly List<double> gapBuf = new List<double>(4096);
     public void Second()
@@ -799,11 +804,20 @@ class Frames
         Steady = null; PaceLine = null; AgeMs = double.NaN;
         long f = System.Diagnostics.Stopwatch.Frequency, now = System.Diagnostics.Stopwatch.GetTimestamp();
         int pid = Pid;
-        if (pid != lastPid) { lastPid = pid; pidAt = now; }
-        if (!On || pid == 0) { Fps = Low = Ft = double.NaN; return; }
+        if (pid != lastPid) { lastPid = pid; pidAt = now; stallWait = 5000; }
+        if (!On || pid == 0)
+        {
+            Fps = Low = Ft = double.NaN;
+            // (no game in front for 10 s: the provider off, so no program writes its presents for nothing; 10 s: an
+            // alt-tab back and forth doesn't turn it off and on, 11-06)
+            if (On && pid == 0 && !provOff && unchecked(Environment.TickCount - zeroAt) > 10000)
+                try { var g = Dxgi; if (EnableTraceEx2(session, ref g, 0 /*EVENT_CONTROL_CODE_DISABLE_PROVIDER*/, 0, 0, 0, 0, IntPtr.Zero) == 0) provOff = true; } catch { }
+            return;
+        }
         // no frames for 3 s: a paused game, or another program that stopped its own trace of the same events turned
         // them off for everyone: asked again, at most every 5 s (cheap; a paused game simply stays at 0)
-        if (double.IsNaN(Fps) || Fps == 0) { int n = Environment.TickCount; if (unchecked(n - stallAt) > 5000) { stallAt = n; try { Enable(); } catch { } } }
+        // (11-06: a game that never presented through DXGI, Vulkan, OpenGL, DirectX 9: after 5 s, 30 s, then every 5 min)
+        if (double.IsNaN(Fps) || Fps == 0) { int n = Environment.TickCount, wait = seenPid == pid ? 5000 : stallWait; if (unchecked(n - stallAt) > wait) { stallAt = n; if (seenPid != pid) stallWait = stallWait < 30000 ? 30000 : 300000; try { Enable(); } catch { } } }
         if (++seconds % 10 == 0) QueryLost();
         var ts = tsBuf; ts.Clear(); int nChains, sync;
         lock (lk)
@@ -883,6 +897,7 @@ class Frames
     public static bool Filter = true;   // (tests: false enables every DXGI event, as before 2.1)
     int Enable()
     {
+        provOff = false;
         if (!Filter) { var g0 = Dxgi; return EnableTraceEx2(session, ref g0, 1, 5, 0, 0, 0, IntPtr.Zero); }
         short[] ev = { 42, 55 };
         IntPtr ids = Marshal.AllocHGlobal(4 + 2 * ev.Length), fd = Marshal.AllocHGlobal(16), parms = Marshal.AllocHGlobal(48);
@@ -1041,7 +1056,9 @@ class History
         return true;
     }
     // one reading's minutes and blocks as hist.bin and the journal keep them, into this history (the last week's only)
-    void ReadTrack(BinaryReader r, int nowMin, int nowTen)
+    // (over: from the journal, newer than hist.bin: its minute or block replaces one hist.bin had, a partial one written
+    // at an exit, 11-06)
+    void ReadTrack(BinaryReader r, int nowMin, int nowTen, bool over = false)
     {
         string key = r.ReadString();
         Track t; if (!tracks.TryGetValue(key, out t)) t = new Track();   // a later try adds to what this run measured
@@ -1050,13 +1067,13 @@ class History
         for (int j = 0; j < c; j++)
         {
             int at = r.ReadInt32(); float a = r.ReadSingle(), m = r.ReadSingle();
-            if (at > nowMin - MinLen && at <= nowMin) { int k = at % MinLen; if (minAt[k] != at || float.IsNaN(t.MAvg[k])) { t.MAvg[k] = a; t.MMax[k] = m; } minAt[k] = at; any = true; }
+            if (at > nowMin - MinLen && at <= nowMin) { int k = at % MinLen; if (over || minAt[k] != at || float.IsNaN(t.MAvg[k])) { t.MAvg[k] = a; t.MMax[k] = m; } minAt[k] = at; any = true; }
         }
         c = r.ReadInt32();
         for (int j = 0; j < c; j++)
         {
             int at = r.ReadInt32(); float a = r.ReadSingle(), m = r.ReadSingle();
-            if (at > nowTen - TenLen && at <= nowTen) { int k = at % TenLen; if (tenAt[k] != at || float.IsNaN(t.TAvg[k])) { t.TAvg[k] = a; t.TMax[k] = m; } tenAt[k] = at; any = true; }
+            if (at > nowTen - TenLen && at <= nowTen) { int k = at % TenLen; if (over || tenAt[k] != at || float.IsNaN(t.TAvg[k])) { t.TAvg[k] = a; t.TMax[k] = m; } tenAt[k] = at; any = true; }
         }
         if (any) tracks[key] = t;
     }
@@ -1075,7 +1092,7 @@ class History
                     int len = r.ReadInt32();
                     if (len < 4 || fs.Length - fs.Position < len) break;
                     using (var cr = new BinaryReader(new MemoryStream(r.ReadBytes(len))))
-                    { int n = cr.ReadInt32(); for (int i = 0; i < n; i++) ReadTrack(cr, nowMin, nowTen); }
+                    { int n = cr.ReadInt32(); for (int i = 0; i < n; i++) ReadTrack(cr, nowMin, nowTen, true); }
                 }
         }
         catch { }   // (a damaged chunk: the ones before it count)
@@ -1244,16 +1261,19 @@ class History
         for (int i = 0; i < 200 && saving; i++) System.Threading.Thread.Sleep(25);   // quitting: let a running save finish first
         var ma = (int[])minAt.Clone(); var ta = (int[])tenAt.Clone();
         int oldMin = curMin - MinLen, oldTen = curTen - TenLen;
-        var list = new List<Snap>();
+        var list = new List<Snap>(); var dead = new List<string>();
         foreach (var kv in tracks)
         {
             var t = kv.Value;
             bool any = false;
             for (int k = 0; k < MinLen && !any; k++) any = ma[k] > oldMin && !float.IsNaN(t.MAvg[k]);
             for (int k = 0; k < TenLen && !any; k++) any = ta[k] > oldTen && !float.IsNaN(t.TAvg[k]);
-            if (!any) continue;   // nothing in the last week (a drive or adapter that's gone): not kept
+            if (!any) { if (!t.Share && Array.IndexOf(byIndex, t) < 0) dead.Add(kv.Key); continue; }   // nothing in the last week (a drive or adapter that's gone): not kept
             list.Add(new Snap { Key = kv.Key, MAvg = (float[])t.MAvg.Clone(), MMax = (float[])t.MMax.Clone(), TAvg = (float[])t.TAvg.Clone(), TMax = (float[])t.TMax.Clone() });
         }
+        // (and not in memory either, when no reading feeds it now: 11-06. Save runs on the tick Sample runs on, so the
+        // tracks never change under it)
+        foreach (var k in dead) tracks.Remove(k);
         var open = openAcc; int oMin = openMin, oTen = openTen; var sAt = secSnap; var sTr = secTracks;
         int sMin = curMin - 1, sTen = curTen - 1;   // (closed up to here: the journal starts after it)
         System.Threading.ThreadStart write = delegate
@@ -1474,6 +1494,14 @@ class Alerts
             }
             list.Add(rule);
         }
+        // a build's always-on lines (x:) step aside while a cell's lines watch the same reading the same way: the cell
+        // says it once (its lines are the ones you set); without such a cell, or with lines that can't judge (no
+        // yellow, red on the wrong side), they come back. A build's judged rules (Own, below) always stay: they
+        // say something no line can. (11-06: before the names below, so a cell doesn't keep a suffix from a rule
+        // that is gone, and the log still finds its cell)
+        Func<Rule, bool> judges = x => (x.Mode == "y" || x.Mode == "yr") && !double.IsNaN(x.Y) && !(x.Mode == "yr" && !double.IsNaN(x.R) && (x.Dir == "below" ? x.R >= x.Y : x.R <= x.Y));
+        var watched = new HashSet<string>(list.Where(x => !x.Id.StartsWith("x:") && judges(x)).Select(x => x.Key + "|" + x.Dir));
+        list.RemoveAll(x => x.Id.StartsWith("x:") && watched.Contains(x.Key + "|" + x.Dir));
         // the history pairs lines by name: cells with the same name get their sensor's name, then a number
         foreach (var grp in list.GroupBy(r => r.Name).Where(x => x.Count() > 1).ToList())
         {
@@ -1484,13 +1512,6 @@ class Alerts
             }
         }
         foreach (var grp in list.GroupBy(r => r.Name).Where(x => x.Count() > 1).ToList()) { int n = 1; foreach (var r in grp.Skip(1)) r.Name += " #" + (++n); }
-        // a build's always-on lines (x:) step aside while a cell's lines watch the same reading the same way: the cell
-        // says it once (its lines are the ones you set); without such a cell, or with lines that can't judge (no
-        // yellow, red on the wrong side), they come back. A build's judged rules (Own, below) always stay: they
-        // say something no line can
-        Func<Rule, bool> judges = x => (x.Mode == "y" || x.Mode == "yr") && !double.IsNaN(x.Y) && !(x.Mode == "yr" && !double.IsNaN(x.R) && (x.Dir == "below" ? x.R >= x.Y : x.R <= x.Y));
-        var watched = new HashSet<string>(list.Where(x => !x.Id.StartsWith("x:") && judges(x)).Select(x => x.Key + "|" + x.Dir));
-        list.RemoveAll(x => x.Id.StartsWith("x:") && watched.Contains(x.Key + "|" + x.Dir));
         // a 12V-2x6 connector cell also watches its pins' balance: once, whatever else watches the connector (a build's
         // own rule, a second cell), under its own name so its episodes don't mix with the cell's
         foreach (var r in list.Where(x => x.Key == Connector.Key && x.Level == null).OrderBy(x => x.Id.StartsWith("x:") ? 1 : 0).Take(1).ToList())
@@ -1568,6 +1589,9 @@ class Alerts
             double v = src.Values[i];
             int raw = 0; double hold = r.Hold, dev = 0; bool off = false, under = false, other = false; string extra = "";
             bool skip = Skip.Contains(r.Key);
+            // (11-06: a skipped reading, PresentMon away while the game is in the back, has no verdict: an open episode
+            // waits as it is instead of ending "back to normal" and counting again on return; a hold starts again)
+            if (skip) { St k; if (state.TryGetValue(r.Id, out k) && k.Logged == 0) k.Since = 0; continue; }
             if (r.Level != null && !skip) { raw = Math.Max(0, Math.Min(2, r.Level())); if (raw > 0 && r.Why != null) extra = r.Why(); }
             bool gatesOk = !skip && r.Mode != "none" && !double.IsNaN(r.Y) && !(r.Mode == "yr" && !double.IsNaN(r.R) && (r.Dir == "below" ? r.R >= r.Y : r.R <= r.Y));
             if (gatesOk)
@@ -1584,10 +1608,11 @@ class Alerts
             if (!skip && raw == 0 && r.CurveWarn && r.Pts != null && r.Pts.Length > 0 && r.Src != null && index.TryGetValue(r.Src, out si) && si < src.Values.Length && !double.IsNaN(src.Values[si]))
             {
                 double exp = Interp(r.Pts, src.Values[si]);
-                if (exp > 0 && Math.Abs((v - exp) / exp * 100) > r.Tol)
+                double pct = exp > 0 ? (v - exp) / exp * 100 : v > 100 ? 100 : 0;   // (11-06: expected at 0 rpm and spinning: off it, as on the page)
+                if (Math.Abs(pct) > r.Tol)
                 {
-                    raw = 1; hold = r.CurveHold; off = true; under = v < exp; dev = Math.Abs((v - exp) / exp);
-                    extra = " (" + Math.Abs(Math.Round((v - exp) / exp * 100)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "% " + (v < exp ? "under" : "over") + " its curve)";
+                    raw = 1; hold = r.CurveHold; off = true; under = v < exp; dev = Math.Abs(pct) / 100;
+                    extra = " (" + Math.Abs(Math.Round(pct)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "% " + (v < exp ? "under" : "over") + " its curve)";
                 }
             }
             St s;
@@ -2151,7 +2176,7 @@ class Games
                 foreach (var r in roots) if (lp.StartsWith(r.Key, StringComparison.Ordinal)) { name = r.Value; break; }   // (both lower case: ordinal, 2.1)
                 if (name == null)
                 {
-                    if (pid == fg && fgSeen.Add(lp) && (DateTime.Now - rootsAt).TotalSeconds > 60) rescan = true;   // (new in front: maybe a game installed since)
+                    if (pid == fg && !fgSeen.Contains(lp) && (DateTime.Now - rootsAt).TotalSeconds > 60) { fgSeen.Add(lp); rescan = true; }   // (new in front: maybe a game installed since; within a minute of a rebuild it asks again later, 11-06)
                     continue;
                 }
                 inRoot.Add(pid);
@@ -2355,7 +2380,7 @@ class Games
         for (int i = custom.Count - 1; i >= 0; i--)
             if (custom[i].Last > 0 && now0 - custom[i].Last > 600) { var c = custom[i]; custom.RemoveAt(i); if (c.Secs >= 10) Write(c, c.Last); SaveCustom(); }
         if (rep != null && rep.Last > 0 && now0 - rep.Last > 600) { Finish(); lock (lk) { if (Game != null) { Since = now0; since = now0; } } }
-        if (pending.Count > 0) WritePending();
+        if (pending.Count > 0 && (now0 >= pendNext || pendNext - now0 > 30)) WritePending();   // (refused: again after 5 s, doubling to 30 s, 11-06; or the clock set back)
         if (dropLater.Count > 0 && now0 % 5 == 0) DropLater();
         if ((curUnread.Count > 0 || custUnread.Count > 0 || stale.Count > 0 || pendHeld.Count > 0 || curPath != curMain || custPath != custMain) && now0 % 30 == 0) RetryHeld();
         if (rep != null && (game == null || rep.Start != since)) Finish();
@@ -2604,7 +2629,11 @@ class Games
         var same = SameStart(r.Game, r.Start);
         foreach (var x in same) if (x.Value >= end) return x.Key;
         foreach (var x in same) if (!pending.Remove(x.Key)) { try { DropLine(x.Key); } catch { if (!dropLater.Contains(x.Key)) dropLater.Add(x.Key); } }
-        var line = json.Serialize(Line(r, end));
+        // (from a copy, as LiveLine: the session kept for a merge keeps its minute in progress, so a game back within
+        // the same minute adds to it, 11-06)
+        Report c;
+        try { c = json.Deserialize<Report>(json.Serialize(r)); c.Ln = r.Ln; } catch { c = r; }
+        var line = json.Serialize(Line(c, end));
         pending.Add(line);
         WritePending();
         LogChanged = true;
@@ -2790,19 +2819,29 @@ class Games
             }
         }
         var go = pending.Where(l => !blocked.Contains(l)).ToList();
-        if (pending.Count == 0) { PendDone(); return; }
-        if (go.Count == 0) { try { Disk.SwapLines(PendFile(), pending); } catch { } return; }
-        try { Disk.AppendLines(logPath, go); LogChanged = true; foreach (var l in go) pending.Remove(l); if (pending.Count == 0) PendDone(); else { try { Disk.SwapLines(PendFile(), pending); } catch { } } }
+        if (pending.Count == 0) { pendWait = 0; PendDone(); return; }
+        if (go.Count == 0) { SavePend(); PendLater(); return; }
+        try { Disk.AppendLines(logPath, go); LogChanged = true; foreach (var l in go) pending.Remove(l); if (pending.Count == 0) { pendWait = 0; PendDone(); } else { SavePend(); PendLater(); } }
         catch (Exception ex)
         {
             if (pending.Count == 1) log("game report write failed (tried again): " + ex.Message);
-            try { Disk.SwapLines(PendFile(), pending); } catch { }   // (on disk meanwhile: a quit or a crash before it goes in loses nothing)
+            SavePend(); PendLater();   // (on disk meanwhile: a quit or a crash before it goes in loses nothing)
         }
+    }
+    // (11-06: a line games.log refused is tried again after 5 s, doubling to 30 s: every second it read and parsed the
+    // whole log; games.pending is written only when what it holds changed)
+    long pendNext; int pendWait; string pendSaved;
+    void PendLater() { pendWait = pendWait == 0 ? 5 : Math.Min(30, pendWait * 2); pendNext = Source.Unix() + pendWait; }
+    void SavePend()
+    {
+        string f = PendFile(), sig = f + "\n" + string.Join("\n", pending);
+        if (sig == pendSaved && File.Exists(f)) return;
+        try { Disk.SwapLines(f, pending); pendSaved = sig; } catch { }
     }
     // games.log.pending, or .pending.2 while the first is held unread (never written over before it is read)
     readonly List<string> pendHeld = new List<string>(), pendDrop = new List<string>();   // pendDrop: held ones cleared meanwhile
     string PendFile() { return pendHeld.Contains(pendPath) ? pendPath + ".2" : pendPath; }
-    void PendDone() { foreach (var f in new[] { pendPath, pendPath + ".2" }) if (!pendHeld.Contains(f) && File.Exists(f)) { try { File.Delete(f); } catch { } } }
+    void PendDone() { pendSaved = null; foreach (var f in new[] { pendPath, pendPath + ".2" }) if (!pendHeld.Contains(f) && File.Exists(f)) { try { File.Delete(f); } catch { } } }
     // lines games.log refused at the last quit or crash: in now, once (one line per session, as Write)
     void TakePending()
     {
@@ -3320,11 +3359,18 @@ partial class DeckForm : Form
                         catch (Exception ex)
                         {
                             // (the view: the page is asked for it again in 5 s, until it goes in; one toast and log line for the run)
-                            if (f != "state" || !stateFailing) { Log("saving " + f + " failed: " + ex.Message); var r = Msg("toast"); r["text"] = "Couldn't save the layout: " + ex.Message + (f == "state" ? " Trying again." : ""); Post(r); }
+                            if (f != "state" || !stateFailing) { Log("saving " + f + " failed: " + ex.Message); var r = Msg("toast"); r["text"] = "Couldn't save the layout: " + (ex is IOException || ex is UnauthorizedAccessException ? "its file can't be written now" : ex.Message) + (f == "state" ? ", trying again" : ""); Post(r); }
                             if (f == "state") { stateFailing = true; stateRetryAt = Source.Unix() + 5; }
+                            // (a slot: the page gets it as it is on disk, so it stops taking the view as saved there, 11-06)
+                            else
+                            {
+                                string fn = f.Replace('/', '\\');
+                                var back = new Dictionary<string, object>(); back[(f[f.Length - 1] - '1').ToString()] = ReadFile(fn, false, 1);
+                                if (!heldFiles.Contains(fn)) { var rs = Msg("slots"); rs["slots"] = back; Post(rs); }   // (held: the Tick sends it once free, as at the start)
+                            }
                         }
                         // (a slot another program held when the page started isn't saved over: said so; the view's start toast says it for state)
-                        if (!saved && f != "state" && heldFiles.Contains(f.Replace('/', '\\'))) { var r = Msg("toast"); r["text"] = "Couldn't save to that slot: another program has its file open. Try again in a moment."; Post(r); }
+                        if (!saved && f != "state" && heldFiles.Contains(f.Replace('/', '\\'))) { var r = Msg("toast"); r["text"] = "That slot is open in another program, like a sync or a backup tool. Save again in a moment"; Post(r); }
                         // (the warnings and game reports follow the view as written: not one that was only refused)
                         if (f == "state" && saved && stateFailing) { stateFailing = false; stateRetryAt = 0; Log("state saved after all"); }
                         if (f == "state" && saved) { var d = m["data"] as Dictionary<string, object>; layout = d != null && d.ContainsKey("L") ? d["L"] : null; RefreshRules(); }
@@ -3368,7 +3414,7 @@ partial class DeckForm : Form
                         if (fail == null && m.ContainsKey("quiet") && true.Equals(m["quiet"])) break;
                         var r = Msg("toast"); Func<int, string> what = k => which == "games" ? (k == 1 ? "1 session" : k + " sessions") : (k == 1 ? "1 warning" : k + " warnings");
                         string kept = held > 0 ? what(held) + " older than the days you keep stayed in the bin" : null;
-                        r["text"] = fail != null ? "Couldn't move it: " + fail : n == 0 ? (kept ?? "Nothing moved: it changed since") : (toLog ? what(n) + " back from the bin" : what(n) + " moved to the bin") + (kept != null ? ", " + kept : "");
+                        r["text"] = fail != null ? "Couldn't move it: " + fail : n == 0 ? (kept ?? "Nothing moved: the list changed meanwhile") : (toLog ? what(n) + " back from the bin" : what(n) + " moved to the bin") + (kept != null ? ", " + kept : "");
                         r["undo"] = n > 0 && fail == null; r["moved"] = fail != null ? 0 : n; Post(r);   // (moved 0: the page drops the step it kept for it)
                     }
                     break;
@@ -3388,7 +3434,7 @@ partial class DeckForm : Form
                         catch (Exception ex) { fail = ex.Message; Log("log:purge failed: " + ex.Message); }
                         SendLog(name + ".bak", which + "Bin");
                         var r = Msg("toast"); Func<int, string> what = k => which == "games" ? (k == 1 ? "1 session" : k + " sessions") : (k == 1 ? "1 warning" : k + " warnings");
-                        r["text"] = fail != null ? "Couldn't delete it: " + fail : did.Count == 0 ? "Nothing deleted: it changed since" : what(Math.Max(1, n)) + " deleted permanently";
+                        r["text"] = fail != null ? "Couldn't delete it: " + fail : did.Count == 0 ? "Nothing deleted: the list changed meanwhile" : what(Math.Max(1, n)) + " deleted permanently";
                         r["gone"] = fail == null ? did : new List<string>(); Post(r);   // (the page drops undo steps that only held these; a failed write deleted nothing)
                     }
                     break;
@@ -3522,6 +3568,14 @@ partial class DeckForm : Form
             Log("reading " + name + " failed: " + ex.Message);
             if (keep)
                 try { string bad = name + ".json.bad-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture); File.Move(p, P(bad)); stateBad = bad; }
+                catch { }
+            // (a slot too, 11-06: it came in empty, so the next save into it would have gone over the old file for good)
+            else if (name.StartsWith("slots\\"))
+                try
+                {
+                    string bad = name + ".json.bad-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture); File.Move(p, P(bad));
+                    goneNotes.Add("Slot " + name.Substring(name.Length - 1) + " couldn't be read, so it is empty now. The old file is kept as " + bad.Replace('\\', '/') + " in your files (Settings).");
+                }
                 catch { }
             return null;
         }
@@ -3712,7 +3766,7 @@ partial class DeckForm : Form
                     if (!hash.Equals(m.Groups[1].Value, StringComparison.OrdinalIgnoreCase)) throw new Exception("the download doesn't match its published checksum");
                 }
             }
-            catch (Exception ex) { err = ex.Message; }
+            catch (Exception ex) { Log("update failed: " + ex.Message); err = ex is System.Net.WebException ? "no connection to GitHub, or the release isn't there" : ex is IOException || ex is UnauthorizedAccessException ? "a file it needs can't be written now" : ex.Message; }
             if (err != null && dir != null) try { Directory.Delete(dir, true); } catch { }   // (a partial or wrong download goes too)
             Try(() => BeginInvoke((Action)(() =>
             {
@@ -3749,7 +3803,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
                     q.Tick += delegate { q.Stop(); exiting = true; tray.Visible = false; Application.Exit(); };
                     q.Start();
                 }
-                catch (Exception ex) { updating = false; Try(() => Directory.Delete(dir, true)); Log("update failed: " + ex.Message); var t = Msg("toast"); t["text"] = "Couldn't update: " + ex.Message; Post(t); }
+                catch (Exception ex) { updating = false; Try(() => Directory.Delete(dir, true)); Log("update failed: " + ex.Message); var t = Msg("toast"); t["text"] = "Couldn't update: the installer didn't start"; Post(t); }
             })));
         });
     }
@@ -3869,9 +3923,10 @@ Start-Process -FilePath $Exe -ArgumentList $a";
         }
         return n;
     }
-    // a bin keeps what it was just given, and up to 32 MB of what came before
+    // a bin keeps what it was just given, and up to 32 MB of what came before (cut back to that once it is past 48 MB:
+    // at its cap it was read and written whole at every trim, 11-06)
     internal static long Bytes(IEnumerable<string> ls) { return ls.Sum(l => (long)Encoding.UTF8.GetByteCount(l) + 2); }
-    internal static void ShortenBin(string p, long added) { Shorten(p, added + (32L << 20)); }
+    internal static void ShortenBin(string p, long added) { try { var fi = new FileInfo(p); if (fi.Exists && fi.Length > added + (48L << 20)) Shorten(p, added + (32L << 20)); } catch { } }
     static readonly Regex LineAt = new Regex(@"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)([+-]\d\d:\d\d)?"), StartAt = new Regex("\"start\":(\\d+)");
     static long LineTime(string l)
     {
@@ -4018,6 +4073,17 @@ Start-Process -FilePath $Exe -ArgumentList $a";
     {
         if (!DaysSet("gameDays") || KeepDays("gameDays") == 0) return;   // (0: kept forever)
         long cut = Source.Unix() - KeepDays("gameDays") * 86400L;
+        // (a look first, 11-06: no session that ended before the cut, nothing more to do; the lines aren't in order, so
+        // each is looked at)
+        try
+        {
+            bool any = false;
+            lock (games.LogLock)
+                if (File.Exists(games.LogPath))
+                    foreach (var l in File.ReadLines(games.LogPath)) { var m = EndRe.Match(l); long e; if (m.Success && long.TryParse(m.Groups[1].Value, out e) && e < cut) { any = true; break; } }
+            if (!any) return;
+        }
+        catch { }   // (it can't be read now: the trim below says why)
         // (only lines that end before the cut get parsed: the rest stay as they are, and nothing is written when none goes)
         try { games.EditLog(o => { object e; return o.TryGetValue("end", out e) && Games.Long(e) < cut ? 1 : 0; }, line => { var m = EndRe.Match(line); long e; return !m.Success || !long.TryParse(m.Groups[1].Value, out e) || e < cut; }); }
         catch (Exception ex) { Log("trimming games.log failed: " + ex.Message); }
@@ -4192,8 +4258,9 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             WriteAlerts();
             games.Sample(src, index, gated, alerts, gameFront, pmOk, pmKeys, src.Bneck.Call, src.Bneck.Live);
             // (the sessions popup open: the session in progress every 5 s, Now playing; the log again once a line came or went)
-            if (gamesLive && pageReady) { if (games.LogChanged) { games.LogChanged = false; PostLive(); SendLog("games.log", "games"); } else if (now % 5 == 0) PostLive(); }   // (the live one first: the log that comes after has it)
-            else games.LogChanged = false;
+            // (only while shown, 11-06: the window away, a change waits for the show, which sends both)
+            if (gamesLive && pageReady && wasShowing) { if (games.LogChanged) { games.LogChanged = false; PostLive(); SendLog("games.log", "games"); } else if (now % 5 == 0) PostLive(); }   // (the live one first: the log that comes after has it)
+            else if (!gamesLive) games.LogChanged = false;
             if (DateTime.Now.Date != trimDay) { trimDay = DateTime.Now.Date; TrimAlerts(); TrimGames(); }   // the days you keep, also on a PC that never restarts
             if (!fake && now - lastHwPath >= 60) { lastHwPath = now; RememberHwinfo(); }
             // (a view save another program's handle refused: the page sends its view again, with its gen; a settings save the
@@ -4227,6 +4294,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
         {
             force = true; SendSparks(subCells, hiddenAt > 0 ? (int)Math.Min(History.SecLen, now - hiddenAt + 3) : History.SecLen);   // back from the tray or the taskbar: the page missed those seconds (2.1: only those)
             Post(Msg("shown"));                  // and measures its tiles again on screen (hidden, some came out short)
+            if (gamesLive) { PostLive(); if (games.LogChanged) { games.LogChanged = false; SendLog("games.log", "games"); } }   // (the sessions popup open: what it missed)
             // (one toast: the page has one, so each would replace the one before)
             var notes = new List<string>();
             if (stateBad != null) { notes.Add("Your view couldn't be read, so it starts empty. The old file is kept as " + stateBad + " in your files (Settings)."); stateBad = null; }
@@ -4384,6 +4452,10 @@ exit $code
         {
             string exe = settings.ContainsKey("hwinfo") ? settings["hwinfo"] as string : null;
             if (exe != null && (!Regex.IsMatch(Path.GetFileName(exe), @"^HWiNFO(64|32)\.exe$", RegexOptions.IgnoreCase) || !File.Exists(exe))) exe = null;
+            // (none where the script looks either: said now, without a Windows prompt for nothing, 11-06)
+            if (exe == null && !new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }.Select(Environment.GetFolderPath).Where(d => d.Length > 0)
+                    .Any(d => File.Exists(Path.Combine(d, @"HWiNFO64\HWiNFO64.EXE")) || File.Exists(Path.Combine(d, @"HWiNFO32\HWiNFO32.EXE"))))
+            { Log("hwinfo restart: not found"); r["text"] = "HWiNFO wasn't found: start it once yourself, " + Brand.Name + " remembers where it is"; Post(r); Restarted(3); return; }
             string script = "$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')\n$Exe = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + Convert.ToBase64String(Encoding.Unicode.GetBytes(exe ?? "")) + "'))" + WinApi + RestartScript;
             var psi = new ProcessStartInfo(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
             psi.Verb = "runas"; psi.WindowStyle = ProcessWindowStyle.Hidden; psi.UseShellExecute = true;   // HWiNFO runs as admin: so must its restart
@@ -4406,7 +4478,7 @@ exit $code
         {
             var w = ex as System.ComponentModel.Win32Exception;
             if (w != null && w.NativeErrorCode == 1223) { r["text"] = "HWiNFO restart cancelled"; Post(r); Restarted(-2); return; }   // No in the Windows prompt
-            Log("hwinfo restart failed: " + ex.Message); r["text"] = "Couldn't restart HWiNFO: " + ex.Message; Post(r); Restarted(-1);
+            Log("hwinfo restart failed: " + ex.Message); r["text"] = "Couldn't restart HWiNFO"; Post(r); Restarted(-1);
         }
     }
     // the page's restart button spins until this comes (code 0: restarted with shared memory on)
@@ -4606,7 +4678,8 @@ try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
                     var t = Msg("toast");
                     t["text"] = code == 8 ? "Keep HWiNFO sharing needs your own account to be an admin (Windows asked for another one)"
                               : code == 9 ? "Another account on this PC has Keep HWiNFO sharing on: there is one for the whole PC"
-                              : code != 0 ? "Couldn't turn Keep HWiNFO sharing " + (on ? "on" : "off") + " (code " + code + ")"
+                              : code == -1 ? "Couldn't turn Keep HWiNFO sharing " + (on ? "on" : "off") + ": Windows didn't finish the change in time"
+                              : code != 0 ? "Couldn't turn Keep HWiNFO sharing " + (on ? "on" : "off")
                               : on ? "Keep HWiNFO sharing is on: HWiNFO restarts after about 11 hours" : "Keep HWiNFO sharing is off, and its task is deleted";
                     Post(t); SendSettings(true);
                 })));
@@ -4732,7 +4805,7 @@ exit 0";
                     fpsBusy = false;
                     var t = Msg("toast");
                     if (on && code != 0 && code != 3) { settings["gameFps"] = false; SaveSettings(); src.Frames.Stop(); }   // (the trace started to try it stops too)
-                    t["text"] = code != 0 && code != 3 ? "Couldn't " + (on ? "allow" : "take back") + " fps counting (code " + code + ")"
+                    t["text"] = code != 0 && code != 3 ? "Couldn't turn Accurate game fps " + (on ? "on" : "off") + (code == -1 ? ": Windows didn't finish the change in time" : "")
                               : on ? FpsText() : "Accurate game fps is off, and the permission it needed is taken back";
                     Post(t); SendSettings(fpsDone: true);
                 })));
@@ -4825,7 +4898,7 @@ exit 0";
             using (var a = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(ApprovedKey, true))
                 if (a != null) a.DeleteValue(runName, false);
         }
-        catch (Exception ex) { Log("autostart failed: " + ex.Message); }
+        catch (Exception ex) { Log("autostart failed: " + ex.Message); var r = Msg("toast"); r["text"] = "Couldn't change Start with Windows"; Post(r); }
     }
 
     // ---- a slot to or from a file, to move a layout to another PC ----
@@ -4941,7 +5014,8 @@ exit 0";
         else if (m.Msg == 0x11 /*WM_QUERYENDSESSION*/) ending = true;
         // minimized: the next tick that finds it on screen says so (shown), even after a minimize too short for any
         // tick to have seen
-        else if (m.Msg == 0x05 /*WM_SIZE*/ && m.WParam.ToInt64() == 1 /*SIZE_MINIMIZED*/) wasShowing = false;
+        // (and when it hid, as the tick does for the tray: the restore sends only the seconds missed, 11-06)
+        else if (m.Msg == 0x05 /*WM_SIZE*/ && m.WParam.ToInt64() == 1 /*SIZE_MINIMIZED*/) { if (wasShowing) hiddenAt = Source.Unix(); wasShowing = false; }
         else if (m.Msg == 0x16 /*WM_ENDSESSION*/)
         {
             if (m.WParam != IntPtr.Zero) { tray.Visible = false; EndMark(); exiting = true; BeginInvoke((Action)Application.Exit); }   // the session ends (or an installer asked): quit

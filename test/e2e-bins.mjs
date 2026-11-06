@@ -122,7 +122,7 @@ await clickPurge('#glist', 'Old A'); await click('#cyes');
 ok('Yes: exactly its line leaves the bin, the log untouched', await untilFile(() => !text('games.log.bak').includes(G.oldA)) && text('games.log.bak').includes(G.oldB) && text('games.log') === gl0, text('games.log.bak'));
 ok('the bin list follows, a toast says so, with no Undo', await until('document.querySelectorAll("#glist .gx-sess").length === 1', 4000) && /^1 session deleted permanently$/.test(await toastTxt()) && await E('$("toastUndo").hidden'), await toastTxt());
 await E(`send({ t: 'log:purge', log: 'games', lines: ['not a line the bin has'] })`); await p.sleep(700);
-ok('a line the bin no longer has: nothing deleted, it says so', /Nothing deleted: it changed since/.test(await toastTxt()) && text('games.log.bak').includes(G.oldB), await toastTxt());
+ok('a line the bin no longer has: nothing deleted, it says so', /Nothing deleted: the list changed meanwhile/.test(await toastTxt()) && text('games.log.bak').includes(G.oldB), await toastTxt());
 await E(`send({ t: 'log:purge', log: 'nope', lines: [${JSON.stringify(G.oldB)}] }); send({ t: 'log:purge', log: 'games' })`); await p.sleep(700);
 ok('a log it doesn\'t know, or no lines: nothing happens', text('games.log.bak').includes(G.oldB) && await E('document.querySelectorAll("#glist .gx-sess").length === 1'));
 // a session moved to the bin and then deleted permanently: the move's undo step goes with it (nothing left to bring back)
