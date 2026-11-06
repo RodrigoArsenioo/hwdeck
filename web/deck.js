@@ -5852,6 +5852,7 @@ const pkSlide = (k, dir) => { if (motionMode() !== 'off') pkEls(k).list.animate(
 // (the bin's rows came: whether the list was waiting for them, the switch's one slide)
 const pkArrived = k => { const P = PK[k], w = !!P.wait; clearTimeout(P.waitT); P.wait = false; pkEls(k).list.classList.remove('pkwait'); return w; };
 function pkMode(k, mode, quiet) {
+  if (k === 'g' && gxCmp && mode) { gxCmp = null; gmodal.classList.remove('cmp'); if (mode !== 'bin') renderGames(gxText); }   // (picking or the bin: the comparison ends, 11-06)
   const P = PK[k], E = pkEls(k), was = P.mode;
   P.mode = mode; P.pick.clear(); pkArrived(k);
   E.modal.classList.toggle('binning', mode === 'bin');
@@ -5897,6 +5898,7 @@ function pkBar(k) {
   const h = '<span class="gb-n">' + (bin ? 'The bin: <b>' + pkWhat(k, tot) + '</b>' + (tot > all ? ', ' + (tot - all) + ' older than the days you keep' : '') + (n ? ', ' + n + ' picked' : '') : n ? '<b>' + n + '</b> picked' : 'Pick the ' + (k === 'g' ? 'sessions' : 'rows') + ' to move to the bin') + '</span><span class="sp"></span>' +
     (all ? '<button class="btn pk-q" data-pk="all">' + (n && n === all ? 'Pick none' : 'Pick all') + '</button>' : '') +
     '<button class="btn pk-q" data-pk="back">' + (bin ? 'Back' : 'Cancel') + '</button>' +
+    (k === 'g' && !bin && n === 2 ? '<button class="btn" data-pk="cmp">Compare</button>' : '') +
     '<button class="btn' + (bin ? ' pk-go' : ' warn') + '" data-pk="' + (bin ? 'restore' : 'del') + '"' + (n ? '' : ' disabled') + '>' + (bin ? 'Restore' : 'Move to the bin') + (n ? ' ' + n : '') + '</button>';
   if (E.bar._h !== h) { E.bar.innerHTML = h; E.bar._h = h; }
 }
@@ -5905,6 +5907,7 @@ function pkAct(k, a) {
   const P = PK[k], items = pkItems(k);
   if (a === 'all') { if (P.pick.size && P.pick.size === items.length) P.pick.clear(); else for (const x of items) P.pick.add(pkKey(k, x)); pkMark(k); pkBar(k); return; }
   if (a === 'back') { pkMode(k, null); return; }
+  if (a === 'cmp') { const xs = items.filter(x => P.pick.has(pkKey(k, x))); if (k === 'g' && xs.length === 2) gxCmpStart(xs); return; }
   const lines = [...new Set(items.filter(x => P.pick.has(pkKey(k, x))).flatMap(x => pkLines(k, x)))]; if (!lines.length) return;   // (once each: a mark can end crossings of several rows)
   const log = k === 'g' ? 'games' : 'alerts', to = a === 'restore' ? 'log' : 'bak';
   pkStep = JSON.stringify({ host: { t: 'log:move', log, to: to === 'log' ? 'bak' : 'log', lines, quiet: true }, redo: { t: 'log:move', log, to, lines, quiet: true } });
@@ -5988,6 +5991,7 @@ new MutationObserver(() => {
   if (gxLive.on !== false && host) { gxLive.on = false; send({ t: 'gamesLive', on: false }); }   // (no more Now playing until it opens again)
   gxNow = null;   // (what was playing then: a game under a minute that ends meanwhile writes no line, and came back as a ghost, 11-06)
   afterFade(gmodal, () => {
+    gxCmp = null; gmodal.classList.remove('cmp');
     if ($('glist').firstChild) { $('glist').innerHTML = ''; gxSs = []; gxTl.length = 0; }
     gxText = '';
     if (GZ.on) { GZ.on = false; renderGz(); }
@@ -5995,7 +5999,7 @@ new MutationObserver(() => {
 }).observe(gmodal, { attributes: true, attributeFilter: ['class'] });
 new MutationObserver(() => { if (!$('wmodal').classList.contains('open')) afterFade($('wmodal'), () => { if ($('wlist').firstChild) { $('wlist').innerHTML = ''; wGroups = []; for (const k in WXC) delete WXC[k]; } }); }).observe($('wmodal'), { attributes: true, attributeFilter: ['class'] });
 let lastGameCount = 0;
-$('gamesBtn').onclick = () => { pkMode('g', null, true); gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; recKey = null; gxLoaded = false; renderRec(); if (host) { send({ t: 'games' }); gxLive.on = true; send({ t: 'gamesLive', on: true }); } else renderGames(''); };
+$('gamesBtn').onclick = () => { gxCmp = null; gmodal.classList.remove('cmp'); pkMode('g', null, true); gmodal.classList.add('open'); $('glist').innerHTML = '<div class="wempty">loading...</div>'; recKey = null; gxLoaded = false; renderRec(); if (host) { send({ t: 'games' }); gxLive.on = true; send({ t: 'gamesLive', on: true }); } else renderGames(''); };
 let gxLoaded = false;   // the log is in since the popup opened (Start names the next "Session n" from it)
 // ---- sessions of your own: Start records one (the host follows it like a game's, beside any game), each running one
 // shows on top with its name (change it there), its time so far and Stop ----
@@ -6664,6 +6668,7 @@ function renderGames(text, keep) {
   gxSum(ss);
   if (GX.game) ss = ss.filter(x => x.game === GX.game);   // (the picked game's sessions; the headers count its time)
   gxSs = ss;
+  if (gxCmp) { gxCmpDraw(); return; }   // (two compared: they stay on show, 11-06)
   const byDay = gxByDay(ss), now = Date.now() / 1000, dayKey = u => localDay(new Date(u * 1000));
   const today = localDay(new Date()), yd = new Date(); yd.setDate(yd.getDate() - 1);
   const yest = localDay(yd);
@@ -6716,7 +6721,7 @@ function gxSessHtml(x, i, full, bin) {
 let gxNow = null;
 function gxLive(s) {
   gxNow = s && typeof s === 'object' && Number.isFinite(s.start) && Number.isFinite(s.end) && s.end >= s.start ? s : null;
-  if (!gmodal.classList.contains('open') || !gxLoaded || PK.g.mode === 'bin') return;
+  if (!gmodal.classList.contains('open') || !gxLoaded || PK.g.mode === 'bin' || gxCmp) return;
   const list = $('glist'), i = gxSs.findIndex(x => x.live);
   if (!gxNow) { if (i >= 0 && !gxSs[i].start) return; if (i >= 0) renderGames(gxText, gxOpen()); return; }   // (no game, or it just ended: the log that comes with its end draws the list again; one too short for a line, here, 11-06)
   // (another game than the one picked: not in the list, only in the numbers)
@@ -6748,6 +6753,72 @@ function gxFill(sess) { const z = sess && sess.querySelector('.gx-lz'); if (!z) 
 const gxActs = (x, i) => x.live ? '' : '<div class="gx-acts">' + (x.custom ? '<label class="gx-nmf"><em>name</em><input class="gx-nm" data-g="' + i + '" value="' + esc(x.game) + '" maxlength="60" spellcheck="false" title="Rename"></label>' : '') +
   '<span class="sp"></span><button class="wclear gx-del" data-g="' + i + '" title="Move this session to the bin, where it can be brought back">Delete session</button></div>';
 const gxOpen = () => [...document.querySelectorAll('#glist .gx-sess.open')].map(s => gxSs[+s.dataset.g] && gxSs[+s.dataset.g].start);
+// ---- two sessions side by side (his pick 11-06): two picked, Compare shows the newer one's summary with the older
+// one's under each number, one chart with the older one's fps dashed (both from their start), and both maxima of each
+// reading with the change; worse past a step in yellow (fps 8% lower, 4 °C hotter). Back, Esc or the popup closing
+// end it ----
+let gxCmp = null;   // { a, b }: the two by start and game, a the older
+const gxCmpOf = q => gxAll.find(x => x.start === q.start && x.game === q.game) || null;
+function gxCmpStart(xs) {
+  const [a, b] = xs.slice().sort((p, q) => p.start - q.start);
+  gxCmp = { a: { start: a.start, game: a.game }, b: { start: b.start, game: b.game } };
+  pkMode('g', null, true); GX.menu = false; gmodal.classList.add('cmp');
+  gxCmpDraw(); const c = $('glist').closest('.mcard'); if (c) c.scrollTop = 0;
+}
+function gxCmpEnd() { gxCmp = null; gmodal.classList.remove('cmp'); renderGames(gxText); }
+function gxCmpDraw() {
+  const A = gxCmpOf(gxCmp.a), B = gxCmpOf(gxCmp.b);
+  if (!A || !B) { gxCmpEnd(); return; }   // (one of them went to the bin meanwhile, 11-06)
+  const cap = w => w.charAt(0).toUpperCase() + w.slice(1), lab = x => { const d = new Date(x.start * 1000); return cap(GX_WD[d.getDay()].slice(0, 3)) + ' ' + d.getDate() + ' ' + cap(GX_MON[d.getMonth()]) + ' ' + hhmm(x.start); };
+  const sg = n => (n > 0 ? '+' : n < 0 ? '\u2212' : '\u00b1') + Math.abs(n);
+  // the two rows as the list draws them, A and B where the chevron was, nothing to open
+  const row = (x, t) => { const n = document.createElement('div'); n.innerHTML = gxSessHtml(x, -1, false); const r = n.firstChild, ch = r.querySelector('.gx-row > svg'), det = r.querySelector('.gx-det'), rw = r.querySelector('.gx-row');
+    if (ch) ch.outerHTML = '<span class="gx-ab' + (t === 'B' ? ' b' : '') + '">' + t + '</span>'; if (det) det.remove(); rw.removeAttribute('tabindex'); rw.removeAttribute('role'); return r.outerHTML; };
+  // the summary: B's, with A's under each number and the change
+  const sA = gxSplit(A), sB = gxSplit(B), itA = gxItems(A), itB = gxItems(B);
+  const tmp = document.createElement('div'); tmp.innerHTML = gxSummary(B, sB, itB); const s5 = tmp.firstChild, d = [...s5.children];
+  const hot = its => its.filter(t => /°/.test(t.u) && t.m !== null && !gxTj(t)).reduce((p, q) => !p || q.m > p.m ? q : p, null), hA = hot(itA), hB = hot(itB);
+  const sub = (el, txt, y) => { if (el) el.insertAdjacentHTML('beforeend', '<span class="gx-d' + (y ? ' y' : '') + '">' + txt + '</span>'); };   // (under B's own lines, 11-06)
+  if (A.fps > 0 && B.fps > 0) sub(d[0], 'A ' + gxF(A.fps) + ', ' + sg(Math.round((B.fps - A.fps) / A.fps * 100)) + '%', B.fps < A.fps * 0.92); else sub(d[0], 'A ' + gxF(A.fps));
+  sub(d[1], 'A ' + (A.custom ? durS(A.end - A.start) : durTxt(gxPlay(A))));
+  if (hA && hB) sub(d[2], 'A ' + gxF(hA.m, 1) + ' ' + esc(hA.u) + ', ' + sg(Math.round((hB.m - hA.m) * 10) / 10) + ' ' + esc(hB.u), hB.m - hA.m >= 4);
+  if (sA.n) sub(d[3], 'A ' + sA.top[0] + ' ' + sA.top[1] + '%');
+  sub(d[4], 'A ' + Math.max(0, +A.warns || 0));
+  // the chart: B's, A's fps dashed over it on one scale (cut at B's length)
+  const gi = gxTl.length, w = document.createElement('div'); w.innerHTML = gxTimeline(B, sB, gi); const tl = w.firstChild;
+  const DB = gxMinutes(B), DA = gxMinutes(A), N = DB.N, af = DA.fv.slice(0, N), svg = tl && tl.querySelector('svg.gx-fpsc');
+  if (svg) {
+    const all = DB.fv.concat(DB.lv, af).filter(v => v !== null), mn = Math.min(...all), mx = Math.max(...all), sp0 = Math.max(1, mx - mn);
+    const raw = Math.max(5, sp0 * 1.25 / 4), pw = Math.pow(10, Math.floor(Math.log10(raw))), step = [1, 2, 2.5, 5, 10].map(s => s * pw).find(s => s >= raw);
+    let lo = Math.max(0, Math.floor((mn - sp0 * 0.08) / step) * step), top = Math.ceil((mx + sp0 * 0.08) / step) * step;
+    if (top - lo < 2 * step) { top += step; lo = Math.max(0, lo - step); }
+    gxTl[gi].lo = lo; gxTl[gi].top = top;   // (its read-out's dots on the same scale, 11-06)
+    const H = 140, X = m => ((m + 0.5) * 10).toFixed(1), Y = v => (H - (Math.max(lo, Math.min(top, v)) - lo) / (top - lo) * H).toFixed(1);
+    const runs = arr => { const out = []; let cur = null; arr.forEach((v, m) => { if (v === null) { cur = null; return; } if (!cur) out.push(cur = []); cur.push(m); }); return out; };
+    const line = (arr, cls) => runs(arr).map(r => '<polyline class="' + cls + '" points="' + (r.length > 1 ? r.map(m => X(m) + ',' + Y(arr[m])).join(' ') : (+X(r[0]) - 3) + ',' + Y(arr[r[0]]) + ' ' + (+X(r[0]) + 3) + ',' + Y(arr[r[0]])) + '"/>').join('');
+    let grid = '', yl = '', band = '';
+    for (let v = lo; v <= top + 1e-9; v += step) { grid += '<line x1="0" x2="' + N * 10 + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/>'; yl += '<span style="top:' + (+Y(v) / H * 100).toFixed(2) + '%">' + +v.toFixed(1) + '</span>'; }
+    for (const r of runs(DB.fv)) if (r.length > 1 && r.every(m => DB.lv[m] !== null)) band += '<polygon points="' + r.map(m => X(m) + ',' + Y(DB.fv[m])).join(' ') + ' ' + r.slice().reverse().map(m => X(m) + ',' + Y(DB.lv[m])).join(' ') + '"/>';
+    svg.innerHTML = grid + band + line(DB.lv, 'lo') + line(af, 'ca') + line(DB.fv, 'fp');
+    const ya = tl.querySelector('.gx-tr.f .gx-yax'); if (ya) ya.innerHTML = yl;
+    const leg = tl.querySelector('.gx-leg'), f = leg && leg.querySelector('b.ln.fp');
+    if (f) { f.parentElement.lastChild.textContent = 'fps B'; f.parentElement.insertAdjacentHTML('beforebegin', '<span><b class="ln ca"></b>fps A</span>'); }
+  }
+  if (tl) { const ch = tl.querySelector(':scope > .gx-ch span'); if (ch) ch.textContent = ''; }
+  // the readings: A's max, B's max, the change
+  let grp = '';
+  for (const s of gxLayout().secs) {
+    if (s.hide || s.kind !== 'list') continue;
+    const rows = s.cells.map(c => {
+      const a = gxFind(itA, c), b = gxFind(itB, c); if (!a || !b || a.m === null || b.m === null) return '';
+      const gb = b.u === 'MB', cv = v => gb ? v / 1024 : v, u = gb ? 'GB' : b.u, k = /°/.test(u) || gb ? 1 : 0, dv = Math.round((cv(b.m) - cv(a.m)) * (k ? 10 : 1)) / (k ? 10 : 1);
+      return '<div class="gx-rw"><span class="n">' + esc(gxCellName(c)) + '</span><span class="a">' + gxF(cv(a.m), k) + '</span><span class="m">' + gxF(cv(b.m), k) + '<u>' + esc(u) + '</u></span><span class="d' + (/°/.test(u) && dv >= 4 ? ' y' : '') + '">' + sg(dv) + '</span></div>';
+    }).join('');
+    if (rows) grp += '<div class="gx-grp"><div class="gx-ch gx-ch4"><i>' + esc(s.name) + '</i><span>A max</span><span>B max</span><span>change</span></div>' + rows + '</div>';
+  }
+  $('glist').innerHTML = '<div class="gx-cmp"><div class="gx-cmph"><button class="gxh-b gx-cmpb" title="Back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><b>' + esc(A.game === B.game ? B.game : A.game + ', ' + B.game) + '</b>' + lab(A) + ' and ' + lab(B) + '</div>' +
+    row(A, 'A') + row(B, 'B') + '<div class="gx-in">' + s5.outerHTML + (tl ? tl.outerHTML : '') + (grp ? '<div class="gx-groups">' + grp + '</div>' : '') + '</div></div>';
+}
 // a custom session's new name: saved when the field changes, or when it is left with a name a redraw put back
 function gxName(el) {
   el._nmKeep = 0;
@@ -6761,6 +6832,7 @@ $('glist').addEventListener('keydown', e => {
   else if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.gx-row')) { e.preventDefault(); e.target.click(); }   // (a session opened from the keyboard)
 });
 $('glist').addEventListener('click', e => {
+  if (e.target.closest('.gx-cmpb')) { gxCmpEnd(); return; }
   const pg = e.target.closest('.gx-purge'); if (pg) { pkPurge('g', pg.closest('.gx-sess')); return; }   // (a bin row's own button: not a pick)
   if (PK.g.mode) { const s = e.target.closest('.gx-sess'); if (s) pkToggle('g', s); return; }   // (picking: a click picks)
   const d = e.target.closest('.gx-del');
@@ -7218,6 +7290,7 @@ document.addEventListener('keydown', ev => {
       if (GX.menu) { gxSet({ menu: false }); return; }
       if (typing && gmodal.contains(ev.target)) { ev.target.blur(); return; }
       if (GZ.on) { GZ.on = false; renderGz(); return; }
+      if (gxCmp) { gxCmpEnd(); return; }   // (two compared: back to the list, 11-06)
     }
     if (tm && tm.id === 'modal' && modalCid) { closeDetail(); return; }
     if (tm && ['wmodal', 'gmodal', 'smodal', 'setmodal'].includes(tm.id)) { tm.classList.remove('open'); return; }

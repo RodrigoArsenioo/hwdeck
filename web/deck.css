@@ -1060,6 +1060,16 @@ select.dsel-n { display: none; }
 /* under a session's details: its name (yours) and Delete */
 #gmodal .gx-tln { font-size: 12px; color: #6f6f6f; padding: 18px 0 20px; text-align: center; border: 1px dashed #262626; border-radius: 9px; margin-bottom: 4px; }
 #gmodal .gx-acts { display: flex; align-items: center; gap: 14px; padding-top: 14px; min-width: 0; } #gmodal .gx-acts .sp { flex: 1; }
+/* two sessions side by side (11-06): their rows marked A and B, B's summary with A's under it, A's fps dashed */
+#gmodal.cmp #gsum { display: none; }
+#gmodal .gx-cmph { display: flex; align-items: center; gap: 12px; margin: 4px 0 14px; font-size: 13px; color: #9a9a9a; } #gmodal .gx-cmph b { color: #e8e8e8; font-weight: 600; font-size: 14px; }
+#gmodal .gx-cmp .gx-sess { pointer-events: none; }
+#gmodal .gx-ab { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; box-sizing: border-box; border-radius: 5px; border: 1px solid #3a3a3a; font-size: 10.5px; font-weight: 600; color: #9a9a9a; } #gmodal .gx-ab.b { color: #e8e8e8; border-color: #6a6a6a; }
+#gmodal .gx-cmp .gx-s5 > div > span.gx-d { margin-top: 3px; color: #6f6f6f; } #gmodal .gx-cmp .gx-s5 > div > span.gx-d.y { color: var(--yellow); }
+#gmodal .gx-cmp .gx-rw, #gmodal .gx-cmp .gx-ch.gx-ch4 { grid-template-columns: minmax(0, 1fr) 46px 64px 44px; } #gmodal .gx-cmp .gx-ch.gx-ch4 { display: grid; gap: 10px; }
+#gmodal .gx-cmp .gx-ch4 i { font-style: normal; white-space: nowrap; } #gmodal .gx-cmp .gx-ch4 span { text-align: right; }
+#gmodal .gx-cmp .gx-rw .d { text-align: right; color: #6f6f6f; font-variant-numeric: tabular-nums; } #gmodal .gx-cmp .gx-rw .d.y { color: var(--yellow); }
+#gmodal .gx-cmp .gx-fpsc polyline.ca { stroke: #8a8a8a; stroke-dasharray: 5 5; } #gmodal .gx-cmp .gx-leg b.ln.ca { background: repeating-linear-gradient(90deg, #8a8a8a 0 3px, transparent 3px 6px); }
 #gmodal .gx-nmf { display: flex; align-items: center; gap: 12px; min-width: 0; }
 #gmodal .gx-nmf em { font-style: normal; font-size: 10.5px; font-weight: 600; color: #6a6a6a; text-transform: uppercase; letter-spacing: .09em; }
 #gmodal .gx-nm { background: #121212; border: 1px solid #2a2a2a; color: #e6e6e6; font: inherit; font-size: 13px; border-radius: 8px; padding: 6px 10px; width: 260px; max-width: 100%; min-width: 0; transition: border-color 120ms; }
