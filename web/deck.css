@@ -71,6 +71,7 @@ nav#screens .ind.still { transition: none; }
 .ebb { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; color: #a8a8a8; font: inherit; font-size: 12px; padding: 5px 9px 5px 7px; border-radius: 8px; cursor: pointer; transition: background 150ms, color 150ms; }
 .ebb svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .ebb:hover { background: #262626; color: #fff; } .ebb.on { background: #2c2c2c; color: #fff; }   /* (a drawer open: lit) */
+.ebb.unhov:hover { background: none; color: #a8a8a8; }   /* (just switched off under the pointer: it looks off until the pointer leaves, his 11-06) */
 .app:not(.editing) .tbar .grow + .editbar + .grow { display: none; }   /* (out of edit mode one spacer is enough) */
 /* (narrow windows while editing, 11-02: the strip's words go, its buttons keep their icons and tips; narrower, the title
    goes and the view tabs tighten, so the window's own buttons stay on screen) */
@@ -119,6 +120,7 @@ nav#screens .ind.still { transition: none; }
 .pane-h .pin { padding: 4px; } .pane-h .pin svg { width: 13px; height: 13px; }
 .pane-h .pin.on { color: #c9dafa; background: #1b2436; }
 .pane-h { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; }
+.pane-h .back { margin: -4px -4px -4px -6px; } .pane-h .back.none { display: none; }   /* (a cell's settings back to its category's, a category's back to the view's, his 11-06) */
 .pane-h h3 { font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .pane-h .grow { flex: 1; }
 

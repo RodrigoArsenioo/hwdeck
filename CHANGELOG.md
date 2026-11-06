@@ -3,6 +3,10 @@
 ## 2.4.1 (2026-11-06)
 
 - Storage no longer has a pin button: the Storage button in the editing bar opens and closes it.
+- A button in the editing bar you click to close its panel no longer looks selected while the pointer is still on it.
+- The settings panel has a back button: from a cell to its category, from a category to the view's settings.
+- Height's hint describes the option picked, All fit or Fill the window.
+- A tile's width in its settings is the width it is drawn at: one a narrow window widens past its own share shows the wider one.
 
 ## 2.4.0 (2026-11-05)
 

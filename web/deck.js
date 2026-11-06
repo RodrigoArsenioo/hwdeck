@@ -3464,7 +3464,7 @@ for (const k of ['L', 'R']) {
   const leave = e => { if (inside(e)) return; if (d.ghost) { d.ghost = false; return; } clearTimeout(d.t); d.t = setTimeout(() => { if (d.hover) d.byPick = false; d.hover = false; syncDrawers(); }, drag && drag.started ? 0 : 380); };
   for (const el of [d.el, d.tab]) { el.addEventListener('mouseenter', enter); el.addEventListener('mouseleave', leave); }
   d.tab.addEventListener('click', () => { d.pinned = true; d.hover = true; syncDrawers(); saveState(); });
-  if (d.pin) d.pin.addEventListener('click', () => { d.pinned = !d.pinned; if (!d.pinned) d.placed = false; syncDrawers(); saveState(); });   // (unpinned: back to opening away from the selection)
+  if (d.pin) d.pin.addEventListener('click', () => { d.pinned = !d.pinned; if (!d.pinned) d.placed = false; syncDrawers(); saveState(); unhover(d.pin); });   // (unpinned: back to opening away from the selection)
   // (to the other side: Storage there already, or the settings pinned there, trade places with it, both sliding across)
   $('swap' + k).addEventListener('click', () => {
     const o = DR[k === 'L' ? 'R' : 'L'], cur = k === 'R' ? (d.el.classList.contains('left') ? 'l' : 'r') : d.side, to = cur === 'l' ? 'r' : 'l';   // (the settings: the side they show on)
@@ -3480,7 +3480,10 @@ for (const k of ['L', 'R']) {
 $('undo').onclick = $('undoE').onclick = undo; $('redo').onclick = $('redoE').onclick = redo;
 $('editDone').onclick = () => setEdit(false);
 // (the editing strip opens and shuts the drawers, 11-02: the side tabs were easy to miss; open: pinned until shut)
-for (const [b, k] of [['ebStore', 'L'], ['ebSel', 'R']]) $(b).onclick = () => { const d = DR[k]; d.pinned = !d.el.classList.contains('open'); d.hover = false; if (!d.pinned) { d.byPick = false; d.placed = false; } syncDrawers(); saveState(); };
+for (const [b, k] of [['ebStore', 'L'], ['ebSel', 'R']]) $(b).onclick = () => { const d = DR[k]; d.pinned = !d.el.classList.contains('open'); d.hover = false; if (!d.pinned) { d.byPick = false; d.placed = false; } syncDrawers(); saveState(); unhover($(b)); };
+// (a toggle just switched off under the pointer drops its hover look until the pointer leaves: lit by the hover it looked
+// still on, his 11-06 "when i toggle off ... it doesn't look" unselected)
+function unhover(b) { if (!b || b.classList.contains('on')) return; b.classList.add('unhov'); b.addEventListener('mouseleave', () => b.classList.remove('unhov'), { once: true }); }
 $('toastUndo').onclick = () => { if (nudge) flushNudge(); if (toastDepth >= 0 && undoSeq === toastDepth) undo(); $('toast').classList.remove('show'); retireToastUndo(); };   // (a nudge still to land is newer: the Undo is stale then)
 // the clean view: a cell opens when a press that started on it is let go, by the cell it was, not by the element (a
 // redraw between press and release, as when a fresh window settles, made the browser drop the click)
@@ -3716,6 +3719,7 @@ function renderInsp() {
   const c = sel && S.L.cells[sel], cat = !c && selCat ? catById(selCat) : null;
   syncDrawers();
   setText($('inspTitle'), c ? 'Cell' : cat ? 'Category' : S.screen === 'overview' ? 'Overview' : VNAME[S.screen] + ' view');
+  $('inspBack').classList.toggle('none', !c && !cat);
   if (!S.edit) return;
   if (cat) { box.innerHTML = catPanel(cat); refocus(); return; }
   if (!c) { box.innerHTML = viewPanel(); refocus(); return; }
@@ -3913,6 +3917,8 @@ function drawCurveSvg(c, e) {
   box._scale = { l, t, W, H, b, rr, xmin, xmax, ymax, top };
 }
 const insp = $('insp');
+// back: a cell's settings to its category's, a category's to the view's (his 11-06 "a back button to roam around")
+$('inspBack').onclick = () => { const c = sel && catOf(sel); if (c) { selectCat(c.id); unhover($('inspBack')); } else if (selCat) clearSel(); };
 $('inspClose').onclick = () => { const d = DR.R; clearTimeout(d.t); d.hover = false; d.pinned = false; d.byPick = false; clearSel(); saveState(); };
 function setCell(fn, withUndo) {
   const c = S.L.cells[sel]; if (!c) return;
@@ -4087,8 +4093,9 @@ function viewPanel() {
       h += '<div class="fgrp"><span class="lab">Start from</span><div class="tpls">' + TPLS.map(([k, t, gc, gr, areas]) => '<button class="tpl" data-tpl="' + k + '"' + (k === 'copy' && !canCopy ? ' disabled title="' + VNAME[ov] + ' is placed automatically: there is nothing to copy"' : '') + '>' +
         '<span class="pic" style="grid-template-columns:' + gc + ';grid-template-rows:' + gr + '">' + areas.map(a => '<i style="grid-area:' + a + '"></i>').join('') + '</span>' + (k === 'copy' ? 'Copy from ' + VNAME[ov] : t) + '</button>').join('') + '</div>' +
         '<span class="hint">Rest the pointer on one to see it with your categories, click to use it. Undo brings yours back.</span></div>';
-      h += '<div class="fgrp">' + (vn === 'tiles' ? segL('Height', 'fill', [['fit', 'All fit'], ['fill', 'Fill the window']], !own || !v.rows.some(r => r.h) ? 'fit' : v.rows.every(r => r.h) ? 'fill' : '') +
-        '<span class="hint">Fill the window: room left under the tiles makes them taller and their graphs bigger, up to twice their size.</span>' : '') +
+      const hv = !own || !v.rows.some(r => r.h) ? 'fit' : v.rows.every(r => r.h) ? 'fill' : '';   // (its hint says what the one picked does, his 11-06)
+      h += '<div class="fgrp">' + (vn === 'tiles' ? segL('Height', 'fill', [['fit', 'All fit'], ['fill', 'Fill the window']], hv) +
+        '<span class="hint">' + (hv === 'fit' ? 'All fit: the tiles keep their own height, and any room left under them stays empty.' : 'Fill the window: room left under the tiles makes them taller and their graphs bigger, up to twice their size.') + '</span>' : '') +
         segL('Spacing', 'gap', [['tight', 'Tight'], ['', 'Normal'], ['roomy', 'Roomy']], v && v.gap || '') + '<span class="hint">The gaps between categories and between their ' + (vn === 'tiles' ? 'tiles' : 'rows') + '.</span></div>';
     } else {
       const n = own ? v.rows[0].cols.length : document.querySelectorAll('#view .gtable').length;
@@ -4156,9 +4163,13 @@ function cellLayHtml(cid, c) {
   h += cl.name != null ? '<div class="fld"><span>Name in ' + V + '</span><div class="vname"><input id="lvName" maxlength="' + NAME_MAX + '" value="' + esc(cl.name) + '" placeholder="' + esc(cellName(c)) + '"><button class="ib" data-lay="vname-x" title="The same name as in the other views">' + ICONS.x + '</button></div></div>'
     : '<button class="linkbtn" data-lay="vname-on" style="align-self:flex-start">Different name in ' + V + '</button>';
   if (vn === 'tiles') {
-    const z = cellSize(cid), G = tileGeo(tileEl(cid)), pct = z.f ? z.f * 100 : G ? Math.min(G.s.w, G.k) / G.k * 100 : null;   // (a normal tile: the share it is drawn at)
+    // (the share it is drawn at: a window too narrow for a tile's own share widens it past it, three of 25% in a row drawn
+    // at a third each, his 11-06 "showing 25% but it should show 33%"; its own when the two are the same)
+    const z = cellSize(cid), G = tileGeo(tileEl(cid)), own = z.f ? z.f * 100 : G ? Math.min(G.s.w, G.k) / G.k * 100 : null;
+    const drawn = G && G.tw > 0 ? Math.min(100, (G.r.width + G.g) / (G.tw + G.g) * 100) : null;
+    const pct = drawn == null ? own : own != null && Math.abs(drawn - own) < 1 ? own : (PCTS.find(q => Math.abs(q - drawn) < 1) || drawn);
     const num = (k, v, u) => '<label><input type="number" data-sz="' + k + '" value="' + v + '" step="any" min="0"><i>' + u + '</i></label>';
-    h += '<div class="fld"><span>Width</span><div class="szin">' + num('f', pct == null ? '' : Math.round(pct * 10) / 10, '%') + '</div>' + qpick('cf', PCTS.map(r4), z.f ? z.f * 100 : null, v => Math.round(v) + '%', 0.5) + '</div>' +
+    h += '<div class="fld"><span>Width</span><div class="szin">' + num('f', pct == null ? '' : Math.round(pct * 10) / 10, '%') + '</div>' + qpick('cf', PCTS.map(r4), pct, v => Math.round(v) + '%', 0.5) + '</div>' +
       '<div class="fld"><span>Height</span><div class="szin">' + num('h', r4(z.h), 'rows') + '</div>' + qpick('ch', RQ, z.h, v => String(v), 0.01) + '</div>' +
       '<label class="chk"><input type="checkbox" data-lay="nl"' + (cl.nl ? ' checked' : '') + '> Starts a new row</label>';
   } else if (cat) {
