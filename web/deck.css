@@ -580,7 +580,7 @@ select.dsel-n { display: none; }
 .dsel-m button.on { background: #262626; color: #fff; }
 .dsel-m button:focus-visible { outline: none; background: #262626; }
 .dsel-m button:disabled { opacity: 0.45; cursor: default; }
-.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .two > * { min-width: 0; }   /* (a long pick in a list there, the Big reading, no longer widens its column past the drawer: it scrolled sideways 15 px, 11-07) */
 .seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 8px; padding: 2px; background: var(--panel); width: 100%; }
 .seg button { flex: 1; background: none; border: 0; color: var(--muted); font-size: 12.5px; padding: 4px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
 .seg button.on { background: var(--seg-on, #262626); color: var(--pill-fg, var(--hi)); }
@@ -683,12 +683,35 @@ select.dsel-n { display: none; }
 :root[data-motion="minimal"] #mtip, :root[data-motion="off"] #mtip { transition: none; }   /* (as its guide and dot: no fade, 11-06) */
 .mstats { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 10px; font-size: 13px; color: #a8a8a8; font-variant-numeric: tabular-nums; }
 .mstats em { font-style: normal; color: #737373; margin-right: 5px; font-size: 12px; }
+.mstats .msub { flex-basis: 100%; }   /* (the cell's own line always under the numbers, not beside them when it fits: 11-07, his "make it uniform all go below") */
 /* (prettify 11-02: the view tabs' look, as the Sessions periods have) */
 .rng { display: inline-flex; position: relative; background: #151515; border: 1px solid #242424; border-radius: 9px; padding: 2px; text-transform: none; letter-spacing: 0; font-weight: 500; }
 .rng button { position: relative; z-index: 1; background: none; border: 0; color: #8c8c8c; font: inherit; font-size: 12.5px; padding: 4px 12px; border-radius: 7px; cursor: pointer; transition: color 200ms; }
 .rng button:hover { color: #e0e0e0; } .rng button.on { color: var(--pill-fg, #fff); }
-.rng .ri { position: absolute; top: 2px; bottom: 2px; left: 0; width: 0; border-radius: 7px; background: var(--pill, #2b2b2b); transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.rng .ri { position: absolute; top: 2px; bottom: 2px; left: 2px; width: 0; border-radius: 7px; background: var(--pill, #2b2b2b); transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .rng .ri.still { transition: none; }
+/* range selector B (11-07): the hours left, the days right; the group without the range picked shows no pill */
+.mrngs { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 16px 0 8px; }
+.mrngs .rng button { padding: 4px 13px; }
+.rng .ri { transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 200ms; }
+.rng .ri.off { opacity: 0; }
+.rng .ri.still { transition: none; }
+#mgraph.grab { cursor: grabbing; }
+/* the bar under the chart: where the window is in the range picked; drag it, drag its ends. Its start and end beside its ends */
+.mbar { position: relative; height: 2px; margin: 12px 84px 16px 84px; border-radius: 2px; background: #1c1c1c; cursor: pointer; transition: height 160ms, background-color 160ms; }
+.mbar::before { content: ''; position: absolute; left: -4px; right: -4px; top: -9px; bottom: -9px; }
+.mbar i { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: #8c8c8c; transition: background-color 160ms; }
+.mbar.act { height: 3px; background: #222; } .mbar.act i { background: #dcdcdc; }
+.mbar .ls, .mbar .le { position: absolute; top: 50%; transform: translateY(-50%); font-size: 12px; color: #cfcfcf; white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: none; transition: color 160ms; }
+.mbar.act .ls, .mbar.act .le { color: #fff; }
+.mbar[hidden] { display: none; }
+:root[data-motion="off"] .mbar, :root[data-motion="off"] .mbar i, :root[data-motion="off"] .rng .ri { transition: none; }
+/* the same bar under the period charts and a session's chart, in the plot's column */
+.mbar.in { display: block; margin: 14px 0 6px; }
+.gx-tl .mbar.in { margin: 10px 0 4px; }
+.gx-lcclip { overflow-x: clip; }
+#gsum.wdrag .gx-lcp, #wsum.wdrag .wx-plot, #glist.wdrag .gx-tl .gx-plot { cursor: grabbing; }
+:is(#gmodal, #wmodal) .gx-tl .gx-plot { cursor: crosshair; }
 .wday { font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.09em; margin: 14px 0 4px; }
 .wrow { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1e1e1e; font-size: 13px; }
 .wrow:last-child { border-bottom: 0; }
@@ -737,8 +760,8 @@ select.dsel-n { display: none; }
 :is(#gmodal, #wmodal) .gx-sdet > div { overflow: hidden; min-height: 0; }
 :is(#gmodal, #wmodal) .gx-sum.open .gx-sdet:has(.gx-menu) > div { overflow: visible; }   /* (its game or cell list open: not cut off) */
 :is(#gmodal, #wmodal) .gx-sdin { padding: 0 12px 15px 46px; cursor: default; }   /* (a session's details: in line with the numbers above) */
-:is(#gmodal, #wmodal) .gx-xh { display: flex; align-items: stretch; justify-content: space-between; gap: 10px; margin: 2px 0 6px; }   /* (the game list on the left, the periods on the right) */
-:is(#gmodal, #wmodal) .gx-ddw { position: relative; flex: none; display: flex; }   /* (the game list as tall as the periods beside it) */
+:is(#gmodal, #wmodal) .gx-xh { display: flex; align-items: stretch; justify-content: space-between; gap: 10px; margin: 2px 0 6px; }   /* (the periods on the left, the game or cell list on the right, 11-07) */
+:is(#gmodal, #wmodal) .gx-ddw { position: relative; flex: none; display: flex; margin-left: auto; }   /* (the game list as tall as the periods beside it) */
 /* (the game list and the periods: the view tabs' look (Tiles / Overview / Grid), their greys, size and glide) */
 :is(#gmodal, #wmodal) .gx-dd { display: inline-flex; align-items: center; gap: 9px; min-height: 32px; max-width: 230px; background: #151515; border: 1px solid #242424; border-radius: 9px; color: #8c8c8c; font: inherit; font-size: 13.5px; padding: 0 12px 0 14px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 200ms; }
 :is(#gmodal, #wmodal) .gx-dd .gx-chev { flex: none; transform: rotate(90deg); }
@@ -749,7 +772,9 @@ select.dsel-n { display: none; }
 :is(#gmodal, #wmodal) .gx-per .ind.still { transition: none; }
 :is(#gmodal, #wmodal) .gx-per button { position: relative; z-index: 1; background: none; color: #8c8c8c; font-size: 13.5px; padding: 5px 14px; border-radius: 7px; transition: color 200ms; }
 :is(#gmodal, #wmodal) .gx-per button:hover { color: #e0e0e0; } :is(#gmodal, #wmodal) .gx-per button.on { background: none; color: var(--pill-fg, #fff); }
-:is(#gmodal, #wmodal) .gx-menu { top: 36px; left: 0; min-width: 240px;   /* (under the game list, opening to the right: it sits on the left) */ max-height: 330px; overflow-y: auto; }
+.gx-pl { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }   /* (the periods and Days' box, on the left, 11-07) */
+:is(#gmodal, #wmodal) .gx-pl .setin.spin { width: 78px; }
+:is(#gmodal, #wmodal) .gx-menu { top: 36px; right: 0; left: auto; min-width: 240px;   /* (under the game list, opening to the left: it sits on the right, 11-07) */ max-height: 330px; overflow-y: auto; }
 :is(#gmodal, #wmodal) .gx-menu button { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; white-space: nowrap; }
 :is(#gmodal, #wmodal) .gx-menu button small { color: #6f6f6f; font-size: 11.5px; font-variant-numeric: tabular-nums; }
 :is(#gmodal, #wmodal) .gx-menu button.on { background: #262626; color: #fff; }
@@ -840,7 +865,7 @@ select.dsel-n { display: none; }
 /* the charts: fps (its 1% low under it, the band between), what limited each minute; a hover guide runs through both */
 :is(#gmodal, #wmodal) .gx-hz { position: relative; }
 :is(#gmodal, #wmodal) .gx-plot { position: relative; display: block; }
-:is(#gmodal, #wmodal) .gx-fpsc, :is(#gmodal, #wmodal) .gx-bnc { display: block; width: 100%; overflow: visible; }
+:is(#gmodal, #wmodal) .gx-fpsc, :is(#gmodal, #wmodal) .gx-bnc { display: block; width: 100%; overflow: hidden; }   /* (hidden: a window shows part of it, B) */
 :is(#gmodal, #wmodal) .gx-fpsc { height: 140px; }
 :is(#gmodal, #wmodal) .gx-bnc { height: 40px; }
 :is(#gmodal, #wmodal) .gx-fpsc line { stroke: #262626; stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -921,13 +946,22 @@ select.dsel-n { display: none; }
 .setrow small.y { color: var(--yellow); }
 .setin { background: var(--panel); border: 1px solid var(--line2); color: var(--fg); font: inherit; font-size: 13px; border-radius: 7px; padding: 5px 9px; width: 210px; flex: none; }
 .setin:focus { border-color: var(--edit); outline: none; }
+/* a number box with arrows (11-07): Settings' box, an up and a down arrow inside it; the field in it bare */
+.setin.spin { display: inline-flex; align-items: center; gap: 7px; padding-right: 7px; } .setin.spin[hidden] { display: none; }
+.setin.spin:focus-within { border-color: var(--edit); }
+.setin.spin input { all: unset; flex: 1; min-width: 0; text-align: right; font: inherit; color: inherit; font-variant-numeric: tabular-nums; }
+.setin.spin input::placeholder { color: #5a5a5a; }
+.spin .ud { display: flex; flex-direction: column; gap: 2px; flex: none; color: #8f8f8f; }
+.spin .ud b { display: flex; padding: 1px 2px; margin: 0 -2px; cursor: pointer; border-radius: 3px; transition: color 140ms; } .spin .ud b:hover { color: #fff; }
+.spin .ud svg { width: 10px; height: 6px; stroke: currentColor; fill: none; stroke-width: 1.7; display: block; }
+.setin.spin:focus-within .ud { color: #c8c8c8; }
 .seg.seg3 { width: auto; flex: none; } .seg.seg3 button { padding: 4px 11px; }
 /* (Settings' segments: the pick's highlight is a pill that slides over to it, like the view tabs'; 11-02, the motion audit) */
 #setbody .seg.pill { position: relative; } #setbody .seg.pill > button { position: relative; z-index: 1; } #setbody .seg.pill > button.on { background: none; }
 #setbody .seg.pill > .ind { position: absolute; top: 2px; bottom: 2px; left: 2px; width: 0; border-radius: 6px; background: var(--seg-on, #262626);
                             transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 #setbody .seg.pill > .ind.still { transition: none; }
-.setkeep { display: inline-flex; align-items: center; gap: 10px; flex: none; } .setkeep .setin { width: 64px; text-align: right; font-variant-numeric: tabular-nums; }   /* (Keep: the days, or forever) */
+.setkeep { display: inline-flex; align-items: center; gap: 10px; flex: none; } .setkeep .setin { width: 64px; text-align: right; font-variant-numeric: tabular-nums; } .setkeep .setin.spin { width: 78px; }   /* (Keep: the days, or forever) */
 .tog2 { width: 34px; height: 19px; border-radius: 999px; background: #2a2a2a; position: relative; border: 0; cursor: pointer; flex: none; transition: background 220ms; }
 .tog2::after { content: ''; position: absolute; top: 2.5px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #9a9a9a; transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), background 220ms; }   /* (it slides across, simple and smooth: 11-02; the page plays it when it draws a switch again) */
 .tog2.on { background: var(--tog-on, #d0d0d0); } .tog2.on::after { transform: translateX(14px); background: var(--tog-knob, #161616); }   /* (11-02: no blue unless the look's colour is Accent) */
@@ -968,6 +1002,18 @@ select.dsel-n { display: none; }
 .notice .nt b { color: #ececec; font-size: 13.5px; font-weight: 600; }
 .notice .nt .ib { padding: 4px; margin: -4px -2px -4px 0; } .notice .nt .ib svg { width: 14px; height: 14px; }
 .notice .na { display: flex; justify-content: flex-end; margin-top: 10px; }
+/* the update notes (2.4.2): one card, the ones after it as sheets peeking out above it, a deck */
+#upw { position: absolute; right: 18px; bottom: 18px; z-index: 95; width: min(380px, calc(100% - 36px)); pointer-events: none; }
+#upw .notice { position: relative; right: auto; bottom: auto; width: 100%; z-index: 1; }
+#upn > * { transition: opacity 140ms; } #upn.swap > * { opacity: 0; }
+#upn .nt { gap: 8px; } #upn .nt b { margin-right: auto; }
+#upn .upc { font-size: 12px; color: #6f6f6f; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#upn ul { margin: 2px 0 0; padding: 0 0 0 16px; max-height: calc(100vh - 150px); overflow-y: auto; } #upn li { margin: 3px 0; } #upn li::marker { color: #555; }
+#upn .na[hidden] { display: none; }
+#upw .upsh { position: absolute; inset: 0; border-radius: 12px; border: 1px solid var(--line2); background: #1a1a1a; transform-origin: 50% 0; opacity: 0; pointer-events: none;
+             transition: opacity 220ms, transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+#upw .s1 { z-index: 0; transform: translateY(-8px) scale(0.95); } #upw .s2 { z-index: -1; background: #171717; transform: translateY(-16px) scale(0.9); }
+#upw[data-n="2"] .notice.show ~ .s1, #upw[data-n="3"] .notice.show ~ .upsh { opacity: 1; }
 /* Saves: Starter above the five slots */
 #sstart .srow2 { margin-bottom: 14px; transition: background 400ms, border-color 150ms, box-shadow 150ms; }   /* (Starter: a block like the slots, a wider gap under it) */
 #sstart .srow2 .sn svg { width: 14px; height: 14px; stroke: #9a9a9a; fill: none; stroke-width: 1.6; stroke-linejoin: round; vertical-align: -2px; }
@@ -1172,7 +1218,9 @@ select.dsel-n { display: none; }
 #wmodal .wx-wk .gx-wd i b { display: block; flex: 1 1 0; background: #b39b3c; }
 #wmodal .wx-wk .gx-wd i b.r, #wmodal .wx-b b.r { background: #b4474b; }
 /* the open bar's chart: a bar a day (a week past 120 days), yellow under red, the average dashed */
-#wmodal .wx-plot { position: relative; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); grid-template-rows: 100%; align-items: end; border-bottom: 1px solid #262626; }
+#wmodal .wx-plot { position: relative; border-bottom: 1px solid #262626; cursor: crosshair; }
+#wmodal .wx-clip { position: absolute; inset: 0; overflow: hidden; }   /* (the window's bars: B, 11-07) */
+#wmodal .wx-bars { position: absolute; top: 0; bottom: 0; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); grid-template-rows: 100%; align-items: end; }
 #wmodal .wx-b { justify-self: center; width: min(62%, 44px); min-height: 2px; display: flex; flex-direction: column-reverse; border-radius: 3px 3px 0 0; overflow: hidden; }
 #wmodal .wx-b b { display: block; flex: 1 1 0; background: #b39b3c; }
 #wmodal .wx-b.z { height: 2px; background: #262626; border-radius: 1px; }

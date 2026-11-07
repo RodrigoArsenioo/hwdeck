@@ -31,7 +31,10 @@ using Microsoft.Web.WebView2.WinForms;
 
 static class AppInfo
 {
-    public const string Version = "2.4.1";
+    public const string Version = "2.4.2";
+    // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
+    // notes' test, 11-07: an install going from one version to the next on one data folder)
+    public static string Run = Version;
     // log timestamps in one fixed form whatever the PC's region (its time separator or calendar would break the page's
     // parsing), with the UTC offset so durations stay right across a summer time change
     public static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture); }
@@ -982,32 +985,202 @@ class Frames
 }
 
 // what each reading did, for every reading (so a cell added now already has its past): the last 15 min at 1 s,
-// 24 h of 1-minute averages and peaks, 7 days of 10-minute averages and peaks. The long ones are saved to hist.bin.
+// 24 h of 1-minute averages and peaks, 7 days of 10-minute averages and peaks, a year of hourly averages and peaks
+// (2.4.2: the popup's 30d, 90d and All). The minutes and blocks are saved to hist.bin, the hours to hist-h.bin.
 // All readings are sampled together, so which second / minute / block a ring slot holds is one array for all.
 class History
 {
-    public const int SecLen = 900, MinLen = 1440, TenLen = 1008;
+    public const int SecLen = 900, MinLen = 1440, TenLen = 1008, HourLen = 8784;   // (hours: 366 days)
     class Track
     {
         public float[] Sec = NaNs(SecLen), MAvg = NaNs(MinLen), MMax = NaNs(MinLen), TAvg = NaNs(TenLen), TMax = NaNs(TenLen);
-        public double MSum, MPeak = double.MinValue, TSum, TPeak = double.MinValue; public int MCnt, TCnt;
+        public float[] HAvg, HMax;   // (made when its first hour is: most readings never need a year of slots)
+        public double MSum, MPeak = double.MinValue, TSum, TPeak = double.MinValue, HSum, HPeak = double.MinValue; public int MCnt, TCnt, HCnt;
         public bool Share;   // 1 or 0 a second (the bottleneck's calls): a minute holds its part of the whole minute, not of the seconds sampled
         public double MVal(int len) { return Share ? MSum / len : MSum / MCnt; }
         public double TVal(int len) { return Share ? TSum / len : TSum / TCnt; }
+        public double HVal(int len) { return Share ? HSum / len : HSum / HCnt; }
+        public void Hours() { if (HAvg == null) { HAvg = NaNs(HourLen); HMax = NaNs(HourLen); } }
     }
     readonly Dictionary<string, Track> tracks = new Dictionary<string, Track>();
     readonly long[] secAt = new long[SecLen];
-    readonly int[] minAt = new int[MinLen], tenAt = new int[TenLen];
+    readonly int[] minAt = new int[MinLen], tenAt = new int[TenLen], hourAt = new int[HourLen];
     Track[] byIndex = new Track[0];
-    int version = -1, curMin = -1, curTen = -1;
+    int version = -1, curMin = -1, curTen = -1, curHour = -1;
     readonly string path;
     public History(string dir)
     {
-        path = Path.Combine(dir, "hist.bin"); jpath = Path.Combine(dir, "hist.jrn");
+        path = Path.Combine(dir, "hist.bin"); jpath = Path.Combine(dir, "hist.jrn"); hpath = Path.Combine(dir, "hist-h.bin"); hjpath = Path.Combine(dir, "hist-h.jrn");
         for (int i = 0; i < MinLen; i++) minAt[i] = -1;
         for (int i = 0; i < TenLen; i++) tenAt[i] = -1;
+        for (int i = 0; i < HourLen; i++) hourAt[i] = -1;
         Load();
-        long now = Source.Unix(); jMin = (int)(now / 60) - 1; jTen = (int)(now / 600) - 1;   // (what is closed from here on is new)
+        LoadHours();
+        long now = Source.Unix(); jMin = (int)(now / 60) - 1; jTen = (int)(now / 600) - 1; jHour = (int)(now / 3600) - 1;   // (what is closed from here on is new)
+    }
+
+    // ---- the hours (2.4.2): hist-h.bin, written whole with hist.bin (once a day and at exit), and hist-h.jrn, the hours
+    // closed since, a chunk at a time as hist.jrn's. Each: magic, then per reading its key and (hour, average, peak)s.
+    // hist-h.bin ends with the sums of the hour in progress at an exit, so a restart within that hour goes on adding ----
+    const int HMagic = 0x31525548, HJMagic = 0x314A5548;   // "HUR1", "HUJ1"
+    readonly string hpath, hjpath;
+    int jHour;
+    bool hHeld;   // hist-h.bin couldn't be opened (held by a backup or a scan): nothing saved over it until it is read
+    int hTries; long hRetryAt; bool hJrnRead, hSeeded, hSeedLater, hMerge;
+    volatile bool hjFailed;   // a journal write failed: the next save writes hist-h.bin whole
+    static void WriteHours(BinaryWriter w, string key, int[] at, float[] avg, float[] max, Func<int, bool> take)
+    {
+        int n = 0; for (int k = 0; k < HourLen; k++) if (take(at[k]) && !float.IsNaN(avg[k])) n++;
+        w.Write(key); w.Write(n);
+        for (int k = 0; k < HourLen; k++) if (take(at[k]) && !float.IsNaN(avg[k])) { w.Write(at[k]); w.Write(avg[k]); w.Write(max[k]); }
+    }
+    // one reading's hours from a file into the ring (the last year's only); a slot holding another hour is cleared for
+    // every reading first (over: the journal's, newer, replace what hist-h.bin had)
+    void ReadHours(BinaryReader r, int nowHour, bool over)
+    {
+        string key = r.ReadString(); int c = r.ReadInt32();
+        Track t; if (!tracks.TryGetValue(key, out t)) t = null;
+        for (int j = 0; j < c; j++)
+        {
+            int at = r.ReadInt32(); float a = r.ReadSingle(), m = r.ReadSingle();
+            if (at <= nowHour - HourLen || at > nowHour || float.IsNaN(a)) continue;
+            if (t == null) tracks[key] = t = new Track();
+            PutHour(t, at, a, m, over);
+        }
+    }
+    void PutHour(Track t, int at, float a, float m, bool over)
+    {
+        int k = at % HourLen;
+        if (hourAt[k] != at) { foreach (var o in tracks.Values) if (o.HAvg != null) { o.HAvg[k] = float.NaN; o.HMax[k] = float.NaN; } hourAt[k] = at; }
+        t.Hours();
+        if (over || float.IsNaN(t.HAvg[k])) { t.HAvg[k] = a; t.HMax[k] = m; }
+    }
+    // (retry: a minute later, while it was held; what this run measured since stays, the file fills what it lacks)
+    void LoadHours(bool retry = false)
+    {
+        long now = Source.Unix(); int nowHour = (int)(now / 3600);
+        bool binRead = false;
+        if (File.Exists(hpath))
+        {
+            FileStream fs = null;
+            try { fs = new FileStream(hpath, FileMode.Open, FileAccess.Read, FileShare.Read); }
+            catch
+            {
+                if (++hTries < 10) { hHeld = true; hRetryAt = now + 60; }
+                else { hHeld = false; try { File.Move(hpath, hpath + ".held-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture)); } catch { hHeld = true; hRetryAt = now + 60; } }   // (still held after 10 tries: set aside, as hist.bin)
+            }
+            if (fs != null)
+                try
+                {
+                    hHeld = false;
+                    using (var r = new BinaryReader(fs))
+                    {
+                        if (r.ReadInt32() != HMagic) throw new InvalidDataException("not an hours file");
+                        int n = r.ReadInt32();
+                        for (int i = 0; i < n; i++) ReadHours(r, nowHour, false);
+                        if (r.BaseStream.Position + 12 <= r.BaseStream.Length && r.ReadInt32() == 0x4E45504F)   // "OPEN": the hour in progress at the exit
+                        {
+                            int oHour = r.ReadInt32(), c = r.ReadInt32();
+                            for (int i = 0; i < c; i++)
+                            {
+                                string key = r.ReadString(); double cnt = r.ReadDouble(), sum = r.ReadDouble(), peak = r.ReadDouble();
+                                Track t;
+                                if (!retry && oHour == nowHour && tracks.TryGetValue(key, out t)) { t.HCnt += (int)cnt; t.HSum += sum; t.HPeak = Math.Max(t.HPeak, peak); }
+                            }
+                            if (!retry && oHour == nowHour) curHour = nowHour;
+                        }
+                    }
+                    binRead = true;
+                }
+                catch
+                {
+                    fs.Dispose();
+                    try { File.Move(hpath, hpath + ".bad-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture)); } catch { hHeld = true; hRetryAt = now + 60; }
+                }
+        }
+        if (!hJrnRead && File.Exists(hjpath))
+            try
+            {
+                using (var fs = new FileStream(hjpath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                using (var r = new BinaryReader(fs))
+                    while (fs.Length - fs.Position >= 8)
+                    {
+                        if (r.ReadInt32() != HJMagic) break;
+                        int len = r.ReadInt32();
+                        if (len < 4 || fs.Length - fs.Position < len) break;
+                        using (var cr = new BinaryReader(new MemoryStream(r.ReadBytes(len))))
+                        { int n = cr.ReadInt32(); for (int i = 0; i < n; i++) ReadHours(cr, nowHour, true); }
+                    }
+            }
+            catch { }   // (a damaged chunk: the ones before it count)
+        hJrnRead = true;
+        // no hist-h.bin read (the first start with hours, or one lost or held): the week of 10-minute blocks into the hours
+        // that have nothing (the journal's and this run's stay), written whole at the next save, so a crash before the
+        // day's full save loses none of it. hist.bin still held: once it is read
+        if (!binRead && !hSeeded) { if (held) hSeedLater = true; else SeedNow(nowHour); }
+    }
+    void SeedNow(int nowHour) { hSeeded = true; hSeedLater = false; SeedHours(nowHour); HadJournal = true; }
+    // the first start with hours: each closed hour of the 7 days of 10-minute blocks (and the minutes of the hours the
+    // blocks don't hold) becomes an hour's average and peak
+    void SeedHours(int nowHour)
+    {
+        foreach (var t in tracks.Values)
+        {
+            var acc = new Dictionary<int, double[]>();   // hour: sum, count, peak
+            bool blocks = true;
+            for (int k = 0; k < TenLen; k++)
+            {
+                int bl = tenAt[k]; if (bl < 0 || float.IsNaN(t.TAvg[k])) continue;
+                int h = bl / 6; if (h >= nowHour || h <= nowHour - HourLen) continue;
+                double[] a; if (!acc.TryGetValue(h, out a)) acc[h] = a = new double[] { 0, 0, double.MinValue };
+                a[0] += t.TAvg[k]; a[1]++; if (!float.IsNaN(t.TMax[k]) && t.TMax[k] > a[2]) a[2] = t.TMax[k];
+            }
+            if (acc.Count == 0) blocks = false;
+            if (acc.Count == 0)   // (no blocks: from the minutes, a day's worth)
+                for (int k = 0; k < MinLen; k++)
+                {
+                    int m = minAt[k]; if (m < 0 || float.IsNaN(t.MAvg[k])) continue;
+                    int h = m / 60; if (h >= nowHour || h <= nowHour - HourLen) continue;
+                    double[] a; if (!acc.TryGetValue(h, out a)) acc[h] = a = new double[] { 0, 0, double.MinValue };
+                    a[0] += t.MAvg[k]; a[1]++; if (!float.IsNaN(t.MMax[k]) && t.MMax[k] > a[2]) a[2] = t.MMax[k];
+                }
+            // (a share, the bottleneck's calls: its part of the whole hour, the blocks or minutes nothing ran in counted as none)
+            foreach (var kv in acc) { double a = t.Share ? kv.Value[0] / (blocks ? 6 : 60) : kv.Value[0] / kv.Value[1]; PutHour(t, kv.Key, (float)a, kv.Value[2] > double.MinValue ? (float)kv.Value[2] : (float)a, false); }
+        }
+    }
+    bool HasHours(Track t) { if (t.HAvg == null) return false; for (int k = 0; k < HourLen; k++) if (hourAt[k] > curHour - HourLen && !float.IsNaN(t.HAvg[k])) return true; return false; }
+    // the hours closed since the last write, on the end of hist-h.jrn (every 15 min with hist.jrn's chunk; an hour closes
+    // once an hour, so most of these write nothing)
+    void JournalHours()
+    {
+        if (hjFailed) { hjFailed = false; HadJournal = true; }   // (the last write failed: the next save is whole)
+        int toHour = curHour - 1;
+        if (hHeld || toHour <= jHour) return;
+        var ms = new MemoryStream(); var w = new BinaryWriter(ms); int n = 0; w.Write(0);
+        int from = Math.Max(jHour, toHour - HourLen);
+        foreach (var kv in tracks)   // (only the hours closed since, slot by slot)
+        {
+            var t = kv.Value; if (t.HAvg == null) continue;
+            int c = 0; for (int h = from + 1; h <= toHour; h++) { int k = h % HourLen; if (hourAt[k] == h && !float.IsNaN(t.HAvg[k])) c++; }
+            if (c == 0) continue;
+            n++; w.Write(kv.Key); w.Write(c);
+            for (int h = from + 1; h <= toHour; h++) { int k = h % HourLen; if (hourAt[k] == h && !float.IsNaN(t.HAvg[k])) { w.Write(h); w.Write(t.HAvg[k]); w.Write(t.HMax[k]); } }
+        }
+        jHour = toHour;
+        if (n == 0) return;
+        w.Flush(); var b = ms.ToArray(); BitConverter.GetBytes(n).CopyTo(b, 0);
+        System.Threading.ThreadPool.QueueUserWorkItem(delegate   // (off the window's thread, as hist.jrn's chunk)
+        {
+            try
+            {
+                using (var fs = new FileStream(hjpath, FileMode.Append, FileAccess.Write, FileShare.Read))
+                {
+                    var h = new byte[8]; BitConverter.GetBytes(HJMagic).CopyTo(h, 0); BitConverter.GetBytes(b.Length).CopyTo(h, 4);
+                    fs.Write(h, 0, 8); fs.Write(b, 0, b.Length); fs.Flush(true);
+                }
+            }
+            catch { hjFailed = true; }
+        });
     }
 
     // ---- the journal (2.1, the perf review 11-04): every 15 min only the minutes and 10-minute blocks closed since the
@@ -1022,6 +1195,7 @@ class History
     public bool Journal()
     {
         if (held || saving || curMin < 0) return false;
+        JournalHours();
         int toMin = curMin - 1, toTen = curTen - 1;
         if (jFailed || toMin < jMin - 1) { jFailed = false; Save(false); return false; }   // (or the clock set back: whole)
         if (toMin <= jMin && toTen <= jTen) return false;
@@ -1109,6 +1283,7 @@ class History
     public void Sample(Source src, string[] moreKeys = null, double[] more = null)
     {
         if (held && (Source.Unix() >= retryAt || retryAt - Source.Unix() > 60)) Load();   // (or the clock set back)
+        if (hHeld && (Source.Unix() >= hRetryAt || hRetryAt - Source.Unix() > 60)) LoadHours(true);
         if (moreKeys != null) foreach (var k in moreKeys) { Track t; if (!tracks.TryGetValue(k, out t)) tracks[k] = t = new Track(); t.Share = true; }
         if (src.Version != version)
         {
@@ -1122,7 +1297,7 @@ class History
             }
         }
         long now = Source.Unix();
-        int si = (int)(now % SecLen), minute = (int)(now / 60), ten = (int)(now / 600);
+        int si = (int)(now % SecLen), minute = (int)(now / 60), ten = (int)(now / 600), hour = (int)(now / 3600);
         // (the clock set back a little: the seconds lived again go into the minute and block in progress, not over an older
         // one; set back further: what was in progress is dropped, the slots go on from the new clock)
         bool bigBack = curMin >= 0 && curMin - minute > 5;
@@ -1136,6 +1311,12 @@ class History
             foreach (var t in tracks.Values) { if (bigBack) { t.TSum = 0; t.TCnt = 0; t.TPeak = double.MinValue; } else CloseTen(t); }
             if (curTen >= 0 && !bigBack) tenAt[curTen % TenLen] = curTen; curTen = ten;
         }
+        if (hour != curHour && (hour > curHour || curHour < 0 || bigBack))
+        {
+            if (curHour >= 0 && !bigBack) { int k = curHour % HourLen; if (hourAt[k] != curHour) { foreach (var o in tracks.Values) if (o.HAvg != null) { o.HAvg[k] = float.NaN; o.HMax[k] = float.NaN; } hourAt[k] = curHour; } }
+            foreach (var t in tracks.Values) { if (bigBack) { t.HSum = 0; t.HCnt = 0; t.HPeak = double.MinValue; } else CloseHour(t); }
+            curHour = hour; hMerge = bigBack && hourAt[hour % HourLen] == hour;   // (the clock set back into an hour already kept: it only fills what that hour lacks)
+        }
         foreach (var t in tracks.Values) t.Sec[si] = float.NaN;
         if (src.Status == "ok")
             for (int i = 0; i < byIndex.Length && i < src.Values.Length; i++)
@@ -1146,6 +1327,7 @@ class History
                 t.Sec[si] = (float)v;
                 t.MSum += v; t.MCnt++; if (v > t.MPeak) t.MPeak = v;
                 t.TSum += v; t.TCnt++; if (v > t.TPeak) t.TPeak = v;
+                t.HSum += v; t.HCnt++; if (v > t.HPeak) t.HPeak = v;
             }
         if (src.Status == "ok" && moreKeys != null && more != null)
             for (int i = 0; i < moreKeys.Length && i < more.Length; i++)
@@ -1156,6 +1338,7 @@ class History
                 t.Sec[si] = (float)v;
                 t.MSum += v; t.MCnt++; if (v > t.MPeak) t.MPeak = v;
                 t.TSum += v; t.TCnt++; if (v > t.TPeak) t.TPeak = v;
+                t.HSum += v; t.HCnt++; if (v > t.HPeak) t.HPeak = v;
             }
         secAt[si] = now;
     }
@@ -1164,6 +1347,17 @@ class History
     {
         if (curMin >= 0) { int k = curMin % MinLen; t.MAvg[k] = t.MCnt > 0 ? (float)t.MVal(60) : float.NaN; t.MMax[k] = t.MCnt > 0 ? (float)t.MPeak : float.NaN; }
         t.MSum = 0; t.MCnt = 0; t.MPeak = double.MinValue;
+    }
+    // (the slot's hour is set before this: every reading gets this hour's value, NaN where nothing was measured)
+    void CloseHour(Track t)
+    {
+        if (curHour >= 0)
+        {
+            int k = curHour % HourLen;
+            if (t.HCnt > 0) { t.Hours(); if (hMerge && !float.IsNaN(t.HAvg[k])) t.HMax[k] = Math.Max(t.HMax[k], (float)t.HPeak); else { t.HAvg[k] = (float)t.HVal(3600); t.HMax[k] = (float)t.HPeak; } }
+            else if (t.HAvg != null && !hMerge) { t.HAvg[k] = float.NaN; t.HMax[k] = float.NaN; }
+        }
+        t.HSum = 0; t.HCnt = 0; t.HPeak = double.MinValue;
     }
     void CloseTen(Track t)
     {
@@ -1223,11 +1417,14 @@ class History
         return a;
     }
 
-    // 1 h, 6 h, 12 h, 24 h as 1-minute points or 7 days as 10-minute points, oldest first, averages and peaks
+    // 1 h, 6 h, 12 h, 24 h as 1-minute points, 1 to 7 days ("3d") as 10-minute points, 30 days, 90 days and all of the
+    // year kept ("all": from its first hour) as hourly points; oldest first, averages and peaks
     public Dictionary<string, object> Range(string key, string range)
     {
-        bool week = range == "7d";
-        int span = week ? TenLen : range == "1h" ? 60 : range == "6h" ? 360 : range == "12h" ? 720 : 1440;
+        if (range == "30d" || range == "90d" || range == "all") return Hours(key, range);
+        int nd = range != null && range.Length == 2 && range[1] == 'd' && range[0] >= '1' && range[0] <= '7' ? range[0] - '0' : 0;
+        bool week = nd > 0;
+        int span = week ? nd * (TenLen / 7) : range == "1h" ? 60 : range == "6h" ? 360 : range == "12h" ? 720 : 1440;
         var avg = new object[span]; var max = new object[span];
         Track t;
         if (tracks.TryGetValue(key, out t))
@@ -1248,7 +1445,28 @@ class History
                 }
             }
         }
-        return new Dictionary<string, object> { { "key", key }, { "range", week ? "7d" : range }, { "step", week ? 600 : 60 }, { "span", span * (week ? 600 : 60) }, { "avg", avg }, { "max", max }, { "end", (long)(week ? curTen : curMin) * (week ? 600 : 60) } };   // end: where the last column starts
+        return new Dictionary<string, object> { { "key", key }, { "range", week ? nd + "d" : range }, { "step", week ? 600 : 60 }, { "span", span * (week ? 600 : 60) }, { "avg", avg }, { "max", max }, { "end", (long)(week ? curTen : curMin) * (week ? 600 : 60) } };   // end: where the last column starts
+    }
+
+    Dictionary<string, object> Hours(string key, string range)
+    {
+        Track t; tracks.TryGetValue(key, out t);
+        int cur = curHour >= 0 ? curHour : (int)(Source.Unix() / 3600), span = range == "30d" ? 720 : range == "90d" ? 2160 : 0;
+        if (span == 0)   // all: from its oldest hour (a week at least, so a new install still has room)
+        {
+            int first = cur;
+            if (t != null && t.HAvg != null) for (int k = 0; k < HourLen; k++) if (hourAt[k] > cur - HourLen && hourAt[k] < first && !float.IsNaN(t.HAvg[k])) first = hourAt[k];
+            span = Math.Max(168, cur - first + 1);
+        }
+        var avg = new object[span]; var max = new object[span];
+        if (t != null)
+            for (int i = 0; i < span; i++)
+            {
+                int b = cur - span + 1 + i;
+                if (b == cur) { if (t.HCnt > 0) { avg[i] = R(t.HVal(3600)); max[i] = R(t.HPeak); } }
+                else if (b >= 0 && t.HAvg != null) { int k = b % HourLen; if (hourAt[k] == b) { avg[i] = R(t.HAvg[k]); max[i] = R(t.HMax[k]); } }
+            }
+        return new Dictionary<string, object> { { "key", key }, { "range", range }, { "step", 3600 }, { "span", span * 3600 }, { "avg", avg }, { "max", max }, { "end", (long)cur * 3600 } };
     }
 
     // a copy of what is closed (cheap, on the UI thread); the writing happens on a pool thread unless the app is quitting
@@ -1268,7 +1486,7 @@ class History
             bool any = false;
             for (int k = 0; k < MinLen && !any; k++) any = ma[k] > oldMin && !float.IsNaN(t.MAvg[k]);
             for (int k = 0; k < TenLen && !any; k++) any = ta[k] > oldTen && !float.IsNaN(t.TAvg[k]);
-            if (!any) { if (!t.Share && Array.IndexOf(byIndex, t) < 0) dead.Add(kv.Key); continue; }   // nothing in the last week (a drive or adapter that's gone): not kept
+            if (!any) { if (!t.Share && Array.IndexOf(byIndex, t) < 0 && !HasHours(t)) dead.Add(kv.Key); continue; }   // nothing in the last week (a drive or adapter that's gone) nor in the year's hours: not kept
             list.Add(new Snap { Key = kv.Key, MAvg = (float[])t.MAvg.Clone(), MMax = (float[])t.MMax.Clone(), TAvg = (float[])t.TAvg.Clone(), TMax = (float[])t.TMax.Clone() });
         }
         // (and not in memory either, when no reading feeds it now: 11-06. Save runs on the tick Sample runs on, so the
@@ -1276,6 +1494,11 @@ class History
         foreach (var k in dead) tracks.Remove(k);
         var open = openAcc; int oMin = openMin, oTen = openTen; var sAt = secSnap; var sTr = secTracks;
         int sMin = curMin - 1, sTen = curTen - 1;   // (closed up to here: the journal starts after it)
+        // the hours too (a copy of the slots that hold one, from the readings that have any)
+        var ha = (int[])hourAt.Clone(); int oldHour = curHour - HourLen, sHour = curHour - 1;
+        var hl = new List<Snap>();
+        if (!hHeld) foreach (var kv in tracks) if (kv.Value.HAvg != null && HasHours(kv.Value)) hl.Add(new Snap { Key = kv.Key, TAvg = (float[])kv.Value.HAvg.Clone(), TMax = (float[])kv.Value.HMax.Clone() });
+        var hOpen = openH; int oHour = openHour;
         System.Threading.ThreadStart write = delegate
         {
             try
@@ -1308,6 +1531,21 @@ class History
                 if (File.Exists(path)) File.Replace(tmp, path, null); else File.Move(tmp, path);
                 try { File.Delete(jpath); } catch { }   // (all it held is in hist.bin now)
                 HadJournal = false;
+                if (!hHeld)
+                {
+                    string htmp = hpath + ".tmp";
+                    using (var fs = new FileStream(htmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
+                    using (var w = new BinaryWriter(fs))
+                    {
+                        w.Write(HMagic); w.Write(hl.Count);
+                        foreach (var t in hl) WriteHours(w, t.Key, ha, t.TAvg, t.TMax, at => at > oldHour);
+                        if (hOpen != null) { w.Write(0x4E45504F); w.Write(oHour); w.Write(hOpen.Count); foreach (var kv in hOpen) { w.Write(kv.Key); foreach (double d in kv.Value) w.Write(d); } }
+                        w.Flush(); fs.Flush(true);
+                    }
+                    if (File.Exists(hpath)) File.Replace(htmp, hpath, null); else File.Move(htmp, hpath);
+                    try { File.Delete(hjpath); } catch { }
+                    if (sHour >= 0) jHour = Math.Max(jHour, sHour);
+                }
                 if (sMin >= 0) { jMin = Math.Max(jMin, sMin); jTen = Math.Max(jTen, sTen); }
             }
             catch { }
@@ -1318,15 +1556,23 @@ class History
     }
     // at exit: the minute and 10-minute block in progress count too, and their sums are kept, so a restart inside
     // the same minute or block goes on adding to them
-    Dictionary<string, double[]> openAcc; int openMin = -1, openTen = -1;
+    Dictionary<string, double[]> openAcc, openH; int openMin = -1, openTen = -1, openHour = -1;
     long[] secSnap; Dictionary<string, float[]> secTracks;
-    public void DropOpen() { openAcc = null; secSnap = null; secTracks = null; }   // the next saves are ordinary ones again
+    public void DropOpen() { openAcc = null; openH = null; secSnap = null; secTracks = null; }   // the next saves are ordinary ones again
     public void CloseOpen()
     {
         secSnap = (long[])secAt.Clone(); secTracks = new Dictionary<string, float[]>();
         foreach (var kv in tracks) if (kv.Value.Sec.Any(x => !float.IsNaN(x))) secTracks[kv.Key] = (float[])kv.Value.Sec.Clone();
         openAcc = new Dictionary<string, double[]>(); openMin = curMin; openTen = curTen;
         foreach (var kv in tracks) { var t = kv.Value; if (t.MCnt > 0 || t.TCnt > 0) openAcc[kv.Key] = new[] { t.MCnt, t.MSum, t.MPeak, t.TCnt, t.TSum, t.TPeak }; }
+        openH = new Dictionary<string, double[]>(); openHour = curHour;
+        foreach (var kv in tracks) { var t = kv.Value; if (t.HCnt > 0) openH[kv.Key] = new[] { (double)t.HCnt, t.HSum, t.HPeak }; }
+        if (curHour >= 0)   // (the hour so far into its slot, as the minute and block are; the sums go on)
+        {
+            int k = curHour % HourLen;
+            if (hourAt[k] != curHour) { foreach (var o in tracks.Values) if (o.HAvg != null) { o.HAvg[k] = float.NaN; o.HMax[k] = float.NaN; } hourAt[k] = curHour; }
+            foreach (var t in tracks.Values) if (t.HCnt > 0 && !(hMerge && t.HAvg != null && !float.IsNaN(t.HAvg[k]))) { t.Hours(); t.HAvg[k] = (float)t.HVal(3600); t.HMax[k] = (float)t.HPeak; }
+        }
         foreach (var t in tracks.Values)   // their values so far; the sums go on, so a cancelled shutdown loses nothing
         {
             // (one with nothing in it gets nothing, as at a minute's end: its slot still holds the same minute a day ago)
@@ -1387,6 +1633,7 @@ class History
         }
         catch { fs.Dispose(); SetAside(); }
         LoadJournal();   // (on top: what was closed after hist.bin was last written whole)
+        if (hSeedLater && !held) SeedNow((int)(Source.Unix() / 3600));   // (the hours' seed waited for it)
     }
     void SetAside()
     {
@@ -2328,7 +2575,7 @@ class Games
     // the last game session in games.log (the latest end; your own sessions aren't play) and the sessions of the last 24 h
     // as [start, end, secs], for the page's Game cells while no game runs (2.1): null when there is none. Each line's
     // start and end are read by pattern (they come first), only the last one is read whole
-    static readonly Regex LgStart = new Regex("\"start\":(-?\\d+)"), LgEnd = new Regex("\"end\":(-?\\d+)"), LgSecs = new Regex("\"secs\":(\\d+)");
+    static readonly Regex LgStart = new Regex("\"start\":(-?\\d+)"), LgEnd = new Regex("\"end\":(-?\\d+)"), LgSecs = new Regex("\"secs\":(\\d+)"), LgFront = new Regex("\"front\":(\\d+)");
     public static Dictionary<string, object> LastOf(string text, long now)
     {
         var cand = new List<KeyValuePair<long, string>>(); var day = new List<object>();
@@ -2336,10 +2583,12 @@ class Games
         {
             string l = raw.TrimEnd('\r');
             if (!l.StartsWith("{") || l.Contains("\"custom\":")) continue;
-            Match a = LgStart.Match(l), b = LgEnd.Match(l), c = LgSecs.Match(l); long st, en; int secs;
+            Match a = LgStart.Match(l), b = LgEnd.Match(l), c = LgSecs.Match(l), fm = LgFront.Match(l); long st, en; int secs, fr;
             if (!a.Success || !b.Success || !long.TryParse(a.Groups[1].Value, out st) || !long.TryParse(b.Groups[1].Value, out en) || en <= st) continue;
             cand.Add(new KeyValuePair<long, string>(en, l));
-            if (en > now - 86400) day.Add(new object[] { st, en, c.Success && int.TryParse(c.Groups[1].Value, out secs) ? secs : (int)Math.Min(en - st, int.MaxValue) });
+            // (its play: the seconds in front, 11-07; a line from before they were kept: its seconds)
+            int all = c.Success && int.TryParse(c.Groups[1].Value, out secs) ? secs : (int)Math.Min(en - st, int.MaxValue);
+            if (en > now - 86400) day.Add(new object[] { st, en, fm.Success && int.TryParse(fm.Groups[1].Value, out fr) ? Math.Min(fr, all) : all });
         }
         // (the latest end that reads whole: a line cut by a crash halfway gives way to the one before it)
         Dictionary<string, object> d = null; var js = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
@@ -2351,7 +2600,7 @@ class Games
         }
         if (d == null) return null;
         var o = new Dictionary<string, object>();
-        foreach (var k in new[] { "game", "start", "end", "secs", "fps", "low", "g", "c", "f", "tf", "tl", "tb" }) if (d.ContainsKey(k)) o[k] = d[k];
+        foreach (var k in new[] { "game", "start", "end", "secs", "front", "fps", "low", "g", "c", "f", "tf", "tl", "tb" }) if (d.ContainsKey(k)) o[k] = d[k];
         o["day"] = day;
         return o;
     }
@@ -2610,6 +2859,17 @@ class Games
         }
     }
     public List<long[]> GapsNow { get { var r = rep; return r != null && r.Gaps != null ? r.Gaps.ToList() : new List<long[]>(); } }
+    // the session in progress's play: its seconds with the game the window in front (his rule 11-07: alt-tabbed isn't
+    // play); a merge's first second, before its report is taken back: the earlier part's
+    public long FrontSecs
+    {
+        get
+        {
+            var r = rep; if (r != null) return r.Front;
+            var d = done; long since; string g0; lock (lk) { since = Since; g0 = Game; }
+            return d != null && g0 != null && d.Start == since ? d.Front : 0;
+        }
+    }
     // the session in progress as its line will be (live: 1), for the page's Now playing; null: none
     public Dictionary<string, object> LiveLine()
     {
@@ -3087,6 +3347,7 @@ partial class DeckForm : Form
         Directory.CreateDirectory(dataDir);
         Directory.CreateDirectory(P("slots"));
         fake = fakeN > 0;
+        if (fake && Ver(Environment.GetEnvironmentVariable("HWDECK_RUNVER")) != null) AppInfo.Run = Environment.GetEnvironmentVariable("HWDECK_RUNVER");
         if (NoFocus) focusAtStart = GetForegroundWindow();
         src = new DeckSource(fake ? (Source)new FakeSource(fakeN) : new HwSource());
         alerts.Conn = src.Conn;
@@ -3097,6 +3358,11 @@ partial class DeckForm : Form
         runName = custom ? Brand.Name + " (" + Path.GetFileName(data) + " " + ((uint)data.ToLowerInvariant().Aggregate(2166136261u, (h, ch) => (h ^ ch) * 16777619u)).ToString("x8") + ")" : Brand.Name;
         settings = ReadSettings();
         games.MergeWithin = MergeMins() * 60;
+        // (2.4.2, his asks 11-07: a note for each update, stacked. notesSeen: the version whose notes were seen. The first
+        // start with them: the oldest version this install ran (its app.log), so an update to this one still gets the
+        // notes of every update it went through before there were notes, and no others; none, a new install: this one,
+        // nothing to catch up on. A test copy starts with nothing to show)
+        if (!(settings.ContainsKey("notesSeen") && settings["notesSeen"] is string)) { settings["notesSeen"] = (fake && Ver(Environment.GetEnvironmentVariable("HWDECK_RUNVER")) == null ? null : OldestStartIn(P("app.log"))) ?? AppInfo.Run; SaveSettings(); }   // (a test copy told to run as a version, even this one, reads its app.log like an install)
         // (2.1: the sessions from before 2.0.1, once per data folder. estBefore: the first start of 2.0.1 or 2.0.2 in
         // its app.log, else this one, kept from the first try; estDone once a pass read and wrote both files; estNote:
         // how many changed, for the page's note until its X)
@@ -3114,7 +3380,8 @@ partial class DeckForm : Form
         if (!fake) { src.Frames = new Frames(runName + " frames " + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value); if (FpsWanted && !Brand.NoActions) src.Frames.Start(); }   // (a test copy never takes over the trace)
         // (a session over 10 minutes quiet, the PC asleep, is about to end: not its length with the sleep in it)
         // (the game gone, in its grace: held at its last counted second, as the session is)
-        src.GameMin = () => { string g = games.Game; long since = games.Since, last = games.LastFed, seen = games.Seen, now = Source.Unix(); bool grace = last > 0 && now - seen > 6; return g != null && since > 0 && !(last > 0 && now - last > 600) ? Math.Max(0, (grace ? last : now) - since - games.GapSecs) / 60.0 : double.NaN; };   // (its breaks aren't play)
+        // (11-07, his rule: play is the time the game is the window in front, so alt-tabbed and its breaks don't count)
+        src.GameMin = () => { string g = games.Game; long since = games.Since, last = games.LastFed, now = Source.Unix(); return g != null && since > 0 && !(last > 0 && now - last > 600) ? Math.Max(0, games.FrontSecs) / 60.0 : double.NaN; };
         var st = ReadFile("state", true) as Dictionary<string, object>;
         if (st != null && st.ContainsKey("L")) layout = st["L"];
         TrimAlerts(); TrimGames();
@@ -3209,7 +3476,7 @@ partial class DeckForm : Form
         timer.Start();   // history, warnings and games run from the start, page or not
         if (Environment.GetEnvironmentVariable("HWDECK_TRACE") == "1") UiTrace.Start(this, Path.Combine(dataDir, "trace.log"));
         ExtStart();
-        Log("start " + AppInfo.Version + " (pid " + Process.GetCurrentProcess().Id + (fake ? ", fake " + fakeN : "") + ", data " + dataDir + ")");
+        Log("start " + AppInfo.Run + " (pid " + Process.GetCurrentProcess().Id + (fake ? ", fake " + fakeN : "") + ", data " + dataDir + ")");
     }
 
     long savedAt;
@@ -3492,6 +3759,8 @@ partial class DeckForm : Form
                 case "exit": exiting = true; tray.Visible = false; Application.Exit(); break;   // a clean quit (tests): history and logs get saved
                 // tests, made-up data only: a game in place of the processes, a reading held at a value
                 case "estSeen": if (settings.Remove("estNote")) SaveSettings(); break;   // (the note's X, or Show sessions)
+                case "notesSeen": { string v = m.ContainsKey("v") ? m["v"] as string : null, was = settings.ContainsKey("notesSeen") ? settings["notesSeen"] as string : null;
+                    if (v != null && Ver(v) != null && (was == null || Newer(v, was)) && !Newer(v, AppInfo.Run)) { settings["notesSeen"] = v; SaveSettings(); } break; }
                 case "fakeGame": if (fake) games.Pretend(m.ContainsKey("game") ? m["game"] as string : null, m.ContainsKey("front") && true.Equals(m["front"])); break;
                 case "fakePin": if (fake) ((FakeSource)src.Inner).Pin(m["key"] as string, m["v"] == null ? double.NaN : Convert.ToDouble(m["v"], System.Globalization.CultureInfo.InvariantCulture)); break;
                 case "fakeFrames": if (fake) { Func<string, double> d = k => m.ContainsKey(k) && m[k] != null ? Convert.ToDouble(m[k], System.Globalization.CultureInfo.InvariantCulture) : 0; ((FakeSource)src.Inner).SetFrames(d("fps"), d("jitter"), d("swing"), m.ContainsKey("stable") && true.Equals(m["stable"])); } break;
@@ -3605,7 +3874,7 @@ partial class DeckForm : Form
         if (!heldFiles.Contains("state")) { var sd = st as Dictionary<string, object>; layout = sd != null && sd.ContainsKey("L") ? sd["L"] : null; RefreshRules(); }
         var held = new List<object>(); for (int i = 0; i < 5; i++) if (heldFiles.Contains("slots\\slot" + (i + 1))) held.Add(i);
         r["held"] = held;   // (the slots another program holds: a missing or damaged one is empty for good)
-        r["state"] = st; r["slots"] = slots; r["fake"] = fake; r["dataDir"] = dataDir; r["version"] = AppInfo.Version; r["pc"] = Environment.MachineName;
+        r["state"] = st; r["slots"] = slots; r["fake"] = fake; r["dataDir"] = dataDir; r["version"] = AppInfo.Run; r["pc"] = Environment.MachineName;
         r["nonClient"] = nonClient;
         r["noStarter"] = OtherArgs.Any(a => a.Equals("--no-starter", StringComparison.OrdinalIgnoreCase));   // (tests: no Starter, no note about it; kept on a restart)
         r["stateHeld"] = heldFiles.Contains("state");   // (its view comes later: no Starter built over it meanwhile)
@@ -3645,6 +3914,7 @@ partial class DeckForm : Form
         r["gameMerge"] = MergeMins();
         int est = 0; try { if (settings.ContainsKey("estNote")) est = Convert.ToInt32(settings["estNote"]); } catch { }
         r["estNote"] = est;   // (sessions from before 2.0.1 this update worked out again: the page's note, until its X)
+        r["notesSeen"] = settings.ContainsKey("notesSeen") ? settings["notesSeen"] as string : AppInfo.Run;   // (the update notes seen: up to this version)
         
         string latest = settings.ContainsKey("updLatest") ? settings["updLatest"] as string : null;
         r["latest"] = UpdatesOn() && Newer(latest, AppInfo.Version) ? latest : null;
@@ -3664,6 +3934,27 @@ partial class DeckForm : Form
     {
         var m = Regex.Match(s ?? "", @"^v?(\d+)\.(\d+)\.(\d+)$");
         return m.Success ? new[] { int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value), int.Parse(m.Groups[3].Value) } : null;
+    }
+    // the oldest version started in app.log and app.log.old ("  start 2.4.1 (pid ..."): where this install began, or the
+    // oldest it went back to; null: none
+    static string OldestStartIn(string appLog)
+    {
+        string low = null;
+        foreach (var f in new[] { appLog + ".old", appLog })
+        {
+            try
+            {
+                if (!File.Exists(f)) continue;
+                foreach (var l in File.ReadLines(f))
+                {
+                    int i = l.IndexOf("  start ", StringComparison.Ordinal); if (i <= 0) continue;
+                    string v = l.Substring(i + 8).Split(' ')[0];
+                    if (Ver(v) != null && (low == null || Newer(low, v))) low = v;
+                }
+            }
+            catch { }
+        }
+        return low;
     }
     static bool Newer(string a, string b)
     {

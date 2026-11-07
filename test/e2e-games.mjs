@@ -53,8 +53,8 @@ ok('the popup gets the host\'s log: a table of sessions, newest first', await un
 ok('the table has its columns (session, length, fps, 1% low, limited by, warnings)', await ev('[...document.querySelectorAll("#glist .gx-cols span")].map(x => x.textContent.trim()).filter(Boolean).join() === "session,length,fps,1% low,limited by,warnings"'));
 ok('the summary: sessions, time played, most played, a 7 day strip', /last 7 days\s*2\s*sessions/.test(await T('#gsum')) && /most playedMarvel Rivals/.test(await T('#gsum')) && await ev('document.querySelectorAll("#gsum .gx-wd").length === 7'), await T('#gsum'));
 const row = i => ev(`[...document.querySelectorAll("#glist .gx-sess")][${i}].querySelector(".gx-row").textContent`);
-ok('a row, one line: name, times, length, fps, 1% low, what limited it, warnings', /^Marvel Rivals\d\d:\d\d to \d\d:\d\d1h 28m16172cpu-bound 60%1 warning$/.test(await row(0)), await row(0));
-ok('its time in front and the warnings in the row\'s hints', await ev('(() => { const r = document.querySelector("#glist .gx-row"); return r.querySelector(".gx-num").title === "1h 05m in front" && r.querySelector(".gx-wv").title === "GPU power 583 W"; })()'));
+ok('a row, one line: name, times, length, fps, 1% low, what limited it, warnings', /^Marvel Rivals\d\d:\d\d to \d\d:\d\d1h 05m16172cpu-bound 60%1 warning$/.test(await row(0)), await row(0));
+ok('its time in front and the warnings in the row\'s hints', await ev('(() => { const r = document.querySelector("#glist .gx-row"); return r.querySelector(".gx-num").title === "23m not in front" && r.querySelector(".gx-wv").title === "GPU power 583 W"; })()'));
 ok('every session stays shut when the popup opens', await ev('[...document.querySelectorAll("#glist .gx-sess")].every(s => !s.classList.contains("open"))'));
 await ev('document.querySelector("#glist .gx-row").click()'); await p.sleep(400);
 ok('a click opens the newest', await ev('(() => { const s = [...document.querySelectorAll("#glist .gx-sess")]; return s[0].classList.contains("open") && !s[1].classList.contains("open"); })()'));
@@ -63,7 +63,7 @@ const grp = () => ev(`[...document.querySelectorAll("${det} .gx-grp")].map(c => 
 const rr = await grp();
 ok('its readings in the three default categories, avg and max', rr.length === 3 && rr[0] === 'Temperatures: GPU64.070.6°C | GPU hotspot72.379.4°C | GPU memory71.078.0°C | CPU58.466.1°C' &&
   rr[1] === 'Power and load: GPU power314447W | GPU usage7799% | CPU power84.6121.9W | CPU usage71100%' && rr[2] === 'Memory: VRAMof 3214.8GB | RAMof 6443.5GB', rr);
-ok('a summary on top: fps and 1% low, played and in front, the hottest, the split, the warnings', /^average fps1611% low 72played1h 28m1h 05m in fronthottest79\.4°CGPU hotspotlimited bygpu 36%cpu 60%capped 4%warnings1GPU power 583 W$/.test(await T(det + ' .gx-s5')), await T(det + ' .gx-s5'));
+ok('a summary on top: fps and 1% low, played (in front, 11-07) and the time not in front, the hottest, the split, the warnings', /^average fps1611% low 72played1h 05m23m not in fronthottest79\.4°CGPU hotspotlimited bygpu 36%cpu 60%capped 4%warnings1GPU power 583 W$/.test(await T(det + ' .gx-s5')), await T(det + ' .gx-s5'));
 const rw = l => `[...document.querySelectorAll("${det} .gx-rw")].find(x => x.querySelector(".n").textContent === ${JSON.stringify(l)})`;
 // (11-02, his ask: no bar under a reading, its average and max only; a max past a line still takes its colour)
 ok('a reading\'s row: its name, average and max, no bar', await ev(`(() => { const r = [...document.querySelectorAll("${det} .gx-rw")]; return r.length > 0 && !document.querySelector("${det} .gx-mb") && r.every(x => !!x.querySelector(".n") && !!x.querySelector(".a") && !!x.querySelector(".m")); })()`));
@@ -267,7 +267,7 @@ const lastLine = () => text(join(data, 'games.log')).trim().split('\n').map(l =>
 const LL = lastLine();
 const gtIdle = `(() => { const e = evalCell(__gt, S.L.cells[__gt], true, true); return { txt: e.txt, tsub: e.tsub, sub: e.sub, tag: e.tag, col: e.col }; })()`;
 ok('no game: the page has the last session from the host (the one that ended last, as games.log has it)', !!LL && await until(`!!feed.lg && feed.lg.end === ${LL ? LL.end : -1} && feed.lg.game === ${JSON.stringify(LL ? LL.game : '')}`, 8000), await ev('JSON.stringify(feed.lg && [feed.lg.game, feed.lg.end])') + ' / log ' + JSON.stringify(LL && [LL.game, LL.end]));
-ok('no game: Game time shows its length in the softer grey, what it was and when it ended, the 24 h in the corner (2.1)', await until(`(() => { const e = ${gtIdle}; return e.txt === durTxt(${LL ? LL.secs : 0}) && e.col === 'past' && e.tsub.startsWith(${JSON.stringify((LL ? LL.game : '') + ', ended ')}) && /( ago| just now)$/.test(e.tsub) && (e.tag === 'last session' ? e.sub === e.tsub : / in 24 h$/.test(e.tag) && e.sub === e.tsub + ', ' + e.tag); })()`, 8000), await ev(`JSON.stringify(${gtIdle})`));
+ok('no game: Game time shows its length in the softer grey, what it was and when it ended, the 24 h in the corner (2.1)', await until(`(() => { const e = ${gtIdle}; return e.txt === durTxt(${LL ? (typeof LL.front === 'number' ? Math.min(LL.front, LL.secs) : LL.secs) : 0}) && e.col === 'past' && e.tsub.startsWith(${JSON.stringify((LL ? LL.game : '') + ', ended ')}) && /( ago| just now)$/.test(e.tsub) && (e.tag === 'last session' ? e.sub === e.tsub : / in 24 h$/.test(e.tag) && e.sub === e.tsub + ', ' + e.tag); })()`, 8000), await ev(`JSON.stringify(${gtIdle})`));
 ok('no game: its graph is the last 24 h, Yes a minute a session ran, drawn 0 to 1 in steps, Yes / No in the hover (2.1.1)', await ev(`(() => {
   const e = evalCell(__gt, S.L.cells[__gt], true, true), m0 = Math.floor(nowTs / 60) - 1440, mid = Math.floor((${LL ? LL.start + LL.end : 0}) / 2 / 60) - m0, st = pastState(e.past || [], S.L.cells[__gt]);
   return Array.isArray(e.past) && e.past.length === 1440 && e.pspan === 86400 && e.yn === true && e.past.every(v => v === 0 || v === 1) && mid >= 0 && mid < 1440 && e.past[mid] === 1 &&
@@ -394,7 +394,7 @@ await host({ t: 'keep', games: 30, warns: 30 });
 await ev('$("gmodal").classList.remove("open")');
 // ---- a session over midnight: whole under the day it started in the list; the week strip splits it at midnight ----
 const md = new Date(); md.setHours(0, 0, 0, 0); md.setDate(md.getDate() - 1); const M = Math.floor(md.getTime() / 1000);   // (yesterday's midnight)
-const night = { game: 'Night Game', start: M - 3600, end: M + 5400, from: M - 3600, secs: 9000, front: 8400, fps: 140, low: 90, items: [], warns: 0, gaps: [[M + 1800, M + 2400]] };   // 23:00 to 01:30, a 10 minute break
+const night = { game: 'Night Game', start: M - 3600, end: M + 5400, from: M - 3600, secs: 8400, front: 8400, fps: 140, low: 90, items: [], warns: 0, gaps: [[M + 1800, M + 2400]] };   // 23:00 to 01:30, a 10 minute break
 writeFileSync(join(data, 'games.log'), JSON.stringify(night) + '\r\n');
 await click('#gamesBtn');
 await until('[...document.querySelectorAll("#glist .gx-gn")].some(x => x.textContent === "Night Game")', 5000);
@@ -416,13 +416,13 @@ ok('the summary bar starts shut: its row with its chevron, nothing under it', aw
 const row0 = await ev('document.querySelector("#gsum .gx-srow").innerHTML');
 await click('#gsum .gx-srow');
 ok('a click on its row opens what is under it, the row as it was (like a session)', await ev('GX.open && !!document.querySelector("#gsum .gx-sum.open")') && await ev('document.querySelector("#gsum .gx-srow").innerHTML') === row0);
-ok('kept forever: 7, 30, 90 days and All, the game list on the left, the periods on the right', await ev('[...document.querySelectorAll("#gsum .gx-per button")].map(b => b.textContent).join() === "7 days,30 days,90 days,All"') &&
-  await ev('(() => { const h = document.querySelector("#gsum .gx-xh").getBoundingClientRect(), d = document.querySelector("#gsum .gx-dd").getBoundingClientRect(), s = document.querySelector("#gsum .gx-per").getBoundingClientRect(); return Math.abs(d.left - h.left) < 1 && Math.abs(h.right - s.right) < 1; })()'), await ev('[...document.querySelectorAll("#gsum .gx-per button")].map(b => b.textContent).join()'));
+ok('kept forever: 7, 30, 90 days and All, the periods on the left, the game list on the right (11-07)', await ev('[...document.querySelectorAll("#gsum .gx-per button")].map(b => b.textContent).join() === "7 days,30 days,90 days,All"') &&
+  await ev('(() => { const h = document.querySelector("#gsum .gx-xh").getBoundingClientRect(), d = document.querySelector("#gsum .gx-dd").getBoundingClientRect(), s = document.querySelector("#gsum .gx-per").getBoundingClientRect(); return Math.abs(s.left - h.left) < 1 && Math.abs(h.right - d.right) < 1; })()'), await ev('[...document.querySelectorAll("#gsum .gx-per button")].map(b => b.textContent).join()'));
 ok('no title or totals that the row already says', await ev('!document.querySelector("#gsum .gx-xt") && !document.querySelector("#gsum .gx-sdin .gx-sumtxt")'));
 await ev('document.querySelector("#gsum .gx-per button[data-p=\\"30\\"]").click(); 1');
 ok('a later period slides in from the right, like Tiles to Overview', await ev('document.querySelector("#gsum .gx-xb").getAnimations().some(a => /translateX\\(3%\\)/.test(JSON.stringify(a.effect.getKeyframes())))'));
 await p.sleep(450);
-ok('the period\'s pill glides under the one picked', await ev('(() => { const i = document.querySelector("#gsum .gx-per .ind"), b = document.querySelector("#gsum .gx-per button.on"); return b.dataset.p === "30" && i.style.transform === "translateX(" + (b.offsetLeft - 2) + "px)" && i.style.width === b.offsetWidth + "px"; })()'));
+ok('the period\'s pill glides under the one picked, exactly on it (11-07)', await ev('(() => { const i = document.querySelector("#gsum .gx-per .ind"), b = document.querySelector("#gsum .gx-per button.on"); const q = i.getBoundingClientRect(), r = b.getBoundingClientRect(); return b.dataset.p === "30" && Math.abs(q.left - r.left) < 0.3 && Math.abs(q.width - r.width) < 0.3; })()'), await ev('(() => { const q = document.querySelector("#gsum .gx-per .ind").getBoundingClientRect(), r = document.querySelector("#gsum .gx-per button.on").getBoundingClientRect(); return [q.left - r.left, q.width - r.width]; })()'));
 await ev('document.querySelector("#gsum .gx-per button[data-p=\\"90\\"]").focus(); 1');
 await p.cmd('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
 await p.cmd('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }); await p.sleep(300);
@@ -433,10 +433,10 @@ ok('30 days: a point a day on the line, centred in its box', await ev('document.
 ok('each game\'s part of it, most played first', await ev('[...document.querySelectorAll("#gsum .gx-gr .gx-gnm")].map(x => x.textContent).join() === "Alpha,Beta,Gamma"'));
 await click('#gsum .gx-dd');
 ok('the game list has every game in the log', await ev('[...document.querySelectorAll("#gsum .gx-menu button")].map(b => b.dataset.game).join() === ",Alpha,Beta,Gamma"'));
-// (it sits on the left: it opens under its button to the right, all of it inside the bar and none of it cut off, 11-02)
-ok('the game list opens under its button, to the right, whole', await ev(`(() => { const m = document.querySelector('#gsum .gx-menu').getBoundingClientRect(), d = document.querySelector('#gsum .gx-dd').getBoundingClientRect(), b = document.querySelector('#gsum .gx-sum').getBoundingClientRect();
+// (it sits on the right: it opens under its button to the left, all of it inside the bar and none of it cut off, 11-07)
+ok('the game list opens under its button, to the left, whole', await ev(`(() => { const m = document.querySelector('#gsum .gx-menu').getBoundingClientRect(), d = document.querySelector('#gsum .gx-dd').getBoundingClientRect(), b = document.querySelector('#gsum .gx-sum').getBoundingClientRect();
   const seen = [...document.querySelectorAll('#gsum .gx-menu button')].every(x => { const r = x.getBoundingClientRect(), e = document.elementFromPoint(r.left + 8, r.top + r.height / 2); return e && x.contains(e); });
-  return Math.abs(m.left - d.left) < 2 && m.top >= d.bottom && m.left >= b.left && m.right <= b.right && seen; })()`), await ev(`JSON.stringify([document.querySelector('#gsum .gx-menu').getBoundingClientRect(), document.querySelector('#gsum .gx-sum').getBoundingClientRect().left])`));
+  return Math.abs(m.right - d.right) < 2 && m.top >= d.bottom && m.left >= b.left && m.right <= b.right && seen; })()`), await ev(`JSON.stringify([document.querySelector('#gsum .gx-menu').getBoundingClientRect(), document.querySelector('#gsum .gx-dd').getBoundingClientRect(), document.querySelector('#gsum .gx-sum').getBoundingClientRect()])`));
 await click('#gsum .gx-menu button[data-game="Beta"]');
 ok('a game picked: the list shows only its sessions', await ev('document.querySelectorAll("#glist .gx-sess").length === 1 && document.querySelector("#glist .gx-gn").textContent === "Beta" && GX.game === "Beta"'));
 const lp = await p.center('#gsum .gx-lcp'); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: lp.x + lp.w / 2 - 2, y: lp.y }); await p.sleep(250);
@@ -449,7 +449,7 @@ await host({ t: 'keep', games: 8, warns: 30 }); await until('feed.gameDays === 8
 await click('#gsum .gx-srow');
 ok('Keep sessions 8 days: 7 days and 8 days', await ev('[...document.querySelectorAll("#gsum .gx-per button")].map(b => b.textContent).join() === "7 days,8 days"'), await ev('[...document.querySelectorAll("#gsum .gx-per button")].map(b => b.textContent).join()'));
 await host({ t: 'keep', games: 5, warns: 30 }); await until('feed.gameDays === 5', 3000); await ev('gxSum(gxAll); 1'); await p.sleep(300);
-ok('5 days: no switch, the game list alone, the chart a point a day', await ev('!document.querySelector("#gsum .gx-per") && !!document.querySelector("#gsum .gx-dd") && document.querySelector("#gsum .gx-lcp polyline").getAttribute("points").split(" ").length === 5'));
+ok('5 days: no switch, the game list alone on the right, the chart a point a day', await ev('(() => { const h = document.querySelector("#gsum .gx-xh").getBoundingClientRect(), d = document.querySelector("#gsum .gx-dd").getBoundingClientRect(); return !document.querySelector("#gsum .gx-per") && Math.abs(h.right - d.right) < 1 && document.querySelector("#gsum .gx-lcp polyline").getAttribute("points").split(" ").length === 5; })()'), await ev('[!!document.querySelector("#gsum .gx-per"), (document.querySelector("#gsum .gx-lcp polyline") || { getAttribute: () => "" }).getAttribute("points").split(" ").length]'));
 await ev('gxSet({ open: false }); 1'); await p.sleep(450);   // (shut for real: opened in the same instant, nothing would slide)
 // ---- quick clicks on the bar, one after another: each one opens or shuts it (a word picked by a double click used to
 // hold it); text dragged over still holds it ----

@@ -58,6 +58,8 @@
   <div class="notice" id="estNotice" role="status"><div class="nt"><b>Game sessions updated</b><button class="ib" id="estClose" title="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     <span id="estTxt"></span>
     <div class="na"><button class="btn" id="estShow">Show sessions</button></div></div>
+  <div id="upw"><div class="notice" id="upn" role="status"><div class="nt"><b id="upnT"></b><span class="upc" id="upnC"></span><button class="ib" id="upnClose" title="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <ul id="upnL"></ul><div class="na" id="upnA"><button class="btn" id="upnAll">Dismiss all</button></div></div><i class="upsh s1"></i><i class="upsh s2"></i></div>
 </div>
 
 <!-- a cell's popup: its graph over 15 min to 7 days, HWiNFO's own min / max / average, its gates or fan curve -->
@@ -66,8 +68,8 @@
     <div class="mhead"><span id="micon"></span><span class="mtitle" id="mtitle"></span><span class="mval" id="mval"></span>
       <button class="mclose" id="mclose" title="Close"><svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
     <div class="mdesc" id="mdesc"></div>
-    <div id="mgraphsec"><div class="msec"><span class="rng" id="mrng" role="group" aria-label="Range"><span class="ri" aria-hidden="true"></span><button data-r="15m" class="on">15 min</button><button data-r="1h">1 h</button><button data-r="6h">6 h</button><button data-r="12h">12 h</button><button data-r="24h">24 h</button><button data-r="7d">7 days</button></span></div>
-      <canvas id="mgraph"></canvas><div class="mstats" id="mstats"></div></div>
+    <div id="mgraphsec"><div class="mrngs" id="mrng"><span class="rng" role="group" aria-label="Hours"><span class="ri" aria-hidden="true"></span><button data-r="15m" class="on" aria-pressed="true">15m</button><button data-r="1h" aria-pressed="false">1h</button><button data-r="6h" aria-pressed="false">6h</button><button data-r="12h" aria-pressed="false">12h</button><button data-r="24h" aria-pressed="false">24h</button></span><span class="rng" role="group" aria-label="Days"><span class="ri off" aria-hidden="true"></span><button data-r="7d" aria-pressed="false">7d</button><button data-r="30d" aria-pressed="false">30d</button><button data-r="90d" aria-pressed="false">90d</button><button data-r="all" aria-pressed="false">All</button></span></div>
+      <canvas id="mgraph"></canvas><div class="mbar" id="mbar"><i></i><span class="ls"></span><span class="le"></span></div><div class="mstats" id="mstats"></div></div>
     <div id="mextra"></div>
   </div>
 </div>

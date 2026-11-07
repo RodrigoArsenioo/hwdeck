@@ -6,7 +6,7 @@
 (() => {
   'use strict';
   const RELEASES = 'https://github.com/RodrigoArsenioo/hwdeck/releases/latest';
-  const VERSION = '2.4.1';
+  const VERSION = '2.4.2';
   const T0 = Math.floor(Date.now() / 1000);
   const nowS = () => Math.floor(Date.now() / 1000);
   const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
@@ -293,10 +293,12 @@
   };
   const settingsMsg = () => ({ t: 'settings', autostart: false, hwinfo: 'Made-up readings in this demo', updates: false, latest: null, gameDays: days('gameDays'), warnDays: days('warnDays'), gameMerge: Math.round(mergeS() / 60) });
 
-  // ---- the long history a popup asks for: 1 h to 24 h as minutes, 7 days as 10-minute blocks ----
+  // ---- the long history a popup asks for: 1 h to 24 h as minutes, 7 days as 10-minute blocks, 30 days, 90 days and
+  // All (here 120 days) as hours, as the app keeps them (2.4.2) ----
   function hist(k, range) {
-    const week = range === '7d', step = week ? 600 : 60, n = week ? 1008 : range === '1h' ? 60 : range === '6h' ? 360 : range === '12h' ? 720 : 1440;
-    const end = Math.floor(nowS() / step) * step, r = BYKEY.get(k), q = week ? 12 : 4, avg = [], max = [], sg = [], sc = [], sf = [];
+    const week = range === '7d', hours = range === '30d' || range === '90d' || range === 'all';
+    const step = hours ? 3600 : week ? 600 : 60, n = hours ? (range === '30d' ? 720 : range === '90d' ? 2160 : 2880) : week ? 1008 : range === '1h' ? 60 : range === '6h' ? 360 : range === '12h' ? 720 : 1440;
+    const end = Math.floor(nowS() / step) * step, r = BYKEY.get(k), q = hours ? 6 : week ? 12 : 4, avg = [], max = [], sg = [], sc = [], sf = [];
     for (let i = 0; i < n; i++) {
       const b = end - (n - 1 - i) * step; let s = 0, m = -1e9, c = 0, cg = 0, cc = 0, cf = 0;
       for (let j = 0; j < q; j++) {
@@ -308,7 +310,7 @@
       avg.push(c ? Math.round(s / c * 1000) / 1000 : null); max.push(c ? m : null);
       sg.push(cg / seen); sc.push(cc / seen); sf.push(cf / seen);
     }
-    const h = { t: 'hist', key: k, range: week ? '7d' : range, step, span: n * step, avg, max, end };
+    const h = { t: 'hist', key: k, range, step, span: n * step, avg, max, end };
     if (k === 'hwdeck.0/bneck') Object.assign(h, { sg, sc, sf });
     return h;
   }
@@ -442,7 +444,7 @@
     }
   }
   window.chrome = window.chrome || {};
-  window.chrome.webview = { postMessage: m => onPage(m), addEventListener: (type, f) => { if (type === 'message') listeners.push(f); }, removeEventListener: () => { } };
+  window.chrome.webview = { demo: true, postMessage: m => onPage(m), addEventListener: (type, f) => { if (type === 'message') listeners.push(f); }, removeEventListener: () => { } };
 
   // ---- around the page: the window buttons go, a bar at the bottom says what this is ----
   const css = document.createElement('style');

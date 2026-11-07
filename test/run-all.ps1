@@ -2,7 +2,7 @@
 # release checks (a prepared data folder), an unreadable working view, a restart that has to wait, sleep and the
 # end of a Windows session, a held history file, the 12V-2x6 connector, the bottleneck with a made-up game, the game sessions popup and report,
 # a build with extras, the layouts, tile sizes, lines on both sides, a game session's numbers, the tile looks, and a window
-# left open for a few minutes. Uses its own data folders under test\ and debug ports 9230-9240, off the main screen; the real
+# left open for a few minutes. Uses its own data folders under test\ and debug ports 9230-9242, off the main screen; the real
 # HW Deck (if running) is left alone.
 #   powershell -File test\run-all.ps1
 $d = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -163,6 +163,14 @@ Set-Content -Encoding UTF8 "$d\test\data-g\state.json" '{"v":1,"L":{"v":1,"cats"
 $p = Start-Deck 'data-g' 9237 300
 Run 'game sessions' test/e2e-games.mjs 9237 test/data-g
 Quit-Deck $p 9237
+
+# range selector B (2.4.2, port 9242): the popup's ranges to All from the hours kept, its chart and bar as the window;
+# Sessions', Warning history's and a session's own charts the same way (a folder seeded with 120 days)
+node test/seed-range.mjs "$d\test\data-range" | Out-Null
+$p = Start-Deck 'data-range' 9242 300
+Run 'range selector' test/e2e-range.mjs 9242 ''
+Run 'range selector in the lists' test/e2e-range-lists.mjs 9242 ''
+Quit-Deck $p 9242
 
 # sessions from before 2.0.1 re-estimated at the start (port 9237): old lines in the log and the bin before it starts
 if (Test-Path "$d\test\data-re") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-re" }

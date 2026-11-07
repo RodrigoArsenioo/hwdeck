@@ -1,40 +1,27 @@
 # Changelog
 
-## 2.4.2 (unreleased)
+## 2.4.2 (2026-11-07)
 
-- Tile graphs move again with Animations on Full: since 2.1.0 a tile's graph stopped taking in new readings in Full.
-- Warnings:
-  - A game in the background (alt-tab) no longer logs a false "back to normal" for its fps lines, and coming back no longer counts the same warning twice.
-  - A fan that should be stopped by its curve but spins now counts as off its curve.
-  - A cell's warning keeps its own name in the log when a build's own line for the same reading steps aside.
-  - Starter names the 12V-2x6 cell "12V-2x6", so its pins' warnings read "12V-2x6 pins".
-- Saves and slots:
-  - A slot file that can't be read is set aside and said, instead of showing as empty and being saved over.
-  - A slot the app couldn't write no longer reads as saved.
-  - Clicking another button in Saves while renaming a slot now does both.
-  - Clearing an already empty view adds no undo step.
-- History and game sessions:
-  - After a crash, the 7 day graphs keep the whole block the app was in, not the part before the restart.
-  - A game that restarts within the same minute keeps that whole minute in its timeline.
-  - A short game that ended while Sessions was closed no longer comes back as "now playing".
-  - Start session numbers its session after all of yours, not only the game picked.
-- The cell popup:
-  - A late answer for a range you already left no longer blanks the graph or draws it in twice.
-  - A "bad when below" line close under the data shows on the graph.
-  - The last game session reads grey in the popup and in the hover preview, with its own numbers.
-- Editing:
-  - Making an Automatic view your own no longer moves categories past the sixth in a column to the bottom.
-  - With no cells left outside edit mode, the view shows its empty state, not a blank window.
-  - Ctrl+arrows and Line up the bottom keep a tile's own width when only its height changes.
-  - A wiggle on a column line no longer freezes a row that follows its content.
-  - Alt+arrows: the lead cell keeps its place, quick presses no longer swap back, and a burst on another category is its own undo step.
-  - The fan curve table keeps its rows in place while you Tab between its fields.
-  - Flipping "Bad when" swaps the lines of both sides, so none quietly stops warning.
-  - A drag scrolled with the wheel drops where the pointer is.
-- Speed: the app does less while hidden or minimized, retries a busy games.log less often, keeps its bins from being rewritten every day, turns the game frame counter off while no game is in front, and lays out the view fewer times on a start, a resize and a scroll.
-- Keyboard and screen readers: popups take the focus and give it back, the confirm reads its question, Escape steps back one layer at a time (a list, a pick, a chip) before closing a popup, buttons that show only an icon have names, and switches, chips, rows and folds say whether they are on or open.
-- With HWiNFO off at the start, cells say HWiNFO isn't sharing instead of "not on this PC", and the view's settings work.
-- The category name's hint shows only in edit mode.
+- Longer graphs: a cell's graph goes from 15 min to 24 h on the left and 7 days, 30 days, 90 days and All on the right. HW Deck keeps an hourly average and peak of every reading for a year (hist-h.bin), starting from the week it already has.
+- Zoom into any graph: the wheel zooms, a drag moves along it, a double click shows it whole. A bar under the graph shows where you are; drag it or its ends. The numbers under the graph follow the part shown.
+- The same zoom on Game sessions' and Warning history's charts and on each session's own chart; their tables follow it too.
+- Play time counts only while the game is the window in front, past sessions included. A session's details show how long it was not in front.
+- After an update, a note in the corner shows what is new, one card for each version.
+- Apply this look to all copies one category's style to every category of the view.
+- Warning history's button shows a dot for new warnings, red when one of them went red.
+- Game sessions: sort the games table by any column, and compare two sessions side by side.
+- Fixes:
+  - Tile graphs move again with Animations on Full (stopped since 2.1.0).
+  - Warnings: no false "back to normal" when a game goes to the background, no warning counted twice, and a fan that spins while its curve says stopped counts as off its curve.
+  - Saves: a slot that can't be read is set aside instead of saved over, and a failed save no longer reads as saved.
+  - History: nothing is lost after a crash or a quick game restart, and a game that ended while Sessions was closed no longer shows as playing.
+  - The cell popup: its graph sits in the middle, the dashed average matches the one under it, the cell's note sits on its own line, and switching ranges quickly no longer blanks the graph.
+  - Sliding pills (view tabs, graph ranges, periods, Settings) sit exactly on the option picked.
+  - Editing: Ctrl+arrows keep a tile's width, Alt+arrows keep the lead cell in place, flipping "Bad when" swaps both lines, and a drag drops where the pointer is.
+  - With HWiNFO off at the start, cells say HWiNFO isn't sharing.
+  - Smaller fixes in editing, Saves and Settings.
+- Faster: less work while hidden or minimized, and fewer layouts on a start, a resize and a scroll.
+- Keyboard and screen readers: popups take the focus and give it back, Escape steps back one layer at a time, and icon buttons have names.
 
 ## 2.4.1 (2026-11-06)
 

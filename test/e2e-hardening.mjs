@@ -196,7 +196,7 @@ await E('$("wmodal").classList.remove("open")'); await p.sleep(300);
 await logClick('#gamesBtn');
 ok('the game log button gets the host\'s log: a row in the sessions table', await until('[...document.querySelectorAll("#glist .gx-sess .gx-gn")].map(x => x.textContent).join() === "Test Game" && !!document.querySelector("#glist .gx-cols")', 5000), await E('$("glist").textContent.slice(0, 100)'));
 const tg = await E('document.querySelector("#glist .gx-sess .gx-row").textContent');
-ok('that session (10 min, 8 in front, nothing recorded) reads "--" for fps, 1% low and what limited it', /^Test Game\d\d:\d\d to \d\d:\d\d10m------none$/.test(tg), tg);
+ok('that session (10 min, 8 in front, nothing recorded) reads its 8 minutes in front (2.4.2: play time) and "--" for fps, 1% low and what limited it', /^Test Game\d\d:\d\d to \d\d:\d\d8m------none$/.test(tg), tg);
 ok('it stays shut when the popup opens', await E('!document.querySelector("#glist .gx-sess").classList.contains("open")'));
 ok('the summary counts it', /last 7 days\s*1\s*session/.test(await E('$("gsum").textContent')), await E('$("gsum").textContent'));
 await logClick('#glist .gx-row');
