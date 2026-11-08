@@ -115,13 +115,26 @@ if (-not $p.WaitForExit(3000)) { Stop-Process -Id $p.Id -Force }
 if (Test-Path "$d\test\data-held") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-held" }
 New-Item -ItemType Directory "$d\test\data-held" | Out-Null
 Set-Content -Encoding ASCII "$d\test\data-held\hist.bin" 'held history'
-Set-Content -Encoding ASCII "$d\test\data-held\settings.json" '{"gameDays":365,"warnDays":365,"updates":false}'
+Set-Content -Encoding ASCII "$d\test\data-held\settings.json" '{"gameDays":365,"warnDays":365,"updates":false,"notesSeen":"2.1.0"}'   # (notesSeen: the start's pick must not go over it, 11-07 audit)
 Old-Logs "$d\test\data-held"
 $lock = [IO.File]::Open("$d\test\data-held\hist.bin", 'Open', 'Read', 'None')
 $lock2 = [IO.File]::Open("$d\test\data-held\settings.json", 'Open', 'Read', 'None')
 $p = Start-Deck 'data-held' 9233 50
 $lock.Close(); $lock2.Close()
 Run 'held history' test/e2e-held.mjs 9233 test/data-held
+if (-not $p.WaitForExit(8000)) { Stop-Process -Id $p.Id -Force }   # the test quits it itself
+
+# a session line games.log refused at the last quit, while games.log holds a longer line of that session and is held
+# while HW Deck starts: judged once games.log is free, not added beside it (11-07 audit)
+if (Test-Path "$d\test\data-pend") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-pend" }
+New-Item -ItemType Directory "$d\test\data-pend" | Out-Null
+Set-Content -Encoding ASCII "$d\test\data-pend\games.log" '{"game":"Pend Test","start":1762500000,"end":1762503600,"secs":3600,"items":[]}'
+Set-Content -Encoding ASCII "$d\test\data-pend\games.log.pending" '{"game":"Pend Test","start":1762500000,"end":1762501800,"secs":1800,"items":[]}'
+Set-Content -Encoding ASCII "$d\test\data-pend\settings.json" '{"estDone":true}'   # (no Old-Logs here: it writes games.log over, 11-07 audit)
+$lock = [IO.File]::Open("$d\test\data-pend\games.log", 'Open', 'Read', 'None')
+$p = Start-Deck 'data-pend' 9243 50
+$lock.Close()
+Run 'pending session line' test/e2e-pending.mjs 9243 test/data-pend
 if (-not $p.WaitForExit(8000)) { Stop-Process -Id $p.Id -Force }   # the test quits it itself
 
 # the 12V-2x6 connector on made-up pins (port 9233 again, HWDECK_FAKEPINS)
@@ -225,6 +238,9 @@ Quit-Deck $p 9234
 # the browser demo (built into dist\demo, served on port 8767 and opened in a headless Edge)
 powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\build-demo.ps1" | Out-Null
 if ($LASTEXITCODE) { "== browser demo`nFAIL the demo didn't build"; $failed++ } else { Run 'browser demo' test/e2e-demo.mjs 0 '' }
+
+# the update notes across upgrades: it starts and closes its own copies, one at a time (11-07 audit: never run here)
+Run 'update notes' test/e2e-upgrade.mjs 9272 ''
 
 # the app goes on after an exception in its own code (it logs "unhandled:", "tick failed:", "message ... failed:" or,
 # from the game poll, "games:"),

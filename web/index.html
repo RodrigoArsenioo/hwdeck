@@ -52,13 +52,13 @@
   <div class="sr" id="live" aria-live="polite"></div>
   <div class="toast" id="toast" role="status"><span id="toastTxt"></span><button class="linkbtn" id="toastUndo" hidden>Undo</button></div>
   <!-- after an update: Starter is new, said once, until it is dismissed -->
-  <div class="notice" id="notice" role="status"><div class="nt"><b>New: Starter</b><button class="ib" id="noticeClose" title="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div id="upw"><div class="notice" id="notice" role="status"><div class="nt"><b>New: Starter</b><span class="upc" id="noticeC"></span><button class="ib" id="noticeClose" title="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     <span>A layout built from this PC's own sensors: the game, the GPU, the CPU, memory, drives and fans. Your view stays as it is. Starter waits in Saves, above your slots.</span>
     <div class="na"><button class="btn" id="noticeShow">Show it</button></div></div>
-  <div class="notice" id="estNotice" role="status"><div class="nt"><b>Game sessions updated</b><button class="ib" id="estClose" title="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="notice" id="estNotice" role="status"><div class="nt"><b>Game sessions updated</b><span class="upc" id="estC"></span><button class="ib" id="estClose" title="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     <span id="estTxt"></span>
     <div class="na"><button class="btn" id="estShow">Show sessions</button></div></div>
-  <div id="upw"><div class="notice" id="upn" role="status"><div class="nt"><b id="upnT"></b><span class="upc" id="upnC"></span><button class="ib" id="upnClose" title="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="notice" id="upn" role="status"><div class="nt"><b id="upnT"></b><span class="upc" id="upnC"></span><button class="ib" id="upnClose" title="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     <ul id="upnL"></ul><div class="na" id="upnA"><button class="btn" id="upnAll">Dismiss all</button></div></div><i class="upsh s1"></i><i class="upsh s2"></i></div>
 </div>
 

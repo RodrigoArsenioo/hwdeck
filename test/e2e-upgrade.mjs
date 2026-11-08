@@ -60,6 +60,9 @@ const view = ev => ev(`(() => ({ show: $('upn').classList.contains('show'), due:
   inWin: (() => { const r = $('upn').getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })() }))()`);
 const shows = (v, due) => v.show && JSON.stringify(v.due) === JSON.stringify(due) && v.t === TITLE[due[0]] && v.c === (due.length > 1 ? (due.length - 1) + ' more' : '') && v.all === due.length > 1 && v.n === String(Math.min(3, due.length));
 const none = v => !v.show && v.due.length === 0;
+// where a card's X is and how tall the card is (his 11-07 "the X button kept moving away from the cursor")
+const geo = (ev, card, x) => ev(`(() => { const b = $('${x}').getBoundingClientRect(), c = $('${card}').getBoundingClientRect(); return { x: [Math.round(b.top), Math.round(b.right)], h: Math.round(c.height), n: $('upw').dataset.n, c: $('${card}').querySelector('.upc').textContent }; })()`);
+const sameX = (a, b) => a && b && a.x[0] === b.x[0] && a.x[1] === b.x[1] && a.h === b.h;
 const x = async ev => { await ev(`$('upnClose').click(); 1`); await sleep(450); };
 const all = async ev => { await ev(`$('upnAll').click(); 1`); await sleep(450); };
 
@@ -176,8 +179,12 @@ for (const [from, due, hist] of [['2.4.1', ['2.4.2']], ['2.4.0', ['2.4.1', '2.4.
   await run(d, '2.4.2', async ev => {
     const v = await view(ev), est = await ev(`$('estNotice').classList.contains('show')`);
     ok('the sessions note is up: the cards wait', est && !v.show, [est, v]);
+    const g0 = await geo(ev, 'estNotice', 'estClose');
+    ok('the sessions note tops one pile: 6 more behind it, the sheets showing (his 11-07)', g0.n === '3' && g0.c === '6 more', g0);
     await ev(`$('estClose').click(); 1`); await sleep(450);
     ok('its X: the cards come up, all 6', shows(await view(ev), ALL.slice(1)), await view(ev));
+    const g1 = await geo(ev, 'upn', 'upnClose');
+    ok('the first card as tall as the sessions note, its X where that X was', sameX(g0, g1), [g0, g1]);
     await ev(`$('notice').classList.add('show'); notesCheck(); 1`); await sleep(100);
     ok('Starter\'s note up: the cards step aside', !(await view(ev)).show, await view(ev));
     await ev(`starterSeen(); 1`); await sleep(450);
@@ -185,9 +192,12 @@ for (const [from, due, hist] of [['2.4.1', ['2.4.2']], ['2.4.0', ['2.4.1', '2.4.
     await ev(`renderSettings(); setmodal.classList.add('open'); send({ t: 'getSettings' }); 1`); await sleep(800);
     ok('Settings asked again: the same cards, none doubled', shows(await view(ev), ALL.slice(1)) && await ev(`document.querySelectorAll('#upn').length === 1 && $('upnL').children.length === NOTES[1][2].length`), await view(ev));
     await ev(`setmodal.classList.remove('open'); $('upnClose').click(); $('upnClose').click(); 1`); await sleep(600);
-    ok('two quick X: two cards gone, 2.3 on top', shows(await view(ev), ALL.slice(3)), await view(ev));
+    ok('two quick X: one card gone, the second X waits for the next card (11-07 audit)', shows(await view(ev), ALL.slice(2)), await view(ev));
+    await ev(`$('upnClose').click(); 1`); await sleep(450);
+    const g2 = await geo(ev, 'upn', 'upnClose');
+    ok('two cards on (a shorter one): the same height, the X in the same place', shows(await view(ev), ALL.slice(3)) && sameX(g1, g2), [g1, g2]);
   });
-  ok('the sessions note was put away for good and the two quick X saved', seen(d) === '2.2.0' && (() => { try { return !('estNote' in JSON.parse(readFileSync(join(d, 'settings.json'), 'utf8'))); } catch (e) { return false; } })(), readFileSync(join(d, 'settings.json'), 'utf8'));
+  ok('the sessions note was put away for good and the two X saved', seen(d) === '2.2.0' && (() => { try { return !('estNote' in JSON.parse(readFileSync(join(d, 'settings.json'), 'utf8'))); } catch (e) { return false; } })(), readFileSync(join(d, 'settings.json'), 'utf8'));
 }
 
 // ---- the card's text: no dashes or arrows, each line a sentence ----

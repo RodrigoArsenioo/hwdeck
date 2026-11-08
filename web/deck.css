@@ -386,6 +386,12 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .lrow.fold { grid-template-columns: minmax(0, 1fr); row-gap: var(--rg); }   /* too narrow: one under the other */
 .lcol { display: flex; flex-direction: column; gap: var(--rg); min-width: 0; border-radius: 0.9rem; }
 .lcol > .dcat { flex: none; }
+.lsub { display: flex; column-gap: var(--cg); align-items: flex-start; min-width: 0; flex: none; }   /* (categories side by side in a column, each by its share: a hidden one takes no room, 11-07) */
+.lsub > .dcat { min-width: 0; flex: 1 1 0px; }
+.lsub > :nth-child(1) { flex-grow: var(--s1, 1); min-width: var(--m1, 0px); } .lsub > :nth-child(2) { flex-grow: var(--s2, 1); min-width: var(--m2, 0px); }
+.lsub > :nth-child(3) { flex-grow: var(--s3, 1); min-width: var(--m3, 0px); } .lsub > :nth-child(4) { flex-grow: var(--s4, 1); min-width: var(--m4, 0px); }   /* (its share, never under its narrowest) */
+.app.editing:not(.fitting) .lsub > .dcat.isempty { min-width: 11.6rem; }   /* (an empty one in edit mode: room to drop readings into; the line folds when there isn't, 11-07 audit) */
+.lsub.fold { flex-direction: column; align-items: stretch; row-gap: var(--rg); } .lsub.fold > .dcat { flex: none; min-width: 0 !important; }   /* (too narrow for them: one under the other) */
 /* (edit mode used to draw a column's empty room as a faint block: it read as a stray bar, his call 11-02: gone) */
 /* Fill: a growing row's tiles are taller by --gr each (a graph no taller than 60% of its width unless the tile is tall) */
 .lrow.grow .tg.pk:not(.shorts) { --grx: var(--gr, 0px); }
@@ -536,7 +542,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .look.on .pic i { background: #6f86b3; }
 .outline { display: flex; flex-direction: column; gap: 4px; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; padding: 6px; }
 .outline .orow { display: grid; gap: 4px; }
-.outline .ocol { display: grid; gap: 4px; align-content: start; }
+.outline .ocol { display: grid; gap: 4px; align-content: start; } .outline .oline { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
 .outline .obox { background: #1f1f1f; border: 1px solid #2c2c2c; border-radius: 4px; font: inherit; font-size: 11px; color: #a8a8a8; padding: 3px 6px; white-space: nowrap; overflow: hidden;
                  text-overflow: ellipsis; min-height: 22px; text-align: left; cursor: pointer; min-width: 0; }
 .outline .obox:hover { border-color: #4a4a4a; color: var(--fg); }
@@ -596,7 +602,7 @@ select.dsel-n { display: none; }
 .insp .foot { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .outline .orow.fill { box-shadow: inset 2px 0 0 var(--edit); padding-left: 6px; border-radius: 2px; }
 .btnrow.mv { display: grid; grid-template-columns: 1fr 1fr; }
-.btnrow.mv .btn { display: flex; justify-content: space-between; align-items: center; gap: 6px; min-width: 0; }
+.btnrow.mv .btn { display: flex; justify-content: space-between; align-items: center; gap: 6px; min-width: 0; } .btnrow.mv .btn.on { border-color: var(--edit); color: #ececec; }
 .btn .kb { pointer-events: none; color: var(--muted); }   /* (4.5:1 on the panel, 11-06 audit) */
 .seg.tog { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: none; border: 0; padding: 0; }
 .seg.tog button { border: 1px solid var(--line2); border-radius: 7px; padding: 5px 6px; }
@@ -1004,10 +1010,11 @@ select.dsel-n { display: none; }
 .notice .na { display: flex; justify-content: flex-end; margin-top: 10px; }
 /* the update notes (2.4.2): one card, the ones after it as sheets peeking out above it, a deck */
 #upw { position: absolute; right: 18px; bottom: 18px; z-index: 95; width: min(380px, calc(100% - 36px)); pointer-events: none; }
-#upw .notice { position: relative; right: auto; bottom: auto; width: 100%; z-index: 1; }
+#upw .notice { position: absolute; left: 0; right: 0; bottom: 0; width: auto; z-index: 1; display: flex; flex-direction: column; }   /* (one pile, each as tall as the tallest: upLock, 11-07) */
+#upw .notice > :nth-child(2) { flex: 1 0 auto; }
 #upn > * { transition: opacity 140ms; } #upn.swap > * { opacity: 0; }
-#upn .nt { gap: 8px; } #upn .nt b { margin-right: auto; }
-#upn .upc { font-size: 12px; color: #6f6f6f; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#upw .nt { gap: 8px; } #upw .nt b { margin-right: auto; }
+#upw .upc { font-size: 12px; color: #6f6f6f; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #upn ul { margin: 2px 0 0; padding: 0 0 0 16px; max-height: calc(100vh - 150px); overflow-y: auto; } #upn li { margin: 3px 0; } #upn li::marker { color: #555; }
 #upn .na[hidden] { display: none; }
 #upw .upsh { position: absolute; inset: 0; border-radius: 12px; border: 1px solid var(--line2); background: #1a1a1a; transform-origin: 50% 0; opacity: 0; pointer-events: none;

@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.4.3 (2026-11-08)
+
+- Side by side in a column: Beside above on a category stacked under another puts it next to that one, both still in their column, up to four on a line. Press it again to put it back under. Where there is no room for them, they stack again.
+- Update notes for several updates sit in one pile of equal cards, so the X stays in the same place.
+- Settings > Updates: Check now looks for an update right away.
+- Fixes:
+  - Game sessions: time asleep or restarting no longer counts as play, the table stays when a zoomed window holds no play, and the table can be sorted with the keyboard.
+  - Charts: the hover stays inside a zoomed chart and on a day in view, the bar can be moved at the closest zoom, a session's end reads the same minute on its bar and its ticks, 7 days names the date, and the wheel scrolls a popup taller than the window.
+  - The cell popup: a zoomed window over a gap shows no average, and the 15 min peak is the real peak.
+  - Warnings: a PresentMon warning ends when the game closes, and the dot turns red when a yellow warning goes red.
+  - History: nothing is lost when its file is held by another program at the start, and setting the clock back keeps the hour's peak.
+  - With HWiNFO not sharing during a game, HW Deck's own frame count still goes into the session.
+  - Saves, Settings, Game sessions and Warning history take the focus when they open and give it back when they close.
+  - Smaller fixes to the update notes and Game time's hover preview.
+
 ## 2.4.2 (2026-11-07)
 
 - Longer graphs: a cell's graph goes from 15 min to 24 h on the left and 7 days, 30 days, 90 days and All on the right. HW Deck keeps an hourly average and peak of every reading for a year (hist-h.bin), starting from the week it already has.

@@ -82,6 +82,15 @@ try {
   await E('document.getElementById("demoReset").click()'); await sleep(300); await until('feed.got && S.L.cats.length > 0', 8000);
   ok('Reset demo brings the demo layout back', await E('S.L.cats[0].name === "GPU" && !S.edit && !sessionStorage.getItem("hwdeck-demo:state")'));
 
+  // round 2's fix 6 (11-07 audit): Saves, Settings, Sessions and Warning history take the focus, Escape gives it back
+  await E('(setEdit(false), 1)').catch(() => {}); await sleep(300);
+  for (const [btn, mod] of [['savesBtn', 'smodal'], ['setBtn', 'setmodal'], ['gamesBtn', 'gmodal'], ['logBtn', 'wmodal']]) {
+    await E(`($('${btn}').focus(), $('${btn}').click(), 1)`); await sleep(600);
+    const inside = await E(`$('${mod}').classList.contains('open') && $('${mod}').contains(document.activeElement)`);
+    await p.key('Escape', 'Escape', 27); await sleep(600);
+    const back = await E(`[$('${mod}').classList.contains('open'), document.activeElement && document.activeElement.id]`);
+    ok(btn + ': its popup takes the focus, Escape closes it and gives the focus back', inside && !back[0] && back[1] === btn, [inside, back]);
+  }
   ok('nothing fetched from anywhere but its own server', urls.length > 0 && urls.every(u => u.startsWith(URL0) || u.startsWith('data:') || u.startsWith('blob:')), urls.filter(u => !u.startsWith(URL0)).join(' '));
   ok('no page errors', errs.length === 0, errs.join(' | '));
 } catch (e) { ok('the run gets to its end', false, e.message); }

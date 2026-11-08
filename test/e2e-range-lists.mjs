@@ -29,6 +29,15 @@ let W = await ev('({ a: GX.W.a, b: GX.W.b })');
 ok('Sessions: the wheel zooms the chart in around the pointer', W.b - W.a < 0.7 && near(W.a + 0.8 * (W.b - W.a), 0.8, 0.02), W);
 ok('Sessions: the games table is the window\'s', await ev(`[...document.querySelectorAll('#gsum .gx-gr')].map(r => r.textContent).join('|')`) !== tab0);
 ok('Sessions: its bar shows the window, a date at each end', await ev(`(() => { const b = document.querySelector('#gsum .mbar'); return Math.abs(parseFloat(b.firstChild.style.left) - GX.W.a * 100) < 0.01 && /^\\d{1,2} [a-z]{3}$/.test(b.children[2].textContent); })()`));
+// (round 2's fix 2, 11-07 audit) a window whose edges cut a day: the hover at either edge reads a day drawn in it
+{ const Wz = await ev('({ a: GX.W.a, b: GX.W.b })'); await ev(`(GX.W.set(0.06, 0.45), 1)`); await sleep(500);
+  const Rz = await rect('#gsum .gx-lcp');
+  for (const fx of [0.003, 0.997]) {
+    await mouse('mouseMoved', Rz.l + Rz.w * fx, Rz.y); await sleep(350);
+    const g = await ev(`(() => { const pl = document.querySelector('#gsum .gx-lcp'); return { hv: pl.classList.contains('hv'), x: parseFloat(pl.querySelector('.gx-gd').style.left) }; })()`);
+    ok('Sessions zoomed: the hover at the ' + (fx < 0.5 ? 'left' : 'right') + ' edge is on a day inside the plot', g.hv && g.x >= -0.01 && g.x <= 100.01, g);
+  }
+  await mouse('mouseMoved', 4, 4); await ev(`(GX.W.set(${Wz.a}, ${Wz.b}), 1)`); await sleep(500); }
 R = await rect('#gsum .gx-lcp'); W = await ev('({ a: GX.W.a, b: GX.W.b })');
 await p.drag({ x: R.l + R.w * 0.5, y: R.y }, { x: R.l + R.w * 0.5 + 80, y: R.y }, 10); await sleep(400);
 let W2 = await ev('({ a: GX.W.a, b: GX.W.b })');
@@ -55,6 +64,11 @@ await sleep(1200);
 const tl = '#glist .gx-sess[data-t="1"] .gx-tl';
 ok('its chart has the bar, the times at its ends', await ev(`(() => { const b = document.querySelector('${tl} .mbar'); return !!b && b.offsetWidth > 100 && /^\\d\\d:\\d\\d$/.test(b.children[1].textContent) && /^\\d\\d:\\d\\d$/.test(b.children[2].textContent); })()`), await ev(`(document.querySelector('${tl} .mbar') || {}).outerHTML`));
 ok('a session opens whole', (await ev(`document.querySelector('${tl} svg.gx-fpsc').getAttribute('viewBox')`)).startsWith('0.00 0 '));
+// (round 2's fix 3, 11-07 audit) a session that ends on a whole minute: its bar's end reads that minute, as its ticks do
+await ev(`(() => { const s = document.querySelector('#glist .gx-sess[data-t="1"]'), x = gxSs[+s.dataset.g]; x.end = Math.max(x.start + 120, Math.floor(x.end / 60) * 60); s.querySelector('.gx-row').click(); return 1; })()`); await sleep(700);
+await ev(`(document.querySelector('#glist .gx-sess[data-t="1"] .gx-row').click(), 1)`); await sleep(1200);
+{ const e = await ev(`(() => { const s = document.querySelector('#glist .gx-sess[data-t="1"]'), x = gxSs[+s.dataset.g], b = document.querySelector('${tl} .mbar'), t = document.querySelector('${tl} .gx-ticks .e1'); return { bar: b && b.children[2].textContent, tick: t && t.textContent, want: hhmm(x.end), whole: x.end % 60 === 0 }; })()`);
+  ok('a session ending on a whole minute: its bar ends at that minute, as its ticks do', e.whole && e.bar === e.want && !!e.tick && e.tick.endsWith(e.want), e); }
 const vb0 = await ev(`document.querySelector('${tl} svg.gx-fpsc').getAttribute('viewBox')`), tk0 = await ev(`document.querySelector('${tl} .gx-ticks').textContent`);
 R = await rect(tl + ' .gx-tr.f .gx-plot');
 await wheel(R, 0.5, -500);

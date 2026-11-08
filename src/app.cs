@@ -31,7 +31,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 static class AppInfo
 {
-    public const string Version = "2.4.2";
+    public const string Version = "2.4.3";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;
@@ -999,13 +999,15 @@ class History
         public bool Share;   // 1 or 0 a second (the bottleneck's calls): a minute holds its part of the whole minute, not of the seconds sampled
         public double MVal(int len) { return Share ? MSum / len : MSum / MCnt; }
         public double TVal(int len) { return Share ? TSum / len : TSum / TCnt; }
-        public double HVal(int len) { return Share ? HSum / len : HSum / HCnt; }
+        public double HVal(int len) { return Share ? HSum / Math.Max(len, HCnt) : HSum / HCnt; }   // (a clock set back inside the hour counts its seconds twice: a share never over the whole, 11-07 audit)
         public void Hours() { if (HAvg == null) { HAvg = NaNs(HourLen); HMax = NaNs(HourLen); } }
     }
     readonly Dictionary<string, Track> tracks = new Dictionary<string, Track>();
     readonly long[] secAt = new long[SecLen];
     readonly int[] minAt = new int[MinLen], tenAt = new int[TenLen], hourAt = new int[HourLen];
     Track[] byIndex = new Track[0];
+    bool[] own = new bool[0];   // (by index: HW Deck's own fps, frame time and game time, which need no HWiNFO)
+    static readonly HashSet<string> OwnKeys = new HashSet<string> { Frames.FpsKey, Frames.LowKey, Frames.FtKey, DeckSource.GameTimeKey };
     int version = -1, curMin = -1, curTen = -1, curHour = -1;
     readonly string path;
     public History(string dir)
@@ -1027,6 +1029,7 @@ class History
     int jHour;
     bool hHeld;   // hist-h.bin couldn't be opened (held by a backup or a scan): nothing saved over it until it is read
     int hTries; long hRetryAt; bool hJrnRead, hSeeded, hSeedLater, hMerge;
+    readonly HashSet<int> hSeedAt = new HashSet<int>();   // (the hours the seed filled: a file read later replaces them)
     volatile bool hjFailed;   // a journal write failed: the next save writes hist-h.bin whole
     static void WriteHours(BinaryWriter w, string key, int[] at, float[] avg, float[] max, Func<int, bool> take)
     {
@@ -1045,7 +1048,7 @@ class History
             int at = r.ReadInt32(); float a = r.ReadSingle(), m = r.ReadSingle();
             if (at <= nowHour - HourLen || at > nowHour || float.IsNaN(a)) continue;
             if (t == null) tracks[key] = t = new Track();
-            PutHour(t, at, a, m, over);
+            PutHour(t, at, a, m, over || hSeedAt.Contains(at));
         }
     }
     void PutHour(Track t, int at, float a, float m, bool over)
@@ -1145,7 +1148,7 @@ class History
                     a[0] += t.MAvg[k]; a[1]++; if (!float.IsNaN(t.MMax[k]) && t.MMax[k] > a[2]) a[2] = t.MMax[k];
                 }
             // (a share, the bottleneck's calls: its part of the whole hour, the blocks or minutes nothing ran in counted as none)
-            foreach (var kv in acc) { double a = t.Share ? kv.Value[0] / (blocks ? 6 : 60) : kv.Value[0] / kv.Value[1]; PutHour(t, kv.Key, (float)a, kv.Value[2] > double.MinValue ? (float)kv.Value[2] : (float)a, false); }
+            foreach (var kv in acc) { double a = t.Share ? kv.Value[0] / (blocks ? 6 : 60) : kv.Value[0] / kv.Value[1]; PutHour(t, kv.Key, (float)a, kv.Value[2] > double.MinValue ? (float)kv.Value[2] : (float)a, false); hSeedAt.Add(kv.Key); }
         }
     }
     bool HasHours(Track t) { if (t.HAvg == null) return false; for (int k = 0; k < HourLen; k++) if (hourAt[k] > curHour - HourLen && !float.IsNaN(t.HAvg[k])) return true; return false; }
@@ -1288,7 +1291,8 @@ class History
         if (src.Version != version)
         {
             version = src.Version;
-            byIndex = new Track[src.Readings.Count];
+            byIndex = new Track[src.Readings.Count]; own = new bool[src.Readings.Count];
+            for (int i = 0; i < own.Length; i++) own[i] = OwnKeys.Contains(src.Readings[i].Key);
             for (int i = 0; i < byIndex.Length; i++)
             {
                 Track t;
@@ -1317,18 +1321,20 @@ class History
             foreach (var t in tracks.Values) { if (bigBack) { t.HSum = 0; t.HCnt = 0; t.HPeak = double.MinValue; } else CloseHour(t); }
             curHour = hour; hMerge = bigBack && hourAt[hour % HourLen] == hour;   // (the clock set back into an hour already kept: it only fills what that hour lacks)
         }
+        // (set back within the hour: its seconds are kept, counted twice, its peak with them; HVal keeps a share at most the whole, 11-07 audit)
         foreach (var t in tracks.Values) t.Sec[si] = float.NaN;
-        if (src.Status == "ok")
-            for (int i = 0; i < byIndex.Length && i < src.Values.Length; i++)
-            {
-                double v = src.Values[i];
-                if (double.IsNaN(v) || double.IsInfinity(v)) continue;
-                var t = byIndex[i];
-                t.Sec[si] = (float)v;
-                t.MSum += v; t.MCnt++; if (v > t.MPeak) t.MPeak = v;
-                t.TSum += v; t.TCnt++; if (v > t.TPeak) t.TPeak = v;
-                t.HSum += v; t.HCnt++; if (v > t.HPeak) t.HPeak = v;
-            }
+        bool hwOk = src.Status == "ok";
+        for (int i = 0; i < byIndex.Length && i < src.Values.Length; i++)
+        {
+            if (!hwOk && (i >= own.Length || !own[i])) continue;   // (HWiNFO away: only HW Deck's own fps, frame time and game time go in, 11-07 audit)
+            double v = src.Values[i];
+            if (double.IsNaN(v) || double.IsInfinity(v)) continue;
+            var t = byIndex[i];
+            t.Sec[si] = (float)v;
+            t.MSum += v; t.MCnt++; if (v > t.MPeak) t.MPeak = v;
+            t.TSum += v; t.TCnt++; if (v > t.TPeak) t.TPeak = v;
+            t.HSum += v; t.HCnt++; if (v > t.HPeak) t.HPeak = v;
+        }
         if (src.Status == "ok" && moreKeys != null && more != null)
             for (int i = 0; i < moreKeys.Length && i < more.Length; i++)
             {
@@ -1496,8 +1502,8 @@ class History
         int sMin = curMin - 1, sTen = curTen - 1;   // (closed up to here: the journal starts after it)
         // the hours too (a copy of the slots that hold one, from the readings that have any)
         var ha = (int[])hourAt.Clone(); int oldHour = curHour - HourLen, sHour = curHour - 1;
-        var hl = new List<Snap>();
-        if (!hHeld) foreach (var kv in tracks) if (kv.Value.HAvg != null && HasHours(kv.Value)) hl.Add(new Snap { Key = kv.Key, TAvg = (float[])kv.Value.HAvg.Clone(), TMax = (float[])kv.Value.HMax.Clone() });
+        var hl = new List<Snap>(); bool hWrite = !hHeld;
+        if (hWrite) foreach (var kv in tracks) if (kv.Value.HAvg != null && HasHours(kv.Value)) hl.Add(new Snap { Key = kv.Key, TAvg = (float[])kv.Value.HAvg.Clone(), TMax = (float[])kv.Value.HMax.Clone() });
         var hOpen = openH; int oHour = openHour;
         System.Threading.ThreadStart write = delegate
         {
@@ -1531,7 +1537,7 @@ class History
                 if (File.Exists(path)) File.Replace(tmp, path, null); else File.Move(tmp, path);
                 try { File.Delete(jpath); } catch { }   // (all it held is in hist.bin now)
                 HadJournal = false;
-                if (!hHeld)
+                if (hWrite)   // (as at the snapshot: a retry that frees the file meanwhile must not get an empty one written over it)
                 {
                     string htmp = hpath + ".tmp";
                     using (var fs = new FileStream(htmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
@@ -1593,7 +1599,12 @@ class History
         if (!File.Exists(path)) { LoadJournal(); return; }
         FileStream fs;
         try { fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read); }
-        catch { if (++tries < 10) { held = true; retryAt = Source.Unix() + 60; } else SetAside(); return; }
+        catch
+        {
+            if (++tries < 10) { held = true; retryAt = Source.Unix() + 60; return; }
+            SetAside(); if (held) return;   // (it can't even be moved: tried again later)
+            LoadJournal(); if (hSeedLater) SeedNow((int)(Source.Unix() / 3600)); return;   // (moved aside: the journal still goes in, as for a damaged or missing file, 11-07 audit; the next save deleted it unread)
+        }
         try
         {
             long now = Source.Unix(); int nowMin = (int)(now / 60), nowTen = (int)(now / 600);
@@ -1662,6 +1673,7 @@ class Alerts
     public class Warm { public string Name, Unit; public double Peak; public bool New, Below; }
     public readonly List<Warm> Hot = new List<Warm>();
     public HashSet<string> Skip = new HashSet<string>();   // readings with no verdict right now (PresentMon away from the game)
+    public bool SkipHold;   // (the game still runs, in the background: an open warning of a skipped reading waits; no game: it ends)
     // lines a build keeps whatever the layout holds (see Extra): its own checks in the warning log, as cell-like entries
     // { key, name, gates }, judged like a cell's; their ids start "x:"
     public readonly Dictionary<string, IDictionary<string, object>> Always = new Dictionary<string, IDictionary<string, object>>();
@@ -1838,7 +1850,7 @@ class Alerts
             bool skip = Skip.Contains(r.Key);
             // (11-06: a skipped reading, PresentMon away while the game is in the back, has no verdict: an open episode
             // waits as it is instead of ending "back to normal" and counting again on return; a hold starts again)
-            if (skip) { St k; if (state.TryGetValue(r.Id, out k) && k.Logged == 0) k.Since = 0; continue; }
+            if (skip && SkipHold) { St k; if (state.TryGetValue(r.Id, out k) && k.Logged == 0) k.Since = 0; continue; }   // (11-07 audit: with the game closed it ends "back to normal" after 3 s, as before 11-06)
             if (r.Level != null && !skip) { raw = Math.Max(0, Math.Min(2, r.Level())); if (raw > 0 && r.Why != null) extra = r.Why(); }
             bool gatesOk = !skip && r.Mode != "none" && !double.IsNaN(r.Y) && !(r.Mode == "yr" && !double.IsNaN(r.R) && (r.Dir == "below" ? r.R >= r.Y : r.R <= r.Y));
             if (gatesOk)
@@ -2671,9 +2683,16 @@ class Games
         if (front) rep.Front++;
         // what limited the fps (a game's: only while it is in front, tabbed out it idles at its background cap)
         if (calls) { if (call == 'g') { rep.G++; rep.MG++; } else if (call == 'c') { rep.C++; rep.MC++; } else if (call == 'f') { rep.F++; rep.MF++; } }
-        if (src.Status != "ok") return;
+        // (HW Deck's own frame count needs no HWiNFO: with HWiNFO away, its 12 h free-version stop mid-game, it still feeds
+        // the session's fps, 11-07 audit)
+        Func<int, double> at = i => i >= 0 && i < src.Values.Length && src.Values[i] > 0 ? src.Values[i] : double.NaN;
+        Pick(src);   // (first: the readings can change while HWiNFO is away, Accurate game fps turned off, and the indices with them)
+        if (src.Status != "ok")
+        {
+            if (front && !double.IsNaN(at(ownFpsI))) { double f0 = at(ownFpsI), l0 = at(ownLowI); rep.FpsSum += f0; rep.FpsN++; rep.MFs += f0; rep.MFn++; if (!double.IsNaN(l0)) { rep.LowSum += l0; rep.LowN++; rep.MLs += l0; rep.MLn++; } }
+            return;
+        }
         foreach (var kv in gated) rep.Ln[kv.Key] = kv.Value;
-        Pick(src);
         // fps only while the game is in front and PresentMon follows it: tabbed out, it drops to its background cap
         // and PresentMon follows whatever window is in front instead
         if (pmOk)
@@ -2690,7 +2709,6 @@ class Games
         }
         // the game's fps while it is in front: HW Deck's own count of its frames when it has some (DirectX games), else
         // HWiNFO's while PresentMon follows it (Vulkan, OpenGL, or the count off)
-        Func<int, double> at = i => i >= 0 && i < src.Values.Length && src.Values[i] > 0 ? src.Values[i] : double.NaN;
         double fps = double.NaN, low = double.NaN;
         if (front && !double.IsNaN(at(ownFpsI))) { fps = at(ownFpsI); low = at(ownLowI); }
         else if (pmOk) { fps = at(fpsI); low = at(lowI); }
@@ -3068,7 +3086,10 @@ class Games
         var have = LogLines(); var blocked = new List<string>();
         if (have != null)
         {
-            var keys = have.Select(l => new { l, k = l.IndexOf("\"start\":", StringComparison.Ordinal) >= 0 ? Key(l) : null }).Where(x => x.k != null).ToList();
+            // (only the lines with a pending session's start are parsed, as SameStart reads them, 11-07 audit: the whole log at
+            // every session's end, on the UI thread, a longer freeze each month)
+            var starts = pending.Select(l => Key(l)).Where(k => k != null).Select(k => "\"start\":" + k.Item2.ToString(System.Globalization.CultureInfo.InvariantCulture) + ",").Distinct().ToList();
+            var keys = have.Where(l => starts.Any(st => l.IndexOf(st, StringComparison.Ordinal) >= 0)).Select(l => new { l, k = Key(l) }).Where(x => x.k != null).ToList();
             foreach (var line in pending.ToList())
             {
                 var k = Key(line); if (k == null) continue;
@@ -3291,9 +3312,30 @@ partial class DeckForm : Form
         settings = d; games.MergeWithin = MergeMins() * 60;
         Log("settings.json read after all" + (changed ? ", with the changes made meanwhile" : ""));
         if (changed) SaveSettings();
+        SettingsPasses();   // (the start's passes, held then)
         TrimAlerts(); TrimGames();   // (the start's trims ran on unknown days: nothing cut then)
         if (src.Frames != null && FpsWanted && !Brand.NoActions) Try(() => src.Frames.Start());
         if (pageReady) SendSettings();
+    }
+    void SettingsPasses()
+    {
+        // (2.4.2, his asks 11-07: a note for each update, stacked. notesSeen: the version whose notes were seen. The first
+        // start with them: the oldest version this install ran (its app.log), so an update to this one still gets the
+        // notes of every update it went through before there were notes, and no others; none, a new install: this one,
+        // nothing to catch up on. A test copy starts with nothing to show)
+        if (!(settings.ContainsKey("notesSeen") && settings["notesSeen"] is string)) { settings["notesSeen"] = (fake && Ver(Environment.GetEnvironmentVariable("HWDECK_RUNVER")) == null ? null : OldestStartIn(P("app.log"))) ?? AppInfo.Run; SaveSettings(); }   // (a test copy told to run as a version, even this one, reads its app.log like an install)
+        // (2.1: the sessions from before 2.0.1, once per data folder. estBefore: the first start of 2.0.1 or 2.0.2 in
+        // its app.log, else this one, kept from the first try; estDone once a pass read and wrote both files; estNote:
+        // how many changed, for the page's note until its X)
+        if (!true.Equals(settings.ContainsKey("estDone") ? settings["estDone"] : null))
+        {
+            long before = 0; try { if (settings.ContainsKey("estBefore")) before = Convert.ToInt64(settings["estBefore"]); } catch { }
+            if (before <= 0) before = Games.PaceStartIn(P("app.log"));
+            settings["estBefore"] = before;
+            int changed;
+            if (Games.ReestimateFiles(new[] { P("games.log"), P("games.log.bak") }, games.LogLock, Log, before, out changed)) { settings["estDone"] = true; if (changed > 0) settings["estNote"] = changed; }
+            SaveSettings();
+        }
     }
     Dictionary<string, object> ReadSettings(int tries = 5)
     {
@@ -3358,23 +3400,10 @@ partial class DeckForm : Form
         runName = custom ? Brand.Name + " (" + Path.GetFileName(data) + " " + ((uint)data.ToLowerInvariant().Aggregate(2166136261u, (h, ch) => (h ^ ch) * 16777619u)).ToString("x8") + ")" : Brand.Name;
         settings = ReadSettings();
         games.MergeWithin = MergeMins() * 60;
-        // (2.4.2, his asks 11-07: a note for each update, stacked. notesSeen: the version whose notes were seen. The first
-        // start with them: the oldest version this install ran (its app.log), so an update to this one still gets the
-        // notes of every update it went through before there were notes, and no others; none, a new install: this one,
-        // nothing to catch up on. A test copy starts with nothing to show)
-        if (!(settings.ContainsKey("notesSeen") && settings["notesSeen"] is string)) { settings["notesSeen"] = (fake && Ver(Environment.GetEnvironmentVariable("HWDECK_RUNVER")) == null ? null : OldestStartIn(P("app.log"))) ?? AppInfo.Run; SaveSettings(); }   // (a test copy told to run as a version, even this one, reads its app.log like an install)
-        // (2.1: the sessions from before 2.0.1, once per data folder. estBefore: the first start of 2.0.1 or 2.0.2 in
-        // its app.log, else this one, kept from the first try; estDone once a pass read and wrote both files; estNote:
-        // how many changed, for the page's note until its X)
-        if (!true.Equals(settings.ContainsKey("estDone") ? settings["estDone"] : null))
-        {
-            long before = 0; try { if (settings.ContainsKey("estBefore")) before = Convert.ToInt64(settings["estBefore"]); } catch { }
-            if (before <= 0) before = Games.PaceStartIn(P("app.log"));
-            settings["estBefore"] = before;
-            int changed;
-            if (Games.ReestimateFiles(new[] { P("games.log"), P("games.log.bak") }, games.LogLock, Log, before, out changed)) { settings["estDone"] = true; if (changed > 0) settings["estNote"] = changed; }
-            SaveSettings();
-        }
+        // (the start's passes over settings.json, the update notes seen and the sessions' re-estimate, run on the file as it
+        // is: held by another program, they wait for RetrySettings, 11-07 audit; the oldest version's notesSeen went over
+        // the file's, and every note put away came back)
+        if (!settingsHeld) SettingsPasses();
         // the game's own frames (Settings: Accurate game fps): on when it was turned on and Windows lets this account trace
         // (trace names are for the whole PC: the account's own id in it, so two accounts signed in at once don't stop each other's)
         if (!fake) { src.Frames = new Frames(runName + " frames " + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value); if (FpsWanted && !Brand.NoActions) src.Frames.Start(); }   // (a test copy never takes over the trace)
@@ -3750,6 +3779,7 @@ partial class DeckForm : Form
                 case "gameFps": SetGameFps(true.Equals(m["on"])); break;
                 case "openData": Process.Start("explorer.exe", "\"" + dataDir + "\""); break;
                 case "updates": settings["updates"] = true.Equals(m["on"]); updNext = 0; SaveSettings(); SendSettings(); break;
+                case "updCheck": updAsked = true; if (!updBusy) { updNext = 0; MaybeCheckUpdate(Source.Unix()); } break;   // (one under way: its answer is this one)
                 case "openRelease": OpenRelease(); break;
                 case "updateNow": UpdateNow(); break;
                 case "drag": Win("drag"); break;
@@ -3929,6 +3959,7 @@ partial class DeckForm : Form
     long updNext;
     int updMissed;
     volatile bool updBusy, updLogged;
+    bool updAsked;   // (Settings' check now: the page gets how it went, updDone)
     bool UpdatesOn() { return Brand.Updates && !settingsHeld && (!settings.ContainsKey("updates") || !false.Equals(settings["updates"])); }   // (held: maybe turned off, so off)
     static int[] Ver(string s)
     {
@@ -3965,7 +3996,8 @@ partial class DeckForm : Form
     }
     void MaybeCheckUpdate(long now)
     {
-        if (fake || updBusy || !UpdatesOn()) return;
+        if (updBusy) return;
+        if (fake || !UpdatesOn()) { if (updAsked) { updAsked = false; Post(new Dictionary<string, object> { { "t", "updDone" }, { "ok", false }, { "why", fake ? "test" : "off" } }); } return; }
         if (updNext == 0) updNext = now;   // (a start, or checks just turned on: now)
         if (now < updNext) return;
         updBusy = true;
@@ -3992,9 +4024,10 @@ partial class DeckForm : Form
             Try(() => BeginInvoke((Action)(() =>
             {
                 updBusy = false;
+                bool asked = updAsked; updAsked = false;
                 long t = Source.Unix();
-                if (!answered) { updNext = t + (++updMissed <= 3 ? 120 : 3600); return; }   // offline
-                updNext = t + 86400; updLogged = false; updMissed = 0;
+                if (!answered) { updNext = t + (++updMissed <= 3 ? 120 : 3600); if (asked) Post(new Dictionary<string, object> { { "t", "updDone" }, { "ok", false }, { "why", "offline" } }); return; }   // offline
+                updNext = t + (Ver(tag) != null ? 86400 : 3600); updLogged = false; updMissed = 0;   // (no version in the answer, GitHub's rate limit: in an hour)
                 settings["updChecked"] = t;
                 if (Ver(tag) != null)
                 {
@@ -4003,6 +4036,7 @@ partial class DeckForm : Form
                 }
                 SaveSettings();
                 SendSettings();
+                if (asked) Post(new Dictionary<string, object> { { "t", "updDone" }, { "ok", Ver(tag) != null }, { "latest", Ver(tag) != null ? tag.TrimStart('v') : null }, { "why", Ver(tag) != null ? "" : "answer" } });
             })));
         });
     }
@@ -4527,7 +4561,7 @@ Start-Process -FilePath $Exe -ArgumentList $a";
             }
             string gexe = games.GameExe;
             pmOk = games.Game != null && gameFront && (src.PmProc == null || gexe == null || string.Equals(src.PmProc, gexe, StringComparison.OrdinalIgnoreCase));
-            alerts.Skip = pmOk ? new HashSet<string>() : pmKeys;
+            alerts.Skip = pmOk ? new HashSet<string>() : pmKeys; alerts.SkipHold = games.Game != null;
             // HWiNFO not sharing for 10 s (the free version stops every 12 h): say so in the log and the tray, end open episodes
             if (src.Status != "ok")
             {

@@ -190,6 +190,25 @@ await E('undo()'); await p.sleep(300);
 ok('two quick key presses are one undo step', JSON.stringify((await rows('tiles'))[0].cols.map(c => c.w ?? null)) === JSON.stringify(w0.map(x => x ?? null)), JSON.stringify((await rows('tiles'))[0].cols));
 await p.key('ArrowRight', 'ArrowRight', 39, 1); await p.sleep(400);
 ok('Alt+Right swaps it with the category on its right', flat(await rows('tiles')).startsWith('sys | gpu'), flat(await rows('tiles')));
+// (his 11-07 "move it to stay next to memory but still side by side") B on a stacked category: beside the one above it
+// in its column, on one line; B again: back under it
+{
+  const f0 = flat(await rows('tiles'));
+  await p.key('s', 'KeyS', 83); await p.sleep(500);
+  const f1 = flat(await rows('tiles'));
+  ok('S: GPU stacked under the column on its left', /sys\+gpu/.test(f1), f1);
+  await p.key('b', 'KeyB', 66); await p.sleep(600);
+  const col = (await rows('tiles')).flatMap(x => x.cols).find(c => c.stack.some(x => (typeof x === 'string' ? x : x.id) === 'gpu'));
+  ok('B: GPU beside the one above it, kept as beside, one line drawn', !!col && col.stack.some(x => x && x.id === 'gpu' && x.b === 1) && await E(`!!document.querySelector('#view .lcol > .lsub > .dcat[data-cat="gpu"]')`), JSON.stringify(col));
+  ok('the two side by side: tops level, GPU on the right, neither past the column', await E(`(() => { const s = document.querySelector('#view .lsub'), c = s && s.closest('.lcol').getBoundingClientRect(), a = s && s.children[0].getBoundingClientRect(), b = s && s.children[1].getBoundingClientRect(); return !!s && Math.abs(a.top - b.top) < 2 && b.left >= a.right - 1 && s.children[1].dataset.cat === 'gpu' && a.left >= c.left - 1 && b.right <= c.right + 1; })()`));
+  ok('its settings: Beside above pressed, and where it is says beside', await E(`(() => { const b = document.querySelector('#insp [data-lay=move][data-v=beside]'), t = document.querySelector('#insp .row3'); return !!b && b.classList.contains('on') && !b.disabled && !!t && / beside 2 of 2/.test(t.textContent); })()`), await E(`(document.querySelector('#insp .row3') || {}).textContent`));
+  ok('the outline draws the line too', await E(`(() => { const d = document.createElement('div'); d.innerHTML = outlineHtml(rowsNow('tiles'), 'tiles'); return !!d.querySelector('.oline [data-ocat="gpu"]') && !!d.querySelector('.oline [data-ocat="sys"]'); })()`));   // (no outline on the page while a category is selected: its drawing, 11-07 audit)
+  await p.key('b', 'KeyB', 66); await p.sleep(600);
+  const r3 = await rows('tiles');
+  ok('B again: back under it, no line left', flat(r3) === f1 && !r3.flatMap(x => x.cols).some(c => c.stack.some(x => x && x.b)) && await E(`!document.querySelector('#view .lsub')`), flat(r3));
+  for (let i = 0; i < 3; i++) { await E('undo()'); await p.sleep(350); }
+  ok('three undos: as it was', flat(await rows('tiles')) === f0, [f0, flat(await rows('tiles'))]);
+}
 
 // looks in the panel
 await click(`${cat('gpu')} .cn`);
