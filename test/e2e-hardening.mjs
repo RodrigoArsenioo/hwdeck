@@ -115,7 +115,7 @@ ok('a warning cut by a crash merges from its start and never runs "to" the next 
 await E(`removeCell(Object.keys(S.L.cells).pop())`); await p.sleep(100);
 ok('a toast offers Undo for what it names', await E('!$("toastUndo").hidden'));
 await E(`mutate(() => { S.L.cats[0].name = 'Renamed'; })`); await p.sleep(100);
-ok('after another change its Undo goes', await E('$("toastUndo").hidden'));
+ok('after another change its Undo goes: out of reach at once, gone once it has faded (11-08)', await E('$("toastUndo").hidden || $("toastUndo").disabled') && await (async () => { await p.sleep(300); return E('$("toastUndo").hidden'); })());
 ok('folding categories is gone: a layout saved with one folded opens unfolded', await E('cleanLayout({ v: 1, cats: [{ id: "a", name: "A", collapsed: true, cells: [] }], cells: {} }).cats[0].collapsed === false && !document.querySelector("#view .dcat.collapsed")'));
 
 // ---- animations: Full / Minimal / Off from Settings (Reduced is gone: run-all saved this view with it) ----

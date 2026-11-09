@@ -64,12 +64,15 @@ const c12Ep = { on: false, calm: 0, words: '' };
 const pinVals = i => (feed.c12keys && feed.c12keys[i] || []).map(k => { const r = BYKEY.get(k); return r && r.v != null ? r.v : null; });
 const CONN_LINES = { mode: 'yr', dir: 'above', y: 9.2, r: 9.5, hold: 0 };
 // a pin's colour by its cell's own lines, as the cell's: 'r' past red, 'y' past yellow, '' under them or with no lines
+// the pins' colour: the tile's own graph colour (its category's under Spectrum, the graphs' grey otherwise; his 11-09)
+const pinCol = (cid, e) => e && (e.col === 'grey' || e.col === 'past') ? sparkColor(e, false) : cellTint(cid) || '#7c7c7c';   // (a dimmed tile's pins dim with its graph, 11-09)
 const pinLvl = (v, cid) => { const c = S.L.cells[cid], gl = gateLines(c && c.gates); return v == null || gl.below ? '' : gl.r !== undefined && v >= gl.r ? 'r' : gl.y !== undefined && v >= gl.y ? 'y' : ''; };
 EXT.kinds['12v'] = {
   body: () => '<span class="xpins">' + '<i><b></b></i>'.repeat(Math.max(1, feed.c12keys ? feed.c12keys[0].length : 6)) + '</span>',
   update(root, rd, e, cid) {
     const a = pinVals(0);
     root.querySelectorAll('.xb .xpins b').forEach((b, i) => { const v = a[i]; b.style.height = (v == null ? 0 : Math.min(100, v / 9.5 * 100)) + '%'; b.className = pinLvl(v, cid); });
+    const sp = root.querySelector('.xb .xpins'), pc = pinCol(cid, e); if (sp && sp._pc !== pc) { sp._pc = pc; sp.style.setProperty('--pc', pc); }   // (the tile's own graph colour, 11-09)
   },
   after(out) {
     if (feed.status !== 'ok') return;   // (a stalled feed judges nothing: the cell stays grey)
@@ -85,7 +88,7 @@ EXT.kinds['12v'] = {
     for (let i = 0; i < a.length; i++) {
       const v = a[i];
       h += '<div class="mpin"><span class="lbl">pin ' + (i + 1) + '</span><span class="trk"><span style="width:' + (v == null ? 0 : Math.min(100, v / 9.5 * 100)) + '%;background:' +
-        ({ r: COLORS.red, y: COLORS.yellow }[pinLvl(v, cid)] || '#6f6f6f') + '"></span></span><span class="num">' + (v == null ? '--' : v.toFixed(2)) + ' A</span><span class="num">' + (w[i] == null ? '--' : w[i].toFixed(1)) + ' W</span></div>';
+        ({ r: COLORS.red, y: COLORS.yellow }[pinLvl(v, cid)] || pinCol(cid, e)) + '"></span></span><span class="num">' + (v == null ? '--' : v.toFixed(2)) + ' A</span><span class="num">' + (w[i] == null ? '--' : w[i].toFixed(1)) + ' W</span></div>';
     }
     const el = box.querySelector('.mpinwrap'); if (el._h !== h) { el.innerHTML = h; el._h = h; }
   }
@@ -278,7 +281,7 @@ function drawLevels(cv, lv, rev, col) {
   ctx.font = (11 * dpr) + 'px Segoe UI'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   for (let v = 1; v <= 3; v++) {
     const y = Math.round(Y(v)) + 0.5;
-    ctx.strokeStyle = '#1e1e1e'; ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+    ctx.strokeStyle = gv('#1e1e1e'); ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
     ctx.fillStyle = '#666'; ctx.fillText(BN_LV[v - 1], padL - 8 * dpr, y);
   }
   const runs = []; let cur = null;
@@ -411,7 +414,7 @@ function interp(pts, x) {
   for (let i = 1; i < p.length; i++) if (x <= p[i][0]) { const [x0, y0] = p[i - 1], [x1, y1] = p[i]; return y0 + (y1 - y0) * (x - x0) / (x1 - x0 || 1); }
   return p[p.length - 1][1];
 }
-const mixHex = (a, b, w) => '#' + [1, 3, 5].map(i => Math.round(parseInt(a.substr(i, 2), 16) * (1 - w) + parseInt(b.substr(i, 2), 16) * w).toString(16).padStart(2, '0')).join('');
+const mixHex = (a, b, w) => '#' + [1, 3, 5].map(i => Math.max(0, Math.min(255, Math.round(parseInt(a.substr(i, 2), 16) * (1 - w) + parseInt(b.substr(i, 2), 16) * w))).toString(16).padStart(2, '0')).join('');   // (each channel kept in 0 to 255: an overshoot made a colour the canvas refused, 11-09)
 const durTxt = sec => { const m = Math.max(0, Math.round(sec / 60)); return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + ('0' + (m % 60)).slice(-2) + 'm'; };
 const durS = sec => sec < 59.5 ? Math.max(0, Math.round(sec)) + 's' : durTxt(sec);   // (a session of your own can be under a minute)
 const plural = (n, one, many) => n.toLocaleString('en-US') + ' ' + (n === 1 ? one : many || one + 's');
@@ -529,6 +532,7 @@ const SZ = { wide: [2, 1], tall: [1, 2], big: [2, 2] };
 // a line, in even lines (his pick: 200 px at his text size). Tiles per row went: a category with it set gets its tiles as
 // shares of its row, as it drew them (cleanViews). PCTS: the widths a drag snaps to, RQ: the heights to pick from
 const TILE_MIN = 11.6, PCTS = [25, 100 / 3, 50, 200 / 3, 75, 100], RQ = [0.5, 0.75, 1, 1.5, 2];
+const SPIN_UD = '<span class="ud" aria-hidden="true"><b data-step="1"><svg viewBox="0 0 10 6"><path d="M1.5 5L5 1.5 8.5 5"/></svg></b><b data-step="-1"><svg viewBox="0 0 10 6"><path d="M1.5 1L5 4.5 8.5 1"/></svg></b></span>';   // (Settings' up and down arrows, its number boxes' and the edit panel's: built early, the panel can draw before Settings' code runs)
 const fNum = x => { if (typeof x !== 'number' || !isFinite(x) || x <= 0) return null; const f = Math.min(1, Math.max(0.05, x)), q = PCTS.find(p => Math.abs(p / 100 - f) < 0.0015); return Math.round((q ? q / 100 : f) * 1e4) / 1e4; };
 const pctTxt = f => Math.round(f * 100) + '%';
 // (a size a hair off a quarter step or a third, a third of a pixel or less, from a snap or a px step, is that step: 0.9999
@@ -599,9 +603,9 @@ function cleanViews(V, L, ids, catIds) {
       }
     }
     if (vn !== 'grid' && (v.gap === 'tight' || v.gap === 'roomy')) o.gap = v.gap;
-    // (Fill the window: the view's, so Automatic keeps it; every row of yours filled is the same thing. A row of yours
-    // can still fill on its own while the view fits: the panel audit 11-06, Fill made Automatic your own)
-    if (vn === 'tiles' && (v.fill === true || (o.rows && o.rows.length && o.rows.every(r => r.h)))) { o.fill = true; if (o.rows) for (const r of o.rows) delete r.h; }
+    // (Fill the window: the view's, so Automatic keeps it, set only by the view's Height. A row of yours fills on its own
+    // and keeps its Fill, even when every row left fills: rows added later fit, 11-08 audit; a move made the view fill)
+    if (vn === 'tiles' && v.fill === true) { o.fill = true; if (o.rows) for (const r of o.rows) delete r.h; }
     if (isObj(v.cat)) {
       const cat = {};
       for (const k of Object.keys(v.cat)) {
@@ -656,7 +660,7 @@ function tidyViews(L) {
 }
 const cleanSlot = s => s && typeof s === 'object' && s.layout && Array.isArray(s.layout.cats)
   ? { v: 1, name: typeof s.name === 'string' ? s.name.trim().slice(0, 80) : '', layout: cleanLayout(s.layout) } : null;
-const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined, title: undefined, clock: true, look: { theme: 'classic', changed: false, base: '#0d0d0d', fades: [], cell: '#151515', op: 100, line: true, corners: 'normal', tint: 'none', acc: '#7fa6e8', pal: 'muted' } };
+const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined, title: undefined, clock: true, look: { theme: 'classic', changed: false, base: '#0d0d0d', fades: [], cell: '#151515', op: 100, line: true, corners: 'normal', tint: 'none', acc: '#ffffff', pal: 'muted', pops: 'cells' }, listFilt: { g: false, w: false }, lookSaved: [] };   // (listFilt: the period chart's window filters the list under it, Sessions g, Warning history w; off by default, his 11-09)
 // the title bar: your title (this PC's name when there is none), the feed's dot and the time of the last reading
 function renderTitle() {
   setText($('title'), (S.title && S.title.trim()) || feed.pc || feed.brand || 'HW Deck');
@@ -687,36 +691,165 @@ function applyMotion() { document.documentElement.dataset.motion = motionMode();
 // yours, from a palette; Match makes that palette from the background's fades, so it always fits). Warnings stay
 // yellow and red. The page sets the tokens from the look (--bg, --tile, --pop, ...); deck.css only reads them
 const THEMES = { tint: ['none', 'accent', 'spectrum'], corners: ['sharp', 'normal', 'round'] };
-const ACC0 = '#7fa6e8', isHex = c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
+const ACC0 = '#ffffff', ACC_OLD = { classic: '#7fa6e8', oled: '#9cb0f4' }, isHex = c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
 const FADE_AT = { tl: [0, 0, 'Top left'], t: [50, 0, 'Top'], tr: [100, 0, 'Top right'], r: [100, 50, 'Right'], br: [100, 100, 'Bottom right'], b: [50, 100, 'Bottom'], bl: [0, 100, 'Bottom left'], l: [0, 50, 'Left'] };
 // the themes to start from. Classic is the look of before (Standard's greys exactly); OLED and Soft the cards of those
 // names, now themes
+// the themes (11-09, the final 107 from the theme swarm, his yes: ten families, each theme with its own palette, t_<id>
+// in PALETTES; Classic keeps Muted). fam: its family, for the Look page to come. Classic and OLED white accents (his
+// 11-09 "classic and greys with this blueish accent color to have a white ffffff"; were #7fa6e8 and #9cb0f4)
 const THEME_PRESETS = {
-  classic: { name: 'Classic', base: '#0d0d0d', fades: [], cell: '#151515', op: 100, line: true, corners: 'normal', tint: 'none', acc: ACC0, pal: 'muted' },
-  oled: { name: 'OLED', base: '#000000', fades: [], cell: '#000000', op: 0, line: true, corners: 'normal', tint: 'none', acc: ACC0, pal: 'muted' },
-  soft: { name: 'Soft', base: '#101010', fades: [], cell: '#1a1a1a', op: 100, line: false, corners: 'round', tint: 'none', acc: ACC0, pal: 'muted' },
-  warm: { name: 'Warm', base: '#120e0b', fades: [{ at: 'tl', c: '#8a5a2e', size: 80, a: 24 }], cell: '#1a1612', op: 100, line: true, corners: 'normal', tint: 'accent', acc: '#e0a458', pal: 'fire' },
-  slate: { name: 'Slate', base: '#0c0e11', fades: [{ at: 't', c: '#4a6a94', size: 85, a: 34 }], cell: '#151a21', op: 85, line: true, corners: 'normal', tint: 'accent', acc: '#7aa2d6', pal: 'ocean' },
-  aurora: { name: 'Aurora', base: '#0a0b14', fades: [{ at: 'tl', c: '#7052e0', size: 75, a: 38 }, { at: 'br', c: '#1ca8be', size: 80, a: 30 }], cell: '#1a1b2e', op: 45, line: true, corners: 'round', tint: 'spectrum', acc: '#9d8cff', pal: 'match' },
-  sunset: { name: 'Sunset', base: '#0d0a0a', fades: [{ at: 'b', c: '#d9572b', size: 95, a: 30 }, { at: 'tr', c: '#7a34b8', size: 55, a: 22 }], cell: '#1c1515', op: 60, line: true, corners: 'normal', tint: 'spectrum', acc: '#ff8c42', pal: 'match' },
-  neon: { name: 'Neon', base: '#0b0c10', fades: [{ at: 'l', c: '#2f6fe0', size: 60, a: 30 }, { at: 'r', c: '#e0407a', size: 60, a: 26 }], cell: '#14151c', op: 55, line: true, corners: 'sharp', tint: 'spectrum', acc: '#7aa2ff', pal: 'match' },
+  classic: { name: 'Classic', fam: 'Greys', base: '#0d0d0d', fades: [], cell: '#151515', op: 100, line: true, corners: 'normal', tint: 'none', acc: ACC0, pal: 'muted' },
+  oled: { name: 'OLED', fam: 'Greys', base: '#000000', fades: [], cell: '#000000', op: 0, line: true, corners: 'normal', tint: 'none', acc: '#ffffff', pal: 't_oled' },
+  carbon: { name: 'Carbon', fam: 'Greys', base: '#050505', fades: [], cell: '#0e0e0e', op: 100, line: true, corners: 'sharp', tint: 'accent', acc: '#d8d8d8', pal: 't_carbon' },
+  soft: { name: 'Soft', fam: 'Greys', base: '#080808', fades: [], cell: '#151515', op: 100, line: false, corners: 'round', tint: 'none', acc: '#c4a8b8', pal: 't_soft' },
+  steel: { name: 'Steel', fam: 'Greys', base: '#0d1013', fades: [], cell: '#10151a', op: 100, line: true, corners: 'sharp', tint: 'accent', acc: '#8aa4be', pal: 't_steel' },
+  smoke: { name: 'Smoke', fam: 'Greys', base: '#0b0b0c', fades: [{ at: 'b', c: '#9a9a9a', size: 100, a: 12 }, { at: 'tl', c: '#6a6a6a', size: 60, a: 10 }], cell: '#141415', op: 70, line: true, corners: 'round', tint: 'spectrum', acc: '#c6c6cc', pal: 't_smoke' },
+  stone: { name: 'Stone', fam: 'Greys', base: '#100f0e', fades: [{ at: 'tl', c: '#6b625a', size: 80, a: 16 }], cell: '#161413', op: 100, line: true, corners: 'round', tint: 'none', acc: '#c2b6a8', pal: 't_stone' },
+  graphite: { name: 'Graphite', fam: 'Greys', base: '#0e0f11', fades: [{ at: 't', c: '#5a6370', size: 90, a: 14 }], cell: '#131518', op: 100, line: true, corners: 'normal', tint: 'none', acc: '#9aa5b4', pal: 't_graphite' },
+  chrome: { name: 'Chrome', fam: 'Greys', base: '#08090a', fades: [{ at: 't', c: '#e8ecf0', size: 100, a: 14 }, { at: 'b', c: '#e8ecf0', size: 60, a: 8 }], cell: '#121314', op: 55, line: true, corners: 'round', tint: 'accent', acc: '#c2d0e2', pal: 't_chrome' },
+  halftone: { name: 'Halftone', fam: 'Greys', base: '#0e0e0e', fades: [{ at: 'tl', c: '#7a8a9c', size: 100, a: 16 }, { at: 'br', c: '#8a7a6a', size: 100, a: 16 }], cell: '#171717', op: 65, line: true, corners: 'normal', tint: 'spectrum', acc: '#a8b8cc', pal: 't_halftone' },
+  leather: { name: 'Leather', fam: 'Browns', base: '#0d0705', fades: [{ at: 'tl', c: '#6a2e1a', size: 95, a: 38 }, { at: 'br', c: '#3a1810', size: 75, a: 34 }], cell: '#1b0f0b', op: 85, line: true, corners: 'sharp', tint: 'spectrum', acc: '#d86a7e', pal: 't_leather' },
+  saddle: { name: 'Saddle', fam: 'Browns', base: '#0f0806', fades: [{ at: 'bl', c: '#8a4a28', size: 90, a: 32 }, { at: 'tr', c: '#4a2014', size: 80, a: 36 }], cell: '#1e110c', op: 55, line: true, corners: 'round', tint: 'spectrum', acc: '#f4a06a', pal: 't_saddle' },
+  mocha: { name: 'Mocha', fam: 'Browns', base: '#120c0a', fades: [{ at: 'tr', c: '#7a4a3a', size: 80, a: 30 }], cell: '#1c1410', op: 80, line: true, corners: 'normal', tint: 'spectrum', acc: '#e8a684', pal: 't_mocha' },
+  fireside: { name: 'Fireside', fam: 'Browns', base: '#0e0806', fades: [{ at: 'b', c: '#a04a20', size: 70, a: 30 }, { at: 'bl', c: '#5a2a14', size: 80, a: 26 }], cell: '#1c110c', op: 68, line: true, corners: 'round', tint: 'spectrum', acc: '#eaa580', pal: 't_fireside' },
+  copper: { name: 'Copper', fam: 'Browns', base: '#0f0b09', fades: [{ at: 'tl', c: '#b0603a', size: 75, a: 26 }, { at: 'br', c: '#5a3a2a', size: 70, a: 26 }], cell: '#1d1612', op: 70, line: true, corners: 'normal', tint: 'spectrum', acc: '#f09a64', pal: 't_copper' },
+  cognac: { name: 'Cognac', fam: 'Browns', base: '#0f0805', fades: [{ at: 't', c: '#a0581e', size: 90, a: 26 }, { at: 'b', c: '#3a1a0c', size: 80, a: 30 }], cell: '#1d120b', op: 65, line: true, corners: 'normal', tint: 'spectrum', acc: '#f6aa68', pal: 't_cognac' },
+  espresso: { name: 'Espresso', fam: 'Browns', base: '#0f0a07', fades: [{ at: 'b', c: '#7a4424', size: 95, a: 40 }, { at: 'tl', c: '#4a2a18', size: 75, a: 34 }], cell: '#22170f', op: 70, line: true, corners: 'normal', tint: 'spectrum', acc: '#e2a468', pal: 't_espresso' },
+  timber: { name: 'Timber', fam: 'Browns', base: '#0d0a07', fades: [{ at: 'l', c: '#5a3c22', size: 70, a: 34 }, { at: 'r', c: '#3e2a18', size: 70, a: 30 }], cell: '#1b150e', op: 82, line: true, corners: 'sharp', tint: 'accent', acc: '#d2a06a', pal: 't_timber' },
+  latte: { name: 'Latte', fam: 'Browns', base: '#15110d', fades: [{ at: 't', c: '#c9a27a', size: 90, a: 16 }, { at: 'br', c: '#8a6a4a', size: 70, a: 20 }], cell: '#1a1510', op: 76, line: true, corners: 'round', tint: 'spectrum', acc: '#f0cfa4', pal: 't_latte' },
+  sand: { name: 'Sand', fam: 'Browns', base: '#13110d', fades: [{ at: 't', c: '#b8a27a', size: 85, a: 16 }], cell: '#17140f', op: 85, line: true, corners: 'round', tint: 'spectrum', acc: '#d9c49a', pal: 't_sand' },
+  garnet: { name: 'Garnet', fam: 'Reds and oranges', base: '#0e0408', fades: [{ at: 't', c: '#a01040', size: 90, a: 34 }], cell: '#1b0c10', op: 72, line: true, corners: 'normal', tint: 'spectrum', acc: '#f25a84', pal: 't_garnet' },
+  ruby: { name: 'Ruby', fam: 'Reds and oranges', base: '#0b0406', fades: [{ at: 'tl', c: '#c01a3a', size: 75, a: 34 }, { at: 'br', c: '#7a0e22', size: 70, a: 26 }], cell: '#190b0e', op: 64, line: true, corners: 'round', tint: 'spectrum', acc: '#ff5c8a', pal: 't_ruby' },
+  carmine: { name: 'Carmine', fam: 'Reds and oranges', base: '#0e0507', fades: [{ at: 'l', c: '#b8104a', size: 90, a: 34 }], cell: '#1c0b0e', op: 64, line: true, corners: 'normal', tint: 'spectrum', acc: '#ff80b4', pal: 't_carmine' },
+  velvet: { name: 'Velvet', fam: 'Reds and oranges', base: '#0e0607', fades: [{ at: 'b', c: '#8a1a2a', size: 100, a: 36 }], cell: '#1b0f11', op: 70, line: true, corners: 'normal', tint: 'spectrum', acc: '#ff6a98', pal: 't_velvet' },
+  coral: { name: 'Coral', fam: 'Reds and oranges', base: '#110807', fades: [{ at: 'bl', c: '#e0604a', size: 85, a: 38 }, { at: 'tr', c: '#b04a3a', size: 60, a: 24 }], cell: '#1f1210', op: 62, line: true, corners: 'round', tint: 'spectrum', acc: '#ff8a70', pal: 't_coral' },
+  lava: { name: 'Lava', fam: 'Reds and oranges', base: '#0a0505', fades: [{ at: 'b', c: '#ff3a10', size: 100, a: 34 }, { at: 'tl', c: '#8a1a0a', size: 60, a: 26 }], cell: '#1a0e0b', op: 55, line: true, corners: 'sharp', tint: 'spectrum', acc: '#ff7a20', pal: 't_lava' },
+  ember: { name: 'Ember', fam: 'Reds and oranges', base: '#0d0807', fades: [{ at: 'b', c: '#c4351c', size: 100, a: 36 }], cell: '#1c1210', op: 60, line: true, corners: 'normal', tint: 'spectrum', acc: '#ff6a3d', pal: 't_ember' },
+  rust: { name: 'Rust', fam: 'Reds and oranges', base: '#100907', fades: [{ at: 'r', c: '#9a3a1a', size: 80, a: 30 }], cell: '#1d1310', op: 70, line: true, corners: 'sharp', tint: 'spectrum', acc: '#ff7f3a', pal: 't_rust' },
+  martian: { name: 'Martian', fam: 'Reds and oranges', base: '#0f0806', fades: [{ at: 'tr', c: '#c0502a', size: 90, a: 34 }], cell: '#1e130f', op: 68, line: true, corners: 'round', tint: 'spectrum', acc: '#ffa070', pal: 't_martian' },
+  saffron: { name: 'Saffron', fam: 'Golds and yellows', base: '#120a04', fades: [{ at: 'br', c: '#e0801a', size: 80, a: 30 }, { at: 'tl', c: '#b08a20', size: 70, a: 22 }], cell: '#211508', op: 66, line: true, corners: 'normal', tint: 'spectrum', acc: '#ff9f40', pal: 't_saffron' },
+  caramel: { name: 'Caramel', fam: 'Golds and yellows', base: '#120d07', fades: [{ at: 'bl', c: '#c07a2a', size: 85, a: 28 }], cell: '#1f170d', op: 70, line: true, corners: 'normal', tint: 'spectrum', acc: '#f8a040', pal: 't_caramel' },
+  honeycomb: { name: 'Honeycomb', fam: 'Golds and yellows', base: '#110c05', fades: [{ at: 'b', c: '#d89020', size: 95, a: 30 }, { at: 'tl', c: '#8a5a10', size: 60, a: 20 }], cell: '#20170a', op: 68, line: true, corners: 'round', tint: 'spectrum', acc: '#f5a742', pal: 't_honeycomb' },
+  sunflower: { name: 'Sunflower', fam: 'Golds and yellows', base: '#100c03', fades: [{ at: 't', c: '#f0b020', size: 90, a: 24 }, { at: 'b', c: '#6a4a10', size: 80, a: 24 }], cell: '#1e1807', op: 70, line: true, corners: 'round', tint: 'spectrum', acc: '#f0a020', pal: 't_sunflower' },
+  midas: { name: 'Midas', fam: 'Golds and yellows', base: '#0d0a04', fades: [{ at: 't', c: '#e8b830', size: 100, a: 26 }, { at: 'bl', c: '#c88a20', size: 80, a: 22 }, { at: 'br', c: '#c88a20', size: 80, a: 22 }], cell: '#1c1607', op: 80, line: true, corners: 'normal', tint: 'spectrum', acc: '#f0a828', pal: 't_midas' },
+  brushedgold: { name: 'Brushed Gold', fam: 'Golds and yellows', base: '#120e05', fades: [{ at: 'l', c: '#d0a038', size: 100, a: 24 }, { at: 'r', c: '#d0a038', size: 100, a: 24 }], cell: '#1c1505', op: 86, line: true, corners: 'sharp', tint: 'accent', acc: '#e8a030', pal: 't_brushedgold' },
+  gilded: { name: 'Gilded', fam: 'Golds and yellows', base: '#0d0b06', fades: [{ at: 'tr', c: '#c8a030', size: 80, a: 24 }], cell: '#1a170e', op: 80, line: true, corners: 'sharp', tint: 'spectrum', acc: '#e3ae51', pal: 't_gilded' },
+  goldleaf: { name: 'Gold Leaf', fam: 'Golds and yellows', base: '#0b0a06', fades: [{ at: 'tl', c: '#d0a838', size: 70, a: 30 }, { at: 'br', c: '#a07820', size: 70, a: 24 }], cell: '#18160d', op: 82, line: true, corners: 'sharp', tint: 'spectrum', acc: '#f4b048', pal: 't_goldleaf' },
+  citrine: { name: 'Citrine', fam: 'Golds and yellows', base: '#0f0c02', fades: [{ at: 'tl', c: '#f0c020', size: 75, a: 28 }, { at: 'br', c: '#f09010', size: 70, a: 22 }], cell: '#1d1806', op: 72, line: true, corners: 'normal', tint: 'spectrum', acc: '#f5a000', pal: 't_citrine' },
+  moss: { name: 'Moss', fam: 'Greens', base: '#0c0d08', fades: [{ at: 'tl', c: '#6a7a2a', size: 85, a: 28 }], cell: '#14170f', op: 75, line: true, corners: 'round', tint: 'spectrum', acc: '#a8c060', pal: 't_moss' },
+  nettle: { name: 'Nettle', fam: 'Greens', base: '#060906', fades: [{ at: 'tl', c: '#4a8a2a', size: 80, a: 24 }], cell: '#10160e', op: 82, line: true, corners: 'sharp', tint: 'spectrum', acc: '#7ad030', pal: 't_nettle' },
+  grove: { name: 'Grove', fam: 'Greens', base: '#050906', fades: [{ at: 'bl', c: '#2a7a36', size: 90, a: 32 }, { at: 'br', c: '#2a7a36', size: 90, a: 32 }], cell: '#0d170e', op: 42, line: true, corners: 'sharp', tint: 'spectrum', acc: '#62c46a', pal: 't_grove' },
+  sage: { name: 'Sage', fam: 'Greens', base: '#0a100b', fades: [{ at: 'b', c: '#6a9a72', size: 90, a: 20 }], cell: '#0e1610', op: 85, line: true, corners: 'round', tint: 'spectrum', acc: '#78e47f', pal: 't_sage' },
+  clover: { name: 'Clover', fam: 'Greens', base: '#060c07', fades: [{ at: 'l', c: '#45a63a', size: 70, a: 26 }, { at: 'r', c: '#45a63a', size: 70, a: 26 }], cell: '#101a12', op: 66, line: true, corners: 'round', tint: 'spectrum', acc: '#2fe472', pal: 't_clover' },
+  matrix: { name: 'Matrix', fam: 'Greens', base: '#000000', fades: [{ at: 't', c: '#00a040', size: 90, a: 22 }], cell: '#000000', op: 0, line: true, corners: 'sharp', tint: 'spectrum', acc: '#2aff6a', pal: 't_matrix' },
+  pinewood: { name: 'Pinewood', fam: 'Greens', base: '#040a07', fades: [{ at: 't', c: '#1d5a36', size: 100, a: 38 }, { at: 'bl', c: '#0e3a24', size: 60, a: 20 }], cell: '#0b1a11', op: 80, line: true, corners: 'sharp', tint: 'spectrum', acc: '#10b870', pal: 't_pinewood' },
+  evergreen: { name: 'Evergreen', fam: 'Greens', base: '#070d09', fades: [{ at: 'b', c: '#1f7a4a', size: 95, a: 32 }, { at: 'tl', c: '#2a5a3a', size: 70, a: 24 }], cell: '#111a14', op: 70, line: true, corners: 'normal', tint: 'spectrum', acc: '#4fd08a', pal: 't_evergreen' },
+  malachite: { name: 'Malachite', fam: 'Greens', base: '#040a07', fades: [{ at: 'tl', c: '#0e8a5a', size: 60, a: 24 }, { at: 'r', c: '#1aa070', size: 55, a: 20 }, { at: 'bl', c: '#0a6a48', size: 60, a: 24 }], cell: '#0b1712', op: 45, line: true, corners: 'normal', tint: 'spectrum', acc: '#1ceca7', pal: 't_malachite' },
+  ivy: { name: 'Ivy', fam: 'Greens', base: '#050a07', fades: [{ at: 'tr', c: '#167a5c', size: 95, a: 30 }, { at: 'bl', c: '#0c4a3a', size: 70, a: 22 }], cell: '#0d170f', op: 66, line: true, corners: 'round', tint: 'spectrum', acc: '#1ec97a', pal: 't_ivy' },
+  cypress: { name: 'Cypress', fam: 'Greens', base: '#04090a', fades: [{ at: 'b', c: '#1e6a50', size: 100, a: 34 }], cell: '#0b1714', op: 88, line: false, corners: 'normal', tint: 'spectrum', acc: '#04cca8', pal: 't_cypress' },
+  jade: { name: 'Jade', fam: 'Teals', base: '#05100a', fades: [{ at: 'l', c: '#0d8a4c', size: 90, a: 32 }, { at: 'br', c: '#0a6a40', size: 70, a: 26 }], cell: '#0f1d18', op: 60, line: true, corners: 'normal', tint: 'spectrum', acc: '#08e092', pal: 't_jade' },
+  mint: { name: 'Mint', fam: 'Teals', base: '#08100e', fades: [{ at: 'tr', c: '#3ad0a0', size: 100, a: 19 }, { at: 'bl', c: '#1a8a6a', size: 75, a: 16 }], cell: '#12201c', op: 65, line: true, corners: 'round', tint: 'spectrum', acc: '#1ef4bb', pal: 't_mint' },
+  spiral: { name: 'Spiral', fam: 'Teals', base: '#071012', fades: [{ at: 'br', c: '#20a090', size: 100, a: 24 }, { at: 'tl', c: '#1c4a7a', size: 80, a: 22 }, { at: 'tr', c: '#0e6a6a', size: 40, a: 14 }], cell: '#0f1c1e', op: 55, line: true, corners: 'round', tint: 'spectrum', acc: '#10e2cf', pal: 't_spiral' },
+  offshore: { name: 'Offshore', fam: 'Teals', base: '#0a1a1c', fades: [{ at: 'r', c: '#0f6a7a', size: 100, a: 30 }], cell: '#0c1c1e', op: 85, line: false, corners: 'round', tint: 'spectrum', acc: '#16c8e0', pal: 't_offshore' },
+  'pier-lights': { name: 'Pier lights', fam: 'Teals', base: '#050b0d', fades: [{ at: 'b', c: '#148a90', size: 70, a: 26 }, { at: 'tl', c: '#b06a30', size: 45, a: 12 }], cell: '#0e171a', op: 70, line: true, corners: 'normal', tint: 'spectrum', acc: '#0bd1db', pal: 't_pier-lights' },
+  'cyan-line': { name: 'Cyan line', fam: 'Teals', base: '#080c0e', fades: [{ at: 't', c: '#126a78', size: 100, a: 16 }], cell: '#0b1c20', op: 100, line: true, corners: 'sharp', tint: 'accent', acc: '#2ad4e0', pal: 't_cyan-line' },
+  'dusk-tide': { name: 'Dusk tide', fam: 'Teals', base: '#060c10', fades: [{ at: 'b', c: '#0f8a88', size: 90, a: 30 }, { at: 'tr', c: '#5a3a90', size: 45, a: 14 }], cell: '#0e171c', op: 60, line: true, corners: 'round', tint: 'spectrum', acc: '#13ddd4', pal: 't_dusk-tide' },
+  deepsea: { name: 'Deep sea', fam: 'Teals', base: '#061012', fades: [{ at: 'bl', c: '#0f6a7a', size: 90, a: 34 }, { at: 'tr', c: '#1a3a7a', size: 70, a: 26 }], cell: '#0f1c20', op: 60, line: true, corners: 'round', tint: 'spectrum', acc: '#15d8eb', pal: 't_deepsea' },
+  frostwater: { name: 'Frostwater', fam: 'Teals', base: '#0a1215', fades: [{ at: 'tl', c: '#5ad8e0', size: 70, a: 12 }, { at: 'br', c: '#2a90b0', size: 60, a: 16 }], cell: '#0f2228', op: 65, line: true, corners: 'normal', tint: 'spectrum', acc: '#8cd8e4', pal: 't_frostwater' },
+  'night-lagoon': { name: 'Night lagoon', fam: 'Teals', base: '#050a10', fades: [{ at: 'b', c: '#127a8a', size: 90, a: 26 }, { at: 'tl', c: '#22306a', size: 70, a: 22 }], cell: '#0d1520', op: 60, line: true, corners: 'round', tint: 'spectrum', acc: '#00b4cc', pal: 't_night-lagoon' },
+  arctic: { name: 'Arctic', fam: 'Blues', base: '#0b1014', fades: [{ at: 'tr', c: '#7ad0f0', size: 80, a: 11 }], cell: '#0f171f', op: 70, line: true, corners: 'round', tint: 'spectrum', acc: '#94d3fd', pal: 't_arctic' },
+  slate: { name: 'Slate', fam: 'Blues', base: '#0c0e11', fades: [{ at: 't', c: '#4a6a94', size: 85, a: 34 }], cell: '#11161c', op: 85, line: true, corners: 'normal', tint: 'accent', acc: '#7aa2d6', pal: 't_slate' },
+  navy: { name: 'Navy', fam: 'Blues', base: '#050a18', fades: [{ at: 'b', c: '#10265a', size: 100, a: 30 }], cell: '#0a132c', op: 100, line: true, corners: 'sharp', tint: 'accent', acc: '#8aa4d8', pal: 't_navy' },
+  storm: { name: 'Storm', fam: 'Blues', base: '#0c0e12', fades: [{ at: 't', c: '#5a6a8a', size: 90, a: 26 }, { at: 'br', c: '#3a4a6a', size: 70, a: 22 }], cell: '#13171c', op: 75, line: true, corners: 'normal', tint: 'spectrum', acc: '#7a9cf0', pal: 't_storm' },
+  blueprint: { name: 'Blueprint', fam: 'Blues', base: '#09152b', fades: [{ at: 'tr', c: '#2f6fd0', size: 60, a: 13 }], cell: '#081429', op: 85, line: true, corners: 'sharp', tint: 'accent', acc: '#8ec5ff', pal: 't_blueprint' },
+  zenith: { name: 'Zenith', fam: 'Blues', base: '#060914', fades: [{ at: 't', c: '#2a5aff', size: 45, a: 45 }], cell: '#0f1530', op: 85, line: true, corners: 'sharp', tint: 'spectrum', acc: '#7397fe', pal: 't_zenith' },
+  midnight: { name: 'Midnight', fam: 'Blues', base: '#070a14', fades: [{ at: 't', c: '#1e3a8a', size: 95, a: 34 }], cell: '#10162a', op: 70, line: true, corners: 'normal', tint: 'spectrum', acc: '#739fff', pal: 't_midnight' },
+  cobalt: { name: 'Cobalt', fam: 'Blues', base: '#080b16', fades: [{ at: 'l', c: '#2a4ae0', size: 80, a: 30 }], cell: '#121730', op: 55, line: true, corners: 'sharp', tint: 'spectrum', acc: '#7890ea', pal: 't_cobalt' },
+  sapphire: { name: 'Sapphire', fam: 'Blues', base: '#070b1c', fades: [{ at: 'tl', c: '#2546c8', size: 75, a: 32 }, { at: 'br', c: '#1a6fd6', size: 60, a: 24 }], cell: '#0f1733', op: 60, line: true, corners: 'round', tint: 'spectrum', acc: '#7699fe', pal: 't_sapphire' },
+  horizon: { name: 'Horizon', fam: 'Blues', base: '#080b14', fades: [{ at: 'b', c: '#3a6ae0', size: 100, a: 28 }, { at: 't', c: '#0f1a3a', size: 100, a: 30 }], cell: '#121a30', op: 60, line: true, corners: 'round', tint: 'spectrum', acc: '#88adfe', pal: 't_horizon' },
+  ultramarine: { name: 'Ultramarine', fam: 'Blues', base: '#06061a', fades: [{ at: 'bl', c: '#2d2fd0', size: 90, a: 38 }, { at: 'tr', c: '#1f5fe0', size: 55, a: 20 }], cell: '#12133a', op: 55, line: true, corners: 'round', tint: 'spectrum', acc: '#6a72ff', pal: 't_ultramarine' },
+  'blue-hour': { name: 'Blue Hour', fam: 'Blues', base: '#090a16', fades: [{ at: 't', c: '#3a4ab8', size: 95, a: 30 }, { at: 'bl', c: '#6a3ab0', size: 55, a: 16 }], cell: '#141632', op: 60, line: true, corners: 'round', tint: 'spectrum', acc: '#98b1ff', pal: 't_blue-hour' },
+  cosmos: { name: 'Cosmos', fam: 'Purples', base: '#070614', fades: [{ at: 'tl', c: '#4a2ab0', size: 70, a: 34 }, { at: 'r', c: '#8a2ab0', size: 50, a: 30 }, { at: 'b', c: '#2a3ab0', size: 60, a: 20 }], cell: '#12102a', op: 44, line: true, corners: 'round', tint: 'spectrum', acc: '#a5abea', pal: 't_cosmos' },
+  royalviolet: { name: 'Royal Violet', fam: 'Purples', base: '#0a0816', fades: [{ at: 't', c: '#5a2ac0', size: 100, a: 34 }, { at: 'b', c: '#3a1a8a', size: 80, a: 22 }], cell: '#16112a', op: 60, line: true, corners: 'normal', tint: 'spectrum', acc: '#835ff2', pal: 't_royalviolet' },
+  lavender: { name: 'Lavender', fam: 'Purples', base: '#0e0d14', fades: [{ at: 'tl', c: '#8a7ad8', size: 85, a: 26 }], cell: '#181620', op: 74, line: true, corners: 'round', tint: 'spectrum', acc: '#aea7ed', pal: 't_lavender' },
+  nebula: { name: 'Nebula', fam: 'Purples', base: '#09081a', fades: [{ at: 'tl', c: '#6a2ad0', size: 80, a: 34 }, { at: 'br', c: '#d02a8a', size: 75, a: 28 }, { at: 'tr', c: '#2a6ad0', size: 50, a: 20 }], cell: '#16132a', op: 45, line: true, corners: 'round', tint: 'spectrum', acc: '#ab85f4', pal: 't_nebula' },
+  grape: { name: 'Grape', fam: 'Purples', base: '#0e0816', fades: [{ at: 'r', c: '#7a30c0', size: 100, a: 40 }, { at: 'bl', c: '#4a1a8a', size: 60, a: 22 }], cell: '#1e1430', op: 62, line: true, corners: 'normal', tint: 'accent', acc: '#a67df2', pal: 't_grape' },
+  orchid: { name: 'Orchid', fam: 'Purples', base: '#0f0a12', fades: [{ at: 't', c: '#b04ad0', size: 90, a: 30 }], cell: '#1b1420', op: 65, line: true, corners: 'round', tint: 'spectrum', acc: '#ca7ce8', pal: 't_orchid' },
+  purpurite: { name: 'Purpurite', fam: 'Purples', base: '#0e0612', fades: [{ at: 'tr', c: '#9a1ab0', size: 70, a: 34 }], cell: '#1c0d22', op: 62, line: true, corners: 'sharp', tint: 'spectrum', acc: '#c671fe', pal: 't_purpurite' },
+  aubergine: { name: 'Aubergine', fam: 'Purples', base: '#0c070e', fades: [{ at: 'bl', c: '#6e2a7a', size: 95, a: 40 }], cell: '#1a0f1c', op: 82, line: false, corners: 'normal', tint: 'accent', acc: '#ba7bd2', pal: 't_aubergine' },
+  byzantium: { name: 'Byzantium', fam: 'Purples', base: '#110614', fades: [{ at: 'l', c: '#902a90', size: 85, a: 34 }], cell: '#200e24', op: 72, line: true, corners: 'sharp', tint: 'accent', acc: '#cf6bd3', pal: 't_byzantium' },
+  plum: { name: 'Plum', fam: 'Purples', base: '#0f080d', fades: [{ at: 'bl', c: '#7a2a6a', size: 90, a: 34 }], cell: '#1c1119', op: 70, line: true, corners: 'normal', tint: 'spectrum', acc: '#cb6ab2', pal: 't_plum' },
+  mulberry: { name: 'Mulberry', fam: 'Purples', base: '#10070f', fades: [{ at: 'b', c: '#902a60', size: 95, a: 32 }, { at: 'tr', c: '#4a2a9a', size: 50, a: 18 }], cell: '#1e1020', op: 70, line: true, corners: 'normal', tint: 'spectrum', acc: '#df67ae', pal: 't_mulberry' },
+  'fuchsia-night': { name: 'Fuchsia Night', fam: 'Pinks', base: '#0e070c', fades: [{ at: 'b', c: '#c21d8a', size: 100, a: 26 }], cell: '#1d0f19', op: 55, line: true, corners: 'normal', tint: 'spectrum', acc: '#ed4fd1', pal: 't_fuchsia-night' },
+  'pink-line': { name: 'Pink Line', fam: 'Pinks', base: '#12080e', fades: [{ at: 'bl', c: '#d0508a', size: 90, a: 24 }], cell: '#20101a', op: 60, line: true, corners: 'sharp', tint: 'accent', acc: '#e987b2', pal: 't_pink-line' },
+  'pink-glass': { name: 'Pink Glass', fam: 'Pinks', base: '#0f080d', fades: [{ at: 'b', c: '#e04a96', size: 100, a: 22 }, { at: 'tl', c: '#a03a7a', size: 70, a: 18 }], cell: '#1e1219', op: 35, line: true, corners: 'round', tint: 'spectrum', acc: '#fe76c2', pal: 't_pink-glass' },
+  blossom: { name: 'Blossom', fam: 'Pinks', base: '#110a0e', fades: [{ at: 'tl', c: '#e05a9a', size: 85, a: 30 }, { at: 'br', c: '#a03a7a', size: 75, a: 24 }], cell: '#1e1419', op: 60, line: true, corners: 'round', tint: 'spectrum', acc: '#df94c3', pal: 't_blossom' },
+  azalea: { name: 'Azalea', fam: 'Pinks', base: '#12080e', fades: [{ at: 'tr', c: '#e83c9a', size: 85, a: 28 }, { at: 'b', c: '#8a2a6a', size: 90, a: 22 }, { at: 'l', c: '#ff7ab8', size: 40, a: 10 }], cell: '#200f19', op: 66, line: true, corners: 'round', tint: 'spectrum', acc: '#fe5fb7', pal: 't_azalea' },
+  sakura: { name: 'Sakura', fam: 'Pinks', base: '#120d10', fades: [{ at: 'tr', c: '#f0a0c0', size: 80, a: 20 }, { at: 'bl', c: '#c07090', size: 70, a: 18 }], cell: '#1f161b', op: 65, line: true, corners: 'round', tint: 'spectrum', acc: '#fcb1cc', pal: 't_sakura' },
+  'rose-inlay': { name: 'Rose Inlay', fam: 'Pinks', base: '#26131d', fades: [{ at: 't', c: '#e0609a', size: 100, a: 12 }], cell: '#12080d', op: 92, line: true, corners: 'normal', tint: 'spectrum', acc: '#f381b4', pal: 't_rose-inlay' },
+  'dusk-bloom': { name: 'Dusk Bloom', fam: 'Pinks', base: '#0e080c', fades: [{ at: 'b', c: '#ff5a78', size: 100, a: 30 }, { at: 'tr', c: '#a03ab0', size: 60, a: 24 }], cell: '#1c1218', op: 58, line: true, corners: 'normal', tint: 'spectrum', acc: '#ff7191', pal: 't_dusk-bloom' },
+  camellia: { name: 'Camellia', fam: 'Pinks', base: '#110a0d', fades: [{ at: 't', c: '#e0507a', size: 100, a: 22 }], cell: '#23121a', op: 80, line: true, corners: 'sharp', tint: 'spectrum', acc: '#ff6692', pal: 't_camellia' },
+  rose: { name: 'Rose', fam: 'Pinks', base: '#120c0d', fades: [{ at: 'b', c: '#b85a6a', size: 95, a: 26 }], cell: '#1c1314', op: 75, line: true, corners: 'round', tint: 'spectrum', acc: '#df8797', pal: 't_rose' },
+  flamingo: { name: 'Flamingo', fam: 'Pinks', base: '#120a0c', fades: [{ at: 'tl', c: '#ff5a8a', size: 80, a: 30 }, { at: 'br', c: '#ff9a4a', size: 75, a: 26 }], cell: '#1f1416', op: 60, line: true, corners: 'normal', tint: 'spectrum', acc: '#ff4994', pal: 't_flamingo' },
+  toxic: { name: 'Toxic', fam: 'Mixes', base: '#070a05', fades: [{ at: 'bl', c: '#7ad010', size: 85, a: 26 }, { at: 'tr', c: '#d0d010', size: 60, a: 18 }], cell: '#10170a', op: 60, line: true, corners: 'sharp', tint: 'spectrum', acc: '#a5e212', pal: 't_toxic' },
+  circuit: { name: 'Circuit', fam: 'Mixes', base: '#09090b', fades: [{ at: 'l', c: '#f0e010', size: 60, a: 18 }, { at: 'r', c: '#10e0f0', size: 60, a: 18 }], cell: '#121519', op: 70, line: true, corners: 'sharp', tint: 'spectrum', acc: '#dbec18', pal: 't_circuit' },
+  tropical: { name: 'Tropical', fam: 'Mixes', base: '#071010', fades: [{ at: 'bl', c: '#10b0a0', size: 85, a: 28 }, { at: 'tr', c: '#ff8a3a', size: 70, a: 24 }], cell: '#0c1918', op: 58, line: true, corners: 'normal', tint: 'spectrum', acc: '#ffa04a', pal: 't_tropical' },
+  inkwell: { name: 'Inkwell', fam: 'Mixes', base: '#070a14', fades: [{ at: 'tl', c: '#2a3a9a', size: 80, a: 26 }], cell: '#200e18', op: 60, line: true, corners: 'sharp', tint: 'spectrum', acc: '#fd90c2', pal: 't_inkwell' },
+  mosaic: { name: 'Mosaic', fam: 'Mixes', base: '#07080f', fades: [{ at: 'tl', c: '#2a4ad0', size: 75, a: 30 }, { at: 'br', c: '#c8902a', size: 70, a: 22 }], cell: '#0e1226', op: 62, line: true, corners: 'sharp', tint: 'spectrum', acc: '#91acfd', pal: 't_mosaic' },
+  peacock: { name: 'Peacock', fam: 'Mixes', base: '#070c10', fades: [{ at: 'tl', c: '#1a8a9a', size: 80, a: 30 }, { at: 'br', c: '#6a3ac0', size: 75, a: 28 }], cell: '#0e1722', op: 60, line: true, corners: 'round', tint: 'spectrum', acc: '#9a5cf0', pal: 't_peacock' },
+  prism: { name: 'Prism', fam: 'Mixes', base: '#0a0a10', fades: [{ at: 'tl', c: '#ff5a5a', size: 60, a: 22 }, { at: 'tr', c: '#5aff9a', size: 60, a: 18 }, { at: 'b', c: '#5a8aff', size: 80, a: 24 }], cell: '#15151f', op: 50, line: true, corners: 'round', tint: 'spectrum', acc: '#c0b0ff', pal: 't_prism' },
+  twilight: { name: 'Twilight', fam: 'Mixes', base: '#0d0a12', fades: [{ at: 'b', c: '#d0703a', size: 80, a: 22 }, { at: 't', c: '#3a3a9a', size: 85, a: 30 }], cell: '#18142a', op: 55, line: true, corners: 'normal', tint: 'spectrum', acc: '#f0a060', pal: 't_twilight' },
+  aurora: { name: 'Aurora', fam: 'Mixes', base: '#0a0b14', fades: [{ at: 'tl', c: '#7052e0', size: 75, a: 38 }, { at: 'br', c: '#1ca8be', size: 80, a: 30 }], cell: '#121326', op: 55, line: true, corners: 'round', tint: 'spectrum', acc: '#9d8cff', pal: 't_aurora' },
+  neon: { name: 'Neon', fam: 'Mixes', base: '#0b0c10', fades: [{ at: 'l', c: '#2f6fe0', size: 60, a: 30 }, { at: 'r', c: '#e0407a', size: 60, a: 26 }], cell: '#14151c', op: 55, line: true, corners: 'sharp', tint: 'spectrum', acc: '#93b4fd', pal: 't_neon' },
+  plasma: { name: 'Plasma', fam: 'Mixes', base: '#0c060c', fades: [{ at: 'tl', c: '#4a3af0', size: 70, a: 26 }, { at: 'b', c: '#f03a8a', size: 70, a: 24 }, { at: 'r', c: '#f0703a', size: 45, a: 16 }], cell: '#170c1a', op: 58, line: true, corners: 'sharp', tint: 'spectrum', acc: '#ff5aa0', pal: 't_plasma' },
+  vapor: { name: 'Vapor', fam: 'Mixes', base: '#0e0a14', fades: [{ at: 'tl', c: '#ff6ad0', size: 75, a: 26 }, { at: 'br', c: '#6ae0ff', size: 75, a: 24 }], cell: '#120d1c', op: 56, line: true, corners: 'round', tint: 'spectrum', acc: '#ffa9e6', pal: 't_vapor' },
+  synthwave: { name: 'Synthwave', fam: 'Mixes', base: '#0c0814', fades: [{ at: 'b', c: '#ff3a9a', size: 90, a: 32 }, { at: 't', c: '#2ac0e0', size: 70, a: 22 }], cell: '#18122a', op: 50, line: true, corners: 'sharp', tint: 'spectrum', acc: '#ff4fae', pal: 't_synthwave' },
+  sunset: { name: 'Sunset', fam: 'Mixes', base: '#0d0a0a', fades: [{ at: 'b', c: '#d9572b', size: 95, a: 30 }, { at: 'tr', c: '#7a34b8', size: 55, a: 22 }], cell: '#1c1515', op: 60, line: true, corners: 'normal', tint: 'spectrum', acc: '#ff8c42', pal: 't_sunset' },
 };
 const lcHex = c => c.toLowerCase(), clampN = (v, lo, hi, d) => v !== null && v !== '' && Number.isFinite(+v) ? Math.max(lo, Math.min(hi, Math.round(+v))) : d;
 const cleanFade = f => f && FADE_AT[f.at] && isHex(f.c) ? { at: f.at, c: lcHex(f.c), size: clampN(f.size, 20, 100, 70), a: clampN(f.a, 5, 80, 30) } : null;
 // a saved look made whole. One from before 11-05 (cards and a colour) opens as its theme with the colour it had:
 // Standard as Classic, OLED (and Outline, the first afternoon of 11-02) as OLED, Soft as Soft
+const THEME_GONE = { warm: 'caramel', ingot: 'classic', chestnut: 'classic', berry: 'classic', pomegranate: 'classic', fudge: 'classic', merlot: 'classic', 'berry-dusk': 'classic', tanzanite: 'classic', canopy: 'classic', drizzle: 'classic', bullion: 'classic', scarlet: 'classic', inlet: 'classic' };   // (themes taken out, 11-09: Warm's nearest is Caramel; the 13 the swarm cut, and anything else unknown, Classic)
 function cleanLook(o) {
   o = o && typeof o === 'object' ? o : {};
+  if (o.theme && !THEME_PRESETS[o.theme] && !o.cards) { const to = THEME_GONE[o.theme] || 'classic'; o = o.changed === true ? Object.assign({}, o, { theme: to }) : Object.assign(JSON.parse(JSON.stringify(THEME_PRESETS[to])), { theme: to, changed: false, pops: o.pops }); }   // (a theme taken out: its nearest, as it came or with your changes, 11-09)
   const theme = THEME_PRESETS[o.theme] ? o.theme : o.cards === 'oled' || o.cards === 'outline' ? 'oled' : o.cards === 'soft' ? 'soft' : 'classic', P = THEME_PRESETS[theme];
   const own = isHex(o.base) && isHex(o.cell);   // (a look of 11-05 on: its own background and cells)
   const seen = new Set(), fades = own && Array.isArray(o.fades) ? o.fades.map(cleanFade).filter(f => f && !seen.has(f.at) && seen.add(f.at)) : P.fades.map(f => Object.assign({}, f));
-  return { theme, changed: own && o.changed === true, base: own ? lcHex(o.base) : P.base, fades, cell: own ? lcHex(o.cell) : P.cell, op: own ? clampN(o.op, 0, 100, P.op) : P.op, line: own ? o.line !== false : P.line,
+  const r = { theme, changed: own && o.changed === true, base: own ? lcHex(o.base) : P.base, fades, cell: own ? lcHex(o.cell) : P.cell, op: own ? clampN(o.op, 0, 100, P.op) : P.op, line: own ? o.line !== false : P.line,
     corners: own && THEMES.corners.includes(o.corners) ? o.corners : P.corners, tint: THEMES.tint.includes(o.tint) ? o.tint : 'none', acc: isHex(o.acc) ? lcHex(o.acc) : ACC0,
-    pal: Object.prototype.hasOwnProperty.call(PALETTES, o.pal) ? o.pal : 'muted' };
+    pal: Object.prototype.hasOwnProperty.call(PALETTES, o.pal) ? o.pal : 'muted', pops: o.pops === 'view' ? 'view' : 'cells' };   // (popups: Cells unless View was picked, his 11-09)
+  // (11-09, the Look page: corners in px and the outline's strength from its sliders, kept only when set; the saved look it came from)
+  const rad = own ? clampN(o.rad, 0, 24, null) : null, la = own ? clampN(o.lineA, 10, 200, 100) : 100;
+  if (rad != null) r.rad = rad; if (la !== 100) r.lineA = la; if (typeof o.from === 'string' && o.from) r.from = o.from.slice(0, 32);
+  return r;
 }
-const lookPlain = () => S.look.theme === 'classic' && !S.look.changed && S.look.tint === 'none' && S.look.acc === ACC0 && S.look.pal === 'muted';
+// a saved look (11-09): its id, name, the look (as cleanLook makes it, not its popups) and its categories' own colours
+const cleanSaved = a => { const seen = new Set(); return (Array.isArray(a) ? a : []).filter(x => x && typeof x === 'object' && typeof x.id === 'string' && x.id && x.look && typeof x.look === 'object' && !seen.has(x.id) && seen.add(x.id)).slice(0, 12).map(x => {
+  const l = cleanLook(Object.assign({}, x.look, { changed: true })); l.changed = false; delete l.from; delete l.pops;
+  const cols = x.cols && typeof x.cols === 'object' ? Object.fromEntries(Object.entries(x.cols).filter(([k, v]) => k && isHex(v)).slice(0, 64).map(([k, v]) => [k, v.toLowerCase()])) : {};
+  return { id: x.id.slice(0, 32), name: (typeof x.name === 'string' && x.name.trim() ? x.name.trim() : 'Saved').slice(0, 40), look: l, cols }; }); };
+// (11-09, white accents: a saved state's Classic or OLED look still on the old blue its theme or palette gave it takes the
+// white, once, as it loads; a look from a save or any other theme keeps its colour. 2.4.3's OLED came with Muted, which
+// shows nowhere under Mono: its own palette then, so it isn't "changed")
+const lookUp = o => {
+  if (!o || typeof o !== 'object' || o.from) return o;
+  const th = o.theme || (o.cards === 'oled' || o.cards === 'outline' ? 'oled' : o.cards === 'soft' ? 'soft' : 'classic');
+  if (!ACC_OLD[th]) return o;
+  o = Object.assign({}, o);
+  if (isHex(o.acc) && Object.values(ACC_OLD).includes(o.acc.toLowerCase()) && (o.pal == null || ['muted', 't_oled', 't_classic'].includes(o.pal))) o.acc = ACC0;
+  if (th === 'oled' && o.pal === 'muted' && (o.tint == null || o.tint === 'none')) o.pal = 't_oled';
+  return o;
+};
+const lookPlain = () => S.look.theme === 'classic' && !S.look.changed && S.look.tint === 'none' && S.look.acc === ACC0 && S.look.pal === 'muted' && S.look.pops !== 'view' && S.look.rad == null && S.look.lineA == null && !S.look.from;
 // colours: a hex mixed toward another (t of b), as rgba, its hue, and one made from a hue
 const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+// (edit mode's lines and outlines are the accent, lifted toward white when it is too dark to see on the dark view: its
+// light at least 0.18; Classic's white is far above it, 11-09)
+const relLum = h => { const [r, g, b] = hexRgb(h).map(v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+const editCol = h => { if (!/^#[0-9a-f]{6}$/i.test(h || '')) return ACC0; let c = h; for (let i = 0; i < 12 && relLum(c) < 0.18; i++) c = mixHex(c, '#ffffff', 0.12); return c; };
 const rgbaOf = (h, a) => 'rgba(' + hexRgb(h).join(', ') + ', ' + a + ')';
 function hueOf(h) { const [r, g, b] = hexRgb(h).map(v => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; if (!d) return [0, 0]; const l = (mx + mn) / 2; return [(mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60, (l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn)) * 100]; }
 function lookHsl(h, s, l) { h = ((h % 360) + 360) % 360; s /= 100; l /= 100; const a = s * Math.min(l, 1 - l), f = n => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }; return '#' + [f(0), f(8), f(4)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join(''); }
@@ -735,23 +868,34 @@ const bgiOf = L => L.fades.map(f => { const [x, y] = FADE_AT[f.at], w = f.size *
   return 'radial-gradient(' + w + '% ' + h + '% at ' + x + '% ' + y + '%, ' + rgbaOf(f.c, f.a / 100) + ', transparent 72%)'; }).concat([L.base]).join(', ');
 const tileOf = L => L.op >= 100 ? L.cell : rgbaOf(L.cell, L.op / 100);
 const solidOf = L => mixHex(L.base, L.cell, L.op / 100);   // (a see-through cell over the base)
-const lineOf = L => L.line ? mixHex(solidOf(L), '#ffffff', 0.0655 + (1 - L.op / 100) * 0.0835) : 'transparent';   // (the less cell, the brighter its line: OLED's still shows)
+const lineOf = L => L.line ? mixHex(solidOf(L), '#ffffff', Math.min(1, (0.0655 + (1 - L.op / 100) * 0.0835) * (L.lineA || 100) / 100)) : 'transparent';   // (the less cell, the brighter its line: OLED's still shows)
 // the tokens: the popups, drawers, fields and Settings in the cells' colour. Classic gives the greys of before exactly
 function lookVars(L) {
-  const solid = solidOf(L), line = lineOf(L), tile = tileOf(L), R = { sharp: ['0.25rem', '0.35rem'], normal: ['0.77rem', '0.92rem'], round: ['1.05rem', '1.2rem'] }[L.corners], up = t => mixHex(solid, '#ffffff', t);
-  return { '--bg': L.base, '--bgi': bgiOf(L), '--tile': tile, '--tile-solid': solid, '--tile-line': line, '--card-line': L.line ? mixHex(solid, '#ffffff', 0.0611 + (1 - L.op / 100) * 0.0879) : 'transparent',   // (a step under the tile's: Classic #232323, OLED #262626, as before)
+  const solid = solidOf(L), line = lineOf(L), tile = tileOf(L), R = L.rad != null ? [(L.rad / 13).toFixed(3) + 'rem', (L.rad / 13 + 0.15).toFixed(3) + 'rem'] : { sharp: ['0.25rem', '0.35rem'], normal: ['0.77rem', '0.92rem'], round: ['1.05rem', '1.2rem'] }[L.corners], up = t => mixHex(solid, '#ffffff', t);
+  return { '--bg': L.base, '--bgi': bgiOf(L), '--tile': tile, '--tile-solid': solid, '--tile-line': line, '--card-line': L.line ? mixHex(solid, '#ffffff', Math.min(1, (0.0611 + (1 - L.op / 100) * 0.0879) * (L.lineA || 100) / 100)) : 'transparent',   // (a step under the tile's: Classic #232323, OLED #262626, as before)
     '--nav': tile, '--nav-line': line,
     '--rule': L.line ? up(0.0556 + (1 - L.op / 100) * 0.045) : 'transparent', '--tile-sh': L.line ? 'none' : '0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 6px 18px rgba(0, 0, 0, 0.35)',
     '--tile-r': R[0], '--card-r': R[1], '--side': mixHex(L.base, solid, 0.25), '--panel': solid, '--raise': up(0.028), '--line': up(0.0655), '--line2': up(0.1282),
-    '--pop': solid, '--pop-line': up(0.1), '--pop2': up(0.0043), '--pop2-line': up(0.106), '--box': up(0.017) };
+    '--pop': solid, '--pop-line': up(0.1), '--pop2': up(0.0043), '--pop2-line': up(0.106), '--box': up(0.017), ...gToks(L) };
 }
+// every grey a surface had, made the look's (11-09, his "if a theme is choosen you need to stick to the theme, cant go for any
+// gray/black things anywhere"): the same step from the cells' colour as from Classic's #151515, toward white or black, so
+// Classic keeps its greys exactly. deck.css reads them as var(--gNN, #nnnnnn); gv() gives one to what the page draws
+const G_LV = ['0f', '10', '12', '14', '15', '16', '17', '18', '19', '1a', '1b', '1c', '1d', '1e', '1f', '20', '21', '22', '23', '24', '25', '26', '28', '2a', '2b', '2c', '2e', '30', '33', '34', '36', '3a', '44', '47', '4a', '55', '6a', '8a'];
+// (OLED, his pick C 11-09: cells darker than a near-black floor step their greys from the floor, so popups, menus and
+// panels keep their rows and lines on a black view; the view's own colours are the look's, not these)
+const G_FLOOR = '#0d0d0d', G_FLUM = relLum(G_FLOOR);
+const gBase = L => { const s = solidOf(L); if (relLum(s) >= G_FLUM) return s; const c = hexRgb(s); for (let k = 1; k <= 13; k++) { const h = '#' + c.map(v => Math.min(255, v + k).toString(16).padStart(2, '0')).join(''); if (relLum(h) >= G_FLUM) return h; } return G_FLOOR; };   // (lifted by the same step on each channel: a near-black's tint kept; black becomes #0d0d0d)
+const gOf = (L, v) => { const s = gBase(L); return v >= 0x15 ? mixHex(s, '#ffffff', (v - 0x15) / 234) : mixHex(s, '#000000', (0x15 - v) / 0x15); };
+const gToks = L => { const o = {}; for (const h of G_LV) o['--g' + h] = gOf(L, parseInt(h, 16)); return o; };
+const GV = new Map(), gv = h => { let c = GV.get(h); if (c === undefined) { c = gOf(S.look, parseInt(h.slice(1, 3), 16)); GV.set(h, c); } return c; };
 function applyLook() {
   const d = document.documentElement, L = S.look, m = palMatch(L);
   d.classList.add('lk-now'); requestAnimationFrame(() => requestAnimationFrame(() => d.classList.remove('lk-now')));   // (a new look all at once: tiles faded over 300 ms behind the rest, 11-06)
   PALETTES.match[1] = m[0]; PALETTES.match[2] = m[1];   // (Match always the current background's: its dots in Colours too)
-  delete d.dataset.cards; d.dataset.tint = L.tint; d.style.setProperty('--acc', L.acc);
+  delete d.dataset.cards; d.dataset.tint = L.tint; d.dataset.pops = L.pops; d.style.setProperty('--acc', L.acc); d.style.setProperty('--edit', editCol(L.acc)); GV.clear();
   const v = lookVars(L); for (const k in v) d.style.setProperty(k, v[k]);
-  TINT.clear();
+  TINT.clear(); paintGc();
 }
 // Spectrum: a category takes the colour you gave it (cat.col, saved with the layout), else the colour of the part most
 // of its cells read (more than half of those that tell); a mix, or readings of nothing in particular (the board, the
@@ -759,8 +903,8 @@ function applyLook() {
 // (the palettes: [name, a colour per part, the accent]. 11-02, his "all too similar": each one a family of its own or a
 // set of clearly different hues; Dusk is the one he set by hand on his dashboard, Fire his ask)
 const PALETTES = {
-  match: ['Match', { game: '#a99bdc', gpu: '#74c69d', cpu: '#7fa6e8', mem: '#4fb8ad', drive: '#8fa0c8', fan: '#6cc8d8' }, '#7fa6e8'],   // (the background's: applyLook sets it)
-  muted: ['Muted', { game: '#a99bdc', gpu: '#74c69d', cpu: '#7fa6e8', mem: '#4fb8ad', drive: '#8fa0c8', fan: '#6cc8d8' }, '#7fa6e8'],
+  match: ['Match', { game: '#a99bdc', gpu: '#74c69d', cpu: '#7fa6e8', mem: '#4fb8ad', drive: '#8fa0c8', fan: '#6cc8d8' }, '#ffffff'],   // (the background's: applyLook sets it)
+  muted: ['Muted', { game: '#a99bdc', gpu: '#74c69d', cpu: '#7fa6e8', mem: '#4fb8ad', drive: '#8fa0c8', fan: '#6cc8d8' }, '#ffffff'],   // (Classic's: its white accent, 11-09)
   dusk: ['Dusk', { game: '#8fa0c8', gpu: '#d98aa8', cpu: '#c79ad6', mem: '#a99bdc', drive: '#4fb8ad', fan: '#74c69d' }, '#c79ad6'],
   fire: ['Fire', { game: '#ff7a5c', gpu: '#ff9f43', cpu: '#ffc15e', mem: '#f6d06f', drive: '#e8735a', fan: '#ff5d73' }, '#ff9f43'],
   ocean: ['Ocean', { game: '#8c9bff', gpu: '#4cc9f0', cpu: '#4895ef', mem: '#56cfe1', drive: '#6c6fd8', fan: '#64dfdf' }, '#4895ef'],
@@ -769,6 +913,116 @@ const PALETTES = {
   rainbow: ['Rainbow', { game: '#b392f0', gpu: '#85e89d', cpu: '#79b8ff', mem: '#ffab70', drive: '#f97583', fan: '#ffea7f' }, '#79b8ff'],
   candy: ['Candy', { game: '#cdb4db', gpu: '#b9e4a0', cpu: '#a2d2ff', mem: '#ffc8dd', drive: '#ffafcc', fan: '#bde0fe' }, '#a2d2ff'],
   neon: ['Neon', { game: '#c77dff', gpu: '#00f5a0', cpu: '#00bbf9', mem: '#fee440', drive: '#f15bb5', fan: '#00f5d4' }, '#00bbf9'],
+  rose: ['Rose', { game: '#c77dff', gpu: '#ff7ab8', cpu: '#ff9ac0', mem: '#f6b0d0', drive: '#e06a9a', fan: '#ffb3c7' }, '#ff7ab8'],
+  coffee: ['Coffee', { game: '#c8915f', gpu: '#e3b07a', cpu: '#d29a7a', mem: '#e8cfa8', drive: '#a87a5a', fan: '#c8a878' }, '#c8915f'],
+  // (each theme's own, 11-09: t_<its id>)
+  't_oled': ['OLED', { game: '#9cb0f4', gpu: '#d8b0f0', cpu: '#7fdcd6', mem: '#c4ccdc', drive: '#8c94e8', fan: '#b4e8f0' }, '#ffffff'],
+  't_halftone': ['Halftone', { game: '#4ab8e0', gpu: '#e070b0', cpu: '#d8d098', mem: '#b4a490', drive: '#8a9cc0', fan: '#e88a70' }, '#a8b8cc'],
+  't_graphite': ['Graphite', { game: '#9eadc4', gpu: '#b9a6dc', cpu: '#78b2dc', mem: '#d6dde8', drive: '#88c3c4', fan: '#a7c4a2' }, '#9aa5b4'],
+  't_smoke': ['Smoke', { game: '#9c94c0', gpu: '#e89a70', cpu: '#7fb0b8', mem: '#c8b8a8', drive: '#b884a8', fan: '#c0b890' }, '#c6c6cc'],
+  't_chrome': ['Chrome', { game: '#c2d0e2', gpu: '#dcaab0', cpu: '#a7bcb2', mem: '#ece0c4', drive: '#e0a988', fan: '#94acd4' }, '#c2d0e2'],
+  't_classic': ['Classic', { game: '#9aaed4', gpu: '#b6a2d0', cpu: '#8ec8c4', mem: '#e6dcc6', drive: '#b2c68e', fan: '#d6a88a' }, '#ffffff'],
+  't_stone': ['Stone', { game: '#d4b48c', gpu: '#c88470', cpu: '#a8a49c', mem: '#e4d8c4', drive: '#a68ea0', fan: '#a07858' }, '#c2b6a8'],
+  't_steel': ['Steel', { game: '#8aa4be', gpu: '#c8b48c', cpu: '#9a8fc0', mem: '#c0ccd8', drive: '#a8846e', fan: '#7fa6a8' }, '#8aa4be'],
+  't_soft': ['Soft', { game: '#c4a8b8', gpu: '#b0aed4', cpu: '#a8c4ac', mem: '#ece4dc', drive: '#92bcd0', fan: '#d8b898' }, '#c4a8b8'],
+  't_carbon': ['Carbon', { game: '#b0c0d8', gpu: '#e8a878', cpu: '#7fa8e0', mem: '#b8a0d0', drive: '#9cd0b8', fan: '#d898a0' }, '#d8d8d8'],
+  't_espresso': ['Espresso', { game: '#eda967', gpu: '#f5764b', cpu: '#d9a6c8', mem: '#bb896f', drive: '#c1b795', fan: '#c6675d' }, '#e2a468'],
+  't_latte': ['Latte', { game: '#f5c180', gpu: '#f0a070', cpu: '#c08a8a', mem: '#dcc0a0', drive: '#b19dc8', fan: '#8c7458' }, '#f0cfa4'],
+  't_saddle': ['Saddle', { game: '#f58e4f', gpu: '#d2616c', cpu: '#f3c9a1', mem: '#fff7e2', drive: '#c5a55c', fan: '#a86f57' }, '#f4a06a'],
+  't_leather': ['Leather', { game: '#be4e70', gpu: '#e4a279', cpu: '#a86e88', mem: '#f0d8c8', drive: '#935f44', fan: '#c86a40' }, '#d86a7e'],
+  't_fireside': ['Fireside', { game: '#fca47b', gpu: '#b36b61', cpu: '#ccb498', mem: '#f6e8dc', drive: '#837255', fan: '#8da285' }, '#eaa580'],
+  't_timber': ['Timber', { game: '#cf9c61', gpu: '#c8714e', cpu: '#d9a7a0', mem: '#8c6d3f', drive: '#ac9a82', fan: '#8ea46f' }, '#d2a06a'],
+  't_cognac': ['Cognac', { game: '#f39a4a', gpu: '#f0c080', cpu: '#c8a0c0', mem: '#fbe6cc', drive: '#c07a50', fan: '#946474' }, '#f6aa68'],
+  't_copper': ['Copper', { game: '#ee8044', gpu: '#efa390', cpu: '#6ec3ab', mem: '#ffe9df', drive: '#b48659', fan: '#c7b098' }, '#f09a64'],
+  't_mocha': ['Mocha', { game: '#eb9e72', gpu: '#ee9aa5', cpu: '#f5d7c3', mem: '#aa8d87', drive: '#c3a0c2', fan: '#a3724f' }, '#e8a684'],
+  't_sand': ['Sand', { game: '#e8c792', gpu: '#de7f5e', cpu: '#9cb98d', mem: '#fbf0d6', drive: '#a48a67', fan: '#b38f94' }, '#d9c49a'],
+  't_ember': ['Ember', { game: '#ff7a42', gpu: '#ffb35a', cpu: '#ff8fa3', mem: '#ffd4b0', drive: '#d4b2a4', fan: '#a99bbd' }, '#ff6a3d'],
+  't_ruby': ['Ruby', { game: '#ff3f6e', gpu: '#ff7e5a', cpu: '#a99cff', mem: '#ffb8cc', drive: '#e85ab0', fan: '#9fa8d8' }, '#ff5c8a'],
+  't_garnet': ['Garnet', { game: '#f2507e', gpu: '#ffa090', cpu: '#c46aa8', mem: '#ffd0dc', drive: '#b88aa8', fan: '#d8a088' }, '#f25a84'],
+  't_rust': ['Rust', { game: '#ff7a2a', gpu: '#f8b090', cpu: '#c05040', mem: '#b8a090', drive: '#e08a50', fan: '#e8d0b0' }, '#ff7f3a'],
+  't_carmine': ['Carmine', { game: '#ff5ca8', gpu: '#ff8466', cpu: '#f4c8a0', mem: '#ffb8d4', drive: '#c87ab0', fan: '#e0a070' }, '#ff80b4'],
+  't_coral': ['Coral', { game: '#ff8a6e', gpu: '#ffb48a', cpu: '#c0aef0', mem: '#ffd8c8', drive: '#ff9cb4', fan: '#e0b890' }, '#ff8a70'],
+  't_martian': ['Martian', { game: '#ff8a50', gpu: '#ffc890', cpu: '#e08c8c', mem: '#e8c0a8', drive: '#c87050', fan: '#c8a0b0' }, '#ffa070'],
+  't_velvet': ['Velvet', { game: '#ff4f86', gpu: '#e8b878', cpu: '#e08aa0', mem: '#ffe0d0', drive: '#b07868', fan: '#ff9a7a' }, '#ff6a98'],
+  't_lava': ['Lava', { game: '#ff6418', gpu: '#ff9a00', cpu: '#ff4f8a', mem: '#ffc070', drive: '#d86a60', fan: '#b07868' }, '#ff7a20'],
+  't_sunflower': ['Sunflower', { game: '#f0a81e', gpu: '#e8722c', cpu: '#f6c48c', mem: '#ecd89a', drive: '#b9c26a', fan: '#a87848' }, '#f0a020'],
+  't_brushedgold': ['Brushed Gold', { game: '#e8a030', gpu: '#98b0d8', cpu: '#c87848', mem: '#e6d2a0', drive: '#e8808a', fan: '#9cc8b0' }, '#e8a030'],
+  't_midas': ['Midas', { game: '#f0a828', gpu: '#ff9850', cpu: '#ffd8b0', mem: '#c88a50', drive: '#e8b4a0', fan: '#d07850' }, '#f0a828'],
+  't_citrine': ['Citrine', { game: '#f5a800', gpu: '#ff8a3d', cpu: '#ff7f9e', mem: '#f8dc8a', drive: '#c4581a', fan: '#8fd04a' }, '#f5a000'],
+  't_gilded': ['Gilded', { game: '#f2b048', gpu: '#d9844a', cpu: '#e3a0b4', mem: '#f0dcc0', drive: '#8fcfb8', fan: '#b8946a' }, '#e3ae51'],
+  't_caramel': ['Caramel', { game: '#f8a848', gpu: '#ff7088', cpu: '#ffd4a0', mem: '#a87458', drive: '#e8885a', fan: '#d8b0a0' }, '#f8a040'],
+  't_goldleaf': ['Gold Leaf', { game: '#f8b444', gpu: '#d87a8a', cpu: '#f4e0b8', mem: '#c8a878', drive: '#b06048', fan: '#e8987a' }, '#f4b048'],
+  't_honeycomb': ['Honeycomb', { game: '#ffb030', gpu: '#ff8466', cpu: '#e0a8e8', mem: '#ffe6b8', drive: '#d88a3a', fan: '#ffd890' }, '#f5a742'],
+  't_saffron': ['Saffron', { game: '#ffa040', gpu: '#f59ab8', cpu: '#ff7652', mem: '#ffe0bc', drive: '#b4a0ff', fan: '#a6d38a' }, '#ff9f40'],
+  't_evergreen': ['Evergreen', { game: '#4fd08a', gpu: '#b5e36a', cpu: '#4cc3d6', mem: '#e4f2df', drive: '#2f9f68', fan: '#8fc9a6' }, '#4fd08a'],
+  't_grove': ['Grove', { game: '#62c46a', gpu: '#e8d8a0', cpu: '#4fc8a0', mem: '#c8ecc0', drive: '#2e8c46', fan: '#b89a78' }, '#62c46a'],
+  't_cypress': ['Cypress', { game: '#04cca8', gpu: '#7fe0a0', cpu: '#3fb8e0', mem: '#c8f0ea', drive: '#1f9f8a', fan: '#8fb8f0' }, '#04cca8'],
+  't_clover': ['Clover', { game: '#2fe472', gpu: '#a0e8c0', cpu: '#3fa060', mem: '#e0f0c0', drive: '#e0a0d0', fan: '#88c070' }, '#2fe472'],
+  't_ivy': ['Ivy', { game: '#1ec97a', gpu: '#7fd860', cpu: '#3aa8a0', mem: '#c0e8b0', drive: '#5a9a50', fan: '#c8c888' }, '#1ec97a'],
+  't_pinewood': ['Pinewood', { game: '#10b870', gpu: '#d08848', cpu: '#2aa8a0', mem: '#c0e8c8', drive: '#1f8a50', fan: '#e8c8a0' }, '#10b870'],
+  't_matrix': ['Matrix', { game: '#c4ff6a', gpu: '#2af06a', cpu: '#8affd0', mem: '#40c8f0', drive: '#c8d4c8', fan: '#e0f0a0' }, '#2aff6a'],
+  't_malachite': ['Malachite', { game: '#1ceca7', gpu: '#8ae070', cpu: '#4ac8c0', mem: '#b7f6e2', drive: '#12a07a', fan: '#c8e8a0' }, '#1ceca7'],
+  't_nettle': ['Nettle', { game: '#7ad030', gpu: '#c0e848', cpu: '#3fb0b0', mem: '#c8eab0', drive: '#3f9a40', fan: '#80a860' }, '#7ad030'],
+  't_moss': ['Moss', { game: '#a8c060', gpu: '#c8a070', cpu: '#7fc0a8', mem: '#e0e8c8', drive: '#6f8a3c', fan: '#9fd890' }, '#a8c060'],
+  't_sage': ['Sage', { game: '#8fca98', gpu: '#c8d890', cpu: '#5aa8a8', mem: '#d0e8c0', drive: '#4f9070', fan: '#98b8a8' }, '#78e47f'],
+  't_deepsea': ['Deep sea', { game: '#15d8eb', gpu: '#5b8cff', cpu: '#3cf0c4', mem: '#c2f2fa', drive: '#a88cff', fan: '#1ea4c4' }, '#15d8eb'],
+  't_jade': ['Jade', { game: '#08e092', gpu: '#a8d8b0', cpu: '#2ab8b8', mem: '#e8f0c8', drive: '#5aa880', fan: '#88e8e0' }, '#08e092'],
+  't_offshore': ['Offshore', { game: '#16c8e0', gpu: '#9cc870', cpu: '#5a8ce8', mem: '#d0f4f4', drive: '#58e0a8', fan: '#2a8cb8' }, '#16c8e0'],
+  't_cyan-line': ['Cyan line', { game: '#2ad4e0', gpu: '#8af0f8', cpu: '#12a0b0', mem: '#7ad8c0', drive: '#4ab8f0', fan: '#a0c8d0' }, '#2ad4e0'],
+  't_pier-lights': ['Pier lights', { game: '#24f3ff', gpu: '#ffb860', cpu: '#4ab8d0', mem: '#d0a070', drive: '#e8805a', fan: '#2cc8a8' }, '#0bd1db'],
+  't_spiral': ['Spiral', { game: '#10e2cf', gpu: '#6a9cdc', cpu: '#7ef0b0', mem: '#f0dcea', drive: '#3cb8d8', fan: '#b4a8f0' }, '#10e2cf'],
+  't_dusk-tide': ['Dusk tide', { game: '#13ddd4', gpu: '#b48cff', cpu: '#4ab0e8', mem: '#d8c8ff', drive: '#e890d8', fan: '#6ce8b0' }, '#13ddd4'],
+  't_night-lagoon': ['Night lagoon', { game: '#00b4cc', gpu: '#6a74ff', cpu: '#00cca8', mem: '#a8c0ff', drive: '#a868f0', fan: '#2a7cc0' }, '#00b4cc'],
+  't_frostwater': ['Frostwater', { game: '#8cd8e4', gpu: '#8ab4f4', cpu: '#90e8b8', mem: '#b8f0e0', drive: '#48bcb8', fan: '#4f80b8' }, '#8cd8e4'],
+  't_mint': ['Mint', { game: '#1ef4bb', gpu: '#4ad8f0', cpu: '#a8ec84', mem: '#d0f8ec', drive: '#7ab8ff', fan: '#3aa888' }, '#1ef4bb'],
+  't_blue-hour': ['Blue Hour', { game: '#8c9cff', gpu: '#c08cff', cpu: '#62b6ff', mem: '#dcd8ff', drive: '#e89ad6', fan: '#86d2f2' }, '#98b1ff'],
+  't_ultramarine': ['Ultramarine', { game: '#7479ff', gpu: '#4caeff', cpu: '#b07aff', mem: '#ccd3ff', drive: '#33d4e6', fan: '#5f8cf0' }, '#6a72ff'],
+  't_sapphire': ['Sapphire', { game: '#3a70f8', gpu: '#b098ff', cpu: '#40c8f0', mem: '#dcd0ff', drive: '#6a8ce0', fan: '#90e8e8' }, '#7699fe'],
+  't_blueprint': ['Blueprint', { game: '#6fb0ff', gpu: '#2f7bff', cpu: '#b8d4f4', mem: '#7f9cc8', drive: '#8a8cff', fan: '#4fd0ff' }, '#8ec5ff'],
+  't_horizon': ['Horizon', { game: '#6f9cff', gpu: '#78dcff', cpu: '#5a6cf0', mem: '#a9c4ff', drive: '#3cbcf0', fan: '#6ae0c0' }, '#88adfe'],
+  't_zenith': ['Zenith', { game: '#5c86ff', gpu: '#8ae8ff', cpu: '#4a64ff', mem: '#b8c8ff', drive: '#e0b0ff', fan: '#2ab8ff' }, '#7397fe'],
+  't_cobalt': ['Cobalt', { game: '#5a78e8', gpu: '#98d0dc', cpu: '#9cb4f4', mem: '#d8c0f0', drive: '#9a88e0', fan: '#4f9ad8' }, '#7890ea'],
+  't_navy': ['Navy', { game: '#7a9ad4', gpu: '#6cc4b4', cpu: '#5cc0f0', mem: '#ece8e0', drive: '#a09ad8', fan: '#78acc8' }, '#8aa4d8'],
+  't_midnight': ['Midnight', { game: '#6c94ff', gpu: '#aec4ff', cpu: '#9a7cf8', mem: '#74c0f0', drive: '#5a6cf0', fan: '#b8a0f0' }, '#739fff'],
+  't_storm': ['Storm', { game: '#6a8ce8', gpu: '#c4b8ff', cpu: '#3cb0d0', mem: '#b0bccc', drive: '#8a7ee0', fan: '#50b8a0' }, '#7a9cf0'],
+  't_arctic': ['Arctic', { game: '#5cc8ff', gpu: '#8fe8f0', cpu: '#a8b4ff', mem: '#c0ecff', drive: '#5ee0c0', fan: '#5f8ce0' }, '#94d3fd'],
+  't_slate': ['Slate', { game: '#7aa2d6', gpu: '#5cb8e0', cpu: '#9a94e0', mem: '#c8d8ec', drive: '#5a7ed0', fan: '#8ec8d0' }, '#7aa2d6'],
+  't_nebula': ['Nebula', { game: '#c39bff', gpu: '#6d7dff', cpu: '#f28ae0', mem: '#ffc8e8', drive: '#4fb0f0', fan: '#e05aa0' }, '#ab85f4'],
+  't_royalviolet': ['Royal Violet', { game: '#7a4bee', gpu: '#c162f4', cpu: '#4d79f3', mem: '#cbbcfc', drive: '#74acfe', fan: '#dd40bb' }, '#835ff2'],
+  't_cosmos': ['Cosmos', { game: '#9fa5e3', gpu: '#c68bd3', cpu: '#94c7f1', mem: '#e5f0fc', drive: '#8a70b8', fan: '#6ed6ea' }, '#a5abea'],
+  't_byzantium': ['Byzantium', { game: '#d86edd', gpu: '#e3b45a', cpu: '#6f8ee8', mem: '#f5dcf2', drive: '#8f62dc', fan: '#deace9' }, '#cf6bd3'],
+  't_purpurite': ['Purpurite', { game: '#bf58fd', gpu: '#fb51bc', cpu: '#806bf6', mem: '#efdcfe', drive: '#e99aeb', fan: '#a3aede' }, '#c671fe'],
+  't_aubergine': ['Aubergine', { game: '#c084d0', gpu: '#9468f0', cpu: '#dcc4d8', mem: '#b8a0c0', drive: '#e070b0', fan: '#8c8cc8' }, '#ba7bd2'],
+  't_grape': ['Grape', { game: '#b471e9', gpu: '#da4786', cpu: '#737ade', mem: '#dedaf7', drive: '#b63caa', fan: '#a2c1e4' }, '#a67df2'],
+  't_plum': ['Plum', { game: '#da76bb', gpu: '#e7809e', cpu: '#839fd1', mem: '#f8dbc4', drive: '#a549a9', fan: '#d2acee' }, '#cb6ab2'],
+  't_orchid': ['Orchid', { game: '#cd7feb', gpu: '#f070d0', cpu: '#e8c0f4', mem: '#b090f8', drive: '#9a50d0', fan: '#f0a0c8' }, '#ca7ce8'],
+  't_lavender': ['Lavender', { game: '#a19cf0', gpu: '#d9a2ef', cpu: '#5593e6', mem: '#e7e5fb', drive: '#a4ccf3', fan: '#a06dbe' }, '#aea7ed'],
+  't_mulberry': ['Mulberry', { game: '#ea609c', gpu: '#f8869a', cpu: '#8d75eb', mem: '#fbdae8', drive: '#ac4abb', fan: '#dcadeb' }, '#df67ae'],
+  't_blossom': ['Blossom', { game: '#ed9ec7', gpu: '#a798d1', cpu: '#f5b8a8', mem: '#f7e6f0', drive: '#ac77a9', fan: '#e4d6b9' }, '#df94c3'],
+  't_dusk-bloom': ['Dusk Bloom', { game: '#ff7499', gpu: '#a584e7', cpu: '#ff9ccb', mem: '#e9d6f2', drive: '#c25ab3', fan: '#e4adf8' }, '#ff7191'],
+  't_flamingo': ['Flamingo', { game: '#ff529e', gpu: '#fa9046', cpu: '#c570d5', mem: '#f8c2bf', drive: '#ff9f85', fan: '#e9b87b' }, '#ff4994'],
+  't_rose-inlay': ['Rose Inlay', { game: '#f282b0', gpu: '#eac69e', cpu: '#ae88bc', mem: '#f6e4e0', drive: '#e39179', fan: '#c5596e' }, '#f381b4'],
+  't_pink-glass': ['Pink Glass', { game: '#fe77be', gpu: '#ad9be6', cpu: '#ffaaa1', mem: '#f1e8f2', drive: '#fec2d2', fan: '#ca5e7c' }, '#fe76c2'],
+  't_fuchsia-night': ['Fuchsia Night', { game: '#eb52d0', gpu: '#9b75ef', cpu: '#ff6192', mem: '#ffc6e6', drive: '#ff9dc9', fan: '#dc95f8' }, '#ed4fd1'],
+  't_rose': ['Rose', { game: '#e58d9c', gpu: '#b8a3cd', cpu: '#e39983', mem: '#f4dad6', drive: '#e5c09d', fan: '#aa6888' }, '#df8797'],
+  't_pink-line': ['Pink Line', { game: '#f070a0', gpu: '#ffb0d0', cpu: '#c050c0', mem: '#ff9a9a', drive: '#e8a0e8', fan: '#d07890' }, '#e987b2'],
+  't_azalea': ['Azalea', { game: '#fe5fb7', gpu: '#a77ed7', cpu: '#ff9b76', mem: '#f6ebf1', drive: '#ffaab1', fan: '#bb57a7' }, '#fe5fb7'],
+  't_camellia': ['Camellia', { game: '#ff6692', gpu: '#ce6dc4', cpu: '#fbada3', mem: '#fadfe2', drive: '#f3bc84', fan: '#ca5c86' }, '#ff6692'],
+  't_sakura': ['Sakura', { game: '#fb96cd', gpu: '#e86a8a', cpu: '#f8d0e0', mem: '#c07090', drive: '#ffb4a8', fan: '#b080a8' }, '#fcb1cc'],
+  't_sunset': ['Sunset', { game: '#ff7eb3', gpu: '#ffa064', cpu: '#b993ff', mem: '#ffd9bd', drive: '#e58cf0', fan: '#ff8f8f' }, '#ff8c42'],
+  't_aurora': ['Aurora', { game: '#a98bff', gpu: '#5fe3a1', cpu: '#4fd2e6', mem: '#d4f7ec', drive: '#e08af0', fan: '#7aa8ff' }, '#9d8cff'],
+  't_twilight': ['Twilight', { game: '#f2a86a', gpu: '#ef8fa8', cpu: '#8f9fff', mem: '#fbe8cf', drive: '#7fc4e8', fan: '#c98fd0' }, '#f0a060'],
+  't_synthwave': ['Synthwave', { game: '#ff4fae', gpu: '#c86bff', cpu: '#2ad4f0', mem: '#e6f0ff', drive: '#ff8a5c', fan: '#6a8cff' }, '#ff4fae'],
+  't_tropical': ['Tropical', { game: '#1ad3c1', gpu: '#ffa04a', cpu: '#4cb4ff', mem: '#fbe3c0', drive: '#ff86b4', fan: '#7ed96a' }, '#ffa04a'],
+  't_peacock': ['Peacock', { game: '#1cb8c8', gpu: '#e8854a', cpu: '#4d6fff', mem: '#a8f0e0', drive: '#9a5cf0', fan: '#20c070' }, '#9a5cf0'],
+  't_inkwell': ['Inkwell', { game: '#9ab5fd', gpu: '#f78cb5', cpu: '#6a7cff', mem: '#ffdbe8', drive: '#c48cf0', fan: '#5ec8e0' }, '#fd90c2'],
+  't_neon': ['Neon', { game: '#7aa6ff', gpu: '#ff6aa8', cpu: '#c27cff', mem: '#dce8ff', drive: '#4fd8f0', fan: '#ff9ad8' }, '#93b4fd'],
+  't_plasma': ['Plasma', { game: '#9a7cff', gpu: '#ff5aa8', cpu: '#5fa8ff', mem: '#ffb8d8', drive: '#ff8a4a', fan: '#e070f0' }, '#ff5aa0'],
+  't_mosaic': ['Mosaic', { game: '#e8a848', gpu: '#4a6cf0', cpu: '#e07a5a', mem: '#f4e6c8', drive: '#40c0c0', fan: '#91acfd' }, '#91acfd'],
+  't_vapor': ['Vapor', { game: '#ff8ad8', gpu: '#6ae0ff', cpu: '#b89cff', mem: '#ffd8c8', drive: '#7ff0c8', fan: '#8cb4ff' }, '#ffa9e6'],
+  't_prism': ['Prism', { game: '#a8a0ff', gpu: '#ff8a7a', cpu: '#6af0a0', mem: '#8ab0ff', drive: '#ffb070', fan: '#60d8f0' }, '#c0b0ff'],
+  't_circuit': ['Circuit', { game: '#10e0f0', gpu: '#a8e010', cpu: '#5a9cff', mem: '#e0eaea', drive: '#f09a5a', fan: '#3fdc7a' }, '#dbec18'],
+  't_toxic': ['Toxic', { game: '#8ae020', gpu: '#b8f000', cpu: '#30e0c8', mem: '#e0ffc0', drive: '#6ab020', fan: '#40f070' }, '#a5e212'],
 };
 function partOf(c) {
   if (!c) return null;
@@ -806,6 +1060,19 @@ const keyTint = key => { if (S.look.tint !== 'spectrum' || !key) return null; fo
 const gameTint = () => { if (S.look.tint !== 'spectrum') return null; const t = keyTint('hwdeck.0/fps'); if (t) return t; for (const id in S.L.cells) if (partOf(S.L.cells[id]) === 'game') { const c = cellTint(id); if (c) return c; } return null; };
 const hexA = (hx, a) => 'rgba(' + parseInt(hx.slice(1, 3), 16) + ',' + parseInt(hx.slice(3, 5), 16) + ',' + parseInt(hx.slice(5, 7), 16) + ',' + a + ')';
 // each category's colour as --cc on it (the CSS colours its name and icons with it under Spectrum)
+// the popups' graphs (his pick D, 11-09): Spectrum draws them in the game's colour (the GPU's and the CPU's for what
+// limited it), Accent in the accent and two tones of it; Mono sets nothing, the CSS's greys stay (--gc, --gc-gpu, --gc-cpu)
+function paintGc() {
+  const L = S.look, d = document.documentElement;
+  let v = null;
+  if (L.tint === 'spectrum') { const pal = (PALETTES[L.pal] || PALETTES.muted)[1]; v = [gameTint() || pal.game, pal.gpu, pal.cpu]; }
+  else if (L.tint === 'accent') { const lt = relLum(L.acc) > 0.65, s = solidOf(L);   // (a light accent: its tones toward the cells, white + white is white, 11-09)
+    v = [L.acc, lt ? mixHex(L.acc, s, 0.25) : mixHex(L.acc, '#ffffff', 0.3), mixHex(L.acc, s, lt ? 0.55 : 0.45)]; if (lt) v.push(mixHex(L.acc, s, 0.4)); }
+  const k = v ? v.join() : ''; if (paintGc.k === k) return; paintGc.k = k;
+  ['--gc', '--gc-gpu', '--gc-cpu', '--gc-lo'].forEach((n, i) => { if (v && v[i]) d.style.setProperty(n, v[i]); else d.style.removeProperty(n); });   // (--gc-lo: the FPS chart's 1% low, a light accent's only)
+}
+// (a cell's popup: its range bar's window in the cell's own colour under Spectrum, 11-09)
+function paintMc() { const m = document.getElementById('modal'), t = modalCid != null ? cellTint(modalCid) : null; if (m._mc === t) return; m._mc = t; if (t) m.style.setProperty('--mc', t); else m.style.removeProperty('--mc'); }
 function paintTint() {
   const on = S.look.tint === 'spectrum';
   if (!on && !paintTint.was) return;
@@ -830,7 +1097,7 @@ function dropGone() {
   for (const k in holdSince) if (!ruled(S.L.cells[k])) delete holdSince[k];
   if (!Object.values(S.L.cells).some(c => c && c.key === 'hwdeck.0/12v')) { c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; }   // (no connector cell left: its pin episode ends)
 }
-function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, pins: [DR.L.pinned, DR.R.pinned], sides: [DR.L.side, DR.R.side], rPlaced: DR.R.placed || undefined, title: S.title, clock: S.clock, look: lookPlain() ? undefined : S.look, hide: S.hide, starter: S.starterSeen === true || undefined, starterNoted: S.starterNoted === true || undefined } }); }, 300); }
+function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, pins: [DR.L.pinned, DR.R.pinned], sides: [DR.L.side, DR.R.side], rPlaced: DR.R.placed || undefined, title: S.title, clock: S.clock, look: lookPlain() ? undefined : S.look, lookSaved: S.lookSaved.length ? S.lookSaved : undefined, hide: S.hide, listFilt: S.listFilt.g || S.listFilt.w ? { g: S.listFilt.g, w: S.listFilt.w } : undefined, starter: S.starterSeen === true || undefined, starterNoted: S.starterNoted === true || undefined } }); }, 300); }
 function saveSlot(i) { send({ t: 'save', file: 'slots/slot' + (i + 1), data: S.slots[i] }); }
 // undo steps hold the layout and which slot it came from, so Clear then Undo is exactly where you were
 let undoStack = [], redoStack = [];
@@ -846,26 +1113,30 @@ const atStep = (s, at) => at && typeof s === 'string' && s.startsWith('{"L":') &
 const stepAt = e => { const i = typeof e === 'string' ? e.lastIndexOf(',"__at":{') : -1; if (i < 0) return null; try { return JSON.parse(e.slice(i + 8, -1)); } catch (x) { return null; } };
 const bareStep = e => { const i = typeof e === 'string' ? e.lastIndexOf(',"__at":{') : -1; return i < 0 ? e : e.slice(0, i) + '}'; };
 function goAt(at) {
-  if (!at || !S.edit) return;
-  sel = at.sel && S.L.cells[at.sel] ? at.sel : null; selCat = !sel && at.selCat && S.L.cats.some(c => c.id === at.selCat) ? at.selCat : null;
-  if (at.screen && at.screen !== S.screen && VIEWS.includes(at.screen)) showScreen(at.screen);
+  if (!at) return;
+  if (S.edit) { sel = at.sel && S.L.cells[at.sel] ? at.sel : null; selCat = !sel && at.selCat && S.L.cats.some(c => c.id === at.selCat) ? at.selCat : null; }
+  if (at.screen && at.screen !== S.screen && VIEWS.includes(at.screen)) showScreen(at.screen);   // (out of edit mode too: the title bar's Undo changed a view out of sight, 11-08 audit)
 }
 // folding a category is how you look at it, not a change: undo keeps the folds as they are
 function restore(json) {
   const o = JSON.parse(json), was = new Map(S.L.cats.map(c => [c.id, c.collapsed]));
   S.L = o.L; S.active = Number.isInteger(o.active) && S.slots[o.active] ? o.active : null;
-  if (o.look) { S.look = cleanLook(o.look); applyLook(); if (setmodal.classList.contains('open')) renderSettings(); }
+  if (o.look) { S.look = cleanLook(o.look); lkFromCheck(); applyLook(); if (setmodal.classList.contains('open')) renderSettings(); }
   for (const c of S.L.cats) if (was.has(c.id)) c.collapsed = was.get(c.id);
 }
 let undoSeq = 0;   // (counts every step: the stack's length stops changing at its cap)
-function pushUndo(before) { undoStack.push(atStep(before, stepMeta.get(before))); undoSeq++; if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
+// (each step keeps the size the view was fitted at then: undo and redo put that very size back, fitPin)
+const fitOf = new Map(); let fitPin = null, fitOkNow = true;
+const fitNow = () => ({ fs: parseFloat(document.documentElement.style.fontSize) || 0, ok: fitOkNow, w: sectionsEl.clientWidth, h: sectionsEl.clientHeight, screen: S.screen, target: cssScale() });
+function fitKeep(st, s) { st.push(s); fitOf.set(s, fitNow()); if (fitOf.size > 400) fitOf.delete(fitOf.keys().next().value); }
+function pushUndo(before) { fitKeep(undoStack, atStep(before, stepMeta.get(before))); undoSeq++; if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
 function snap() { pushUndo(snapOf()); }
 // a change that changes nothing (Alt+arrow at the end of a list) leaves no undo step
 function mutate(fn, msg) { if (nudge) flushNudge(); const before = snapOf(); fn(); tidyViews(S.L); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); flipNext = true; afterChange(); if (msg) toast(msg, true); }
 // every tile measured again (a build's cells got their bodies): once things settle, never under a drag
-const xSeen = new Set(); let rmT = 0;
+const xSeen = new Set(); let rmT = 0, rmGlide = false;
 let entEnd = 0;   // (when the entrance under way ends: a remeasure waits for it, 11-06, it cut the wave mid-way)
-function remeasureSoon(ms) { clearTimeout(rmT); rmT = setTimeout(() => { if ((drag && drag.started) || rs) { remeasureSoon(); return; } const w = entEnd - performance.now(); if (w > 0) { remeasureSoon(w + 20); return; } packMemo.clear(); renderView(false); }, ms == null ? 400 : ms); }
+function remeasureSoon(ms, glide) { clearTimeout(rmT); if (glide !== undefined) rmGlide = glide; rmT = setTimeout(() => { if ((drag && drag.started) || rs) { remeasureSoon(); return; } const w = entEnd - performance.now(); if (w > 0) { remeasureSoon(w + 20); return; } packMemo.clear(); if (rmGlide) flipNext = flipNext || 'live'; rmGlide = false; renderView(false); }, ms == null ? 400 : ms); }   // (glide: a build's first data moves what is there, 11-08; back from the tray: one cut)
 // a start: the view stays out of sight until what it shows is in (the readings, their values, a build's extras.js and
 // its first data), then it is measured and comes in; before, it drew placeholders first and jumped once they filled
 // in (a Smart Life tile without its bar). In the tray the page gets none of it, so this waits for the window to open;
@@ -882,8 +1153,8 @@ let onLayout = null;   // (the sessions popup: Customize and the open sessions d
 function afterChange() { preview = null; tidyViews(S.L); fixSel(); if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); if (onLayout) onLayout(); }
 // (a step the host does, a Restore in Settings: undone and redone by the host, its log, not the layout: 11-02)
 const hostStep = e => { if (e[2] !== 'h') return null; try { const o = JSON.parse(e); return o.host ? o : null; } catch (x) { return null; } };
-function undo() { if (nudge) flushNudge(); keyStep.t = 0; if (!undoStack.length) return; retireToastUndo(); const e = undoStack.pop(), h = hostStep(e); if (h) { redoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } const at = stepAt(e); redoStack.push(atStep(snapOf(), at)); restore(e); fixSel(); goAt(at); flipNext = true; afterChange(); }   // (it glides back the way it went)
-function redo() { if (nudge) flushNudge(); keyStep.t = 0; if (!redoStack.length) return; retireToastUndo(); const e = redoStack.pop(), h = hostStep(e); if (h) { undoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); undoSeq++; send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } const at = stepAt(e); undoStack.push(atStep(snapOf(), at)); restore(e); fixSel(); goAt(at); flipNext = true; afterChange(); }
+function undo() { if (nudge) flushNudge(); keyStep.t = 0; if (!undoStack.length) return; retireToastUndo(); const e = undoStack.pop(), h = hostStep(e); if (h) { redoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } const at = stepAt(e); fitKeep(redoStack, atStep(snapOf(), at)); fitPin = fitOf.get(e) || null; restore(e); fixSel(); goAt(at); flipNext = true; afterChange(); }   // (it glides back the way it went)
+function redo() { if (nudge) flushNudge(); keyStep.t = 0; if (!redoStack.length) return; retireToastUndo(); const e = redoStack.pop(), h = hostStep(e); if (h) { undoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); undoSeq++; send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } const at = stepAt(e); fitKeep(undoStack, atStep(snapOf(), at)); fitPin = fitOf.get(e) || null; restore(e); fixSel(); goAt(at); flipNext = true; afterChange(); }
 function syncUndo() { $('undo').disabled = $('undoE').disabled = !undoStack.length; $('redo').disabled = $('redoE').disabled = !redoStack.length; }   // (the title bar's and the editing strip's)
 function fixSel() { if (sel && !S.L.cells[sel]) sel = null; if (selCat && !S.L.cats.some(c => c.id === selCat)) selCat = null; }
 const layoutSig = L => JSON.stringify(L, (k, v) => k === 'collapsed' ? undefined : v);
@@ -920,6 +1191,7 @@ function subscribe() {
   subT = setTimeout(() => {
     const cells = cellKeys(), rows = gzKeys.length ? [...new Set(rowKeys.concat(gzKeys))] : rowKeys, m = JSON.stringify([cells, rows]);   // (Storage's rows in sight, and Customize's)
     dropRings(new Set(cells));
+    lastvAsk(cells);
     if (m === lastSub) return; lastSub = m;
     send({ t: 'sub', cells, rows });
   }, 60);
@@ -929,6 +1201,8 @@ function subscribe() {
 const moreOpen = new Map();   // (a cell's Hold, fade, also bad fold, opened or shut by hand this session)
 let dselOpen = null;   // (a settings list's open menu: { s: the select, b: its button, m: the menu }; see dselShow)
 let sel = null, selCat = null, relinkFor = null;   // the selected cell, or the selected category (never both)
+let nmOnly = null;   // (Only <view> picked for a name, nothing typed yet: { cid, vn }, 11-08 audit)
+let inspCatLater = false;   // (new readings came while a settings field was typed in: see inspCatFlush, 11-08 audit)
 const holdSince = {}, cellEp = {};
 // a second with no value (or a reading gone): a calm one for the cell's episode, as the log counts it, and the end of a
 // hold (never a second the page didn't look, like a drag's)
@@ -1225,15 +1499,69 @@ let modalUp = false;
 let lastPress = null;
 document.addEventListener('pointerdown', e => { lastPress = { el: e.target, t: performance.now(), x: e.clientX, y: e.clientY }; }, true);
 document.addEventListener('keydown', () => { lastPress = null; }, true);   // (a popup a key opened grows as before, not out of the last click)
+// (11-09, his "on the controls pop up it looks kinda odd ... when you exit the pop up it just fades away, try a zoom in
+// into the button"): the card is solid from its first frames (it came in see-through, the view's numbers showing
+// through it all the way from the corner: its own opacity from 0.2 and the popup's 280 ms fade), only the dim and blur
+// fade in under it; it starts slow and settles long (no first-frame jump); and it goes back INTO what opened it on the
+// way out, the open played backwards and quicker, the dim fading under it. Full only, as the grow. Every step starts from
+// where the card and the dim are that frame, so a quick close, or a reopen on the way home, never jumps
+const POP_IN = 380, POP_OUT = 230, POP_EASE_IN = 'cubic-bezier(0.2, 0, 0, 1)', POP_EASE_OUT = 'cubic-bezier(0.3, 0, 0.8, 0.15)', POP_DIM_EASE = 'cubic-bezier(0.16, 1, 0.3, 1)';
+const popCard = m => m.querySelector(':scope > .mcard, :scope > .mwrap');   // (.mwrap: a card with a panel docked beside it, both grow as one: the dashboard's Controls and its TV remote, 11-05)
+// the transform that puts the card (open, its transform aside) on a rect: centred on it, its size
+function popAt(card, r) {
+  const w = card.offsetWidth, h = card.offsetHeight; if (!w || !h) return null;
+  const cx = card.offsetLeft + w / 2, cy = card.offsetTop + h / 2, s = Math.max(0.05, Math.min(0.9, Math.max(r.width / w, r.height / h)));
+  return 'translate(' + (r.left + r.width / 2 - cx).toFixed(1) + 'px, ' + (r.top + r.height / 2 - cy).toFixed(1) + 'px) scale(' + s.toFixed(3) + ')';
+}
+// what opened it, where it is NOW (it may have moved, or been drawn again: found by its cell or id), or null: gone,
+// hidden, or out of the window (then it leaves as before)
+function popHome(m) {
+  let el = m._src; if (!el) return null;
+  if (!el.isConnected && m._srcKey) el = [...document.querySelectorAll(m._srcKey)].find(e => !e.closest('.modal:not(.open)') && e.getClientRects().length) || null;
+  if (!el || !el.isConnected || el.closest('.modal:not(.open)') || m.contains(el)) return null;
+  const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+  return r.width > 0 && r.height > 0 && x >= 0 && y >= 0 && x <= innerWidth && y <= innerHeight ? r : null;
+}
+// the card and the dim as drawn this frame (read before any of their animations is cancelled: a cancelled one no longer counts)
+function popNow(m) {
+  const card = popCard(m); if (!card) return null;
+  const c = getComputedStyle(card), d = getComputedStyle(m);
+  return { card, tf: c.transform === 'none' ? 'none' : c.transform, op: +c.opacity, bg: d.backgroundColor, bf: d.backdropFilter === 'none' ? 'blur(0px)' : d.backdropFilter };
+}
+const popStop = m => { for (const k of ['_grow', '_dimIn', '_zout', '_dimOut', '_fade']) if (m[k]) { const a = m[k]; m[k] = null; a.cancel(); } };
+const popDimIn = (m, bg, bf) => { m._dimIn = m.animate([{ opacity: 1, backgroundColor: bg, backdropFilter: bf }, { opacity: 1 }], { duration: 280, easing: POP_DIM_EASE }); };
 function growFrom(m) {
-  const card = m.querySelector(':scope > .mcard, :scope > .mwrap');   // (.mwrap: a card with a panel docked beside it, both grow as one: the dashboard's Controls and its TV remote, 11-05)
+  const card = popCard(m); m._src = m._srcKey = null;
   if (!card || !motionOn() || !lastPress || performance.now() - lastPress.t > 700 || m.contains(lastPress.el) || !lastPress.el.isConnected) return;
-  const src = lastPress.el.closest('.tile, .row, .bcell, .gx-row, .card, button, .ib') || lastPress.el, r = src.getBoundingClientRect();
-  const w = card.offsetWidth, h = card.offsetHeight; if (!w || !h) return;
-  const cx = card.offsetLeft + w / 2, cy = card.offsetTop + h / 2;   // (where it sits open, its transform aside)
-  const has = r.width > 0 && r.height > 0, sx = has ? r.left + r.width / 2 : lastPress.x, sy = has ? r.top + r.height / 2 : lastPress.y;
-  const s = Math.max(0.12, Math.min(0.9, has ? Math.min(r.width / w, r.height / h) : 0.12));
-  m._grow = card.animate([{ transform: 'translate(' + (sx - cx).toFixed(1) + 'px, ' + (sy - cy).toFixed(1) + 'px) scale(' + s.toFixed(3) + ')', opacity: 0.2 }, { transform: 'none', opacity: 1 }], { duration: 340, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+  const src = lastPress.el.closest('.tile, .row, .bcell, .gx-row, .card, button, .ib') || lastPress.el, br = src.getBoundingClientRect();
+  const has = br.width > 0 && br.height > 0, r = has ? br : { left: lastPress.x - 16, top: lastPress.y - 16, width: 32, height: 32 };
+  const from = popAt(card, r); if (!from) return;
+  if (has) { m._src = src; m._srcKey = src.dataset.cid ? '[data-cid="' + CSS.escape(src.dataset.cid) + '"]' : src.id ? '#' + CSS.escape(src.id) : null; }
+  m._grow = card.animate([{ transform: from, opacity: 0 }, { opacity: 1, offset: 0.12 }, { transform: 'none', opacity: 1 }], { duration: POP_IN, easing: POP_EASE_IN });
+  popDimIn(m, 'rgba(0, 0, 0, 0)', 'blur(0px)');
+}
+// opened again on its way home: back out from where it got to, dim and all
+function popBack(m, now) {
+  m._grow = now.card.animate([{ transform: now.tf, opacity: now.op }, { transform: 'none', opacity: 1 }], { duration: POP_IN, easing: POP_EASE_IN });
+  popDimIn(m, now.bg, now.bf);
+}
+// closing: back into what opened it, from wherever the card is now
+function shrinkHome(m, busy) {
+  const now = popNow(m), r = !busy && now && motionOn() ? popHome(m) : null, to = r ? popAt(now.card, r) : null;
+  const coming = !!(m._dimIn || m._grow);   // (closed before it had come all the way in)
+  popStop(m);
+  if (!to) {   // the fade, as before; from where it had got to when it was still coming in (no snap to full dim first)
+    if (now && coming) {
+      const d = m._dimOut = m.animate([{ opacity: 1, backgroundColor: now.bg, backdropFilter: now.bf }, { opacity: 0, backgroundColor: now.bg, backdropFilter: now.bf }], { duration: 150, easing: 'ease-in', fill: 'forwards' });
+      m._fade = now.card.animate([{ transform: now.tf, opacity: now.op }, { transform: 'translateY(26px) scale(0.94)', opacity: now.op }], { duration: 150, easing: 'ease-in', fill: 'forwards' });
+      d.onfinish = () => { if (m._dimOut === d) popStop(m); };
+    }
+    return;
+  }
+  m.classList.add('zout'); m.inert = true;   // (drawn while it goes home; nothing on it takes a click or a key meanwhile)
+  m._dimOut = m.animate([{ backgroundColor: now.bg, backdropFilter: now.bf }, { backgroundColor: 'rgba(0, 0, 0, 0)', backdropFilter: 'blur(0px)' }], { duration: 200, easing: 'ease-out', fill: 'forwards' });
+  const a = m._zout = now.card.animate([{ transform: now.tf, opacity: now.op }, { opacity: now.op, offset: 0.62 }, { transform: to, opacity: 0 }], { duration: POP_OUT, easing: POP_EASE_OUT, fill: 'forwards' });
+  a.onfinish = () => { if (m._zout !== a) return; m.style.transition = 'none'; m.classList.remove('zout'); m.inert = false; void m.offsetWidth; m.style.transition = ''; popStop(m); };
 }
 // popups over popups (Controls, then a device's own; 2.2): the one on top has a light dim and no second blur, the ones
 // under it step back (deck.css .modal.over / .under). On top: the highest, then the one opened last
@@ -1266,10 +1594,15 @@ function modalFocus(m, open) {
 const modalObs = new MutationObserver(rs => {
   const was = modalUp; modalUp = !!document.querySelector('.modal.open');
   const firstOf = new Map(); for (const r of rs) if (!firstOf.has(r.target)) firstOf.set(r.target, r);   // (one look per popup: a class changed just before its open made two "opened" records, a double grow and its opener lost, 11-07 audit)
+  const opening = [...firstOf.values()].some(r => r.target.classList.contains('open') && !/(^|\s)open(\s|$)/.test(r.oldValue || ''));
   for (const r of firstOf.values()) {
     const m = r.target, wasOpen = /(^|\s)open(\s|$)/.test(r.oldValue || '');
-    if (m.classList.contains('open') && !wasOpen) { m._openAt = performance.now(); growFrom(m); }
-    else if (!m.classList.contains('open') && wasOpen && m._grow) { m._grow.cancel(); m._grow = null; }   // (closed while it grew: it leaves as any close, 11-06)
+    if (m.classList.contains('open') && !wasOpen) {
+      const back = m._zout && motionOn() ? popNow(m) : null;   // (opened again on its way home, 11-09)
+      popStop(m); m.classList.remove('zout'); m.inert = false; m._openAt = performance.now();
+      if (back) popBack(m, back); else growFrom(m);
+    }
+    else if (!m.classList.contains('open') && wasOpen) shrinkHome(m, opening);   // (one closing as another opens, a swap: it fades as before, two flights at once were busy)
     if (FOCUS_M.includes(m.id) && m.classList.contains('open') !== wasOpen) modalFocus(m, !wasOpen);
   }
   stackModals();
@@ -1332,7 +1665,7 @@ function calmSettle() {
 }
 function sweepSpins() { for (const s of stepped) if (!s.isConnected) unstep(s); }
 function glow(r, lvl) {
-  const mm = motionMode(); if (mm === 'off') return;
+  const mm = motionMode(); if (mm === 'off' || stillUnder(r.root)) return;   // (behind a popup's blur nobody sees it, 11-08)
   // (a tile: a tinted layer under its content whose opacity fades, on the compositor, so the tile isn't painted again
   // every frame; 1.8 s in Full, 0.9 s in Minimal, which is the mode while a game is in front. Other rows keep the inset
   // shadow, in Full only. 2.1, the motion audit 11-04)
@@ -1430,7 +1763,7 @@ function graphLoop(now) {
   const todo = [];
   for (const [cv, G] of graphs) {
     if (!cv.isConnected) { graphs.delete(cv); continue; }
-    const p = G.t0 ? Math.min(1, (now - G.t0) / GDUR) : 1, rv = G.rev0 ? Math.min(1, (now - G.rev0) / 800) : 1, cp = G.colT0 ? Math.min(1, (now - G.colT0) / 300) : 1;
+    const p = G.t0 ? Math.max(0, Math.min(1, (now - G.t0) / GDUR)) : 1, rv = G.rev0 ? Math.max(0, Math.min(1, (now - G.rev0) / 800)) : 1, cp = G.colT0 ? Math.max(0, Math.min(1, (now - G.colT0) / 300)) : 1;   // (a frame stamped before its start: 0, not below, 11-09)
     G.drawCol = cp < 1 ? mixHex(G.colFrom, G.col, cp) : G.col; if (cp >= 1) G.colT0 = 0;
     const moving = p < 1 || rv < 1 || cp < 1;
     if (!moving && !G.dirty) continue;
@@ -1499,8 +1832,23 @@ function cellName(c) { const r = c.key ? BYKEY.get(c.key) : null; return c.name 
 const isMissing = c => !c.pred && READ.length > 0 && !BYKEY.has(c.key);
 // a missing reading whose sensor is here was dropped by HWiNFO for now (hidden, device idle); else it's from another PC
 const sensorHere = c => (!READ.length && !feed.fake) || (!!c.key && SENS.some(sn => c.key.startsWith(sn.key + '/')));   // (no readings at all yet, HWiNFO off: not sharing, not "not on this PC", 11-06)
-const missingTxt = c => sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now' : 'not on this PC: ' + (c.match ? c.match.split('|')[0] : c.key);
-const missingShort = c => sensorHere(c) ? 'not shared by HWiNFO' : 'not on this PC';   // (where those are cut, 2.2)
+// a missing reading whose sensor is still here comes and goes (the battery's time left while plugged in, his pick E
+// 11-08): "not available now" outside edit mode, no Re-link. One the history has had no value for in 7 days (HWiNFO
+// renamed it) is gone: Re-link back. LASTV: key, when it last had a value (unix s, 0: never), from the host; lastvSince:
+// when the history starts. HW Deck's own readings and an extras build's are never renamed: always a pause
+const LASTV = new Map(), WEEK_S = 7 * 86400;
+let lastvSince = 0, lastvAsked = '', lastvAt = 0;
+const quietGone = c => { const at = c.key && !/^(hwdeck|x)\./.test(c.key) ? LASTV.get(c.key) : undefined, now = Date.now() / 1000; return at === undefined ? false : at > 0 ? now - at >= WEEK_S : lastvSince > 0 && now - lastvSince >= WEEK_S; };   // (never a value in a history of a week or more: gone at once; in a younger one, a fresh install, a pause yet, the suite 11-08)   // (never a value here: gone at once, a reading of another PC's sensor with the same key, review 11-08)
+const neverHere = c => LASTV.get(c.key) === 0;
+const isPause = c => sensorHere(c) && !quietGone(c);
+const missingTxt = c => !sensorHere(c) ? 'not on this PC: ' + (c.match ? c.match.split('|')[0] : c.key) : !S.edit ? 'not available now' : isPause(c) ? 'HWiNFO isn\'t sharing this right now' : neverHere(c) ? 'never shared on this PC' : 'not shared by HWiNFO for 7 days';
+const missingShort = c => !sensorHere(c) ? 'not on this PC' : !S.edit ? 'not available now' : isPause(c) ? 'not shared by HWiNFO' : neverHere(c) ? 'never shared here' : 'not shared for 7 days';   // (where those are cut, 2.2)
+// (the missing readings whose sensor is here: when each last had a value, asked when that set changes, or after an hour, 11-08)
+function lastvAsk(cells) {
+  const ks = READ.length ? cells.filter(k => !BYKEY.has(k) && !/^(hwdeck|x)\./.test(k) && SENS.some(sn => k.startsWith(sn.key + '/'))).sort() : [], s = ks.join('\n');
+  if (!ks.length || (s === lastvAsked && Date.now() - lastvAt < 3600000)) return;
+  lastvAsked = s; lastvAt = Date.now(); send({ t: 'lastval', keys: ks });
+}
 const isFanCell = c => c.pred || isFanR(BYKEY.get(c.key));
 function catHead(cat, inner) {
   return '<span class="grip" title="Drag to move the category: onto another one\'s edge to put them side by side or stack them">' + ICONS.grip + '</span>' + (inner || '') +   // (no collapse button: categories always show, his call 11-02)
@@ -1543,7 +1891,7 @@ function tileHtml(cid, lk, pre) {
     (z.f ? ' data-f="' + z.f + '"' + (z.fx ? ' data-fx="1"' : '') : z.w !== 1 ? ' data-w="' + z.w + '"' : '') + (z.h !== 1 ? ' data-h="' + z.h + '"' : '') + (cellLook(cid, 'tiles').nl ? ' data-nl="1"' : '') + '>' +
     '<div class="tn">' + iconOf(c, r) + '<span data-full="1">' + esc(nm) + '</span><span class="tq"></span></div>' +   // (a name cut short shows whole on hover: see the tips)
     '<div class="tv"><span class="v"></span><small class="u">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small></div><div class="tc"></div>' +
-    (miss ? (S.edit ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit ? '<span class="corner" title="Drag to size it, double-click for a normal tile">' + ICONS.corner + '</span>' : '') + '</div>';
+    (miss ? (S.edit && !isPause(c) ? '<button class="btn rl">Re-link</button>' : '') : graph) + (S.edit ? '<span class="corner" title="Drag to size it, double-click for a normal tile">' + ICONS.corner + '</span>' : '') + '</div>';
 }
 // Tiles: a block per category, a tile per cell (auto: blocks past 6 cells take the whole width)
 function blkHtml(cat, inRows) {
@@ -1570,16 +1918,16 @@ function cardHtml(cat) {
       '<div class="dgrid bcells">' + ids.map(cid => {
         const b = bits(cid);
         return '<div class="bcell dc' + b.cls + '" data-cid="' + esc(cid) + '" data-k="row" tabindex="0"><div class="bl"><span class="lbl">' + b.nm + '<i></i></span>' + val(b.u) + '</div>' +
-          (b.xb != null ? b.xb : b.on ? '<canvas class="rsp"></canvas>' : b.miss && S.edit ? rl : '<span class="gph"></span>') + '</div>';
+          (b.xb != null ? b.xb : b.on ? '<canvas class="rsp"></canvas>' : b.miss && S.edit && !isPause(b.c) ? rl : '<span class="gph"></span>') + '</div>';
       }).join('') + '</div></section>';
   const hero = lk.style !== 'list';
   return '<section class="card ' + cls + (lk.style === 'small' ? ' small' : '') + (lk.style === 'list' ? ' list' : '') + anim() + '" data-cat="' + esc(cat.id) + '"><div class="ch dch"' + headTab() + '>' + catHead(cat, icon) + '<span class="tag"></span></div>' +
     '<div class="dgrid vert">' + ids.map((cid, i) => {
       const b = bits(cid);
       if (i === 0 && hero) return '<div class="hero dc' + b.cls + '" data-cid="' + esc(cid) + '" data-k="hero" tabindex="0"><div><div class="nm">' + iconOf(b.c, b.r) + '<span>' + esc(nameIn(cid)) + '</span></div>' +
-        '<div class="hv"><span class="v"></span><small class="u">' + b.u + '</small></div><div class="hc"></div>' + (b.miss && S.edit ? rl : '') + '</div>' +
+        '<div class="hv"><span class="v"></span><small class="u">' + b.u + '</small></div><div class="hc"></div>' + (b.miss && S.edit && !isPause(b.c) ? rl : '') + '</div>' +
         (b.xb != null ? xBody(cid, b.r, 'hero') : b.on ? '<canvas></canvas>' : '<span></span>') + '</div>';
-      const mid = b.xb != null ? b.xb : b.on ? '<canvas class="rsp"></canvas>' : b.miss && S.edit ? rl : '';
+      const mid = b.xb != null ? b.xb : b.on ? '<canvas class="rsp"></canvas>' : b.miss && S.edit && !isPause(b.c) ? rl : '';
       return '<div class="row dc' + b.cls + (mid ? '' : ' nog') + '" data-cid="' + esc(cid) + '" data-k="row" tabindex="0"><span class="lbl">' + b.nm + '<i></i></span>' + mid + val(b.u) + '</div>';
     }).join('') + '</div></section>';
 }
@@ -1624,7 +1972,7 @@ function arrHtml(cls, v, block, auto) {
   let h = '';
   for (const r of rows) {
     const manual = manualRow(r);
-    h += '<div class="lrow" data-r="' + r.i + '"' + (manual ? '' : ' data-auto="1"') + (tiles && (r.h || fillAll('tiles')) ? ' data-fill="1"' : '') + ' style="--cols:' + colTracks(manual ? r.cols : r.cols.map(() => ({}))) + '">';
+    h += '<div class="lrow" data-r="' + r.i + '"' + (manual ? ' data-w="' + r.cols.map(c => c.w).join(',') + '"' : ' data-auto="1"') + (tiles && (r.h || fillAll('tiles')) ? ' data-fill="1"' : '') + ' style="--cols:' + colTracks(manual ? r.cols : r.cols.map(() => ({}))) + '">';
     for (const c of r.cols) h += '<div class="lcol" data-c="' + c.i + '" data-min="' + colMin(c) + '">' + stackLines(c.stack).map(ln => ln.length < 2 ? block(catById(sid(ln[0])), true) : '<div class="lsub" data-min="' + colMin({ stack: ln }) + '" data-mine="' + (S.edit ? ln.filter(x => !cellsOf(catById(sid(x))).length).length * (TILE_MIN + (S.screen === 'tiles' ? 1.7 : 0.92) * gapSp()) : 0) + '" style="' + ln.map((s, j) => '--s' + (j + 1) + ':' + lineShare(catById(sid(s))) + ';--m' + (j + 1) + ':' + catMin(catById(sid(s)), true, ln.filter(x => cellsOf(catById(sid(x))).length).length > 1, gapSp()) + 'rem').join(';') + '">' + ln.map(s => block(catById(sid(s)), true)).join('') + '</div>').join('') + '</div>';
     if (S.edit && !auto) {   // (Automatic has no handles: a drop makes it your own first)
       for (let k = 0; k < r.cols.length - 1; k++) h += '<span class="ldiv" data-k="' + k + '" title="Drag to change the widths, double-click to let them follow what each column holds"></span>';
@@ -1700,7 +2048,7 @@ function buildGrid() {
       (cont ? '<span class="dchw"><span class="cn">' + esc(cat.name) + '</span><span class="contd">continued</span></span>' : '<span class="dchw dch"' + headTab() + '>' + catHead(cat) + '</span>') + '</td></tr>' +
       (ids || idsIn(cat)).map(cid => {
         const c = S.L.cells[cid], r = c.key ? BYKEY.get(c.key) : null, miss = isMissing(c), xb = miss ? null : xBody(cid, r, 'grid');
-        return '<tr class="dc' + (miss ? ' missing' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + '" data-cid="' + esc(cid) + '" data-k="grow" tabindex="0"><td class="gname">' + iconOf(c, r) + '<span>' + esc(nameIn(cid)) + '</span>' + (miss && S.edit ? '<button class="btn rl">Re-link</button>' : '') + '</td>' +
+        return '<tr class="dc' + (miss ? ' missing' : '') + (isBneck(c) ? ' bn' : '') + (cid === sel ? ' sel' : '') + '" data-cid="' + esc(cid) + '" data-k="grow" tabindex="0"><td class="gname">' + iconOf(c, r) + '<span>' + esc(nameIn(cid)) + '</span>' + (miss && S.edit && !isPause(c) ? '<button class="btn rl">Re-link</button>' : '') + '</td>' +
           '<td class="gval"><span class="v"></span><span class="u gu">' + esc(c.pred ? 'RPM' : unitOf(r)) + '</span></td>' +
           (xb != null ? '<td class="gstrip" colspan="3">' + xb + '</td>' : isBneck(c) && !miss ? '<td class="gstrip" colspan="3">' + (c.graph !== false ? '<canvas></canvas>' : '') + '</td>' : '<td class="gn"></td><td class="gn"></td><td class="gn"></td>') + '<td class="glines"></td><td class="ginfo"></td></tr>';
       }).join('') + '</tbody>').join('') + '</table></div>';
@@ -1710,21 +2058,8 @@ function buildGrid() {
     return '<div class="gsplit arr" id="view" style="--gt:repeat(' + Math.max(1, cols.length) + ', minmax(0, 1fr))">' +
       cols.map(c => table(c.stack.map(s => ({ cat: catById(sid(s)) })))).join('') + '</div>';
   }
-  // two tables side by side when there is room, cut at the middle line: a long category there goes on in the second
-  // table ("continued"), so the two come out about as long
-  const items = S.L.cats.filter(cat => S.edit || cellsOf(cat).length).map(cat => ({ cat, ids: cat.collapsed ? null : idsIn(cat) })), len = it => (it.ids ? it.ids.length : 0) + 1;   // (only what is drawn: an empty one is hidden outside edit mode, 11-06)
-  const half = Math.ceil(items.reduce((a, it) => a + len(it), 0) / 2), t1 = [], t2 = [];
-  const two = gridForce ? gridForce === 2 : gridN[fitKey(cssScale())] === 2;   // else one under the other: one table
-  let acc = two ? 0 : Infinity;
-  if (!two) t1.push(...items);
-  else for (const it of items) {
-    if (t2.length || acc >= half) { t2.push(it); continue; }
-    if (acc + len(it) <= half) { t1.push(it); acc += len(it); continue; }
-    const k = half - acc - 1;   // its cells that still fit in the first table
-    if (it.ids && k >= 3 && it.ids.length - k >= 3) { t1.push({ cat: it.cat, ids: it.ids.slice(0, k) }); t2.push({ cat: it.cat, ids: it.ids.slice(k), cont: true }); acc = half; }
-    else if (!t1.length || acc + len(it) / 2 <= half) { t1.push(it); acc += len(it); }
-    else t2.push(it);
-  }
+  // two tables side by side when there is room, cut at the middle line (gridCut)
+  const [t1, t2] = gridCut(gridItems(), gridTwo());
   return '<div class="gsplit" id="view">' + (t1.length ? table(t1) : '') + (t2.length ? table(t2) : '') + '</div>';
 }
 function setupHtml() {
@@ -1748,6 +2083,7 @@ function buildView() {
   animI = 0;
   if (sectionsEl._slide) { sectionsEl._slide.cancel(); sectionsEl._slide = null; }
   sectionsEl.classList.remove('sliding');
+  const angs = new Map(); for (const [cid, r] of E) if (r.fan && r.fan._ang) angs.set(cid, r.fan._ang);   // (a fan keeps its angle across a rebuild, as when it stops: it snapped upright, 11-08)
   const old = $('view');
   // (the cell or category header that had the focus gets it back in the new view, 11-06: it fell to the page)
   const fa = document.activeElement, fq = fa && fa.matches && fa.matches('#view .dc[data-cid]') ? '.dc[data-cid="' + CSS.escape(fa.dataset.cid) + '"]' : fa && fa.matches && fa.matches('#view .dch') && fa.closest('.dcat') ? '.dcat[data-cat="' + CSS.escape(fa.closest('.dcat').dataset.cat) + '"] .dch' : null;
@@ -1772,6 +2108,7 @@ function buildView() {
     const r = { root: el, cid, kind: el.dataset.k, v: q('.v'), u: q('.u'), vbox: q('.tv, .hv, .val, .gval'), cap: q('.tc, .hc, .lbl i, .ginfo'), tq: q('.tq'), canvas: q('canvas') || el.querySelector('.xb canvas.xg'), strip: q('.strip'), lines: q('.glines'), xb: el.querySelector('.xb') };
     if (r.kind === 'grow') r.td = el.children;
     if (c && isFanCell(c)) r.fan = q('.tn svg, .nm svg, .gname svg');
+    if (r.fan && angs.has(cid)) { r.fan._ang = angs.get(cid); const w = document.createElement('i'); w.className = 'spw'; r.fan.replaceWith(w); w.appendChild(r.fan); w.style.transform = 'rotate(' + r.fan._ang.toFixed(1) + 'deg)'; }   // (wrapped and turned at once; spinIcon observes it when it turns)
     if (r.canvas) { r.canvas._enter = enterNext ? performance.now() : 0; ro.observe(r.canvas); }   // (when the view arrived)
     E.set(cid, r);
   }
@@ -1805,7 +2142,7 @@ let drawnHidden = false;   // (a view drawn in the tray: measured again when the
 function renderView(enter) {
   if (enter) enterNext = true;
   if (document.hidden) drawnHidden = true;
-  const was = flipNext && !enter && !enterNext ? catRects() : null;   // an edit: the categories and cells glide from where they were
+  const was = flipNext && !enter && !enterNext && (flipNext !== 'live' || (motionOn() && !modalUp && !document.hidden)) ? catRects() : null;   // an edit: the categories and cells glide from where they were; a reading that comes or goes too ('live': Full only, not under a popup, it is no click, 11-08)
   flipNext = false;
   TINT.clear();   // (cells may have moved between categories)
   buildView();
@@ -1822,7 +2159,8 @@ function pxFresh() {
   const pct = cellPct(sel); if (pct == null) return;   // (the panel's own readout: field and chips agree, 11-06 audit)
   if (b !== document.activeElement) b.value = Math.round(pct * 10) / 10;
   const z = cellSize(sel), au = !z.f && z.w === 1;
-  for (const x of document.querySelectorAll('#insp [data-lay="cf"] button')) { const on = x.dataset.v === 'auto' ? au : !au && Math.abs(+x.dataset.v - pct) < 0.5; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); }
+  const off = cfOff(sel);
+  for (const x of document.querySelectorAll('#insp [data-lay="cf"] button')) { const on = x.dataset.v === 'auto' ? au : !au && Math.abs(+x.dataset.v - pct) < 0.5; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); if (x.dataset.v !== 'auto') x.disabled = off(+x.dataset.v); }   // (greyed as the width now allows, 11-08)
 }
 // a tile's width as the panel shows it, in % of its row: the share it is drawn at (a row of tiles you haven't sized spreads
 // out to fill its width, three of 25% drawn at a third each, his 11-06 "showing 25% but it should show 33%"; one you sized
@@ -1832,15 +2170,24 @@ function cellPct(cid) {
   const drawn = G && G.tw > 0 ? Math.min(100, (G.r.width + G.g) / (G.tw + G.g) * 100) : null;
   return drawn == null ? own : own != null && Math.abs(drawn - own) < 1 ? own : (PCTS.find(q => Math.abs(q - drawn) < 1) || drawn);
 }
+// the widths a tile can't be drawn at in its category as it is now (under the minimum, or a row that can't hold it as
+// set): their chips greyed, so a chip never does nothing or something else (his 11-08 "if u click 33% nothing happens
+// but if u click 25% it allows but puts 33%")
+function cfOff(cid) {
+  const G = tileGeo(tileEl(cid)); if (!G) return () => false;
+  return x => { const w = x / 100 * G.k; return w < G.k - PE && Math.abs(G.at(w, G.s.h).w - w) > 0.012 * G.k; };
+}
 let flipNext = false;
 // (a drop: the cell or category glides from where it was let go, not from its old slot, still there under the ghost)
 let flipFrom = null;
+// (a category's key here: Grid cuts one over its two tables, and the part that goes on is its own, 11-08 review)
+const flipKey = el => el.dataset.cat + (el.classList.contains('cont') ? '|cont' : '');
 function catRects() {
-  const m = new Map(); m.cells = new Map(); if (S.screen === 'grid') return m;
+  const m = new Map(); m.cells = new Map();   // (Grid too: its rows glide, 11-08)
   m.fs = parseFloat(document.documentElement.style.fontSize) || 0;   // (the size it was fitted at: see playFlip)
   // (a hidden one, an empty category outside edit mode, has no box to glide from: it just comes)
-  for (const el of document.querySelectorAll('#view .dcat')) { const r = el.getBoundingClientRect(); if (r.width || r.height) m.set(el.dataset.cat, r); }
-  for (const el of document.querySelectorAll('#view .dc[data-cid]')) { const r = el.getBoundingClientRect(); if (r.width || r.height) m.cells.set(el.dataset.cid, r); }   // (and the cells: an edit's neighbours glide aside)
+  for (const el of document.querySelectorAll('#view .dcat')) { const r = el.getBoundingClientRect(); if (r.width || r.height) { r.el = el; m.set(flipKey(el), r); } }   // (el: one that goes fades where it was, flipGhost)
+  for (const el of document.querySelectorAll('#view .dc[data-cid]')) { const r = el.getBoundingClientRect(); if (r.width || r.height) { r.el = el; m.cells.set(el.dataset.cid, r); } }   // (and the cells: an edit's neighbours glide aside)
   if (flipFrom && performance.now() - flipFrom.t < 500) { const r = flipFrom.r; r.drop = true; (flipFrom.kind === 'cat' ? m : m.cells).set(flipFrom.id, r); }   // (the ghost's box: a glide from it, see playFlip)
   flipFrom = null;
   return m;
@@ -1849,20 +2196,30 @@ function playFlip(was) {
   // (Minimal: a short glide, where it goes only, no fades: an edit is a reply to a click, as drawers and toggles are;
   // his autopilot list 11-05, "edits glide in Minimal", 2.2. Off: none)
   const mode = motionMode(), full = mode === 'full', dur = full ? 280 : mode === 'minimal' ? 180 : 0;
-  if (!dur || S.screen === 'grid') return;
+  if (!dur) return;
+  const grid = S.screen === 'grid';   // (Grid's rows glide through their cells, 11-08: it snapped)
   const half = full ? 0.5 : 1;   // (a new size, from its old middle: half seen in Full, whole in Minimal)
   const moved = new Set();   // (the categories that glide: their cells go with them)
   // (the old sizes at the new fitted size: a refit alone, a few % smaller, is a glide; it faded every category to half,
   // 11-06)
   const fs1 = parseFloat(document.documentElement.style.fontSize) || 0, k = was.fs && fs1 ? fs1 / was.fs : 1;
   for (const el of document.querySelectorAll('#view .dcat')) {
-    const a = was.get(el.dataset.cat); if (!a) continue;
+    const a = was.get(flipKey(el));
+    if (!a) { if (full && was.size && el.getClientRects().length) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out' }); continue; }   // (one that comes: an empty one as E shows it, 11-08 review)
     const b = el.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
     // (let go: from the ghost's middle to its place, whole, 11-06; the ghost is a small label, never its size)
     if (a.drop) { moved.add(el); el.animate([{ transform: 'translate(' + (a.left + a.width / 2 - b.left - b.width / 2) + 'px, ' + (a.top + a.height / 2 - b.top - b.height / 2) + 'px)' }, { transform: 'none' }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); continue; }
     // (a new width or height: from its old middle, half seen, so its tiles packed anew never show mid-jump; 11-02)
     if (Math.abs(a.width * k - b.width) > 8 || Math.abs(a.height * k - b.height) > 8) { moved.add(el); el.animate([{ transform: 'translate(' + (a.left + a.width / 2 - b.left - b.width / 2) + 'px, ' + (a.top + a.height / 2 - b.top - b.height / 2) + 'px)', opacity: half }, { transform: 'none', opacity: 1 }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); }
     else if (Math.abs(dx) + Math.abs(dy) > 1) { moved.add(el); el.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); }
+  }
+  // (one an edit took away: a copy fades where it was as its neighbours close the gap, as a new one comes in; Full,
+  // 11-08: it vanished)
+  if (full) {
+    const here = s => document.querySelector('#view ' + s) !== null, shown = s => { const e = document.querySelector('#view ' + s); return !!e && e.getClientRects().length > 0; }, gone = [];
+    for (const [, a] of was) if (a.el && a.el.dataset.cat && !shown('.dcat' + (a.el.classList.contains('cont') ? '.cont' : '') + '[data-cat="' + CSS.escape(a.el.dataset.cat) + '"]')) gone.push(a);
+    if (was.cells) for (const [id, a] of was.cells) if (a.el && a.el.tagName !== 'TR' && !here('.dc[data-cid="' + CSS.escape(id) + '"]') && !gone.some(g => g.el.contains(a.el))) gone.push(a);
+    for (const a of gone) flipGhost(a);
   }
   // (the selection gliding: the settings look again where it ends, 11-06; they read it mid-glide and stayed over it)
   const se = sel ? document.querySelector('#view .dc[data-cid="' + sel + '"]') : selCat ? document.querySelector('#view .dcat[data-cat="' + selCat + '"]') : null;
@@ -1871,6 +2228,13 @@ function playFlip(was) {
   if (!was.cells) return;
   for (const el of document.querySelectorAll('#view .dc[data-cid]')) {
     const c = el.closest('.dcat'); if (c && moved.has(c)) continue;
+    if (grid && el.tagName === 'TR') {   // (a row: its cells move, translate only; a new one fades in in Full, 11-08)
+      const a = was.cells.get(el.dataset.cid), tds = [...el.children];
+      if (!a) { if (full) for (const td of tds) td.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out' }); continue; }
+      const b = el.getBoundingClientRect(), dx = a.drop ? a.left + a.width / 2 - b.left - b.width / 2 : a.left - b.left, dy = a.drop ? a.top + a.height / 2 - b.top - b.height / 2 : a.top - b.top;
+      if (Math.abs(dx) + Math.abs(dy) > 1) for (const td of tds) td.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }], { duration: full ? 240 : dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+      continue;
+    }
     const a = was.cells.get(el.dataset.cid);
     if (!a) { if (full) el.animate([{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'ease-out' }); continue; }
     const b = el.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
@@ -1882,6 +2246,20 @@ function playFlip(was) {
   }
 }
 
+// a cell or category an edit removed: a copy of it fades where it was, outside #view so nothing that reads the view
+// (fit, catRects, a check) sees it (11-08, the motion audit: it vanished while its neighbours glided into the gap)
+function flipGhost(a) {
+  if (a.el.tagName === 'TBODY' || a.el.tagName === 'TR') return;   // (Grid: outside its table it draws as bare rows: it just goes, 11-08 review)
+  const v = $('view'), g = a.el.cloneNode(true);
+  { const oc = a.el.querySelectorAll('canvas'), gc = g.querySelectorAll('canvas'); gc.forEach((c, i) => { try { if (oc[i] && oc[i].width && oc[i].height) c.getContext('2d').drawImage(oc[i], 0, 0); } catch (e) { /* nothing to copy */ } }); }   // (a copy has no picture: its graph, 11-08 review)
+  for (const x of [g, ...g.querySelectorAll('[id], [data-cid], [data-cat], [tabindex]')]) { x.removeAttribute('id'); x.removeAttribute('data-cid'); x.removeAttribute('data-cat'); x.removeAttribute('tabindex'); }
+  g.classList.remove('sel', 'csel', 'dragging'); g.classList.add('flipghost'); g.setAttribute('aria-hidden', 'true'); g.inert = true;
+  Object.assign(g.style, { position: 'fixed', left: a.left + 'px', top: a.top + 'px', width: a.width + 'px', height: a.height + 'px', margin: '0', pointerEvents: 'none', zIndex: '5', boxSizing: 'border-box' });
+  v.parentNode.appendChild(g);
+  const r = g.getBoundingClientRect(); if (Math.abs(r.left - a.left) + Math.abs(r.top - a.top) > 0.5) { g.style.left = 2 * a.left - r.left + 'px'; g.style.top = 2 * a.top - r.top + 'px'; }   // (a parent that holds fixed boxes: where it was all the same)
+  const an = g.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(0.96)' }], { duration: 200, easing: 'ease-out' });
+  an.onfinish = an.oncancel = () => g.remove();
+}
 // every tick: numbers, colours, captions, graphs; reads first (which cells are in sight), then writes
 // a second judged for the cells updateView didn't draw (skipDrawn), or for all of them while a drag holds the redraws
 function judgeRest(skipDrawn) {
@@ -1927,7 +2305,7 @@ function readSight() {
   return m;
 }
 function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's, judges nothing)
-  paintTint();   // (writes only when a colour changed: readings that just came in, a new view)
+  paintTint(); paintGc(); paintMc();   // (write only when a colour changed: readings that just came in, a new view; the popups' graphs, 11-09)
   // seen: gets its number this time (all of them after a rebuild); sight: its graph is drawn (only what is on screen)
   let pre = sightPre; sightPre = null;
   if (pre) for (const cid of E.keys()) if (!pre.has(cid)) { pre = null; break; }   // (the view drawn again since: read now)
@@ -1949,7 +2327,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     // cell fading in once; 2.1, the motion audit 11-04)
     const gm = e.col === 'past' ? 'past' : 'live', flip = r._gm !== undefined && r._gm !== gm && isGameCell(c); r._gm = gm;
     if (vis) odo(r.v, e.txt != null ? e.txt : fmtV(e.v, dec, rd), flip || catchUp || (r._lvl !== undefined && e.lvl !== r._lvl), flip || catchUp);   // (a new level: its digits with its colour, 11-06)
-    if (flip && vis && motionMode() !== 'off') for (const el of [r.vbox, r.cap, r.tq, r.canvas, r.strip]) if (el) el.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: motionOn() ? 320 : 200, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    if (flip && vis && motionMode() !== 'off' && !catchUp && !stillUnder(r.root)) for (const el of [r.vbox, r.cap, r.tq, r.canvas, r.strip]) if (el) el.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: motionOn() ? 320 : 200, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
     if (e.txt != null) setText(r.u, e.utxt);
     const colCls = e.col === 'white' ? '' : e.col;
     // (a number drawn for the first time, a new view or one drawn again (Height, a resize), takes its colour at once, not
@@ -1970,7 +2348,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
       r.root.classList.toggle('yellow', e.lvl === 1); r.root.classList.toggle('red', e.lvl === 2); r.root.classList.toggle('warm', e.warm > 0 || e.warmR > 0);
       // (prettify 11-02: a tile that just went yellow, or yellow to red, also pulses a ring out, with the glow below; not
       // as the view is drawn, and only with Full animations. r._lvl moves on below, after the glow)
-      if (r._lvl !== undefined && e.lvl > r._lvl && motionMode() === 'full' && !catchUp) { r.root.classList.remove('flare'); const fr = r.root; requestAnimationFrame(() => fr.classList.add('flare')); clearTimeout(r._fl); r._fl = setTimeout(() => r.root.classList.remove('flare'), 1000); }
+      if (r._lvl !== undefined && e.lvl > r._lvl && motionMode() === 'full' && !catchUp && !stillUnder(r.root)) { r.root.classList.remove('flare'); const fr = r.root; requestAnimationFrame(() => fr.classList.add('flare')); clearTimeout(r._fl); r._fl = setTimeout(() => r.root.classList.remove('flare'), 1000); }
       const wk = e.warm ? 'y' + e.warm : e.warmR ? 'r' + e.warmR : '';   // (the border fades toward yellow before it, toward red past it)
       if (r._w !== wk) { r._w = wk; r.root.style.setProperty('--wb', e.warm ? mixHex(S.look.line ? lineOf(S.look) : solidOf(S.look), '#5c4f1d', e.warm * 0.85) : e.warmR ? mixHex('#5c4f1d', '#6b2020', e.warmR * 0.85) : ''); }
     }
@@ -2042,11 +2420,20 @@ function floorSz(sz, k, W, g, fs, short) {
   const min = (short ? 15 : TILE_MIN) * fs, p = (W + g) / k, kmax = Math.max(1, Math.floor((W + g) / (min + g) + 1e-6));   // (short tiles: their name and value side by side, 15rem as in Auto)
   const low = sz.map(s => !s.auto && Math.min(s.w, k) * p - g < min - 0.5);
   if (!low.some(Boolean)) return sz;
+  const up = PCTS.map(q => q / 100 * k).find(u => u * p - g >= min - 0.5) || k;   // (the smallest share drawn whole, 11-08 audit)
   const { pos } = packTiles(sz, k), out = sz.map(s => Object.assign({}, s)), done = new Set();
   sz.forEach((s, i) => {
     if (!low[i] || done.has(i)) return;
     const grp = new Set([i]); let y0 = pos[i].y, y1 = pos[i].y + pos[i].h, grew = true;
     while (grew) { grew = false; pos.forEach((q, j) => { if (!grp.has(j) && q.y < y1 - PE && q.y + q.h > y0 + PE) { grp.add(j); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y + q.h); grew = true; } }); }   // (normal tiles there too: the order stays)
+    // (sizes that differ: only the ones too narrow go up, to the smallest share drawn whole, and a share beside them is
+    // drawn as set; it was held at the even split, 67% or 75% drawn 50%, 11-08 audit)
+    // (only while they still fit in the rows they had: past that they wrapped and left a hole beside a taller share, so
+    // the group splits evenly as before, the suite 11-08: 58% beside two of 42%)
+    if (![...grp].every(j => Math.abs(sz[j].w - s.w) < 1e-6 && Math.abs(sz[j].h - s.h) < 1e-6)) {
+      const t = out.map(o => Object.assign({}, o)); for (const j of grp) if (low[j]) t[j].w = Math.max(sz[j].w, up);
+      if (packTiles(t, k).H <= packTiles(sz, k).H + PE) { for (const j of grp) { out[j].w = t[j].w; done.add(j); } return; }
+    }
     const cols = new Set([...grp].map(j => Math.round(pos[j].x * 1000))).size, per = Math.min(kmax, Math.ceil(cols / Math.ceil(cols / kmax)));
     for (const j of grp) { out[j].w = k / per; done.add(j); }
   });
@@ -2099,10 +2486,11 @@ function setTileUnit(tgs) {
   tileUnit = n.length ? Math.max(8.6, Math.round(n[(n.length - 1) >> 1] * 1000) / 1000) : 8.6;
 }
 function measureUnits(tgs, fs) {
-  const need = tgs.filter(t => { if (t.closest('.dcat.collapsed')) return false; const u = unitH.get(t); return !u || u.narrow !== t.classList.contains('narrow') || (exactUnits && Math.abs(u.fs - fs) > 0.01); });
+  const need = tgs.filter(t => { if (t.closest('.dcat.collapsed')) return false; const u = unitH.get(t); return !u || u.narrow !== t.classList.contains('narrow') || (exactUnits && Math.abs(u.fs - fs) > (S.edit ? 1e-4 : 0.01)); });
   if (!need.length) return;
   for (const t of need) { t.classList.remove('pk'); t.classList.add('meas'); }
   const hs = need.map(t => tileKids(t).map(x => x.offsetHeight));
+  if (window.__natDbg) need.forEach(t => tileKids(t).forEach(x => { if (x.dataset.cid) window.__natDbg[x.dataset.cid] = [fs, x.offsetHeight, x.offsetWidth, [...x.children].map(c => (String(c.className).split(' ')[0] || c.tagName) + ':' + c.offsetHeight).join(' '), app.className.split(' ').filter(k => !/^(boot)$/.test(k)).join('.'), t.className]; }));   // (the stress test's debug: what a tile's own height was read from)
   need.forEach((t, i) => {
     if (!hs[i].some(Boolean)) return;
     const short = t.classList.contains('shorts');
@@ -2115,15 +2503,18 @@ function measureUnits(tgs, fs) {
 // category fills the width (his call 11-04: four tiles over three look as a category of four over one of three per row
 // did). Drawn wider (dx, dw); placed as they are (x, w: what a drag, a size and the heights go by)
 function fillRows(sz, pos, k) {
-  const tq = SNAPQ * Math.max(1, k / 2);
-  if (!pos.some(p => p.x + p.w >= k - tq)) return;
-  const hh = sz.length && sz.every(s => Math.abs(s.h - sz[0].h) < 1e-6) ? sz[0].h : 1;   // (one height for all its tiles: its rows that tall, 11-06 audit: a height alone changed the widths)
-  const grid = sz.length > 0 && sz.every(s => s.auto === false && Math.abs(s.h - hh) < 1e-6 && Math.abs(s.w - sz[0].w) < 1e-6);   // (every tile one share, one row high)
-  const nb = Math.ceil((Math.max(0, ...pos.map(p => p.y + p.h)) - PE) / hh);
-  for (let r = 0; r < nb; r++) {
-    const ids = [], y0 = r * hh; let ok = true;
-    pos.forEach((p, i) => { if (p.y < y0 + hh - PE && p.y + p.h > y0 + PE) { if (Math.abs(p.y - y0) > PE || Math.abs(p.h - hh) > PE || Math.abs(sz[i].h - hh) > 1e-6 || sz[i].fx || !(grid || (sz[i].auto !== false && sz[i].w === 1))) ok = false; ids.push(i); } });   // (a tile sized by hand: its row as set)
+  const tq = SNAPQ * Math.max(1, k / 2), um = Math.min(1, ...sz.map(s => Math.min(s.w, k)));
+  if (!pos.some(p => p.x + p.w > k - um + tq)) return;   // (a row with no room left for one more tile counts as full: 33% and two Autos of four, the fourth fills its row, 11-08)
+  const grid = sz.length > 0 && sz.every(s => s.auto === false && Math.abs(s.w - sz[0].w) < 1e-6);   // (every tile one share)
+  // (each row by its own tiles: they all start on it and no other tile reaches into it, whatever their heights, so a
+  // height alone never changes the widths; it took one height for all, 11-08 audit)
+  const ys = [...new Set(pos.map(p => Math.round(p.y * 1e6) / 1e6))];
+  for (const y0 of ys) {
+    const ids = []; let ok = true;
+    pos.forEach((p, i) => { if (Math.abs(p.y - y0) < PE) { if (sz[i].fx || !(grid || (sz[i].auto !== false && sz[i].w === 1))) ok = false; ids.push(i); } });   // (a tile sized by hand: its row as set)
     if (!ok || !ids.length) continue;
+    const y1 = Math.max(...ids.map(i => pos[i].y + pos[i].h));
+    if (pos.some((p, i) => !ids.includes(i) && p.y < y1 - PE && p.y + p.h > y0 + PE)) continue;   // (a tile of another row reaches into it)
     ids.sort((a, b) => pos[a].x - pos[b].x);
     // (all one width u: normal tiles, or a category whose tiles are all one share, as its tiles per row became in 2.2, so
     // 4 x 25% over 3 x 25% draws the 3 as it did; from the left with no hole, room at the end)
@@ -2206,6 +2597,16 @@ function naturals(view, fs) {
 // tracks, one at a time to the tallest column that gets shorter by it (others then spread into what is left), and its
 // Auto categories use exactly those tracks, so tiles line up across columns. Overview: the twelfths split with the
 // lowest tallest column. Returns false when the row has to fold
+// the members of a line side by side, each at least the room for its tiles in as few rows as the line holds (R rows: n
+// tiles get ceil(n / R) a row; the shares share out the rest): two equal members always get the same tiles a row (his
+// laptop 11-08: Iris Xe two a row beside Memory one a row, 2 px narrower), a small member never takes a big one's room.
+// it: { n tiles, u one tile in px } or { fix px } (collapsed, tiles per row set, a card, an empty one); av: the line less
+// its gaps; gives each member's px
+function lineMins(it, av, g) {
+  const room = (m, k) => m.fix != null ? m.fix : Math.min(k, m.n) * m.u + (Math.min(k, m.n) - 1) * g, N = Math.max(1, ...it.map(m => m.fix != null ? 1 : m.n));
+  for (let R = 1; R < N; R++) { const r = it.map(m => room(m, m.fix != null ? 1 : Math.ceil(m.n / R))); if (r.reduce((a, b) => a + b, 0) + 0.2 * it.length <= av) return r; }
+  return it.map(m => room(m, 1));
+}
 function balanceRow(row, cols, W, cg, fs, g, nat) {
   const C = cols.length, rg = parseFloat(getComputedStyle(cols[0]).rowGap) || 0;
   // (an empty category, shown only in edit mode, takes no part: edit mode shows the view as it is, 2.2)
@@ -2223,27 +2624,32 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
     if (real(e)) return one(e);
     if (!e.classList.contains('lsub')) return null;
     const ms = [...e.children].filter(real);
-    return ms.length ? { line: ms.map(one), fr: ms.map(x => lineShare(catById(x.dataset.cat))), mn: ms.map(x => catMin(catById(x.dataset.cat), true, ms.length > 1, gapSp()) * fs) } : null;
+    if (!ms.length) return null;
+    const line = ms.map(one), tl = S.screen === 'tiles';
+    return { line, fr: ms.map(x => lineShare(catById(x.dataset.cat))), it: ms.map((x, j) => !tl || line[j].collapsed || line[j].per || !line[j].tiles.length ? { fix: catMin(catById(x.dataset.cat), true, ms.length > 1, gapSp()) * fs } : { n: line[j].tiles.length, u: (line[j].short ? 15 : TILE_MIN) * fs }) };   // (its members' narrowest as layoutPass draws them: their tiles in as few rows as it holds, 11-08)
   }).filter(Boolean));
   const lineW = (d, w) => {
-    const av = w - (d.line.length - 1) * cg, out = d.fr.map(() => 0), fix = d.fr.map(() => false);
+    const av = w - (d.line.length - 1) * cg, mn = lineMins(d.it, av, g), out = d.fr.map(() => 0), fix = d.fr.map(() => false);
     for (let it = 0; it < 5; it++) {
       const fr = d.fr.reduce((a, f, j) => fix[j] ? a : a + f, 0), left = av - out.reduce((a, x, j) => fix[j] ? a + x : a, 0);
       d.fr.forEach((f, j) => { if (!fix[j]) out[j] = fr ? left * f / fr : 0; });
-      let again = false; d.fr.forEach((f, j) => { if (!fix[j] && out[j] < d.mn[j]) { out[j] = d.mn[j]; fix[j] = again = true; } });
+      let again = false; d.fr.forEach((f, j) => { if (!fix[j] && out[j] < mn[j]) { out[j] = mn[j]; fix[j] = again = true; } });
       if (!again) break;
     }
     return out;
   };
   const stackH = (i, f) => desc[i].reduce((a, d) => a + f(d), 0) + (desc[i].length - 1) * rg;
   if (S.screen === 'tiles') {
-    const m0 = TILE_MIN * fs, K0 = Math.floor((W - (C - 1) * cg + C * g) / (m0 + g) + 1e-6);
+    // (the tracks counted at the full text size, so a fit only scales the split: an edit anywhere that fits the text a
+    // little smaller moved an untouched row's line by up to 176 px, 11-08 audit 0201. Wm: the row at that size, in px of now)
+    const m0 = TILE_MIN * fs, q = Math.max(1, cssScale() / fs), Kq = Math.floor((W / q - (C - 1) * cg + C * g) / (m0 + g) + 1e-6);
+    const Wm = Kq >= C ? W / q : W, K0 = Kq >= C ? Kq : Math.floor((W - (C - 1) * cg + C * g) / (m0 + g) + 1e-6);
     if (K0 < C) return false;
     // tracks of at least m wide: each column starts at what its categories need (short tiles want two tracks), then
     // the tallest that gets shorter within the next 3 tracks takes them; gives the tracks and the tallest column
     const lined = desc.some(ds => ds.some(d => d.line));   // (a row with a line side by side: judged at real track widths, 11-08 audit)
     const alloc = (K, m) => {
-      const tU = U => Math.max(m, (W - (C - 1) * cg - (U - C) * g) / U);   // (the track width when U tracks are used: a line's members are judged at it, 11-07 audit)
+      const tU = U => Math.max(m, (Wm - (C - 1) * cg - (U - C) * g) / U);   // (the track width when U tracks are used: a line's members are judged at it, 11-07 audit)
       const catH = (d, n, w0, U) => {
         if (d.line) return Math.max(...lineW(d, n * tU(U || K) + (n - 1) * g).map((wj, j) => catH(d.line[j], Math.max(1, Math.floor((wj + g) / (m0 + g) + 1e-6)), wj)));
         if (d.collapsed) return nat.H;
@@ -2254,7 +2660,13 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
         return nat.H + d.packs.get(pk) * fs;
       };
       const colH = (i, n, U) => stackH(i, d => catH(d, n, undefined, U));   // (U: the tracks used; none, all K: a line judged at its narrowest)
-      const k = cols.map(c => Math.max(1, Math.ceil(((+c.dataset.min || 0) * fs + g) / (m + g) - 1e-6))), need = k.slice();
+      const k = cols.map(c => Math.max(1, Math.ceil(((+c.dataset.min || 0) * fs + g) / (m + g) - 1e-6)));
+      // (a share set on a tile keeps the tracks it needs to be drawn as set, a third three, a quarter four, smallest
+      // first while the row has them: a 33% picked dropped its column to two tracks, too narrow to draw it, 11-08 audit)
+      const sn = desc.map((ds, i) => Math.max(k[i], ...ds.filter(d => !d.line && d.tg && !d.per && !d.short).flatMap(d => d.tiles.map(t => +t.dataset.f > 0 ? Math.ceil(1 / +t.dataset.f - 0.02) : 1))));
+      let ks = k.reduce((a, b) => a + b, 0);
+      for (const [dn, i] of sn.map((n, i) => [n - k[i], i]).filter(x => x[0] > 0).sort((a, b) => a[0] - b[0])) if (ks + dn <= K) { k[i] += dn; ks += dn; }
+      const need = k.slice();
       let rem = K - k.reduce((a, b) => a + b, 0);
       if (rem < 0) return null;
       // (a row with a line side by side, three columns at most: every split of the tracks is tried, its lines judged at
@@ -2288,7 +2700,7 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
     // 9.5rem), is taken when it leaves the tallest column shorter
     let a = alloc(K0, m0);
     if (!a) return false;
-    const m1 = (W - (C - 1) * cg - (K0 + 1 - C) * g) / (K0 + 1);
+    const m1 = (Wm - (C - 1) * cg - (K0 + 1 - C) * g) / (K0 + 1);
     if (m1 >= TILE_MIN * fs) { const b = alloc(K0 + 1, m1); if (b && b.top < a.top - 0.5) a = b; }   // (2.2: never tracks under the minimum)
     const k = a.k;
     const used = k.reduce((a, b) => a + b, 0), t = (W - (C - 1) * cg - (used - C) * g) / used;
@@ -2328,10 +2740,14 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
 // Tiles per row, Auto: as many as fit, evened out over the rows (3 tiles where 5 fit = 3 wider ones, no empty places)
 function balancedK(tg, W, fs, g) {
   const tiles = tileKids(tg), min = (tg.classList.contains('shorts') ? 15 : TILE_MIN) * fs;
-  const kmax = Math.max(1, Math.floor((W + g) / (min + g) + 1e-6)), a = tileArea(tiles, kmax), rows = Math.max(1, Math.ceil(a / kmax - PE));
+  // (a tile with a share counts as one place: its width is a share of the row whatever k is, so sizing one tile never
+  // changes how many Auto tiles go to a row; it counted f x kmax, 50% on one of four Autos made the three 33%, 11-08 audit)
+  const kmax = Math.max(1, Math.floor((W + g) / (min + g) + 1e-6)), sz = tiles.map(t => szOf(t, kmax)), one = s => s.f ? 1 : Math.min(s.w, kmax);
+  const a = sz.reduce((x, s) => x + (s.f ? 1 : one(s) * s.h), 0), rows = Math.max(1, Math.ceil(a / kmax - PE));   // (a share: one place, one row high, its height doesn't change k either)
   let k = Math.min(kmax, Math.max(1, Math.ceil(a / rows - PE)));
-  const mw = tiles.reduce((m, t) => Math.max(m, szOf(t, kmax).w), 1);   // a wide tile gets its width where there is room
+  const mw = sz.reduce((m, s) => s.f ? m : Math.max(m, s.w), 1);   // a wide tile gets its width where there is room
   if (kmax > 1 && mw > 1) k = Math.max(k, Math.min(kmax, Math.ceil(mw - PE)));
+  if (sz.some((s, i) => i && s.nl)) { let run = 0, most = 0; sz.forEach((s, i) => { if (i && s.nl) run = 0; run += one(s); most = Math.max(most, run); }); k = Math.max(1, Math.min(k, Math.ceil(most - PE))); }   // (New row: no more a row than its longest run, so its rows are shared out, not half empty, 11-08 audit)
   return k;
 }
 // a fit tries several text sizes: the natural sizes scale with it and a row's width doesn't change, so both are read
@@ -2385,13 +2801,22 @@ function layoutPass() {
   for (const r of rows) { const m = rowW.get(r.row); r.W = m && m[0] === layGen ? m[1] : r.row.clientWidth; rowW.set(r.row, [layGen, r.W]); r.cg = parseFloat(getComputedStyle(r.row).columnGap) || 0; }
   for (const { row, cols, W, cg } of rows) {
     if (cols.length < 2) { row.classList.remove('fold'); continue; }
-    const fold = row.dataset.auto ? !balanceRow(row, cols, W, cg, fs, g, nat) : W + 1 < cols.reduce((a, c) => a + (+c.dataset.min || 0) * fs, 0) + cg * (cols.length - 1);
+    const ws = row.dataset.w ? row.dataset.w.split(',').map(Number) : null, T = ws ? ws.reduce((a, b) => a + b, 0) : 0, av = W - cg * (cols.length - 1);
+    const fold = row.dataset.auto ? !balanceRow(row, cols, W, cg, fs, g, nat) : av + 1 < cols.reduce((a, c) => a + (+c.dataset.min || 0) * fs, 0) || (!!ws && ws.length === cols.length && cols.some((c, i) => ws[i] / T * av + 1 < (+c.dataset.min || 0) * fs));   // (a row of yours: one under the other when any column would be drawn under its narrowest, 11-08 audit 0202; it drew one 95 px wide)
     row.classList.toggle('fold', fold);
     if (fold) for (const t of row.querySelectorAll('.tg[data-ktrack]')) delete t.dataset.ktrack;
   }
   // (a line side by side too narrow for its members: one under the other, 11-07 audit; it squeezed them under a tile's width)
   const fitting = app.classList.contains('fitting');   // (while edit mode fits, an empty member isn't drawn: it adds nothing; otherwise it needs a tile's room, 11-07 audit)
   for (const s of view.querySelectorAll('.lsub')) s.classList.toggle('fold', s.clientWidth + 1 < ((+s.dataset.min || 0) + (fitting ? 0 : +s.dataset.mine || 0)) * fs);
+  // (each member of a line the room for its tiles in as few rows as the line holds: two equal members always get the same
+  // tiles a row, his laptop 11-08: Iris Xe two a row beside Memory one a row at 2 px less)
+  for (const s of view.querySelectorAll('.lsub:not(.fold)')) {
+    const kids = [...s.children], on = kids.filter(e => e.classList.contains('dcat') && e.getClientRects().length), cgL = parseFloat(getComputedStyle(s).columnGap) || 0, full = on.filter(e => !e.classList.contains('isempty')).length;
+    const it = on.map(e => { const cat = catById(e.dataset.cat), tg = e.querySelector('.tg'); if (e.classList.contains('isempty')) return { fix: TILE_MIN * fs }; if (!cat || !tg || S.screen !== 'tiles' || e.classList.contains('collapsed') || tg.classList.contains('per')) return { fix: (cat ? catMin(cat, true, full > 1, gapSp()) : 0) * fs }; return { n: Math.max(1, tileKids(tg).length), u: (tg.classList.contains('shorts') ? 15 : TILE_MIN) * fs }; });
+    const r = lineMins(it, s.clientWidth - (on.length - 1) * cgL, g);
+    on.forEach((e, i) => s.style.setProperty('--m' + (kids.indexOf(e) + 1), (Math.ceil(r[i] * 10 + 1) / 10) + 'px'));
+  }
   // then every width the rest depends on, read in one go
   const gs = document.querySelector('#view.gsplit.arr'), gw = gs ? gs.clientWidth : 0;
   const tw = tgs.map(t => t.clientWidth);
@@ -2415,7 +2840,14 @@ function layoutPass() {
     packTg(t, k);
     tileFit(t, tw[i], k, g, fs);
   });
-  if (flipped.length) { measureUnits(flipped.map(f => f[0]), fs); for (const [t, k, w] of flipped) { t._tw = w; packTg(t, k); tileFit(t, w, k, g, fs); } }
+  if (flipped.length) {
+    measureUnits(flipped.map(f => f[0]), fs);
+    // (their own heights changed with it, and so may one tile high: the pass again from there, once. It was kept as read
+    // before the turn, so the same layout drew a little differently after an undo than before it, 11-08 stress test)
+    const u0 = tileUnit; setTileUnit(tgs);
+    if (Math.abs(tileUnit - u0) > 1e-3 && !layoutPass.again) { layoutPass.again = true; try { layoutPass(); } finally { layoutPass.again = false; } return; }
+    for (const [t, k, w] of flipped) { t._tw = w; packTg(t, k); tileFit(t, w, k, g, fs); }
+  }
   vs.forEach((d, i) => {
     const n = d.querySelectorAll(':scope > .row').length, sc = subCols(vw[i], n, fs);
     d.classList.toggle('sub', sc > 1);
@@ -2527,14 +2959,21 @@ function autofit() {
   // then a few more tries, so the margin left at the bottom is about the one at the sides, not a size step more
   const refine = (lo, hi) => { for (let i = 0; i < 3 && hi - lo > 0.06; i++) { const mid = (lo + hi) / 2; if (at(mid)) lo = mid; else hi = mid; } return lo; };
   let lo, ok = true;
-  // (the remembered size is still tried: live values can change what fits)
-  if (memo && at(memo)) lo = memo;
-  else if (memo !== target && at(target)) lo = target;
+  // (the remembered size is still tried: live values can change what fits. With the tiles' heights read at that size:
+  // read at the size the view had before (the step an undo goes back from, say) they could turn down the very size it
+  // fit at, and undo or redo then fitted another size than the one it went back to, 11-08 stress test)
+  // (an undo or redo: the size this step had, when the window and the view are as they were then)
+  const pin = fitPin; fitPin = null;
+  const pinned = !!pin && pin.fs > 0 && pin.screen === S.screen && Math.abs(pin.target - target) < 0.001 && pin.w === sectionsEl.clientWidth && pin.h === sectionsEl.clientHeight;
+  let memoOk = false, fb = 'walk'; if (memo && !pinned) { exactUnits = true; memoOk = at(memo); exactUnits = false; }
+  if (pinned) { lo = pin.fs; ok = pin.ok; fb = 'pin'; root.style.fontSize = lo + 'px'; }
+  else if (memoOk) { lo = memo; fb = 'memo'; }
+  else if (memo !== target && at(target)) { lo = target; fb = 'target'; }
   // (fit nowhere last time, at this key: the smallest size once, then scrolling at the full size, 11-06; it walked
   // about 20 sizes again on every view switch and resize)
-  else if (noFit.has(mkey) && !at(floor)) { lo = target; ok = false; }
+  else if (noFit.has(mkey) && !at(floor)) { lo = target; ok = false; fb = 'nofit'; }
   // edit mode, redrawn on every change: far too much to ever fit (3 windows tall) scrolls at once, no more tries
-  else if (S.edit && sectionsEl.scrollHeight > sectionsEl.clientHeight * 3) { lo = target; ok = false; }
+  else if (S.edit && sectionsEl.scrollHeight > sectionsEl.clientHeight * 3) { lo = target; ok = false; fb = 'edit3x:' + sectionsEl.scrollHeight + '/' + sectionsEl.clientHeight; }
   else {
     // from where this view fit last (an edit, a resize: usually close), else from how much of it fits at the full size,
     // each try steers by how much of the window the content fills (text and tiles scale together); halves the gap
@@ -2560,9 +2999,19 @@ function autofit() {
   }
   // the tiles' heights read again at the size kept; a size that fit and no longer does goes down a little
   root.style.fontSize = lo + 'px';
-  const stale = [...v.querySelectorAll('.tg')].some(t => { const u = unitH.get(t); return u && Math.abs(u.fs - lo) > 0.01; });
+  const stale = [...v.querySelectorAll('.tg')].some(t => { const u = unitH.get(t); return u && Math.abs(u.fs - lo) > (S.edit ? 1e-4 : 0.01); });   // (edit mode: read at the very size kept, 0.003 off moved a tile a px and undo came back a px off, the stress test 11-08; outside it, 0.01 as before: a redraw of 200 cells took 370 ms)
   exactUnits = stale; const still = stale ? fits() : true; exactUnits = false;
-  if (ok && !still) for (let i = 0; i < 8; i++) { lo = Math.max(floor, lo - 0.25); if (at(lo) || lo === floor) break; }
+  // (each step down with the heights read at that size, so the size kept is drawn as an undo back to it draws it; and
+  // nothing fitting down to the smallest size scrolls at the full size, as the walk does: it stopped at the smallest
+  // size here and at the full size there, so an undo or redo of the same layout came back at the other one, 11-08)
+  if (ok && !still && !pinned) {
+    let got = false; exactUnits = true;
+    for (let i = 0; i < 40 && lo > floor; i++) { lo = Math.max(floor, lo - 0.25); if (at(lo)) { got = true; break; } }
+    if (!got) { lo = target; ok = false; at(lo); }
+    exactUnits = false;
+  }
+  fitOkNow = ok;
+  if (window.__fitLog) __fitLog.push({ k: mkey, memo: memo || 0, memoOk, fb, lo: +lo.toFixed(3), ok, still });   // (the stress test reads how each fit went)
   lastFit[S.screen] = lo / target;
   if (ok) noFit.delete(mkey);
   rememberFit(mkey, lo);
@@ -2591,11 +3040,17 @@ function inspAfterFit() {
   if (a && insp.contains(a) && a.matches('input:not([type=checkbox]):not([type=radio]), textarea')) { inspFitLater = true; return; }
   renderInsp();
 }
+// new readings came while a field in the settings was typed in or a list there was open: the settings are drawn again
+// once it is left (11-08 audit: a charger plugged in mid-name wiped the name)
+function inspCatFlush() {
+  if (!inspCatLater) return;
+  setTimeout(() => { if (!inspCatLater) return; const a = document.activeElement; if (dselOpen || (a && a.closest && a.closest('#insp input, #insp select, #insp textarea'))) return; inspCatLater = false; renderInsp(); }, 0);
+}
 function refit() {
   if ((drag && drag.started) || rs) { refitLater = true; return; }   // (a rebuild would move the view under the drag)
   if (S.screen !== 'grid' && !isCustom(S.screen) && lastAuto[S.screen] && JSON.stringify(autoRows(S.screen)) !== JSON.stringify(lastAuto[S.screen])) { renderView(false); inspAfterFit(); return; }   // (a category's or the view's settings follow the new arrangement)
   if (S.screen === 'grid' && !isCustom('grid') && $('view') && gridN[fitKey(cssScale())] !== ($('view').querySelectorAll('.gtable').length > 1 ? 2 : 1)) { renderView(false); inspAfterFit(); return; }
-  autofit(); updateView(true, true); pxFresh();
+  autofit(); updateView(true, true); pxFresh(); inspAfterFit();   // (a category's Column width and Level, or the view's outline, follow the new split, 11-08 audit 0204)
 }
 window.addEventListener('resize', () => {
   layGen++;
@@ -2644,7 +3099,7 @@ function requestScreen(s) {
   wantScreen = s;
   for (const b of document.querySelectorAll('#screens button[data-s]')) b.classList.toggle('active', b.dataset.s === s);
   placeTabInd(false, s);
-  if (!screenRaf) screenRaf = requestAnimationFrame(() => { screenRaf = 0; const t = wantScreen; wantScreen = null; if (t && t !== S.screen) showScreen(t); });
+  if (!screenRaf) screenRaf = requestAnimationFrame(() => setTimeout(() => { screenRaf = 0; const t = wantScreen; wantScreen = null; if (t && t !== S.screen) showScreen(t); }, 0));   // (built once the click's frame is painted: the pill glides at once, not after the build, 11-08)
 }
 $('screens').addEventListener('click', e => { const b = e.target.closest('button[data-s]'); if (b) requestScreen(b.dataset.s); });
 
@@ -2672,6 +3127,7 @@ function hidOf(r) {
 }
 function setHide(fn) { fn(S.hide); S.hide = cleanHide(S.hide); hideSets(); saveState(); renderStorage(); if (GZ.on) { gzCompute(); gzChips(); gzDraw(); } }
 const without = (a, x) => a.filter(y => y !== x);
+let storGlide = null;   // (a fold or a type chip: drawRows glides the rows, 11-08)
 const collapsedGroups = new Set();
 function passes(r, toks, iv) {
   if (typeFilter === 'hidden' ? !hidOf(r) : hidOf(r)) return false;
@@ -2732,7 +3188,20 @@ function drawRows(pre) {   // (pre: its scroll read already, before the tick wro
     }
   }
   // the same rows as last time stay the same elements (a click that spans a tick still lands); only values change
+  // (a fold or a type chip: the rows glide from their old tops, new ones fade in in Full, the group's chevron turns;
+  // far ones just come. Every other redraw stays as it is, 11-08: they jumped)
+  const gl = storGlide; storGlide = null;
+  const old = gl && sp._h !== html && motionMode() !== 'off' ? new Map([...sp.children].map(el => [el.dataset.key || 'g' + el.dataset.gs, parseFloat(el.style.top)])) : null;
   if (sp._h !== html) { sp.innerHTML = html; sp._h = html; }
+  if (old) {
+    const full = motionOn(), far = vl.clientHeight || 400;
+    for (const el of sp.children) {
+      const t0 = old.get(el.dataset.key || 'g' + el.dataset.gs), t1 = parseFloat(el.style.top);
+      if (t0 === undefined || Math.abs(t0 - t1) > far) { if (full) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: 'ease-out' }); }
+      else if (Math.abs(t0 - t1) > 0.5) el.animate([{ transform: 'translateY(' + (t0 - t1) + 'px)' }, { transform: 'none' }], { duration: full ? 240 : 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    }
+    const g = gl.gs != null ? sp.querySelector('.vrow.g[data-gs="' + gl.gs + '"]') : null; if (g) { g.classList.toggle('collapsed'); void g.offsetWidth; g.classList.toggle('collapsed'); }
+  }
   for (const el of sp.children) if (el.dataset.key) setText(el.children[2], valTxt(BYKEY.get(el.dataset.key)));
   if (keys.join('\n') !== rowKeys.join('\n')) { rowKeys = keys; subscribe(); }
   const st = $('vsticky'), first = rows[Math.floor(top / ROWH)];
@@ -2741,7 +3210,14 @@ function drawRows(pre) {   // (pre: its scroll read already, before the tick wro
 }
 function renderChips() {
   const counts = chipCounts;
-  $('chips').innerHTML = ['all', 'temp', 'volt', 'fan', 'power', 'current', 'clock', 'usage', 'other', 'hidden'].filter(t => counts[t] || t === typeFilter)
+  const ts = ['all', 'temp', 'volt', 'fan', 'power', 'current', 'clock', 'usage', 'other', 'hidden'].filter(t => counts[t] || t === typeFilter), ch = $('chips');
+  // (the same chips: in place, so the lit one's fade plays; one that comes or goes draws them anew, 11-08)
+  if (ch._t === ts.join() && ch.children.length === ts.length) {
+    ts.forEach((t, i) => { const b = ch.children[i], on = typeFilter === t, tx = (t === 'all' ? 'All' : t === 'hidden' ? 'Hidden' : TYPE_NAME[t]) + ' ' + (counts[t] || 0).toLocaleString('en-US'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); if (b.textContent !== tx) b.textContent = tx; });
+    return;
+  }
+  ch._t = ts.join();
+  ch.innerHTML = ts
     .map(t => '<button class="chip' + (t === 'hidden' ? ' hidchip' : '') + (typeFilter === t ? ' on' : '') + '" data-t="' + t + '" aria-pressed="' + (typeFilter === t) + '"' + (t === 'hidden' ? ' title="Hidden readings"' : '') + '>' + (t === 'all' ? 'All' : t === 'hidden' ? 'Hidden' : TYPE_NAME[t]) + ' ' + (counts[t] || 0).toLocaleString('en-US') + '</button>').join('');
 }
 
@@ -2751,12 +3227,13 @@ function newCell(key) {
   if (key === CONN) c.gates = Object.assign({}, CONN_LINES);   // a connector is only worth a cell with its lines
   return c;
 }
-function addKeys(keys, catId, index, newCatName) {
+function addKeys(keys, catId, index, newCatName, nlFrom) {   // (nlFrom: the New row tile it goes in front of, which hands it its New row, 11-08)
   mutate(() => {
     let cat = catId && S.L.cats.find(c => c.id === catId);
     if (!cat) { cat = { id: nid('c'), name: newCatName || 'New category', collapsed: false, cells: [] }; S.L.cats.push(cat); }
     const ids = keys.map(k => { const id = nid('a'); S.L.cells[id] = newCell(k); return id; });
     cat.cells.splice(index == null ? cat.cells.length : index, 0, ...ids);
+    if (nlFrom && ids.length && cat.cells.includes(nlFrom)) { setLook('cell', nlFrom, 'nl', '', 'tiles'); setLook('cell', ids[0], 'nl', true, 'tiles'); }
     if (ids.length === 1) { sel = ids[0]; selCat = null; }
   }, keys.length > 1 ? 'Added ' + keys.length + ' cells' : null);
 }
@@ -2860,7 +3337,7 @@ function hitTest(x, y) {
     if (gs) { setText(gs, t ? t.txt : ''); gs.classList.toggle('no', !!t && t.zone === 'full'); }
     return;
   }
-  let under = document.elementFromPoint(x, y);
+  let under = document.elementsFromPoint(x, y).find(e => !e.closest('.toast')) || null;   // (a toast over "+ New category" took the drop: what is under it counts, the suite 11-08)
   if (!under) return;
   if (under.closest('#newcat')) {
     // (a cell under the zone, the bottom row of a fitted view: it wins, every cell stays a place to drop, 11-06)
@@ -2906,10 +3383,28 @@ function hitTest(x, y) {
   const after = vertical ? y > best.r.top + best.r.height / 2 : x > best.r.left + best.r.width / 2;
   const vis = cells.map(el => el.dataset.cid);
   let before = vis[vis.indexOf(best.el.dataset.cid) + (after ? 1 : 0)] || null, mk = best.el, ma = after;
+  // (the mark at the left of a New row tile, the start of its row: the dropped one starts the row, it takes the New row)
+  const nl = S.screen === 'tiles' && !ma && !!before && before === mk.dataset.cid && !!cellLook(before, 'tiles').nl;
+  // (tiles: packing puts a tile in the first spot it fits, which can be a hole higher up: the place that puts it
+  // beside the mark, 11-08 audit: it went elsewhere and moved a tile not touched)
+  if (!vertical && !nl && best.el.classList.contains('tile')) before = packedBefore(catEl, cells, mk, ma, before);
   // (before the lead, drawn first: it lands after the lead, so the mark goes there)
   if (before && before === lead) { before = front; const le = cells.find(el => el.dataset.cid === lead); if (le) { mk = le; ma = true; } }
-  drag.target = { cat: catId, before };
+  drag.target = { cat: catId, before, nl: nl || undefined };
   markAt(mk, ma);
+}
+// the "before" a tile dropped beside mk (after it: ma) needs for packing to put it there: the one asked first, else the
+// nearest that does (the tiles as drawn; the dropped one at its own size, a reading 1 x 1)
+function packedBefore(catEl, cells, mk, ma, def) {
+  const tg = catEl.querySelector('.tg'); if (!tg) return def;
+  const k = +tg.style.getPropertyValue('--k') || 1, vis = cells.map(el => el.dataset.cid), m = vis.indexOf(mk.dataset.cid), src = drag && drag.kind === 'cell' ? document.querySelector('#view .tile[data-cid="' + drag.data + '"]') : null;
+  if (m < 0) return def;
+  const sz = cells.map(el => szOf(el, k)), me = src ? Object.assign(szOf(src, k), { nl: false }) : { w: 1, h: 1, nl: false, f: 0, fx: false, auto: true };
+  const okAt = i => { const s = sz.slice(); s.splice(i, 0, me); const { pos } = packTiles(s, k), z = pos[i], q = pos[m + (m >= i ? 1 : 0)]; return Math.abs(z.y - q.y) < 1e-6 && Math.abs(ma ? z.x - (q.x + q.w) : z.x + z.w - q.x) < 1e-6; };
+  const d0 = def ? vis.indexOf(def) : vis.length; if (d0 < 0 || okAt(d0)) return def;
+  let best = null;
+  for (let i = 0; i <= vis.length; i++) if (okAt(i) && (best === null || Math.abs(i - d0) < Math.abs(best - d0))) best = i;
+  return best === null ? def : vis[best] || null;
 }
 // the drop mark before or after a cell, as the cells sit: side by side (tiles, band cells) or one under another
 function markAt(el, after) {
@@ -2923,11 +3418,12 @@ function endDrag(cancel) {
   if (refitLater) { refitLater = false; setTimeout(refit, 0); }
   if (viewLater) { viewLater = false; setTimeout(() => renderView(false), 0); }
   dropmark.style.display = 'none'; app.classList.remove('dragging');
-  if (d.ghost) { if (!cancel && (d.kind === 'cell' || d.kind === 'cat')) flipFrom = { kind: d.kind, id: d.data, r: d.ghost.getBoundingClientRect(), t: performance.now() }; d.ghost.remove(); }
+  if (d.ghost) { if (d.kind === 'cell' || d.kind === 'cat') flipFrom = { kind: d.kind, id: d.data, r: d.ghost.getBoundingClientRect(), t: performance.now() }; d.ghost.remove(); }
   syncDrawers();
   $('newcat').classList.remove('over');
   for (const el of document.querySelectorAll('#view .dragging')) el.classList.remove('dragging');
   for (const el of document.querySelectorAll('#view .dcat')) el.style.opacity = '';
+  if (cancel && d.started && flipFrom && S.edit) { flipNext = true; renderView(false); }   // (let go of with Escape: back from the ghost to its place, as a drop glides, 11-08)
   if (!d.started || cancel) return;
   justDragged = true; setTimeout(() => { justDragged = false; }, 0);
   const t = d.target; if (!t) return;
@@ -2937,7 +3433,7 @@ function endDrag(cancel) {
   else if (d.kind === 'row') {
     const r = BYKEY.get(d.data);
     const to = !t.newcat && catById(t.cat), at = to && t.before ? to.cells.indexOf(t.before) : -1;
-    if (t.newcat) addKeys([d.data], null, null, r ? SENS[r.s].short : null); else addKeys([d.data], t.cat, at >= 0 ? at : null);
+    if (t.newcat) addKeys([d.data], null, null, r ? SENS[r.s].short : null); else addKeys([d.data], t.cat, at >= 0 ? at : null, null, t.nl ? t.before : null);
   } else if (d.kind === 'cell') {
     if (nudge) flushNudge();   // (its own step first, so n0 tells whether the drop changed anything)
     const n0 = undoSeq;
@@ -2949,6 +3445,7 @@ function endDrag(cancel) {
       if (!to) { to = { id: nid('c'), name: 'New category', collapsed: false, cells: [] }; S.L.cats.push(to); }
       const at = t.before ? to.cells.indexOf(t.before) : -1;
       to.cells.splice(at >= 0 ? at : to.cells.length, 0, d.data);
+      if (t.nl && t.before && to.cells.includes(t.before)) { setLook('cell', t.before, 'nl', '', 'tiles'); setLook('cell', d.data, 'nl', true, 'tiles'); }   // (at the start of a New row: the row starts with it, 11-08 audit)
       // the selection follows the cell, but a drag doesn't open its settings (a click does): another cell's go away
       if (sel !== d.data) { DR.R.key = d.data; DR.R.byPick = false; }
       sel = d.data; selCat = null;
@@ -2992,7 +3489,14 @@ function setSize(id, w, h, tol, k) {
 // are one row, left to right; Grid: each table a column
 function screenRows() {
   if (S.screen === 'grid') {
-    const cols = [...document.querySelectorAll('#view .gtable')].map(t => ({ stack: [...t.querySelectorAll('tbody.dcat:not(.cont)')].map(b => b.dataset.cat) }));
+    const tabs = [...document.querySelectorAll('#view .gtable')];
+    let cols = tabs.map(t => ({ stack: [...t.querySelectorAll('tbody.dcat:not(.cont)')].map(b => b.dataset.cat) }));
+    if (tabs.length === 2 && document.querySelector('#view .gtable tbody.dcat.cont')) {   // (a category continued in the second table, 11-08 audit)
+      const order = cols[0].stack.concat(cols[1].stack), len = id => { const c = catById(id); return c ? (c.collapsed ? 0 : cellsOf(c).length) + 1 : 1; }, tot = order.reduce((a, id) => a + len(id), 0);
+      let best = 1, bestM = Infinity, acc = 0;
+      for (let i = 1; i < order.length; i++) { acc += len(order[i - 1]); const m = Math.max(acc, tot - acc); if (m < bestM - 1e-9) { bestM = m; best = i; } }
+      cols = [{ stack: order.slice(0, best) }, { stack: order.slice(best) }];
+    }
     return cols.some(c => c.stack.length) ? [{ cols }] : [];   // (an empty table goes when the view is tidied)
   }
   if (lastAuto[S.screen] && !isCustom(S.screen)) return clone(lastAuto[S.screen]);
@@ -3033,6 +3537,14 @@ function posIn(rows, id) {
 // below (stacked over or under t.cat), swap (the two trade places, each keeps the slot's height), row (a row of its own
 // at index t.at), into (Grid: the end of table t.table), beside (at the end of t.cat's line, side by side with it),
 // unbeside (out of its own line, under it)
+// a column added to a row of hand-set widths (twelfths): it takes an even share, the others keep their proportions in
+// what is left; none past 12 columns (11-08 audit: adding one threw the row's widths away)
+function widthsWith(ws, at) {
+  const n = ws.length + 1; if (n > 12) return null;
+  const mine = Math.max(1, Math.round(12 / n)), rest = 12 - mine, T = ws.reduce((a, b) => a + b, 0) || 1, w = ws.map(b => Math.max(1, Math.round(b / T * rest)));
+  for (let diff = rest - w.reduce((a, b) => a + b, 0), g = 0, j = w.length - 1; diff && g < 200; g++, j = (j + w.length - 1) % w.length) { if (diff > 0) { w[j]++; diff--; } else if (w[j] > 1) { w[j]--; diff++; } }
+  w.splice(at, 0, mine); return w;
+}
 function placeCat(rows, src, t) {
   const PH = '\u0000', s0 = posIn(rows, src);
   if (t.zone === 'swap') {
@@ -3054,7 +3566,12 @@ function placeCat(rows, src, t) {
     if (t.zone === 'unbeside') { const st = s0.col.stack, i = st.indexOf(ph), e = lineAt(st, i)[1]; st.splice(e + 1, 0, src); }   // (out of its line: under it)
     else if (t.zone === 'beside') { const e = lineAt(p.col.stack, p.k)[1]; p.col.stack.splice(e + 1, 0, { id: src, b: 1 }); }   // (the end of that one's line)
     else if (t.zone === 'above' || t.zone === 'below') { const [a, e] = lineAt(p.col.stack, p.k); p.col.stack.splice(t.zone === 'below' ? e + 1 : a, 0, src); }   // (over or under its whole line)
-    else { p.row.cols.splice(p.ci + (t.zone === 'right' ? 1 : 0), 0, { stack: [src] }); for (const c of p.row.cols) delete c.w; }
+    else {
+      const at = p.ci + (t.zone === 'right' ? 1 : 0), cs = p.row.cols, own = cs.length > 1 && cs.every(c => c.w), solo = own && !!s0 && s0.row === p.row && s0.col.stack.length === 1;
+      const nw = own && !solo ? widthsWith(cs.map(c => c.w), at) : null;
+      cs.splice(at, 0, solo ? { stack: [src], w: s0.col.w } : { stack: [src] });
+      if (nw) cs.forEach((c, i) => { c.w = nw[i]; }); else if (!solo) for (const c of cs) delete c.w;   // (hand-set widths stay: a new column takes an even share of them, one moved within its row keeps its own, 11-08 audit)
+    }
   }
   // (the first of a line it left leads the rest of it)
   if (s0 && !wasB) { const st = s0.col.stack, i = st.indexOf(ph); if (i >= 0 && isBeside(st[i + 1])) { const e = st[i + 1]; st[i + 1] = e.h ? { id: e.id, h: e.h } : e.id; } }
@@ -3154,7 +3671,10 @@ function catTarget(x, y, prev) {
 function dropCat(d) {
   const t = d.target, vn = S.screen, src = d.data;
   if (!t || t.zone === 'full') return;
-  // an Automatic view stays automatic when only the order changes: a swap, a row of its own, Grid up and down
+  // an Automatic view stays automatic when only the order changes (a swap, Grid up and down) and Automatic then draws
+  // what the mark said; when it would not (it puts the biggest first in the shortest column, Grid cuts at the middle
+  // line), the drop makes the view your own, as a drop on one of yours (11-08 audit: nothing moved, or it landed in the
+  // other table)
   if (d.auto && (t.zone === 'swap' || (vn === 'grid' && (t.zone === 'above' || t.zone === 'below')))) {
     const order = S.L.cats.map(c => c.id);   // (your order: Automatic columns read top to bottom, not in it)
     if (t.zone === 'swap') { const i = order.indexOf(src), j = order.indexOf(t.cat); order[i] = t.cat; order[j] = src; }
@@ -3165,11 +3685,37 @@ function dropCat(d) {
       const j = ref ? order.indexOf(ref) + (t.zone === 'below' ? 1 : 0) : order.length;
       order.splice(j, 0, src);
     }
-    layoutChange(() => { S.L.cats = order.map(catById).filter(Boolean).concat(S.L.cats.filter(c => !order.includes(c.id))); });
-    return;
+    const cats = order.map(catById).filter(Boolean).concat(S.L.cats.filter(c => !order.includes(c.id)));
+    if (sameStacks(autoFor(vn, cats), placeCat(clone(d.rows), src, t))) { layoutChange(() => { S.L.cats = cats; }); return; }
   }
   layoutChange(() => { const v = vset(vn); if (!v.rows) froze = true; v.rows = placeCat(clone(d.rows), src, t); });
 }
+// what Automatic draws for this order of the categories (Grid: its two tables, the categories that start in each)
+function autoFor(vn, cats) {
+  const was = S.L.cats; S.L.cats = cats;
+  try { return vn === 'grid' ? gridAutoRows() : autoRows(vn); } finally { S.L.cats = was; }
+}
+function sameStacks(a, b) { const f = x => JSON.stringify(x.map(r => r.cols.map(c => c.stack.map(sid)).filter(c => c.length)).filter(r => r.length)); return f(a) === f(b); }
+// Grid on Automatic: two tables side by side when there is room, cut at the middle line: a long category there goes on
+// in the second table ("continued"), so the two come out about as long; only what is drawn (an empty one is hidden
+// outside edit mode, 11-06)
+function gridItems() { return S.L.cats.filter(cat => S.edit || cellsOf(cat).length).map(cat => ({ cat, ids: cat.collapsed ? null : idsIn(cat) })); }
+function gridTwo() { return gridForce ? gridForce === 2 : gridN[fitKey(cssScale())] === 2; }   // else one under the other: one table
+function gridCut(items, two) {
+  const len = it => (it.ids ? it.ids.length : 0) + 1, half = Math.ceil(items.reduce((a, it) => a + len(it), 0) / 2), t1 = [], t2 = [];
+  let acc = two ? 0 : Infinity;
+  if (!two) t1.push(...items);
+  else for (const it of items) {
+    if (t2.length || acc >= half) { t2.push(it); continue; }
+    if (acc + len(it) <= half) { t1.push(it); acc += len(it); continue; }
+    const k = half - acc - 1;   // its cells that still fit in the first table
+    if (it.ids && k >= 3 && it.ids.length - k >= 3) { t1.push({ cat: it.cat, ids: it.ids.slice(0, k) }); t2.push({ cat: it.cat, ids: it.ids.slice(k), cont: true }); acc = half; }
+    else if (!t1.length || acc + len(it) / 2 <= half) { t1.push(it); acc += len(it); }
+    else t2.push(it);
+  }
+  return [t1, t2];
+}
+function gridAutoRows() { const [t1, t2] = gridCut(gridItems(), gridTwo()), st = t => t.filter(it => !it.cont).map(it => it.cat.id); return [{ cols: [{ stack: st(t1) }, { stack: st(t2) }] }]; }
 
 // ---------- the handles: the line between two columns (widths), the strip under a row (height), a tile's corner ----------
 let rs = null;
@@ -3187,6 +3733,17 @@ function widthsNow(ri, cols) {
   for (let diff = 12 - w.reduce((a, b) => a + b, 0), i = 0; diff && i < 50; i++) { const j = w.indexOf(diff > 0 ? Math.min(...w) : Math.max(...w)); if (diff < 0 && w[j] <= 1) break; w[j] += Math.sign(diff); diff -= Math.sign(diff); }
   return w;
 }
+// a row's columns at their narrowest (data-min: a tile, a card, a line) in twelfths of the row as drawn, so a width set by
+// hand never leaves one under it (11-08 audit 0202: 75% on three columns drew one 95 px wide); null when it isn't drawn
+// side by side
+function minTwelfths(ri) {
+  const el = document.querySelector('#view .lrow[data-r="' + ri + '"]'); if (!el) return null;
+  const cs = [...el.children].filter(e => e.classList.contains('lcol')), fs = parseFloat(document.documentElement.style.fontSize) || 13;
+  const W = el.classList.contains('fold') ? el.clientWidth - (cs.length - 1) * (parseFloat(getComputedStyle(el).columnGap) || 0) : cs.reduce((a, c) => a + c.getBoundingClientRect().width, 0);   // (folded: the room its columns would share side by side, review 11-08)
+  return W > 0 ? cs.map(c => Math.max(1, Math.ceil(((+c.dataset.min || 0) * fs - 1) / (W / 12) - 1e-6))) : null;   // (as layoutPass folds: a pixel's grace)
+}
+const sumOf = a => a.reduce((x, y) => x + y, 0);
+const foldStuck = ri => { const el = document.querySelector('#view .lrow[data-r="' + ri + '"]'); if (!el || !el.classList.contains('fold')) return false; const mt = minTwelfths(ri); return !mt || sumOf(mt) > 12; };   // (folded and no widths could put it side by side again: the window is too narrow for its columns)
 const heightTxt = h => h ? 'Fill' : 'Fit';
 // ---- tile sizes: its corner, the numbers in its settings, Ctrl+arrows ----
 // a drawn tile: its category (k tiles to a row), a spot's width p (a gap included), and at(w, h): how tall in px the
@@ -3197,9 +3754,10 @@ function tileGeo(tile) {
   const k = +tg.style.getPropertyValue('--k') || 1, fs = parseFloat(document.documentElement.style.fontSize) || 13, g = 0.62 * fs * spOf($('view')), short = tg.classList.contains('shorts');
   const row = tg.closest('.lrow'), grNow = () => row && row.classList.contains('grow') && !short ? parseFloat(row.style.getPropertyValue('--gr')) || 0 : 0;
   const sz = kids.map(x => szOf(x, k)), nat = kids.map(x => natOf(x, short)), tr = tg.getBoundingClientRect(), p = (tr.width + g) / k;
-  const at = (w, h) => { const s = sz.slice(); s[j] = { w, h, nl: sz[j].nl, f: w / k, auto: false, fx: true }; const L = placeTiles(floorSz(s, k, tr.width, g, fs, short), nat, k, g / fs, !short && fillEven(row)), q = L.pos[j], gr = grNow(); return { th: q.th * fs + q.h * gr, TH: L.TH * fs + L.H * gr, x: q.x, y: q.y }; };
+  const at = (w, h) => { const s = sz.slice(); s[j] = { w, h, nl: sz[j].nl, f: w / k, auto: false, fx: true }; const L = placeTiles(floorSz(s, k, tr.width, g, fs, short), nat, k, g / fs, !short && fillEven(row)), q = L.pos[j], gr = grNow(); return { th: q.th * fs + q.h * gr, TH: L.TH * fs + L.H * gr, x: q.x, y: q.y, w: drawnW(q) }; };
   // (wmin: the minimum, in places)
-  return { tg, j, k, g, fs, tw: tr.width, p, at, r: tile.getBoundingClientRect(), s: sz[j], wmin: Math.min(k, (TILE_MIN * fs + g) / p) };
+  const min = (short ? 15 : TILE_MIN) * fs;   // (short tiles: 15rem, as floorSz and balancedK; the corner offered 25% they drew at 50%, 11-08 audit)
+  return { tg, j, k, g, fs, tw: tr.width, p, at, r: tile.getBoundingClientRect(), s: sz[j], min, wmin: Math.min(k, (min + g) / p) };
 }
 const tileEl = cid => document.querySelector('#view .tile[data-cid="' + CSS.escape(cid) + '"]');
 const pxW = (G, w) => Math.min(w, G.k) * G.p - G.g;
@@ -3235,7 +3793,7 @@ function colEnds(blk) {
   return { own, cols, row };
 }
 const nearest = (xs, v, thr) => { let b = null; for (const x of xs) if (Math.abs(x - v) <= thr && (b === null || Math.abs(x - v) < Math.abs(b - v))) b = x; return b; };
-const setTileSz = (t, w, h, k) => { delete t.dataset.w; t.dataset.f = String(Math.round(Math.min(1, w / k) * 1e4) / 1e4); t.dataset.fx = '1'; if (h !== 1) t.dataset.h = h; else delete t.dataset.h; };
+const setTileSz = (t, w, h, k, hOnly) => { if (!hOnly) { delete t.dataset.w; t.dataset.f = String(Math.round(Math.min(1, w / k) * 1e4) / 1e4); t.dataset.fx = '1'; } else { delete t.dataset.f; delete t.dataset.fx; } if (h !== 1) t.dataset.h = h; else delete t.dataset.h; };   // (hOnly: an Auto tile whose height alone moves stays Auto, its row drawn as it is, 11-08 audit)
 const fmtSz = n => String(Math.round(n * 100) / 100);
 const r4 = n => Math.round(n * 1e4) / 1e4;
 // the lines a size snapped to
@@ -3321,7 +3879,7 @@ function moveCorner0(ev, R, maxW, thr, lines) {
     else { w = R.s.w; h = R.h0; }
   }
   R.w = r4(w); R.h = r4(h);
-  setTileSz(R.tile, R.w, R.h, R.k);
+  setTileSz(R.tile, R.w, R.h, R.k, R.s.auto && Math.abs(R.w - R.s.w) <= 1e-4);
   packTg(R.tg, R.k); tileFit(R.tg, R.tw, R.k, R.g, R.fs);
   if (R.tg.closest('.lrow.grow')) growPass();   // a Fill row shares its spare room again
   guides(lines);
@@ -3331,10 +3889,28 @@ function moveCorner0(ev, R, maxW, thr, lines) {
 // the numbers in a tile's settings: its width as a % of its row, its height in rows
 function sizeInput(cid, which, v) {
   if (nudge) flushNudge();   // (a Ctrl+arrow just before: its side counts)
-  const z = cellSize(cid);
-  if (!isFinite(v) || v <= 0) { renderInsp(); return; }
-  if (which === 'f') { const q = PCTS.find(x => Math.abs(x - v) < 0.5); mutate(() => setShare(cid, (q || v) / 100, z.h)); }   // (a typed 33 or 67: the third its chip gives)
+  const z = cellSize(cid), fq = 'input[data-sz="' + which + '"]', fc = which === 'f' ? 'cf' : 'ch';
+  if (!isFinite(v) || v <= 0) { renderInsp(); szFlash(fq, NaN, fc); return; }
+  szFlash(fq, v, fc);
+  if (which === 'f') {
+    const q = PCTS.find(x => Math.abs(x - v) < 0.5), G = tileGeo(tileEl(cid)), drawn = u => !G || u >= 1 - PE || Math.abs(G.at(u * G.k, z.h).w - u * G.k) <= 0.012 * G.k;
+    let f = Math.min(1, (q || v) / 100); if (!drawn(f)) f = PCTS.map(x => x / 100).find(u => u > f && drawn(u)) || 1;   // (under the minimum: the smallest share it is drawn at, so the field says what is drawn, 11-08 audit)
+    mutate(() => setShare(cid, f, z.h));   // (a typed 33 or 67: the third its chip gives)
+  }
   else if (which === 'h') mutate(() => z.f ? setShare(cid, z.f, v, undefined, z.fx) : setSize(cid, z.w, v));
+}
+// a typed size the rules changed (junk, over 100, a width that can't be drawn, near a chip): the field and the chip it
+// became light up in the edit colour and fade, about 0.6 s (his 11-09 pick; Minimal and Off: held, no fade). Kept as
+// typed: nothing. Read once the panel is drawn again with what was set
+function szFlash(q, typed, chips) {
+  setTimeout(() => {
+    const i = document.querySelector('#insp ' + q); if (!i) return;
+    const now = parseFloat(i.value);
+    if (isFinite(typed) && isFinite(now) && Math.abs(now - typed) < 0.05) return;
+    const go = el => { el.classList.remove('szfl'); void el.offsetWidth; el.classList.add('szfl'); clearTimeout(el._szfl); el._szfl = setTimeout(() => el.classList.remove('szfl'), 650); };
+    go(i);
+    if (chips && isFinite(now)) { const c = [...document.querySelectorAll('#insp [data-lay="' + chips + '"] button[data-v]')].find(b => Math.abs(parseFloat(b.dataset.v) - now) < 0.06); if (c) go(c); }
+  }, 90);
 }
 // Ctrl+arrows: 1% of its row wider or narrower, a pixel taller or shorter; with Shift the next share (25, 33, 50, 67,
 // 75, 100%) or quarter row. Shown at once on its
@@ -3372,7 +3948,12 @@ function nudgeSize(cid, dx, dy, quarter) {
   const h = !dy ? z.h : lim(quarter ? q(z.h, dy) : solveSize(hh => G.at(w0, hh).th, G.at(w0, z.h).th + dy, z.h), 2);
   const wd = !!dx || !!(nudge && nudge.cid === cid && nudge.wd);   // (the width stepped at all: else its share and "set by hand" stay as they were, 11-06)
   nudge = { cid, w, h, k: G.k, tol: quarter ? SNAPQ : snapAt(G), wk: !!G.s.f || !!dx || !!(nudge && nudge.cid === cid && nudge.wk), wd };   // (wk: its width set: kept as a share)
-  setTileSz(t, Math.min(w, G.k), h, G.k); packTg(G.tg, G.k); tileFit(G.tg, G.tw, G.k, G.g, G.fs);
+  // (its neighbours glide to where the new size puts them, from where they are seen, as with the size buttons; a held
+  // key carries on mid-glide, 11-08: they jumped)
+  const nb = motionMode() !== 'off' ? tileKids(G.tg).filter(x => x !== t).map(x => [x, x.getBoundingClientRect()]) : null;
+  if (nb) for (const [x] of nb) for (const an of x.getAnimations()) if (an.id === 'nudge') an.cancel();
+  setTileSz(t, Math.min(w, G.k), h, G.k, G.s.auto && !wd); packTg(G.tg, G.k); tileFit(G.tg, G.tw, G.k, G.g, G.fs);
+  if (nb) for (const [x, a] of nb) { const b = x.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top; if (Math.abs(dx) + Math.abs(dy) > 1) x.animate([{ transform: 'translate(' + dx.toFixed(1) + 'px, ' + dy.toFixed(1) + 'px)' }, { transform: 'none' }], { duration: motionOn() ? 240 : 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', id: 'nudge' }); }
   const r = t.getBoundingClientRect(), say = pctTxt(Math.min(w, G.k) / G.k) + ' x ' + fmtSz(h) + ' rows';
   pill(say, r.right + 6, r.bottom + 6); live.textContent = say;
   clearTimeout(nudgeT);
@@ -3408,8 +3989,10 @@ function startHandle(ev, el) {
     if (!row) { rs = null; return; }
     if (el.classList.contains('ldiv')) {
       const base = widthsNow(ri, row.cols), cols = [...rowEl.children].filter(c => c.classList.contains('lcol'));
-      const W = cols.reduce((a, c) => a + c.getBoundingClientRect().width, 0), T = base.reduce((a, b) => a + b, 0);
-      Object.assign(rs, { kind: 'split', rowEl, ri, k: +el.dataset.k, base, w: base.slice(), T, unit: W / T, fixed: row.cols.every(c => c.w), auto0: rowEl.dataset.auto, cols0: rowEl.style.getPropertyValue('--cols') });
+      const W = cols.reduce((a, c) => a + c.getBoundingClientRect().width, 0), T = base.reduce((a, b) => a + b, 0), fixed = row.cols.every(c => c.w);
+      const fbase = fixed || rowEl.classList.contains('fold') || !W || cols.length !== base.length ? base : cols.map(c => c.getBoundingClientRect().width / W * T);   // (a row that follows its content: from where its line is drawn, the first step lands on the twelfth under the pointer, 11-08 audit 0205)
+      const mt = minTwelfths(ri);
+      Object.assign(rs, { kind: 'split', rowEl, ri, k: +el.dataset.k, base, fbase, mins: mt && mt.length === base.length ? mt.map(x => Math.ceil(x * T / 12 - 1e-6)) : base.map(() => 1), w: base.slice(), T, unit: W / T, fixed, auto0: rowEl.dataset.auto, cols0: rowEl.style.getPropertyValue('--cols') });
     } else { const h0 = row.h || fillAll(S.screen) ? 1 : 0; Object.assign(rs, { kind: 'rowh', ri, h0, h: h0 }); }
   }
   el.classList.add('on');
@@ -3419,16 +4002,15 @@ function moveHandle(ev) {
   if (!rs.moved && Math.hypot(ev.clientX - rs.x0, ev.clientY - rs.y0) < 3) return;
   rs.moved = true;
   if (rs.kind === 'split') {
-    const k = rs.k, d = Math.round((ev.clientX - rs.x0) / rs.unit);
-    let a = rs.base[k] + d, b = rs.base[k + 1] - d;
-    if (a < 1) { b -= 1 - a; a = 1; } if (b < 1) { a -= 1 - b; b = 1; }
+    const k = rs.k, pair = rs.base[k] + rs.base[k + 1], lo = rs.mins[k], hi = pair - rs.mins[k + 1];
+    const a = hi < lo || (!rs.fixed && Math.abs(ev.clientX - rs.x0) < rs.unit / 2) ? rs.base[k] : Math.max(lo, Math.min(hi, Math.round(rs.fbase[k] + (ev.clientX - rs.x0) / rs.unit))), b = pair - a;   // (a row that follows its content: under half a twelfth is a wiggle, it stays so, review 11-08)   // (each side at its narrowest at least, 11-08 audit 0202)
     rs.w = rs.base.slice(); rs.w[k] = a; rs.w[k + 1] = b;
     // (11-06: laid out again only when the split changed, not every move; back where it was, a row that follows its
     // content stays so, a wiggle froze it into twelfths)
     if (rs.lastA !== a) {
       rs.lastA = a;
       if (a === rs.base[k] && !rs.fixed) { if (rs.auto0 !== undefined) rs.rowEl.dataset.auto = rs.auto0; if (rs.cols0) rs.rowEl.style.setProperty('--cols', rs.cols0); else rs.rowEl.style.removeProperty('--cols'); }
-      else { delete rs.rowEl.dataset.auto; rs.rowEl.style.setProperty('--cols', colTracks(rs.w.map(w => ({ w })))); }
+      else { delete rs.rowEl.dataset.auto; rs.rowEl.dataset.w = rs.w.join(','); rs.rowEl.style.setProperty('--cols', colTracks(rs.w.map(w => ({ w })))); }
       layoutPass(); growPass();
     }
     pill(pctTxt(a / rs.T) + ' | ' + pctTxt(b / rs.T), ev.clientX, ev.clientY - 36);   // (in %, as the settings, 11-06)
@@ -3448,14 +4030,14 @@ function endHandle(cancel) {
   lpill.classList.remove('on'); h.el.classList.remove('on'); guides();
   justDragged = true; setTimeout(() => { justDragged = false; }, 0);
   if (!h.moved) return;
-  if (cancel) { renderView(false); renderInsp(); return; }
+  if (cancel) { flipNext = true; renderView(false); renderInsp(); return; }   // (Escape: it glides back from the preview, 11-08)
   const before = snapOf();
-  if (h.kind === 'split' && !h.fixed && h.w.every((w, i) => w === h.base[i])) { renderView(false); renderInsp(); return; }   // (a content row left where it was: no step, 11-06)
+  if (h.kind === 'split' && !h.fixed && h.w.every((w, i) => w === h.base[i])) { flipNext = true; renderView(false); renderInsp(); return; }   // (a content row left where it was: no step, 11-06; it glides back, 11-08)
   if (h.kind === 'split') mutate(() => { const row = stored(S.screen).rows[h.ri]; row.cols.forEach((c, i) => { c.w = h.w[i]; }); });
   else if (h.kind === 'rowh') mutate(() => { const row = stored(S.screen).rows[h.ri]; rowFill(S.screen, row, !!h.h); });
   else if (h.s.f && Math.abs(h.w - h.s.w) <= 1e-4) mutate(() => setShare(h.cid, h.s.f, h.h, snapAt(h), h.s.fx));   // (a height alone: its share and "set by hand" as they were, 11-06)
   else mutate(() => setSize(h.cid, h.w, h.h, snapAt(h), h.s.f || Math.abs(h.w - h.s.w) > 1e-4 ? h.k : undefined));   // (its width as it was: a normal tile stays one, 2.2)
-  if (snapOf() === before) { renderView(false); renderInsp(); }   // back where it started: draw it as it was
+  if (snapOf() === before) { flipNext = true; renderView(false); renderInsp(); }   // back where it started: draw it as it was (gliding, 11-08)
 }
 const rsOwn = ev => !rs || rs.pid == null || ev.pointerId === rs.pid;   // (only the pointer that started it)
 document.addEventListener('pointermove', ev => { if (rsOwn(ev)) moveHandle(ev); });
@@ -3504,15 +4086,18 @@ function moveCat(id, how) {
 function setWidth(id, twelfths) {
   const p = posIn(rowsNow(), id); if (!p || p.row.cols.length < 2) return;
   if (!twelfths) { if (p.row.cols.every(c => c.w)) layoutChange(() => { const q = posIn(ownRows(), id); for (const c of q.row.cols) delete c.w; }); announce(id); return; }
-  const now = widthsNow(p.ri, p.row.cols);
+  const now = widthsNow(p.ri, p.row.cols), el = document.querySelector('#view .lrow[data-r="' + p.ri + '"]');
+  if (el && foldStuck(p.ri)) return;   // (drawn one under the other and no width could change that, 11-08 audit 0203; one only too narrow can be widened, review)
+  const m0 = minTwelfths(p.ri), mt = m0 && m0.length === now.length ? m0 : now.map(() => 1), lo = mt[p.ci], hi = 12 - mt.reduce((a, x, i) => i === p.ci ? a : a + x, 0);
+  if (hi < lo) return;
   layoutChange(() => {
     const rows = ownRows(), q = posIn(rows, id), cols = q.row.cols, base = now, T = base.reduce((a, b) => a + b, 0);
-    const mine = Math.max(1, Math.min(12 - (cols.length - 1), twelfths)), rest = 12 - mine, others = T - base[q.ci];
-    const w = base.map((b, i) => i === q.ci ? mine : Math.max(1, Math.round(b / others * rest)));
+    const mine = Math.max(lo, Math.min(hi, twelfths)), rest = 12 - mine, others = T - base[q.ci];   // (the others kept at their narrowest at least, 11-08 audit 0202)
+    const w = base.map((b, i) => i === q.ci ? mine : Math.max(mt[i], Math.round(b / others * rest)));
     let diff = 12 - w.reduce((a, b) => a + b, 0);
     for (let i = cols.length - 1, g = 0; diff !== 0 && g < 100; g++, i = (i + cols.length - 1) % cols.length) {
       if (i === q.ci) continue;
-      if (diff > 0) { w[i]++; diff--; } else if (w[i] > 1) { w[i]--; diff++; }
+      if (diff > 0) { w[i]++; diff--; } else if (w[i] > mt[i]) { w[i]--; diff++; }
     }
     cols.forEach((c, i) => { c.w = w[i]; });
   });
@@ -3520,11 +4105,12 @@ function setWidth(id, twelfths) {
 }
 function nudgeWidth(id, d) {
   const p = posIn(rowsNow(), id); if (!p || p.row.cols.length < 2) return;
-  const now = widthsNow(p.ri, p.row.cols);
-  { const w = now, j = p.ci < p.row.cols.length - 1 ? p.ci + 1 : p.ci - 1; if (w[p.ci] + d < 1 || w[j] - d < 1) return; }   // at the limit: nothing to do
+  const now = widthsNow(p.ri, p.row.cols), el = document.querySelector('#view .lrow[data-r="' + p.ri + '"]'), m0 = minTwelfths(p.ri), tn = sumOf(now), mt = m0 && m0.length === now.length ? m0.map(x => Math.ceil(x * tn / 12 - 1e-6)) : now.map(() => 1);
+  if (el && foldStuck(p.ri)) return;   // (one under the other with nothing to undo it, 11-08 audit 0203)
+  { const w = now, j = p.ci < p.row.cols.length - 1 ? p.ci + 1 : p.ci - 1; if (w[p.ci] + d < mt[p.ci] || w[j] - d < mt[j]) return; }   // at the limit, a column at its narrowest (11-08 audit 0202): nothing to do
   layoutChange(() => {
     const rows = ownRows(), q = posIn(rows, id), cols = q.row.cols, w = now.slice(), j = q.ci < cols.length - 1 ? q.ci + 1 : q.ci - 1;
-    if (w[q.ci] + d < 1 || w[j] - d < 1) return;
+    if (w[q.ci] + d < mt[q.ci] || w[j] - d < mt[j]) return;
     w[q.ci] += d; w[j] -= d;
     cols.forEach((c, i) => { c.w = w[i]; });
   });
@@ -3631,8 +4217,14 @@ function setEdit(on) {
   if (drag) { cancelPid = drag.pid; endDrag(true); }
   if (rs) { cancelPid = rs.pid; endHandle(true); }
   editPress = null;
-  const entering = on && !app.classList.contains('editing');
+  const entering = on && !app.classList.contains('editing'), leaving = !on && app.classList.contains('editing') && motionMode() !== 'off';
+  // (what edit mode adds or takes away, its empty categories and Re-link, glides; leaving, the open drawers slide out
+  // instead of vanishing: "leaving" keeps them shown while they go, 11-08)
+  const was = (entering || leaving) && motionMode() !== 'off' && !document.hidden ? catRects() : null;
+  clearTimeout(app._lvT); app.classList.remove('leaving');
   S.edit = on; app.classList.toggle('editing', on);
+  if (leaving) { app.classList.add('leaving'); app._lvT = setTimeout(() => app.classList.remove('leaving'), 320); }
+  if (entering) lastvAsk(cellKeys());   // (Re-link shows in edit mode: the 7 days counted from what the host knows now, 11-08)
   // (the strip pops in as you go into edit mode, only then: a CSS animation keyed on the motion setting replayed it
   // whenever a game left the front. 11-02, the motion audit)
   if (entering && motionMode() !== 'off') $('editbar').animate([{ opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1 }], { duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
@@ -3641,7 +4233,7 @@ function setEdit(on) {
   if (!on) { sel = null; selCat = null; endRelink(true); if (rowKeys.length) { rowKeys = []; subscribe(); } }   // (Storage gone: its rows no longer streamed, 11-06)
   syncDrawers();
   hidePrev(); saveState();
-  renderView(false); renderStorage(); renderInsp(); placeTabInd(true);
+  renderView(false); if (was) playFlip(was); renderStorage(); renderInsp(); placeTabInd(true);
 }
 $('editBtn').onclick = () => setEdit(!S.edit);
 function newCategory() {
@@ -3841,6 +4433,8 @@ sectionsEl.addEventListener('click', ev => {
   if (sel || selCat) clearSel();
 });
 function selectCell(cid) {
+  if (relinkFor && relinkFor !== cid) endRelink();   // (the pick was for another cell: Link re-linked it and jumped back to it, 11-08 audit)
+  nmOnly = null;
   sel = cid; selCat = null; DR.R.byPick = true; DR.R.pickT = Date.now();
   for (const el of document.querySelectorAll('#view .dc.sel, #view .dcat.csel')) el.classList.remove('sel', 'csel');
   const el = document.querySelector('#view .dc[data-cid="' + cid + '"]'); if (el) el.classList.add('sel');
@@ -3894,7 +4488,7 @@ sectionsEl.addEventListener('scroll', () => { hidePrev(); if (!scrollT) scrollT 
 $('vlist').addEventListener('scroll', () => requestAnimationFrame(() => drawRows()));   // (no argument: the frame's time read as a scroll read, 11-06)
 let qSayT = 0;
 $('q').addEventListener('input', e => { query = e.target.value; $('vlist').scrollTop = 0; renderStorage(); clearTimeout(qSayT); qSayT = setTimeout(() => { live.textContent = plural(rows.filter(x => !x.g).length, 'reading'); }, 600); });   // (said once typing stops, 11-06)
-$('chips').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; typeFilter = b.dataset.t; $('vlist').scrollTop = 0; renderStorage(); });
+$('chips').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; typeFilter = b.dataset.t; $('vlist').scrollTop = 0; storGlide = {}; renderStorage(); });
 $('hideIn').addEventListener('click', () => { hideIn = !hideIn; $('hideIn').classList.toggle('on', hideIn); $('hideIn').setAttribute('aria-pressed', hideIn); renderStorage(); });
 $('vspace').addEventListener('click', e => {
   if (e.detail > 1 && e.target.closest('[data-act], .addall')) return;   // (a double-click's second press: the next row moved up under it)
@@ -3919,7 +4513,7 @@ $('vspace').addEventListener('click', e => {
       return;
     }
     if (collapsedGroups.has(sk)) collapsedGroups.delete(sk); else collapsedGroups.add(sk);
-    renderStorage(); return;
+    storGlide = { gs: s }; renderStorage(); return;
   }
   const row = e.target.closest('.vrow.r'); if (!row) return;
   const act = e.target.closest('[data-act]');
@@ -3979,7 +4573,10 @@ function dselClose(refocus) {
   // (the pointer left the drawer through the menu, which hangs from the page: the drawer's leave never came, 11-06)
   const dr = ['L', 'R'].map(k => DR[k]).find(x => x.el.contains(d.b));
   if (dr && dr.hover && !dr.el.matches(':hover')) { clearTimeout(dr.t); dr.t = setTimeout(() => { dr.hover = false; syncDrawers(); }, 380); }
+  inspCatFlush();   // (new readings came while it was open, 11-08 audit)
 }
+// (an option's text, and its colours as small squares when it has them: data-sq, the palettes', 11-09)
+const dselLab = o => { const q = o && o.dataset.sq ? o.dataset.sq.split(',').filter(c => /^#[0-9a-f]{6}$/i.test(c)) : []; return q.length ? '<span class="dsel-t">' + esc(o.textContent) + '</span><span class="lk-sq">' + q.map(c => '<i style="--c:' + c + '"></i>').join('') + '</span>' : esc(o ? o.textContent : ''); };
 function dselUp(box) {
   if (dselOpen && !dselOpen.b.isConnected) dselClose(false);
   for (const s of box.querySelectorAll('select:not(.dsel-n)')) {
@@ -3987,8 +4584,8 @@ function dselUp(box) {
     const b = document.createElement('button'), o = s.options[s.selectedIndex];
     b.type = 'button'; b.className = 'dsel'; b.id = (s.id || 'ds-' + (s.dataset.lay || 'list')) + 'Dd';   // (an id: a redraw puts the focus back on it)
     const lb = s.closest('label'), ls = lb && lb.querySelector(':scope > span');   // (its field's name, for a screen reader: the hidden list had it)
-    b.setAttribute('aria-haspopup', 'listbox'); b.setAttribute('aria-expanded', 'false'); if (ls) b.setAttribute('aria-label', ls.textContent + ', ' + (o ? o.textContent : ''));
-    b.innerHTML = '<span>' + esc(o ? o.textContent : '') + '</span>' + '<svg class="gx-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg>';
+    b.setAttribute('aria-haspopup', 'listbox'); b.setAttribute('aria-expanded', 'false'); if (ls) b.setAttribute('aria-label', ls.textContent + ', ' + (o ? o.textContent : '')); else if (s.getAttribute('aria-label')) b.setAttribute('aria-label', s.getAttribute('aria-label') + ', ' + (o ? o.textContent : ''));   // (a list named by its own label, 11-09)
+    b.innerHTML = '<span>' + dselLab(o) + '</span>' + '<svg class="gx-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg>';
     if (s.title) b.title = s.title;
     b.disabled = s.disabled; b._sel = s; s.after(b);
   }
@@ -3997,7 +4594,8 @@ function dselShow(b) {
   const s = b._sel; if (!s || !s.isConnected || b.disabled) return;
   const same = dselOpen && dselOpen.b === b; dselClose(false); if (same) return;
   const m = document.createElement('div'); m.className = 'smenu dsel-m'; m.setAttribute('role', 'listbox');
-  m.innerHTML = [...s.options].map((o, i) => '<button type="button" role="option" aria-selected="' + (i === s.selectedIndex) + '" data-n="' + i + '"' + (i === s.selectedIndex ? ' class="on"' : '') + (o.disabled ? ' disabled' : '') + '>' + esc(o.textContent) + '</button>').join('');
+  const it = o => '<button type="button" role="option" aria-selected="' + (o.index === s.selectedIndex) + '" data-n="' + o.index + '"' + (o.index === s.selectedIndex ? ' class="on"' : '') + (o.disabled ? ' disabled' : '') + '>' + dselLab(o) + '</button>';
+  m.innerHTML = [...s.children].map(c => c.tagName === 'OPTGROUP' ? '<div class="dsel-g" role="presentation">' + esc(c.label) + '</div>' + [...c.children].map(it).join('') : it(c)).join('');   // (groups under their name, 11-09)
   document.body.appendChild(m);
   const r = b.getBoundingClientRect(), below = innerHeight - r.bottom - 10, above = r.top - 10, up = m.offsetHeight > below && above > below;
   m.style.maxHeight = Math.max(120, Math.min(330, up ? above : below)) + 'px';
@@ -4011,7 +4609,7 @@ function dselPick(n) {
   const d = dselOpen; if (!d) return;
   const { s, b } = d; dselClose(true);
   if (n === s.selectedIndex || !s.options[n] || s.options[n].disabled) return;
-  s.selectedIndex = n; b.firstChild.textContent = s.options[n].textContent;
+  s.selectedIndex = n; b.firstChild.innerHTML = dselLab(s.options[n]);
   s._ptr = true; s.dispatchEvent(new Event('change', { bubbles: true }));   // (picked with the pointer: as a list's, see ptrPick)
 }
 document.addEventListener('click', e => {
@@ -4080,35 +4678,43 @@ function inspTitle(kind, name) {
   t.title = t.scrollWidth > t.clientWidth + 1 ? name : '';
 }
 function renderInsp() {
+  inspCatLater = false;
   const box = $('insp'), refocus = inspFocus(box);
-  const c = sel && S.L.cells[sel], cat = !c && selCat ? catById(selCat) : null;
+  const c = sel && S.L.cells[sel], cat = !c && selCat ? catById(selCat) : null, wasOpen = DR.R.el.classList.contains('open');
   syncDrawers();
   inspTitle(c ? 'Cell' : cat ? 'Category' : '', c ? nameIn(sel) : cat ? cat.name : S.screen === 'overview' ? 'Overview' : VNAME[S.screen]);
   $('inspBack').classList.toggle('none', !c && !cat);
   if (!S.edit) return;
-  if (cat) { box.innerHTML = catPanel(cat); dselUp(box); refocus(); return; }
-  if (!c) { box.innerHTML = viewPanel(); dselUp(box); refocus(); return; }
+  // (another cell, category or the view: the new content fades in over the old, as a Game cell's flip; its own redraws
+  // stay instant. Its segments' picks are pills that slide, as Settings', 11-08)
+  const sk = sel || selCat || '', sw = segSnap(box);
+  if (box._sk !== undefined && box._sk !== sk && wasOpen && motionMode() !== 'off') box.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: motionOn() ? 200 : 150, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  box._sk = sk;
+  if (cat) { box.innerHTML = catPanel(cat); dselUp(box); segPills(box, sw); refocus(); return; }
+  if (!c) { box.innerHTML = viewPanel(); dselUp(box); segPills(box, sw); refocus(); return; }
   const r = c.key ? BYKEY.get(c.key) : null, sen = r ? SENS[r.s] : null;
   const g = c.gates || { mode: 'none', dir: 'above', y: NaN, r: NaN, hold: 3 };
   const unit = c.pred ? 'RPM' : unitOf(r), lk = c.pred ? 1 : gbK(r);
   const num = x => (x == null || !isFinite(x)) ? '' : x, numL = x => (x == null || !isFinite(x)) ? '' : Math.round(x * lk * 1e4) / 1e4;   // (lines in GB for memory)
   let h = '<div class="src">' + (c.pred ? '<span>Predicted fan: no sensor, its rpm comes from the curve below.</span>'
     : r ? '<span>' + esc(sen.name) + '</span><span style="color:var(--fg)" title="' + esc(r.key) + '">' + esc(r.label) + '</span>'
-    : '<span style="color:#e08a8d">' + (sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now' : 'Not on this PC' + (c.match ? ': ' + esc(c.match.replace('|', ', ')) : '')) + '</span><span class="k">' + esc(c.key) + '</span>') + '</div>';
+    : '<span style="color:' + (isPause(c) ? 'var(--dim)' : '#e08a8d') + '">' + (isPause(c) ? 'HWiNFO isn\'t sharing this reading right now' : sensorHere(c) ? (neverHere(c) ? 'HWiNFO has never shared this reading on this PC' : 'HWiNFO hasn\'t shared this reading for 7 days') : 'Not on this PC' + (c.match ? ': ' + esc(c.match.replace('|', ', ')) : '')) + '</span><span class="k">' + esc(c.key) + '</span>') + '</div>';
   // its name: one field, for every view or for this one only (his pick 11-06: was a "Different name in" link)
-  const cl = cellLook(sel), V = VNAME[S.screen], vnm = cl.name != null;
-  h += '<div class="fld"><span>Name</span>' + (vnm ? '<input id="lvName" aria-label="Name in ' + V + '" maxlength="' + NAME_MAX + '" value="' + esc(cl.name) + '" placeholder="' + esc(cellName(c)) + '">'
+  const cl = cellLook(sel), V = VNAME[S.screen], vnm = cl.name != null || (!!nmOnly && nmOnly.cid === sel && nmOnly.vn === S.screen);
+  const own = VIEWS.filter(v => v !== S.screen && cellLook(sel, v).name != null);   // (other views with a name of their own: said under the field, 11-08 audit)
+  h += '<div class="fld"><span>Name</span>' + (vnm ? '<input id="lvName" aria-label="Name in ' + V + '" maxlength="' + NAME_MAX + '" value="' + esc(cl.name || '') + '" placeholder="' + esc(cellName(c)) + '">'
     : '<input id="iName" aria-label="Name" maxlength="' + NAME_MAX + '" value="' + esc(c.name || '') + '" placeholder="' + esc(r ? r.label : c.pred ? 'Predicted fan' : '') + '">') +
-    chipsH('nscope', [['all', 'All views'], ['one', 'Only ' + V]], x => x === (vnm ? 'one' : 'all'), '', 'Name for') + '</div>';
+    chipsH('nscope', [['all', 'All views'], ['one', 'Only ' + V]], x => x === 'one' ? vnm : !vnm && !own.length, '', 'Name for') + '</div>' +
+    (own.length ? '<span class="hint">' + own.map(v => esc(VNAME[v] + ': ' + cellLook(sel, v).name)).join(', ') + '</span>' : '');
   h += cellLayHtml(sel, c);
   // decimals and the graph as chips (were lists); the bottleneck is a call, not a number: no decimals, no lines
   const bn = isBneck(c);
   h += '<div class="fgrp"><span class="lab">Display</span>' + (bn ? '' : segL('Decimals', 'dec', [['', 'Auto'], [0, '0'], [1, '1'], [2, '2'], [3, '3']], c.dec == null ? '' : c.dec, 'qs')) +
     segL(bn ? '15 min bar' : 'Graph', 'graph', [[1, 'Show'], [0, 'Hide']], c.graph === false ? 0 : 1) + '</div>';
   if (!c.pred && !bn) {
-    h += '<div class="fgrp"><span class="lab">Lines</span><div class="seg" id="iMode" role="group" aria-label="Lines">' + [['none', 'None'], ['y', 'Yellow'], ['yr', 'Yellow + Red']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.mode === v ? 'on' : '') + '" aria-pressed="' + (g.mode === v) + '">' + t + '</button>').join('') + '</div>';
+    h += '<div class="fgrp"><span class="lab">Lines</span><div class="seg pills" id="iMode" role="group" aria-label="Lines">' + [['none', 'None'], ['y', 'Yellow'], ['yr', 'Yellow + Red']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.mode === v ? 'on' : '') + '" aria-pressed="' + (g.mode === v) + '">' + t + '</button>').join('') + '</div>';
     if (g.mode !== 'none') {
-      h += '<div class="seg" id="iDir" role="group" aria-label="Bad when">' + [['above', 'Bad when above'], ['below', 'Bad when below']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.dir === v ? 'on' : '') + '" aria-pressed="' + (g.dir === v) + '">' + t + '</button>').join('') + '</div>';
+      h += '<div class="seg pills" id="iDir" role="group" aria-label="Bad when">' + [['above', 'Bad when above'], ['below', 'Bad when below']].map(([v, t]) => '<button data-v="' + v + '" class="' + (g.dir === v ? 'on' : '') + '" aria-pressed="' + (g.dir === v) + '">' + t + '</button>').join('') + '</div>';
       const o = g.other && typeof g.other === 'object' ? g.other : null, osd = g.dir === 'below' ? 'above' : 'below', side = (d, t) => o ? (d === 'below' ? 'Low: ' + t.toLowerCase() : 'High: ' + t.toLowerCase()) : t;
       h += '<div class="two"><label class="fld gate-y"><span>' + side(g.dir, 'Yellow') + ' ' + esc(unit) + '</span><input id="iY" aria-describedby="gErr" type="number" step="any" value="' + numL(g.y) + '"></label>' +
            (g.mode === 'yr' ? '<label class="fld gate-r"><span>' + side(g.dir, 'Red') + ' ' + esc(unit) + '</span><input id="iR" aria-describedby="gErr" type="number" step="any" value="' + numL(g.r) + '"></label>' : '<span></span>') + '</div>';
@@ -4156,10 +4762,10 @@ function renderInsp() {
     }
     h += '</div>';
   }
-  h += '<div class="fgrp"><div class="btnrow">' + (isMissing(c) ? '<button class="btn" id="iRelink">Re-link</button>' : '') +
+  h += '<div class="fgrp"><div class="btnrow">' + (isMissing(c) && !isPause(c) ? '<button class="btn" id="iRelink">Re-link</button>' : '') +
     '<button class="btn" id="iOpen">Open graphs</button><button class="btn warn" id="iRemove" aria-keyshortcuts="Delete">Remove cell<span class="kb" aria-hidden="true">Del</span></button></div></div>';
   box.innerHTML = h;
-  dselUp(box); refocus();
+  dselUp(box); segPills(box, sw); refocus();
   tickInsp();
 }
 // new lines start a little past where the value is now, on its bad side, at the cell's decimals (nothing without a value)
@@ -4228,6 +4834,9 @@ function tickInsp() {
     const og2 = otherOf(g), marks = [g.y, g.mode === 'yr' ? g.r : NaN, og2 && og2.y !== undefined ? og2.y : NaN, og2 && og2.r !== undefined ? og2.r : NaN].filter(Number.isFinite);
     for (const x of marks) { mn = Math.min(mn, x); mx = Math.max(mx, x); }
     const pad = (mx - mn || 1) * 0.15; mn -= pad; mx += pad;
+    // (the range held while the series and the lines still fit in it, and it isn't over twice too wide: the bar and the
+    // ticks stay put while the marker glides, 11-08; they jumped under it every whole percent)
+    { const hk = sel + '|' + marks.join(); if (sc._hk === hk && sc._mn <= mn + pad && sc._mx >= mx - pad && sc._mx - sc._mn <= (mx - mn) * 2) { mn = sc._mn; mx = sc._mx; } else { sc._hk = hk; sc._mn = mn; sc._mx = mx; } }
     const P = x => Math.max(0, Math.min(100, (x - mn) / (mx - mn) * 100));
     // the scale in zones: normal, yellow, red, by where each stretch of it is by the lines (both sides)
     const cuts = [mn, ...marks.filter(x => x > mn && x < mx).sort((x, y) => x - y), mx], zc = ['#1f2a22', '#4d4317', '#4a1e21'];
@@ -4273,19 +4882,19 @@ function drawCurveSvg(c, e) {
   const ax = niceAxis(top, 4), ymax = ax.max;
   const X = v => l + (Math.max(xmin, Math.min(xmax, v)) - xmin) / (xmax - xmin) * (W - l - rr), Y = v => t + (1 - v / ymax) * (H - t - b);
   let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" id="cSvg" role="img" aria-label="Fan curve">';
-  for (let x = xmin; x <= xmax; x += xstep) s += '<line x1="' + X(x) + '" x2="' + X(x) + '" y1="' + t + '" y2="' + (H - b) + '" stroke="#202020"/><text x="' + X(x) + '" y="' + (H - 7) + '" fill="#6a6a6a" font-size="9" text-anchor="middle">' + x + '\u00b0</text>';
-  for (let v = 0; v <= ymax + 1e-9; v += ax.step) s += '<line x1="' + l + '" x2="' + (W - rr) + '" y1="' + Y(v) + '" y2="' + Y(v) + '" stroke="#202020"/><text x="' + (l - 4) + '" y="' + (Y(v) + 3) + '" fill="#6a6a6a" font-size="9" text-anchor="end">' + kLabel(v) + '</text>';
+  for (let x = xmin; x <= xmax; x += xstep) s += '<line x1="' + X(x) + '" x2="' + X(x) + '" y1="' + t + '" y2="' + (H - b) + '" stroke="' + gv('#202020') + '"/><text x="' + X(x) + '" y="' + (H - 7) + '" fill="#6a6a6a" font-size="9" text-anchor="middle">' + x + '\u00b0</text>';
+  for (let v = 0; v <= ymax + 1e-9; v += ax.step) s += '<line x1="' + l + '" x2="' + (W - rr) + '" y1="' + Y(v) + '" y2="' + Y(v) + '" stroke="' + gv('#202020') + '"/><text x="' + (l - 4) + '" y="' + (Y(v) + 3) + '" fill="#6a6a6a" font-size="9" text-anchor="end">' + kLabel(v) + '</text>';
   // past its first and last points a fan keeps their speed: dashed to the edges
   const p0 = pts[0], pn = pts[pts.length - 1];
-  if (pts.length) s += '<path d="M' + l + ' ' + Y(p0[1]) + ' L' + X(p0[0]) + ' ' + Y(p0[1]) + ' M' + X(pn[0]) + ' ' + Y(pn[1]) + ' L' + (W - rr) + ' ' + Y(pn[1]) + '" fill="none" stroke="#7fa6e8" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.6"/>';
-  s += '<polyline points="' + pts.map(p => X(p[0]) + ',' + Y(p[1])).join(' ') + '" fill="none" stroke="#7fa6e8" stroke-width="1.6"/>';
+  if (pts.length) s += '<path d="M' + l + ' ' + Y(p0[1]) + ' L' + X(p0[0]) + ' ' + Y(p0[1]) + ' M' + X(pn[0]) + ' ' + Y(pn[1]) + ' L' + (W - rr) + ' ' + Y(pn[1]) + '" fill="none" style="stroke: var(--edit)" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.6"/>';
+  s += '<polyline points="' + pts.map(p => X(p[0]) + ',' + Y(p[1])).join(' ') + '" fill="none" style="stroke: var(--edit)" stroke-width="1.6"/>';
   const src = BYKEY.get(c.curve.src);
   // where the fan is now goes under the points, so a point on top of it can still be dragged
   if (src && src.v != null && e.v != null) {
     const off = e.curve && Math.abs(e.curve.dev) > c.curve.tol && c.curve.warn !== false;
-    s += '<g pointer-events="none"><line x1="' + X(src.v) + '" x2="' + X(src.v) + '" y1="' + t + '" y2="' + (H - b) + '" stroke="#3a3a3a" stroke-dasharray="2 3"/><circle cx="' + X(src.v) + '" cy="' + Y(e.v) + '" r="4.5" fill="' + (off ? '#e6c84a' : '#e0e0e0') + '" stroke="none"/></g>';
+    s += '<g pointer-events="none"><line x1="' + X(src.v) + '" x2="' + X(src.v) + '" y1="' + t + '" y2="' + (H - b) + '" stroke="' + gv('#3a3a3a') + '" stroke-dasharray="2 3"/><circle cx="' + X(src.v) + '" cy="' + Y(e.v) + '" r="4.5" fill="' + (off ? '#e6c84a' : '#e0e0e0') + '" stroke="' + gv('#0f0f0f') + '" stroke-width="1.5"/></g>';   // (a dark ring: it shows on a white curve too, 11-09)
   }
-  c.curve.pts.forEach((p, i) => { s += '<circle class="pt" data-i="' + i + '" cx="' + X(p[0]) + '" cy="' + Y(p[1]) + '" r="5" fill="#0f0f0f" stroke="#7fa6e8" stroke-width="1.6"/>'; });
+  c.curve.pts.forEach((p, i) => { s += '<circle class="pt" data-i="' + i + '" cx="' + X(p[0]) + '" cy="' + Y(p[1]) + '" r="5" fill="' + gv('#0f0f0f') + '" style="stroke: var(--edit)" stroke-width="1.6"/>'; });
   const sv = s + '</svg>'; if (box._h !== sv) { box._h = sv; box.innerHTML = sv; }   // (only when it changed: every second before, 11-06)
   box._scale = { l, t, W, H, b, rr, xmin, xmax, ymax, top };
 }
@@ -4311,7 +4920,7 @@ insp.addEventListener('input', e => {
   if (t.id === 'iName') {
     setCell(c => { c.name = t.value.trim() || undefined; }); inspTitle('Cell', nameIn(sel));
     const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
-    if (el) el.textContent = nameIn(sel);
+    if (el) { el.textContent = nameIn(sel); nameFitSoon(); }   // (fitted again, as the Only <view> field's, 11-08 audit)
   }
   const lk = c.pred ? 1 : gbK(BYKEY.get(c.key));   // (memory lines are typed in GB, kept in MB)
   if (t.id === 'iOY' || t.id === 'iOR') { setCell(c => { const o = c.gates.other || (c.gates.other = {}), k = t.id === 'iOY' ? 'y' : 'r'; if (t.value === '' || !isFinite(Number(t.value))) delete o[k]; else o[k] = Number(t.value) / lk; }); tickInsp(); updateView(false, true); }
@@ -4377,7 +4986,15 @@ insp.addEventListener('click', e => {
     }, true);
     renderInsp(); updateView(false, true);
   }
-  if (e.target.closest('#iMore')) { moreOpen.set(sel, $('iMore').getAttribute('aria-expanded') !== 'true'); renderInsp(); return; }
+  if (e.target.closest('#iMore')) {   // (in place: its chevron turns, the box grows in or folds away, 11-08: it popped)
+    const b = $('iMore'), open = b.getAttribute('aria-expanded') !== 'true', mb = $('iMoreBox'); moreOpen.set(sel, open);
+    if (motionMode() === 'off') { renderInsp(); return; }
+    if (!open) { b.classList.remove('open'); b.setAttribute('aria-expanded', 'false'); b.removeAttribute('aria-controls'); if (mb) { mb.inert = true; for (const x of [mb, ...mb.querySelectorAll('[id]')]) x.removeAttribute('id'); sumFold(mb, false); } return; }
+    renderInsp(); const nb = $('iMore'), nbox = $('iMoreBox');
+    if (nb) { nb.classList.remove('open'); void nb.offsetWidth; nb.classList.add('open'); }
+    if (nbox) sumFold(nbox, true);
+    return;
+  }
   if (e.target.closest('#iPreset')) { const p = presetFor(BYKEY.get(c.key)); setCell(c => { c.gates = Object.assign({}, p.g); }, true); renderInsp(); updateView(false, true); }
   if (e.target.closest('#iRemove') && e.detail < 2) { inspGoneAt = performance.now(); const c = catOf(sel); removeCell(sel); if (c && !sel && S.L.cats.includes(c)) selectCat(c.id); }
   if (e.target.closest('#iRelink')) startRelink(sel);
@@ -4444,7 +5061,7 @@ insp.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.closes
 
 // ---------- the right panel for a category, for the view, and the layout bits of a cell ----------
 // a row of chips: one button each, the one in effect lit (and pressed, for a screen reader); lit(v) says which
-const chipsH = (key, opts, lit, cls, label) => '<div class="seg' + (cls ? ' ' + cls : '') + '" data-lay="' + key + '" role="group"' + (label ? ' aria-label="' + esc(label) + '"' : '') + '>' +
+const chipsH = (key, opts, lit, cls, label) => '<div class="seg' + (cls ? ' ' + cls : '') + (key === 'cf' || /\b(qs|qt|tog)\b/.test(cls || '') ? '' : ' pills') + '" data-lay="' + key + '" role="group"' + (label ? ' aria-label="' + esc(label) + '"' : '') + '>' +
   opts.map(([v, t, off]) => { const on = !!lit(v); return '<button data-v="' + v + '"' + (off ? ' disabled' : '') + ' class="' + (on ? 'on' : '') + '" aria-pressed="' + on + '">' + t + '</button>'; }).join('') + '</div>';
 const segL = (label, key, opts, cur, cls) => '<div class="fld"><span>' + label + '</span>' + chipsH(key, opts, v => String(v) === String(cur), cls, label) + '</div>';
 const TPLS = [['two', '2 a row', '1fr 1fr', '1fr 1fr 1fr', ['1/1', '1/2', '2/1', '2/2', '3/1/4/3']], ['three', '3 a row', '1fr 1fr 1fr', '1fr 1fr', ['1/1', '1/2', '1/3', '2/1/3/4']],
@@ -4503,12 +5120,14 @@ function catPanel(cat) {
     const v = stored(vn), rows = rowsNow(vn), p = posIn(rows, cat.id), alone = !p || p.row.cols.length < 2;
     if (p) h += '<span class="row3">Row ' + (p.ri + 1) + ' of ' + rows.length + (alone ? ', alone' : ', column ' + (p.ci + 1) + ' of ' + p.row.cols.length) + stackTxt(p.col.stack, p.k) + '</span>';
     // its column's width: a % field and % chips (his pick 11-06: were 1/4, 1/3...); the chips that can't fit are off
-    const mine = !alone && p.row.cols.every(c => c.w), b = mine ? p.row.cols.map(c => c.w) : [1], tw = alone ? '' : mine ? Math.round(b[p.ci] / b.reduce((x, y) => x + y, 0) * 1200) / 100 : 'auto';
-    const mxw = alone ? 0 : 12 - (p.row.cols.length - 1);   // (the most a column can take: the others keep a twelfth each)
+    const mine = !alone && p.row.cols.every(c => c.w), b = mine ? p.row.cols.map(c => c.w) : [1];
     const blk = document.querySelector('#view .dcat[data-cat="' + CSS.escape(cat.id) + '"]'), col = blk && blk.closest('.lcol'), row = col && col.closest('.lrow');
-    const pct = alone ? 100 : mine ? Math.round(b[p.ci] / b.reduce((x, y) => x + y, 0) * 1000) / 10 : col && row && row.getBoundingClientRect().width ? Math.round(col.getBoundingClientRect().width / row.getBoundingClientRect().width * 100) : '';
-    h += '<div class="fld"><span>Column width</span><div class="szin"><label><input type="number" data-cw="1" aria-label="Column width, %" value="' + pct + '" step="any" min="1" max="100"' + (alone ? ' disabled' : '') + '><i>%</i></label></div>' +
-      chipsH('width', [['auto', 'Auto'], [3, '25%'], [4, '33%'], [6, '50%'], [8, '67%'], [9, '75%']].map(([x, t]) => [x, t, alone || (x !== 'auto' && x > mxw)]), x => String(x) === String(tw), 'qs', 'Column width') + '</div>';
+    const folded = !alone && !!row && row.classList.contains('fold') && (!mine || foldStuck(p.ri)), cs = row ? [...row.children].filter(e => e.classList.contains('lcol')) : [], cw = cs.reduce((a, c) => a + c.getBoundingClientRect().width, 0);   // (folded: one under the other, each the row's whole width, 11-08 audit 0203)
+    const tw = alone ? '' : mine ? (folded ? '' : Math.round(b[p.ci] / b.reduce((x, y) => x + y, 0) * 1200) / 100) : 'auto';
+    const mt = alone || folded ? null : minTwelfths(p.ri), ok = !!mt && mt.length === p.row.cols.length, lo = ok ? mt[p.ci] : 1, hi = ok ? 12 - mt.reduce((a, x, i) => i === p.ci ? a : a + x, 0) : alone ? 12 : 12 - (p.row.cols.length - 1);   // (only widths that leave every column at its narrowest, 11-08 audit 0202)
+    const pct = alone || folded ? 100 : mine ? Math.round(b[p.ci] / b.reduce((x, y) => x + y, 0) * 1000) / 10 : col && cw ? Math.round(col.getBoundingClientRect().width / cw * 1000) / 10 : '';   // (an Auto row: its columns without the gaps, two equal ones 50, 11-08 audit 0206)
+    h += '<div class="fld"><span>Column width</span><div class="szin"><label class="spin"><input type="number" data-cw="1" data-lo="' + lo + '" data-hi="' + hi + '" aria-label="Column width, %" value="' + pct + '" step="' + 100 / 12 + '" min="' + 100 / 12 + '" max="100"' + (alone || folded ? ' disabled' : '') + '><i>%</i>' + SPIN_UD + '</label></div>' +
+      chipsH('width', [['auto', 'Auto'], [3, '25%'], [4, '33%'], [6, '50%'], [8, '67%'], [9, '75%']].map(([x, t]) => [x, t, alone || (x === 'auto' ? folded && !mine : folded || x < lo || x > hi)]), x => String(x) === String(tw), 'qs', 'Column width') + '</div>';
     if (vn === 'tiles') h += segL('Its row', 'rowh', [[0, 'Fit'], [1, 'Fill']], (v && v.fill) || (v && v.rows && p && p.row.h) ? 1 : 0);
     // the four moves always there, off where they can't go, each with its key (his pick 11-06: only the possible ones showed)
     const mo = moveOptions(cat.id);
@@ -4536,10 +5155,11 @@ function catPanel(cat) {
 function catSizeHtml(cat, ids) {
   if (!ids.length) return '';
   const t = stored('tiles'), le = id => (t && t.cell && t.cell[id]) || {}, zs = ids.map(cellSize), blk = document.querySelector('#view .blk[data-cat="' + CSS.escape(cat.id) + '"]');
-  const fAuto = zs.every(z => !z.f && z.w === 1), fAll = !fAuto && zs.every(z => z.f && Math.abs(z.f - zs[0].f) < 0.005) ? zs[0].f * 100 : null;   // (Auto as drawn: an old "tall" tile is Auto wide, 11-06 audit)
+  const pc = ids.map(cellPct), fAuto = zs.every(z => !z.f && z.w === 1), fAll = !fAuto && pc.every(x => x != null && Math.abs(x - pc[0]) < 0.5) ? pc[0] : null;   // (Auto as drawn: an old "tall" tile is Auto wide, 11-06 audit; a share as drawn, as each tile's Width says, 11-08 audit)
+  const G = blk ? tileGeo(blk.querySelector('.tg.pk > .tile')) : null, awOff = x => !!G && x < 100 - PE && (x / 100 * G.k) * G.p - G.g < G.min - 0.5;   // (a share its tiles can't be drawn at here: greyed, 11-08 audit)
   const hAuto = zs.every(z => Math.abs(z.h - 1) < 0.01), hAll = !hAuto && zs.every(z => Math.abs(z.h - zs[0].h) < 0.01) ? zs[0].h : null;
-  return '<div class="fld"><span>Width of all</span>' + chipsH('aw', [['auto', 'Auto'], [25, '25%'], [r4(100 / 3), '33%'], [50, '50%'], [100, '100%']], x => x === 'auto' ? fAuto : fAll != null && Math.abs(x - fAll) < 0.5, 'qs', 'Width of all') + '</div>' +
-    '<div class="fld"><span>Height of all</span><div class="segrow">' + chipsH('ah', [['auto', 'Auto'], [1, '1'], [1.5, '1.5'], [2, '2']], x => x === 'auto' ? hAuto : hAll != null && Math.abs(x - hAll) < 0.01, 'qs', 'Height of all') +
+  return '<div class="fld"><span>Width of all</span>' + chipsH('aw', [['auto', 'Auto']].concat(PCTS.map(x => [r4(x), Math.round(x) + '%', awOff(x)])), x => x === 'auto' ? fAuto : fAll != null && Math.abs(x - fAll) < 0.5, 'qs', 'Width of all') + '</div>' +
+    '<div class="fld"><span>Height of all</span><div class="segrow">' + chipsH('ah', [['auto', 'Auto'], [1.5, '1.5'], [2, '2']], x => x === 'auto' ? hAuto : hAll != null && Math.abs(x - hAll) < 0.01, 'qs', 'Height of all') +
     '<button class="btn" data-lay="fitrow"' + (blk && colEnds(blk).cols.length ? '' : ' disabled') + '>Level</button></div></div>';
 }
 function cellLayHtml(cid, c) {
@@ -4548,10 +5168,10 @@ function cellLayHtml(cid, c) {
   if (vn === 'tiles') {
     // (the share it is drawn at: a row of tiles you haven't sized spreads out to fill its width, three of 25% drawn at a
     // third each, his 11-06 "showing 25% but it should show 33%"; one you size is drawn as you set it. Auto: none set)
-    const z = cellSize(cid), pct = cellPct(cid);
-    const num = (k, v, u, lab) => '<label><input type="number" data-sz="' + k + '" aria-label="' + lab + '" value="' + v + '" step="any" min="0"><i>' + u + '</i></label>';
+    const z = cellSize(cid), pct = cellPct(cid), off = cfOff(cid);
+    const num = (k, v, u, lab) => '<label class="spin"><input type="number" data-sz="' + k + '" aria-label="' + lab + '" value="' + v + '" step="any" min="0"><i>' + u + '</i>' + SPIN_UD + '</label>';
     h += '<div class="fld"><span>Width</span><div class="szin">' + num('f', pct == null ? '' : Math.round(pct * 10) / 10, '%', 'Width, %') + '</div>' +
-      chipsH('cf', [['auto', 'Auto']].concat(PCTS.map(x => [r4(x), Math.round(x) + '%'])), x => x === 'auto' ? !z.f && z.w === 1 : !(!z.f && z.w === 1) && pct != null && Math.abs(x - pct) < 0.5, 'qs', 'Width') + '</div>' +
+      chipsH('cf', [['auto', 'Auto']].concat(PCTS.map(x => [r4(x), Math.round(x) + '%', off(x)])), x => x === 'auto' ? !z.f && z.w === 1 : !(!z.f && z.w === 1) && pct != null && Math.abs(x - pct) < 0.5, 'qs', 'Width') + '</div>' +
       '<div class="fld"><span>Height</span><div class="szin">' + num('h', r4(z.h), 'x', 'Height') + '</div>' + chipsH('ch', RQ.map(x => [x, String(x)]), x => Math.abs(x - z.h) < 0.01, 'qs', 'Height') + '</div>';
   }
   // First (the category's lead) and New row as two toggles (his pick 11-06: were a box and the category's Shown first)
@@ -4599,7 +5219,7 @@ function layoutAct(key, v) {
   else if (key === 'fitrow') fitRow(id);
   else if (key === 'lead-me') { const c = catOf(sel); if (c) mutate(() => setLook('cat', c.id, 'lead', idsIn(c)[0] === sel || cellsOf(c)[0] === sel ? '' : sel)); }   // (on again: off, its first one back)
   else if (key === 'nl') mutate(() => setLook('cell', sel, 'nl', cellLook(sel).nl ? '' : true));
-  else if (key === 'nscope') { const has = cellLook(sel).name != null; if (v === 'one' && !has) { mutate(() => setLook('cell', sel, 'name', cellName(S.L.cells[sel]))); const f = $('lvName'); if (f) { f.focus(); f.select(); } } else if (v === 'all' && has) mutate(() => setLook('cell', sel, 'name', '')); else renderInsp(); }   // (a view name typed away: already All views, drawn so)
+  else if (key === 'nscope') { const has = cellLook(sel).name != null, any = VIEWS.some(vn => cellLook(sel, vn).name != null); if (v === 'one' && !has) { nmOnly = { cid: sel, vn: S.screen }; renderInsp(); const f = $('lvName'); if (f) f.focus(); } else if (v === 'all' && any) { nmOnly = null; mutate(() => { for (const vn of VIEWS) if (cellLook(sel, vn).name != null) setLook('cell', sel, 'name', '', vn); }); } else { if (v === 'all') nmOnly = null; renderInsp(); } }   // (Only: nothing kept until a name is typed; All views: every view's own name goes, 11-08 audit)
   else if (key === 'dec') mutate(() => { const c = S.L.cells[sel]; if (!c) return; if (v === '') delete c.dec; else c.dec = +v; });
   else if (key === 'graph') mutate(() => { const c = S.L.cells[sel]; if (c) c.graph = v === '1'; });
   else if (key === 'aw' || key === 'ah') { const cat = catById(id); if (!cat) return; if (v !== 'auto') catSizeInput(id, key === 'aw' ? 'f' : 'h', +v);
@@ -4623,8 +5243,8 @@ insp.addEventListener('change', e => {
   const t = e.target;
   if (t.dataset && t.dataset.sz && sel) { const id = sel, k = t.dataset.sz, v = parseFloat(t.value); setTimeout(() => sizeInput(id, k, v), 0); return; }
   if (t.dataset && t.dataset.csz && selCat) { const id = selCat, k = t.dataset.csz, v = parseFloat(t.value); setTimeout(() => catSizeInput(id, k, v), 0); return; }
-  if (t.dataset && t.dataset.cw && selCat) { const id = selCat, v = parseFloat(t.value); setTimeout(() => { if (!isFinite(v) || v <= 0) { renderInsp(); return; } setWidth(id, Math.max(1, Math.round(v * 12 / 100))); renderInsp(); }, 0); return; }   // (its column's width typed, in twelfths of the row)
-  if (t.id === 'lvName' && !t.value.trim()) { renderInsp(); return; }   // (its name typed away: the panel says All views again)
+  if (t.dataset && t.dataset.cw && selCat) { const id = selCat, v = parseFloat(t.value); setTimeout(() => { if (!isFinite(v) || v <= 0) { renderInsp(); szFlash('input[data-cw]', NaN); return; } setWidth(id, Math.max(1, Math.round(v * 12 / 100))); renderInsp(); szFlash('input[data-cw]', v); }, 0); return; }   // (its column's width typed, in twelfths of the row)
+  if (t.id === 'lvName' && !t.value.trim()) { nmOnly = null; renderInsp(); return; }   // (its name typed away: the panel says All views again)
   if (t.id === 'lName') {
     const cat = selCat && catById(selCat), v = t.value.trim().slice(0, 200);
     if (cat && v && v !== cat.name) mutate(() => { cat.name = v; }); else if (cat) t.value = cat.name;
@@ -4647,7 +5267,7 @@ let tplT = 0, tplUsed = null;   // (tplUsed: the one just used, not previewed ag
 insp.addEventListener('pointerdown', e => { const l = e.target.closest && e.target.closest('select'); if (l) l._ptr = true; }, true);
 const listKey = e => e.altKey || /^(Arrow|Page|Home$|End$|Enter$| $|F4$)/.test(e.key || '');   // (what a list takes from the keyboard)
 insp.addEventListener('keydown', e => { if (e.target.tagName === 'SELECT' && listKey(e)) e.target._ptr = false; }, true);
-insp.addEventListener('focusout', e => { if (e.target.tagName === 'SELECT') e.target._ptr = false; if (inspFitLater) { inspFitLater = false; setTimeout(inspAfterFit, 0); } });   // (reached again later with Tab: a keyboard list)
+insp.addEventListener('focusout', e => { if (e.target.tagName === 'SELECT') e.target._ptr = false; if (inspFitLater) { inspFitLater = false; setTimeout(inspAfterFit, 0); } inspCatFlush(); });   // (reached again later with Tab: a keyboard list)
 // a press in the settings while a typed name or size is still to go in: its change redraws the panel under the press
 // and the browser drops the click; at the release the same control in the new panel gets it (a field: the focus)
 let inspPress = null;
@@ -4674,18 +5294,20 @@ insp.addEventListener('mouseover', e => {
   const b = e.target.closest('.tpl'); if (!b || b.disabled || (preview && preview.k === b.dataset.tpl) || (drag && drag.started) || rs || dragPt) return;   // (none under a drag, 11-06)
   if (b.dataset.tpl === tplUsed) { if (!e.relatedTarget || b.contains(e.relatedTarget)) return; tplUsed = null; }   // (the one just used, redrawn under the pointer: not again until it is entered again, 11-06)
   clearTimeout(tplT);
-  tplT = setTimeout(() => { if (!b.isConnected || (drag && drag.started) || rs || dragPt) return; const v = templateView(b.dataset.tpl); if (!v) return; preview = { vn: S.screen, view: v, k: b.dataset.tpl }; renderView(false); }, 180);
+  tplT = setTimeout(() => { if (!b.isConnected || (drag && drag.started) || rs || dragPt) return; const v = templateView(b.dataset.tpl); if (!v) return; preview = { vn: S.screen, view: v, k: b.dataset.tpl }; flipNext = true; renderView(false); }, 180);   // (gliding into it and back, 11-08)
 });
 insp.addEventListener('mouseout', e => {
   const b = e.target.closest('.tpl'); if (!b || (e.relatedTarget && b.contains(e.relatedTarget))) return;
   clearTimeout(tplT); tplUsed = null;
   // (onto the next template: it takes over from this preview, no stop at the real view between them)
   const nx = e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.tpl'); if (nx && !nx.disabled) return;   // (a disabled one has no preview: the view as it is, 11-06)
-  if (preview) { preview = null; renderView(false); }
+  if (preview) { preview = null; flipNext = true; renderView(false); }
 });
 
 // ---------- selecting: a cell, a category, or nothing (the view) ----------
 function selectCat(id) {
+  if (relinkFor) endRelink();
+  nmOnly = null;
   sel = null; selCat = id; DR.R.byPick = true; DR.R.pickT = Date.now();   // clicking it again brings its settings back
   for (const el of document.querySelectorAll('#view .dc.sel')) el.classList.remove('sel');
   for (const el of document.querySelectorAll('#view .dcat')) el.classList.toggle('csel', el.dataset.cat === id);
@@ -4693,6 +5315,8 @@ function selectCat(id) {
   renderInsp();
 }
 function clearSel() {
+  if (relinkFor) endRelink();
+  nmOnly = null;
   if (sel || selCat) live.textContent = 'Nothing selected';   // (11-06)
   sel = null; selCat = null;
   for (const el of document.querySelectorAll('#view .dc.sel, #view .dcat.csel')) el.classList.remove('sel', 'csel');
@@ -4800,7 +5424,10 @@ const RANGE_S = { '15m': 900, '1h': 3600, '6h': 21600, '12h': 43200, '24h': 8640
 let bigRevMs = 700;   // (the big graph's draw-in: 700 ms as the popup opens, 450 for a range picked in it)
 function bigRev() { if (!bigRev0) return 1; const p = (performance.now() - bigRev0) / bigRevMs; return p >= 1 ? 1 : easeOut(Math.max(0, p)); }
 let bigRaf = 0;   // (one draw-in loop at a time: each pick started another, 11-06)
-function bigLoop() { if (bigRaf) return; bigRaf = requestAnimationFrame(() => { bigRaf = 0; if (!modalCid || !lastBig) return; drawBigGraph.apply(null, lastBig); if (bigRev() < 1) bigLoop(); else bigRev0 = 0; }); }
+function bigLoop() { if (bigRaf) return; bigRaf = requestAnimationFrame(() => { bigRaf = 0; if (!modalCid) return;
+  if (lastBig) drawBigGraph.apply(null, lastBig);
+  else { const c = cellAt(modalCid), e = c && $('mextra').querySelector('.bnc') ? evalCell(modalCid, c, true, true) : null; if (!e || !e.strip) return; bnPanel($('mextra'), e, false); }   // (the bottleneck's columns draw in too, 11-08)
+  if (bigRev() < 1) bigLoop(); else bigRev0 = 0; }); }
 // (two groups, hours and days: the one with the range picked shows its pill there, gliding within the group; the
 // other's fades; coming from the other group it appears in place)
 function placeRng(still) {
@@ -4829,7 +5456,7 @@ mrng.addEventListener('click', e => {
 // ---- the popup's window (see mkWin): the stats under the chart are the window's; a new range or a new popup starts whole ----
 // (the narrowest: 10 of its points, and a minute)
 function bwMin() { const L = lastBig, n = L && L[1] ? L[1].length : 0, sp = L && L[7] ? L[7] : (RANGE_S[bigRange] || 0) * 1000; return Math.min(1, Math.max(n > 1 ? 10 / (n - 1) : 0.02, sp ? 60000 / sp : 0)); }
-function bwDraw() { if (modalCid && lastBig) refreshModal(); }
+function bwDraw() { if (modalCid && lastBig) refreshModal(false, true); }   // (light: the chart, its bar and the stats, not the extras, 11-08)
 const BW = mkWin({ min: bwMin, draw: bwDraw });
 const bwSet = (a, b, glide) => BW.set(a, b, glide), bwReset = () => BW.reset();
 // the bar: where the window is, its start and end beside its ends (a date from 2 days on, else the time; now when it ends now)
@@ -4867,13 +5494,14 @@ function ownDayNow() { const c = cellAt(modalCid), r = c && c.key ? BYKEY.get(c.
 const histReady = () => { const c = cellAt(modalCid); return c && bigHist && bigHist.key === histKey(c) && bigHist.range === bigRange; };
 function histOf(c) {   // the host's long history for this cell; a predicted fan's goes through its curve
   if (!c.pred) return bigHist;
-  const f = a => a.map(x => x == null ? null : interp(c.curve.pts, x));
-  return Object.assign({}, bigHist, { avg: f(bigHist.avg), max: f(bigHist.max) });
+  const M = histOf.m; if (M && M.h === bigHist && M.p === c.curve.pts) return M.v;   // (kept: a glide asks every frame, 11-08)
+  const f = a => a.map(x => x == null ? null : interp(c.curve.pts, x)), v = Object.assign({}, bigHist, { avg: f(bigHist.avg), max: f(bigHist.max) });
+  histOf.m = { h: bigHist, p: c.curve.pts, v }; return v;
 }
 function openDetail(cid, rng) {   // (rng: the range it opens on, 15 min unless said)
   const c = cellAt(cid); if (!c) return;
-  hidePrev();
-  modalCid = cid; modal.classList.add('open'); lastBig = null; openedAt = performance.now();
+  hidePrev(true);
+  modalCid = cid; paintMc(); modal.classList.add('open'); lastBig = null; openedAt = performance.now();
   const fa = document.activeElement; mOpener = fa && fa !== document.body && !modal.contains(fa) ? fa : null; modal.querySelector('.mcard').focus({ preventScroll: true });   // (into it, and back on close, 11-06)
   const mv = $('mval'); if (mv._n) mv._n._ot = undefined; mv._gm = undefined;
   setRange(rng || '15m', true);
@@ -4885,7 +5513,7 @@ function closeDetail() {
   const back = mOpener && mOpener.isConnected ? mOpener : modalCid != null ? document.querySelector('#view .dc[data-cid="' + CSS.escape(String(modalCid)) + '"]') : null; mOpener = null;
   if (back && modal.contains(document.activeElement)) back.focus({ preventScroll: true });
   const t = modalCid != null && !!TCELL[modalCid]; modalCid = null; bigHist = null; modal.classList.remove('open'); pauseSpin(document.querySelector('#micon svg')); if (t) subscribe(); }
-function refreshModal(full) {
+function refreshModal(full, light) {   // (light: a window moved, 11-08)
   const c = cellAt(modalCid); if (!c) { closeDetail(); return; }
   const r = c.key ? BYKEY.get(c.key) : null, e = evalCell(modalCid, c, true, true), dec = decOfCell(c, r), unit = c.pred ? 'RPM' : unitOf(r), xk = xkOf(r);
   const mi = $('micon'), ic = iconOf(c, r);
@@ -4893,14 +5521,17 @@ function refreshModal(full) {
   if (isFanCell(c)) spinIcon(mi.querySelector('svg'), e.v);
   setText($('mtitle'), nameIn(modalCid));
   const mv = $('mval');
+  if (full) mv.style.transition = 'none';   // (its colour fades as the tile's, but not from the last popup's, 11-08)
   mv.style.color = e.col === 'past' ? '#a3a3a3' : COLORS[e.col] || COLORS.white;   // (the last game session: grey, as on its tile, 11-06)
+  if (full) { void mv.offsetWidth; mv.style.transition = ''; }
   if (!mv._n) { mv.innerHTML = '<span></span><span class="u"></span>'; mv._n = mv.firstChild; mv._u = mv.lastChild; }
   const gm = e.col === 'past' ? 'past' : 'live', flip = mv._gm !== undefined && mv._gm !== gm; mv._gm = gm;   // (live to past: another number, cut, not rolled)
   odo(mv._n, e.txt != null ? e.txt : fmtV(e.v, dec, r), flip, flip); setText(mv._u, e.txt != null ? (e.utxt ? ' ' + e.utxt : '') : e.v == null ? '' : ' ' + unit);
+  if (flip && motionMode() !== 'off') for (const el of [mv, mgraph]) el.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: motionOn() ? 320 : 200, easing: SUM_E });   // (live to past: the view's flip fade, 11-08)
   const g = c.gates, gk = gbK(r), det = gbDet(gateLines(g), gk);
   if (full) {
     let d = c.pred ? 'Predicted from ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ' through its curve, as there is no fan sensor.'
-      : r ? '<span title="' + esc(r.key) + '">' + esc(SENS[r.s].name) + ', ' + esc(r.label) + '.</span>' : sensorHere(c) ? 'HWiNFO isn\'t sharing this reading right now.' : 'This reading is not on this PC.';
+      : r ? '<span title="' + esc(r.key) + '">' + esc(SENS[r.s].name) + ', ' + esc(r.label) + '.</span>' : isPause(c) ? 'Not available right now.' : sensorHere(c) ? (neverHere(c) ? 'HWiNFO has never shared this reading on this PC.' : 'HWiNFO hasn\'t shared this reading for 7 days.') : 'This reading is not on this PC.';
     if (gatesOn(g)) d += ' Lines: yellow ' + lnTxt(det.y, dec, r, det.below) + (det.r !== undefined ? ', red ' + lnTxt(det.r, dec, r, det.below) : '') + (unit && !isYN(r) ? ' ' + esc(unit) : '') + (g.dir === 'below' ? ', bad when below' : '') + (det.y2 !== undefined || det.r2 !== undefined ? ', and on the other side ' + [det.y2 !== undefined ? 'yellow ' + lnTxt(det.y2, dec, r, !det.below) : '', det.r2 !== undefined ? 'red ' + lnTxt(det.r2, dec, r, !det.below) : ''].filter(Boolean).join(', ') + (g.dir === 'below' ? ', bad when above' : ', bad when below') : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
     if (c.curve && !c.pred) d += ' Follows a fan curve driven by ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ', within ' + fmtL(c.curve.tol, 1) + '%' + (c.curve.warn === false ? ', but it doesn\'t warn when off it' : '') + '.';
     if (e.strip) d = 'What\'s limiting your fps, checked every second while a game runs. GPU bound: the GPU is almost fully busy (95% or more), normal for a game without an fps limit. ' +
@@ -4926,7 +5557,7 @@ function refreshModal(full) {
   if (bigRange === '15m') lastBig = [mgraph, sp, det, dec, gu, modalGateInView, null, HLEN * 1000];
   else if (day) lastBig = [mgraph, day, det, dec, gu, modalGateInView, null, OWN_SPAN[bigRange] * 1000];
   else if (histReady()) { const H = histOf(c); lastBig = isYN(r) ? [mgraph, H.max, det, dec, gu, modalGateInView, null, H.span * 1000] : [mgraph, gbArr(H.avg, gk), det, dec, gu, modalGateInView, gbArr(H.max, gk), H.span * 1000]; }
-  else lastBig = [mgraph, [], det, dec, gu, modalGateInView, null, 0];
+  else lastBig = lastBig && lastBig[1] && lastBig[1].length > 1 ? [mgraph, lastBig[1], det, dec, gu, modalGateInView, lastBig[6], lastBig[7]] : [mgraph, [], det, dec, gu, modalGateInView, null, 0];   // (a range picked, its answer on its way: the line before stays, dimmed (.loading), until the new one draws in; loading... only with none before, 11-08)
   mgraph.classList.toggle('loading', bigRange !== '15m' && !day && !histReady());
   const f = x => x == null || !isFinite(x) ? '--' : fmtV(x, dec, r);
   let st, long = false;
@@ -4940,9 +5571,11 @@ function refreshModal(full) {
   if (bigRange === '15m' && !day && lastBig && isFinite(st.mx)) lastBig[10] = st.mx * gk;   // (its cut spike's peak: that second too)   // (the line's average = the one under it, from the seconds)
   drawBigGraph.apply(null, lastBig); bwBar();
   const per = !long ? '' : bigHist.step >= 3600 ? 'hourly' : bigHist.step >= 600 ? '10-minute' : '1-minute';
-  $('mstats').innerHTML = (isYN(r) ? '' : '<span' + (long ? ' title="The lowest ' + per + ' average"' : '') + '><em>' + (long ? 'lowest avg' : 'min') + '</em>' + f(st.mn) + '</span><span><em>avg</em>' + f(st.av) + '</span><span><em>max</em>' + f(st.mx) + '</span>') +
+  const msH = (isYN(r) ? '' : '<span' + (long ? ' title="The lowest ' + per + ' average"' : '') + '><em>' + (long ? 'lowest avg' : 'min') + '</em>' + f(st.mn) + '</span><span><em>avg</em>' + f(st.av) + '</span><span><em>max</em>' + f(st.mx) + '</span>') +
     (r && !c.pred && r.mx != null ? '<span title="HWiNFO\'s own, since it started or was reset"><em>HWiNFO min / avg / max</em>' + f(r.mn) + ' / ' + (isYN(r) ? Math.round(r.av * 100) + '% yes' : f(r.av)) + ' / ' + f(r.mx) + '</span>' : '') +
     (e.sub ? '<span class="msub" style="color:' + (e.lvl ? '#8f7c2e' : '#6a6a6a') + '">' + esc(e.sub) + '</span>' : '');
+  { const ms = $('mstats'); if (ms._h !== msH) { ms.innerHTML = msH; ms._h = msH; } }   // (only when it changed: its tips stay, 11-08)
+  if (light) return;
   const extra = $('mextra');
   if (c.curve) {
     if (full || !extra.querySelector('#mcurve')) extra.innerHTML = '<div class="msec">' + (c.pred ? 'its curve' : 'fan curve') + '</div><canvas id="mcurve"></canvas>';
@@ -4991,8 +5624,8 @@ function bnPanel(box, e, full) {
   const B = BNP.B = bnCols(), cv = box.querySelector('.bnc');
   box.querySelector('.bnp').classList.toggle('loading', !B);
   if (B) {   // (drawn again only when a column or its size changed)
-    const lv = B.cols.map(v => v ? 3 - v.indexOf(Math.max(v[0], v[1], v[2])) : null), k = lv.join() + '|' + cvDims(cv).join('x');
-    if (cv._h !== k) { drawLevels(cv, lv, 1, cellTint(modalCid) || '#c9c9c9'); cv._h = k; }
+    const lv = B.cols.map(v => v ? 3 - v.indexOf(Math.max(v[0], v[1], v[2])) : null), k = lv.join() + '|' + cvDims(cv).join('x') + '|' + solidOf(S.look) + '|' + (cellTint(modalCid) || '');   // (a new look draws it again, 11-09)
+    const p = bigRev(); if (cv._h !== k || p < 1) { drawLevels(cv, lv, p, cellTint(modalCid) || '#c9c9c9'); cv._h = p < 1 ? null : k; }   // (drawing in as the other charts do, 11-08)
   }
   const sum = B && bnSum(B);
   const lg = !B ? '<span>loading...</span>' : sum.tot ? bnLegend(sum) + (B.step > 1 ? '<span><em>game time</em>' + (sum.secs < 59.5 ? Math.round(sum.secs) + 's' : durTxt(sum.secs)) + '</span>' : '') : B.old ? '<span>The split per minute is kept from HW Deck 1.3.0 on: nothing here yet</span>' : '<span>no game in ' + bnSpan(bigRange) + '</span>';
@@ -5105,7 +5738,7 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
   const nTicks = yn ? 1 : Math.round((hi - lo) / step);
   for (let i = 0; i <= nTicks; i++) {
     const v = yn ? i : lo + i * step, y = Y(v);
-    ctx.strokeStyle = '#1e1e1e'; ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+    ctx.strokeStyle = gv('#1e1e1e'); ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
     ctx.fillStyle = '#666'; ctx.fillText(yn ? (v ? 'Yes' : 'No') : dec ? v.toFixed(Math.max(dec, stepDec)) : (step >= 1 ? Math.round(v).toLocaleString('en-US') : v.toFixed(stepDec)), padL - 6 * dpr, y);
   }
   const span = spanMs || HLEN * 1000;
@@ -5139,7 +5772,7 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
   // the window's average, dashed across, its value on the right
   if (!preview && !yn && vals.length && !gap) {   // (a window on a gap has no average: its stats say --, 11-07 audit)
     const av = typeof avOver === 'number' && isFinite(avOver) ? avOver : vals.reduce((p, q) => p + q, 0) / vals.length, ay = Y(av);
-    ctx.strokeStyle = '#474747'; ctx.setLineDash([5 * dpr, 5 * dpr]); ctx.lineWidth = dpr;
+    ctx.strokeStyle = gv('#474747'); ctx.setLineDash([5 * dpr, 5 * dpr]); ctx.lineWidth = dpr;
     ctx.beginPath(); ctx.moveTo(padL, ay); ctx.lineTo(w - padR, ay); ctx.stroke(); ctx.setLineDash([]);
     ctx.font = (11.5 * dpr) + 'px Segoe UI'; ctx.fillStyle = '#7c7c7c'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     const num = noNeg0(dec ? av.toFixed(dec) : Math.round(av).toLocaleString('en-US')), room = padR - 10 * dpr;
@@ -5217,7 +5850,7 @@ function drawCurveChart(cv, c, e) {
   const ax = niceAxis(Math.max(500, Math.max(...pts.map(p => p[1]), e.v || 0) * 1.12), 5), yMax = ax.max;
   const X = t => padL + (t - cr.min) / (cr.max - cr.min) * (w - padL - padR), Y = v => h - padB - v / yMax * (h - padT - padB);
   ctx.font = (11 * dpr) + 'px Segoe UI'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  for (let v = 0; v <= yMax + 1e-9; v += ax.step) { const y = Y(v); ctx.strokeStyle = '#1e1e1e'; ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke(); ctx.fillStyle = '#666'; ctx.fillText(v.toLocaleString('en-US'), padL - 6 * dpr, y); }
+  for (let v = 0; v <= yMax + 1e-9; v += ax.step) { const y = Y(v); ctx.strokeStyle = gv('#1e1e1e'); ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke(); ctx.fillStyle = '#666'; ctx.fillText(v.toLocaleString('en-US'), padL - 6 * dpr, y); }
   ctx.textBaseline = 'top'; ctx.fillStyle = '#666';
   for (let t = cr.min; t <= cr.max; t += cr.step) { ctx.textAlign = t === cr.min ? 'left' : t === cr.max ? 'right' : 'center'; ctx.fillText(t, X(t) + (t === cr.min ? 3 * dpr : 0), h - padB + 8 * dpr); }
   ctx.textAlign = 'center'; ctx.fillStyle = '#555'; ctx.fillText((src ? src.label : 'temperature') + ' ' + tempUnit(src), (padL + w - padR) / 2, h - padB + 22 * dpr);
@@ -5343,7 +5976,10 @@ document.addEventListener('pointerover', e => {
 document.addEventListener('pointerdown', prevOff, true);   // (a press opens its popup: the preview goes)
 document.documentElement.addEventListener('pointerleave', prevOff);
 window.addEventListener('blur', () => { HP.cid = null; hidePrev(); });
-function hidePrev() { HP.shown = false; hprev.classList.remove('on'); pauseSpin(hprev.querySelector('.pi svg')); }
+function hidePrev(now) {   // (now: a popup opens over it, gone at once, not fading over the card growing from its tile, 11-08)
+  HP.shown = false; const pv = hprev.querySelector('.pv'); if (pv) pv._cid = null;
+  if (now && hprev.classList.contains('on')) { hprev.style.transition = 'none'; hprev.classList.remove('on'); void hprev.offsetWidth; hprev.style.transition = ''; } else hprev.classList.remove('on');
+  pauseSpin(hprev.querySelector('.pi svg')); }
 function fillPrev() {
   const c = cellAt(HP.cid); if (!c) return false;
   const r = c.key ? BYKEY.get(c.key) : null, e = evalCell(HP.cid, c, true, true), dec = decOfCell(c, r), f = x => x == null || !isFinite(x) ? '--' : fmtV(x, dec, r);
@@ -5353,7 +5989,8 @@ function fillPrev() {
   setText(hprev.querySelector('.pt'), nameIn(HP.cid));
   const pv = hprev.querySelector('.pv'), vh = e.txt != null ? esc(e.txt) + '<small>' + esc(e.utxt) + '</small>' : esc(fmtV(e.v, dec, r)) + '<small>' + esc(c.pred ? 'RPM' : unitOf(r)) + '</small>';
   if (pv._h !== vh) { pv.innerHTML = vh; pv._h = vh; }
-  pv.style.color = e.col === 'past' ? '#a3a3a3' : COLORS[e.col] || COLORS.white;   // (past: the last game session, 2.1)
+  const pc = e.col === 'past' ? '#a3a3a3' : COLORS[e.col] || COLORS.white;   // (past: the last game session, 2.1)
+  if (pv._cid !== HP.cid) { pv.style.transition = 'none'; pv.style.color = pc; void pv.offsetWidth; pv.style.transition = ''; pv._cid = HP.cid; } else pv.style.color = pc;   // (fades as the tile's; another cell's comes in its own, 11-08)
   // the bottleneck shows its calls as a graph (GPU, CPU, capped) and each call's share instead of min / avg / max
   HP.e = e;
   hprev.querySelector('canvas').hidden = !!e.strip; hprev.querySelector('.pstrip').hidden = !e.strip;
@@ -5661,7 +6298,22 @@ function starterCheck() {
   enterNext = true; setEdit(false); subscribe(); syncSaves();
   toast('Starter: a layout built from this PC\'s sensors. The pencil, or E, edits it', false, 7000);
 }
-function starterSeen() { S.starterSeen = true; $('notice').classList.remove('show'); saveState(); estCheck(); }
+function starterSeen() { if ($('notice').classList.contains('swap')) return; S.starterSeen = true; saveState(); pileNext($('notice'), ((feed.estNote || 0) > 0 && !estGone) || notesDue().length > 0, estCheck); }
+// a card of the pile put away with another after it (the motion audit 11-08): its words fade and the next card's come up
+// in the same place, as the update cards swap theirs, no drop and rise of two cards crossing. The last one drops away
+// as before; Off: at once
+function pileNext(el, has, then) {
+  if (!has || motionMode() === 'off') { el.classList.remove('show'); then(); return; }
+  el.classList.add('swap');
+  setTimeout(() => {
+    const cs = [$('notice'), $('estNotice'), $('upn')];
+    for (const c of cs) c.style.transition = 'none';
+    el.classList.remove('show', 'swap'); then();
+    void el.offsetWidth; for (const c of cs) c.style.transition = '';
+    const nc = cs.find(c => c !== el && c.classList.contains('show'));
+    if (nc) for (const k of nc.children) k.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140 });
+  }, 140);
+}
 // sessions from before 2.0.1 this update worked out again (2.1, the host's Games.ReestimateFiles; feed.estNote: how
 // many): a note like Starter's, once, after Starter's if that one is up. Its X or Show sessions and it's gone for good
 // (the host forgets the count). A new install has nothing to change, so it never shows there
@@ -5674,7 +6326,7 @@ function estCheck() {
   el.classList.add('show'); notesCheck();
 }
 function estFill() { const n = feed.estNote || 0; setText($('estTxt'), 'HW Deck worked out the bottleneck of ' + n + (n === 1 ? ' game session' : ' game sessions') + ' from before 2.0.1 again. Back then a GPU that wasn\'t busy read as "FPS capped". Now only minutes whose fps held steady stay capped, and the rest count as CPU bound.'); }
-function estSeen() { estGone = true; $('estNotice').classList.remove('show'); send({ t: 'estSeen' }); notesCheck(); }
+function estSeen() { if ($('estNotice').classList.contains('swap')) return; estGone = true; send({ t: 'estSeen' }); pileNext($('estNotice'), notesDue().length > 0, notesCheck); }
 // ---- the update notes (2.4.2, his ask 11-07): a little card for each update since the version this install ran last,
 // all of them, stacked: the oldest on top, the rest peeking out behind it. Its X shows the next one, Dismiss all puts
 // them all away; the host keeps the version seen (notesSeen; a new install starts at its own, so none). After Starter's
@@ -5715,6 +6367,12 @@ const NOTES = [
     'Update notes sit in one pile, so the X stays in place.',
     'Settings > Updates: Check now looks for an update right away.',
     'Fixes to game sessions, charts, warnings and history.']],
+  ['2.4.4', '2.4.4', ['107 themes in ten colours, each with its own palette, and a new Look page: a live preview of your window, and your own saved looks.',
+    'Themes reach every window; Settings > Look > Popups draws them like the cells or like the view.',
+    'Game sessions: Compare has its own button beside Pick: click A, then B, swap them, compare. Back keeps them.',
+    'The chart in Game sessions and Warning history filters the list only with Filter list on.',
+    'Edit mode: in your accent colour, arrows on Width and Height, nothing moves as it turns on, and undo brings back exactly what was there.',
+    'A reading HWiNFO isn\'t sharing right now just says so; Re-link shows only when it is really gone.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
@@ -5758,6 +6416,7 @@ function notesSeen(v, next) {
   feed.notesSeen = v; send({ t: 'notesSeen', v });
   const el = $('upn');
   if (!next || !notesDue().length) { el.classList.remove('show'); upLock(); return; }
+  if (motionMode() === 'off') { notesDraw(notesDue()); upLock(); return; }   // (Off: the next card at once, not an empty one for 140 ms, 11-08)
   el.classList.add('swap'); upLock();
   setTimeout(() => { const due = notesDue(); if (due.length) notesDraw(due); else el.classList.remove('show'); el.classList.remove('swap'); upLock(); }, 140);
 }
@@ -5804,9 +6463,11 @@ function fmtDur(ms) { const s = Math.max(0, Math.round(ms / 1000)); if (s < 60) 
 // bar a day and each cell's share; under it a header per day and a block per row (a cell's crossings close together)
 // that opens to each crossing and, when the page can get it, the reading around them with its lines. While the bar is
 // open the list shows its period and cell; shut, all of the days kept ----
+const fltSw = k => '<span class="gx-flt">Filter list<button class="tog2' + (S.listFilt[k] ? ' on' : '') + '" data-flt="' + k + '" aria-pressed="' + S.listFilt[k] + '" aria-label="Filter list"></button></span>';   // (the chart's window filters the list under it: his switch, off by default, 11-09)
+const fltBack = (m, had) => { const n = m.querySelector('[data-flt]'); if (!n) return; if (motionMode() !== 'off') { const on = n.classList.contains('on'); n.classList.toggle('on', !on); void n.offsetWidth; n.classList.toggle('on', on); } if (had) n.focus({ preventScroll: true }); };   // (drawn again with its header: it slides from where it was, and keeps the focus a key gave it, 11-09)
 const WX = { open: false, period: 7, cell: null, menu: false, slide: null, ws: 0, we: 0 };   // (slide: a pick's direction, -1 / 1, while it is drawn; ws, we: the window's time)
 // (its window: the summary drawn again at once, the list under it once the window rests)
-WX.W = mkWin({ min: () => Math.min(1, 3 / Math.max(1, WX.wn || 1)), draw: () => { if (!WX.open) return; wxSum(); clearTimeout(WX.lt); WX.lt = setTimeout(() => { wShow = 300; wxList(); }, 250); } });
+WX.W = mkWin({ min: () => Math.min(1, 3 / Math.max(1, WX.wn || 1)), draw: () => { if (!WX.open) return; wxSum(); if (!S.listFilt.w) return; clearTimeout(WX.lt); WX.lt = setTimeout(() => { if (WX.ws + '|' + WX.we === WX.lk) return; wShow = 300; wxList(); }, 250); } });   // (the list follows the window only with Filter list on, 11-09)   // (a press that moved nothing: the list stays, 11-08)
 let wxEps = [];   // the crossings of the days kept, oldest first
 const wxWait = new Map();   // a row's chart waiting for the host's history: key|range, the charts
 // the log read into crossings, oldest first; each keeps its own lines (its start, red, peaks, back to normal) so a move
@@ -5883,7 +6544,7 @@ function wxFrom() {
   return P === 'all' ? gxMid(f0.getFullYear(), f0.getMonth(), f0.getDate()) : gxMid(td.getFullYear(), td.getMonth(), td.getDate() - (P - 1));
 }
 // the crossings the list shows: the open bar's period and cell, or all of them
-function wxShown() { if (!WX.open) return wxEps; const a = WX.ws ? WX.ws * 1000 : wxFrom() * 1000, b = WX.we ? WX.we * 1000 : Infinity; return wxEps.filter(ep => ep.when.getTime() >= a && ep.when.getTime() < b && (!WX.cell || ep.name === WX.cell)); }
+function wxShown() { if (!WX.open) return wxEps; if (!S.listFilt.w) return WX.cell ? wxEps.filter(ep => ep.name === WX.cell) : wxEps; const a = WX.ws ? WX.ws * 1000 : wxFrom() * 1000, b = WX.we ? WX.we * 1000 : Infinity; return wxEps.filter(ep => ep.when.getTime() >= a && ep.when.getTime() < b && (!WX.cell || ep.name === WX.cell)); }
 // the cells in the cell list's order: all of them first, then the ones that warned most (a pick's side goes by it)
 function wxCellOrder() { const n = Object.create(null); for (const ep of wxEps) n[ep.name] = (n[ep.name] || 0) + 1; return [null].concat(Object.keys(n).sort((p, q) => n[q] - n[p])); }
 // the week's numbers and strip (wsum), or the bar opened
@@ -5926,7 +6587,8 @@ function wxSum(live) {
     }
     if (bd._h !== o.body) {
       const h0 = slide ? det.offsetHeight : 0;
-      bd.innerHTML = o.body; bd._h = o.body;
+      if (slide) bd.innerHTML = o.body; else sumPatch(bd, o.body, box.classList.contains('open') && motionMode() !== 'off' && (!live || motionOn()));   // (as Sessions' bar, 11-08)
+      bd._h = o.body;
       if (slide) {
         const e = 'cubic-bezier(0.2, 0.8, 0.2, 1)', h1 = det.offsetHeight;
         bd.animate([{ transform: 'translateX(' + (slide * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: e });
@@ -5958,7 +6620,7 @@ function wxSumOpen() {
     menu = '<div class="smenu gx-menu"><button data-cell=""' + (WX.cell ? ' aria-pressed="false"' : ' class="on" aria-pressed="true"') + '>All cells<small>' + plural(cl.length, 'cell') + '</small></button><div class="gx-msep"></div>' +
       cl.map(k => '<button data-cell="' + esc(k) + '"' + (k === WX.cell ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"') + '>' + esc(k) + '<small>' + plural(n[k], 'time') + '</small></button>').join('') + '</div>';
   }
-  const head = perSlider(ps, WX.period) +
+  const head = perSlider(ps, WX.period) + fltSw('w') +
     '<span class="gx-ddw"><button class="gx-dd' + (WX.menu ? ' on' : '') + '" title="Show one cell" aria-haspopup="true" aria-expanded="' + !!WX.menu + '">' + (WX.cell ? esc(WX.cell) : 'All cells') + GX_CHEV + '</button>' + menu + '</span>';   // (as Sessions', 11-07)
   // the chart: crossings a day (a week past 120 days), yellow under red, the count on the left, the average on the right
   const keyAt = {}, days = [];
@@ -5967,12 +6629,12 @@ function wxSumOpen() {
   let pts = days.map(o => Object.assign({ w: 0 }, o));
   if (nd > 120) { pts = []; for (let i = 0; i < nd; i += 7) { const wk = days.slice(i, i + 7); pts.push({ d: wk[0].d, w: wk.length, y: wk.reduce((p, o) => p + o.y, 0), r: wk.reduce((p, o) => p + o.r, 0) }); } }
   const n = pts.length, j0 = Math.max(0, Math.floor(wa * n + 1e-9)), j1 = Math.min(n - 1, Math.ceil(wb * n - 1e-9) - 1), vis = pts.slice(j0, j1 + 1), nv = vis.length;
-  const H = 120, mx = Math.max(...vis.map(o => o.y + o.r)), ymax = Math.max(2, Math.ceil(mx / 2) * 2), Y = v => +(H - v / ymax * H).toFixed(1), X = i => +(((i + 0.5) / n - wa) / (wb - wa) * 100).toFixed(3);
+  const H = 120, mx = Math.max(...vis.map(o => o.y + o.r)), ymT = Math.max(2, Math.ceil(mx / 2) * 2), ymax = sumYm(WX, WX.wkey, ymT, () => { if (WX.open) wxSum(true); }), Y = v => +(H - v / ymax * H).toFixed(1), X = i => +(((i + 0.5) / n - wa) / (wb - wa) * 100).toFixed(3);
   const avg = vis.reduce((p, o) => p + o.y + o.r, 0) / Math.max(1, nv);
   const lab = o => o.w ? 'week of ' + o.d.getDate() + ' ' + GX_MON[o.d.getMonth()] : GX_WD[o.d.getDay()] + ' ' + o.d.getDate() + ' ' + GX_MON[o.d.getMonth()];
   const bars = pts.map(o => { const t = o.y + o.r; return '<div class="wx-b' + (t ? '' : ' z') + '"' + (t ? ' style="height:' + (t / ymax * 100).toFixed(2) + '%"' : '') + ' title="' + lab(o) + ': ' + (t ? [o.y ? o.y + ' yellow' : '', o.r ? o.r + ' red' : ''].filter(Boolean).join(', ') : 'nothing') + '">' +
     (o.y ? '<b style="flex:' + o.y + '"></b>' : '') + (o.r ? '<b class="r" style="flex:' + o.r + '"></b>' : '') + '</div>'; }).join('');
-  let h = '<div class="gx-lc"><div class="gx-lcg"><div class="gx-lcy" style="height:' + H + 'px">' + [0, ymax / 2, ymax].map(v => '<span style="top:' + Y(v) + 'px">' + v + '</span>').join('') + '</div>' +
+  let h = '<div class="gx-lc"><div class="gx-lcg"><div class="gx-lcy" style="height:' + H + 'px">' + [0, ymT / 2, ymT].map((v, i) => '<span style="top:' + (H - i * H / 2) + 'px">' + v + '</span>').join('') + '</div>' +
     '<div class="wx-plot" style="height:' + H + 'px"><div class="wx-clip"><div class="wx-bars" style="--n:' + n + ';width:' + (100 / (wb - wa)).toFixed(3) + '%;left:' + (-wa / (wb - wa) * 100).toFixed(3) + '%">' + bars + '</div></div>' +
     (avg ? '<i class="wx-av" style="top:' + Y(avg) + 'px"></i><span class="gx-lca" style="top:' + Y(avg) + 'px">avg ' + (Math.round(avg * 10) / 10) + (nd > 120 ? '/wk' : '') + '</span>' : '') + '</div><span></span></div>';
   const end = wb > 0.999 && nv > 7 && !pts[n - 1].w, xl = (o, i) => nv <= 7 ? GX_WD[o.d.getDay()].slice(0, 3) : o.w ? (o.d.getDate() <= 7 && (!end || i < j1 - 1) ? GX_MON[o.d.getMonth()] : '') : (o.d.getDay() === 1 && (!end || i < j1 - 3) ? o.d.getDate() + ' ' + GX_MON[o.d.getMonth()] : '');
@@ -5981,10 +6643,10 @@ function wxSumOpen() {
   // each cell's part of the window, most first: its crossings, the red ones, its worst, its last
   const per = Object.create(null);
   for (const ep of inP) { const o = per[ep.name] || (per[ep.name] = { eps: [], r: 0, last: ep.when }); o.eps.push(ep); if (ep.level === 'RED') o.r++; if (ep.when > o.last) o.last = ep.when; }
-  const names = Object.keys(per).sort((p, q) => per[q].eps.length - per[p].eps.length), sum = inP.length || 1;
+  const names = sumHold(WX, Object.keys(per).sort((p, q) => per[q].eps.length - per[p].eps.length)), sum = inP.length || 1;
   const ago = d => { const k = Math.round((gxMid(td.getFullYear(), td.getMonth(), td.getDate()) - gxMid(d.getFullYear(), d.getMonth(), d.getDate())) / 86400); return k <= 0 ? 'today' : k === 1 ? 'yesterday' : k + ' days ago'; };
   if (names.length) h += '<div class="gx-gtab"><div class="gx-gh"><span>cell</span><span>share of the warnings</span><span class="gx-r">times</span><span class="gx-r">red</span><span class="gx-r">worst</span><span class="gx-r">last</span></div>' +
-    names.map(k => { const o = per[k], pk = wxWorst(o.eps); return '<div class="gx-gr' + (k === WX.cell ? ' on' : '') + '" data-cell="' + esc(k) + '" role="button" tabindex="-1" aria-pressed="' + (k === WX.cell) + '"><span class="gx-gnm">' + esc(k) + '</span><span class="gx-gbar"><span style="width:' + (o.eps.length / sum * 100).toFixed(1) + '%"></span></span>' +
+    names.map(k => { const o = per[k], pk = wxWorst(o.eps); return '<div class="gx-gr' + (k === WX.cell ? ' on' : '') + '" data-cell="' + esc(k) + '" role="button" tabindex="-1" aria-pressed="' + (k === WX.cell) + '"><span class="gx-gnm">' + esc(k) + '</span><span class="gx-gbar"><span style="width:' + (o.eps.length / sum * 100).toFixed(1) + '%' + wxBarTint(k) + '"></span></span>' +
       '<span class="gx-r">' + o.eps.length + '</span><span class="gx-r">' + (o.r || '--') + '</span><span class="gx-r">' + (pk ? esc(wYN(pk.v + ' ' + pk.u)) : '--') + '</span><span class="gx-r gx-ago">' + ago(o.last) + '</span></div>'; }).join('') + '</div>';
   return { head, body: h };
 }
@@ -5997,15 +6659,17 @@ function wxSet(o) {
     WX.slide = WX.period !== p0 ? Math.sign(ps.indexOf(WX.period) - ps.indexOf(p0)) || 1 : WX.cell !== c0 ? Math.sign(order.indexOf(WX.cell) - order.indexOf(c0)) || 1 : null;
   }
   try {
-    wxSum();
-    if (WX.open !== was || WX.cell !== c0 || (WX.open && WX.period !== p0)) {
+    flipHold++; wxSum();
+    if (S.listFilt.w ? WX.open !== was || WX.cell !== c0 || (WX.open && WX.period !== p0) : WX.cell !== c0) {   // (Filter list off: only a cell picked changes the list)
       wShow = 300; wxList();
       if (WX.slide && motionMode() !== 'off') $('wlist').animate([{ transform: 'translateX(' + (WX.slide * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+      else if (WX.open !== was && motionMode() !== 'off') $('wlist').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: SUM_E });   // (the bar opened or shut: the list fades to what it shows now, 11-08)
     }
-  } finally { WX.slide = null; }
+  } finally { flipHold--; WX.slide = null; }
 }
 // the list drawn again from the crossings shown (rows that were open stay open)
 function wxList() {
+  WX.lk = WX.ws + '|' + WX.we;
   const keep = new Set([...$('wlist').querySelectorAll('.gx-sess.open')].map(el => el.dataset.k));
   wGroups = wxGroups(wxShown()).reverse();   // (newest first)
   drawWarnList(keep);
@@ -6071,20 +6735,24 @@ function drawWarnList(keep) {
   let hh = '', lastDay = null;
   wGroups.slice(0, wShow).forEach((g, gi) => { if (g.day !== lastDay) { lastDay = g.day; hh += wxDayHd(g.day, byDay[g.day], today, yest); } hh += wxRow(g, gi); });
   if (wGroups.length > wShow) hh += '<button class="linkbtn wmore" id="wMore">Show ' + plural(wGroups.length - wShow, 'older row') + '</button>';
-  for (const k in WXC) delete WXC[k];   // (the charts of the list it replaces: they stayed for the whole run, 11-06)
-  const list = $('wlist'), nd = WX.open ? (WX.period === 'all' ? 0 : WX.period) : wEmptyN, win = WX.open && !WX.W.whole() && WX.we > WX.ws;   // (a window of the period: its dates, B)
+  // (an open row's chart goes with it into the new list, 11-08: no lost chart, no jump, no second ask)
+  const carry = new Map(); for (const el of $('wlist').querySelectorAll('.gx-sess.open')) { const c = el.querySelector('.wx-ch'); if (c && keep && keep.has(el.dataset.k) && c.querySelector('.wx-tl')) carry.set(el.dataset.k, c); }
+  const kept = new Set([...carry.values()].map(c => String(c._wx)));
+  for (const k in WXC) if (!kept.has(k)) delete WXC[k];   // (the charts of the list it replaces: they stayed for the whole run, 11-06)
+  const lf = WX.open && S.listFilt.w, list = $('wlist'), nd = lf ? (WX.period === 'all' ? 0 : WX.period) : wEmptyN, win = lf && !WX.W.whole() && WX.we > WX.ws;   // (a window of the period: its dates, B)
+  const fl = listTops(list);
   list.innerHTML = hh ? '<div class="gx-cols"><span></span><span>warning</span><span class="gx-r">peak</span><span class="gx-r">lasted</span><span class="gx-r">times</span><span>its lines</span><span class="gx-r">level</span></div>' + hh
                       : '<div class="wempty ico chk">Nothing crossed a line' + (win ? ' from ' + dMon(new Date(WX.ws * 1000)) + ' to ' + dMon(new Date(WX.we * 1000 - 1)) : nd ? ' in the last ' + nd + ' days' : '') + (WX.open && WX.cell ? ' for ' + esc(WX.cell) : '') + '. Quiet machine.</div>';
   if (keep && keep.size) {   // (drawn again: what was open stays open, at once)
     list.classList.add('still');
-    for (const el of list.querySelectorAll('.gx-sess')) if (keep.has(el.dataset.k)) { wxFill(el, wGroups[+el.dataset.g]); el.classList.add('open'); const rw = el.querySelector('.gx-row'); if (rw) rw.setAttribute('aria-expanded', 'true'); }
+    for (const el of list.querySelectorAll('.gx-sess')) if (keep.has(el.dataset.k)) { wxFill(el, wGroups[+el.dataset.g], carry.get(el.dataset.k)); el.classList.add('open'); const rw = el.querySelector('.gx-row'); if (rw) rw.setAttribute('aria-expanded', 'true'); }
     void list.offsetHeight; list.classList.remove('still');
   }
-  pkMark('w');
+  listGlide(list, fl); pkMark('w');
 }
 // what opens under a row: the reading around it (when its cell is in the view and the history reaches that far), then
 // each crossing: when, its level, what it crossed at, how long, how it ended, its peak
-function wxFill(el, g) {
+function wxFill(el, g, old) {
   if (!el || !g || el._f) return; el._f = true;
   const w = wxCell(g.name), c = w && !w.pins ? S.L.cells[w.cid] : null;
   const how = ep => ep.interrupted ? (/^HWiNFO/.test(ep.cut || '') ? 'HWiNFO stopped sharing' : /^PC going to sleep/.test(ep.cut || '') ? 'PC went to sleep' : 'ended with the app') : ep.end ? 'back to normal' : 'ongoing';
@@ -6093,8 +6761,18 @@ function wxFill(el, g) {
     const o = [ep.end ? fmtDur(ep.end - ep.when) : '', how(ep), ep.peak ? 'peak ' + wYN(ep.peak) : ''].filter(Boolean).join(', ');
     return '<div class="wx-ep"><span class="t">' + ep.time + '</span><span class="wx-lv' + (red ? ' r' : '') + '"><i></i>' + (red ? 'red' : 'yellow') + '</span><span class="v">' + (at ? 'at ' + esc(wYN(at)) : '') + '</span><span class="o">' + esc(o) + '</span></div>';
   }).join('');
-  el.querySelector('.gx-in').innerHTML = (c && c.key && host ? '<div class="wx-ch"></div>' : '') + '<div class="wx-eps">' + rows + '</div>';
-  const ch = el.querySelector('.wx-ch'); if (ch) wxAsk(ch, g, w);
+  el.querySelector('.gx-in').innerHTML = (c && c.key && host ? '<div class="wx-ch ld"></div>' : '') + '<div class="wx-eps">' + rows + '</div>';
+  const ch = el.querySelector('.wx-ch'); if (ch) { if (old) ch.replaceWith(old); else wxAsk(ch, g, w); }
+}
+// (the chart in: from the room held for it to its own height, eased; no chart after all: it folds away, 11-08)
+function wxChEase(ch, h0) {
+  const h1 = ch.offsetHeight; if (motionMode() === 'off' || !ch.offsetParent || Math.abs(h1 - h0) < 1) return;
+  ch.style.overflow = 'hidden'; ch.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: 300, easing: SUM_E }).onfinish = () => { ch.style.overflow = ''; };
+}
+function wxChGone(ch) {
+  if (motionMode() === 'off' || !ch.offsetParent) { ch.remove(); return; }
+  const cs = getComputedStyle(ch); ch.style.overflow = 'hidden';
+  ch.animate([{ height: cs.height, minHeight: cs.minHeight, marginTop: cs.marginTop, marginBottom: cs.marginBottom, opacity: 1 }, { height: '0px', minHeight: '0px', marginTop: '0px', marginBottom: '0px', opacity: 0 }], { duration: 260, easing: SUM_E }).onfinish = () => ch.remove();
 }
 // its history from the host: the smallest range that reaches back to it (1 h, 6 h, 12 h, 24 h of minutes, 7 days of 10
 // minutes); older than that, no chart
@@ -6127,11 +6805,11 @@ function wxTake(m) {
 const WXC = {}; let wxN = 0, wxHz = null;
 function wxChart(o, m) {
   const { ch, g, w, a, b } = o, c = S.L.cells[w.cid];
-  if (!c || !Array.isArray(m.avg) || !Array.isArray(m.max)) { ch.remove(); return; }
+  if (!c || !Array.isArray(m.avg) || !Array.isArray(m.max)) { wxChGone(ch); return; }
   const r = BYKEY.get(c.key), under = g.eps.some(ep => /\(under its line\)/.test(ep.detail)), src = under ? m.avg : m.max, n = src.length, t0 = m.end - (n - 1) * m.step;
   const pts = [];
   for (let i = 0; i < n; i++) { const t = t0 + i * m.step; if (t + m.step <= a || t > b) continue; const v = src[i]; pts.push([t, v == null || !isFinite(v) ? null : +v]); }
-  const vs = pts.filter(p => p[1] !== null); if (vs.length < 2) { ch.remove(); return; }
+  const vs = pts.filter(p => p[1] !== null); if (vs.length < 2) { wxChGone(ch); return; }
   const gl = w.curve || !gatesOn(c.gates) ? {} : gateLines(c.gates), lines = [], side = (y, rr) => { if (y !== undefined) lines.push([y, 'y']); if (rr !== undefined) lines.push([rr, 'r']); };
   if (gl.below === under) side(gl.y, gl.r); else side(gl.y2, gl.r2);
   const k = gbK(r), dec = decOfCell(c, r), u = unitOf(r), val = x => lnTxt(x * k, dec, r, under) + (u ? ' ' + u : ''), name = cellName(c);
@@ -6157,7 +6835,7 @@ function wxChart(o, m) {
   let tk = '<span class="e0">' + hhmm(A) + '</span>';
   for (let t = Math.ceil((A - tz) / 60 / every) * every * 60 + tz; t < B; t += every * 60) { const pc = (t - A) / (B - A) * 100; if (pc > 9 && pc < 91 && hhmm(t) !== hhmm(B)) tk += '<span style="left:' + pc.toFixed(2) + '%">' + hhmm(t) + '</span>'; }
   tk += '<span class="e1">' + hhmm(B) + '</span>';
-  const id = ch._wx || (ch._wx = ++wxN);
+  const h0 = ch.offsetHeight, id = ch._wx || (ch._wx = ++wxN);
   WXC[id] = { pts, step: m.step, lo, top, lines, under, val, name, yn: isYN(r) };
   const fc = cellTint(w.cid);
   ch.innerHTML = '<div class="gx-tl wx-tl" data-w="' + id + '"' + (fc ? ' style="--fc:' + fc + '"' : '') + '><div class="gx-ch">' + esc(name) + '<span>' + (m.step === 600 ? '10-minute' : '1-minute') + (under ? ' averages' : ' peaks') + ', the time over its lines shaded</span></div>' +
@@ -6165,6 +6843,7 @@ function wxChart(o, m) {
     '<div class="gx-tr"><span></span><span class="gx-ticks">' + tk + '</span><span></span></div>' +
     '<div class="gx-tr"><span></span><span class="gx-leg"><span><b class="ln fp"></b>' + esc(name) + '</span>' + lines.map(([v, l]) => '<span><b class="wl ' + l + '"></b>' + (l === 'r' ? 'red' : 'yellow') + ' <i>' + esc(val(v)) + '</i></span>').join('') +
     (sh ? '<span><b class="wsh"></b>over the line</span>' : '') + '</span><span></span></div></div>';
+  ch.classList.remove('ld'); wxChEase(ch, h0);
 }
 // the hover read-out: the minute under the pointer, its guide and dot, its value and whether it was past a line
 function wxHover(hz, e) {
@@ -6199,6 +6878,7 @@ $('wsum').addEventListener('click', e => {
   // (its row opens and shuts it, like a session's; what opened under it stays open under clicks)
   if (t.closest('.gx-srow')) { if (!pk) wxSet({ open: !WX.open }); return; }
   const mb = t.closest('.gx-menu button'); if (mb) { wxSet({ cell: mb.dataset.cell || null, menu: false }); return; }
+  if (t.closest('[data-flt]')) { const had = document.activeElement === t.closest('[data-flt]'); S.listFilt.w = !S.listFilt.w; saveState(); wxSum(); wShow = 300; wxList(); fltBack(wmodal, had); if (motionMode() !== 'off') $('wlist').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: SUM_E }); return; }
   if (t.closest('.gx-dd')) { wxSet({ menu: !WX.menu }); return; }
   const pb = t.closest('.gx-per button'); if (pb) { if (perPick(pb.dataset.p) === WX.period && !WX.W.whole()) WX.W.set(0, 1, true); else wxSet({ period: perPick(pb.dataset.p), menu: false }); return; }   // (the period again: all of it)
   const gr = t.closest('.gx-gr'); if (gr && !pk) { wxSet({ cell: WX.cell === gr.dataset.cell ? null : gr.dataset.cell, menu: false }); return; }
@@ -6226,7 +6906,12 @@ $('wlist').addEventListener('click', e => {
 // Cancel, Move to the bin. The bin icon shows what Delete, Keep or a move set aside, the same rows each with its
 // box: pick all, Back, Restore. A move is the rows' exact lines between the log and its bin; undo takes it back ----
 const PK = { g: { mode: null, pick: new Set(), bin: [] }, w: { mode: null, pick: new Set(), bin: [] } };
-const pkEls = k => k === 'g' ? { modal: $('gmodal'), list: $('glist'), bar: $('gbar'), sel: $('gselBtn'), bin: $('gbinBtn') } : { modal: wmodal, list: $('wlist'), bar: $('wbar'), sel: $('wselBtn'), bin: $('wbinBtn') };
+const pkEls = k => k === 'g' ? { modal: $('gmodal'), list: $('glist'), bar: PK.g.mode === 'cmp' ? $('gcbar') : $('gbar'), sel: $('gselBtn'), bin: $('gbinBtn') } : { modal: wmodal, list: $('wlist'), bar: $('wbar'), sel: $('wselBtn'), bin: $('wbinBtn') };   // (Compare: a bar of its own, 11-09)
+// Compare (his 11-09 "it should use the select feature somehow, just not share the same thing"): a mode of its own
+// beside Pick, Pick's squares on the rows; the first one clicked is A, the next B (a click on A or B again lets it go,
+// another one with both set takes B's place); its own bar: A, the swap, B, Cancel, Compare. Back from the comparison
+// comes back to it with A and B kept
+const CQ = { a: null, b: null };   // (gxKey of A and of B)
 let wbText = '', wbShow = 300;   // (the warnings' bin: its text, how many rows drawn)
 // (a row that can be picked: a session in the log, not the one in progress; a warning that ended; in the bin, one within
 // the days you keep: an older one, back in the log, would be set aside again at once and not shown)
@@ -6241,37 +6926,46 @@ const pkWhat = (k, n) => k === 'g' ? plural(n, 'session') : plural(n, 'row');
 // (to the bin and back, 11-02, the motion audit: it blinked. The list stays until the bin's rows come, "loading..." only
 // if they take a while, then they slide in from the right; Back slides the log in from the left, as a period picked
 // does. Only on the switch: never on Show older rows or a list drawn again)
-const pkSlide = (k, dir) => { if (motionMode() !== 'off') pkEls(k).list.animate([{ transform: 'translateX(' + (dir * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }); };
+const pkSlide = (k, dir, sum) => {   // (sum: the bar above it (and REC) come back with it, in the same move, 11-08)
+  if (motionMode() === 'off') return;
+  const kf = [{ transform: 'translateX(' + (dir * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], o = { duration: 380, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' };
+  pkEls(k).list.animate(kf, o);
+  if (sum) for (const id of k === 'g' ? ['gsum', 'grun'] : ['wsum']) { const s = $(id); if (s && s.offsetParent) s.animate(kf, o); }
+};
 // (the bin's rows came: whether the list was waiting for them, the switch's one slide)
 const pkArrived = k => { const P = PK[k], w = !!P.wait; clearTimeout(P.waitT); P.wait = false; pkEls(k).list.classList.remove('pkwait'); return w; };
 function pkMode(k, mode, quiet) {
   if (k === 'g' && gxCmp && mode) { gxCmp = null; gmodal.classList.remove('cmp'); if (mode !== 'bin') renderGames(gxText); }   // (picking or the bin: the comparison ends, 11-06)
   const P = PK[k], E = pkEls(k), was = P.mode;
   P.mode = mode; P.pick.clear(); pkArrived(k);
-  E.modal.classList.toggle('binning', mode === 'bin');
-  E.sel.classList.toggle('on', mode === 'sel'); E.bin.classList.toggle('on', mode === 'bin'); E.sel.setAttribute('aria-pressed', mode === 'sel'); E.bin.setAttribute('aria-pressed', mode === 'bin');
+  if (k === 'g' && (was === 'cmp') !== (mode === 'cmp')) { const o = E.bar; o._h = null; pkSink(o, () => pkEls('g').bar !== o || !PK.g.mode || PK.g.wait); }   // (Pick's bar and Compare's: the one it leaves sinks, 11-09)
+  E.modal.classList.toggle('binning', mode === 'bin' && (quiet || was === 'bin'));   // (into the bin: the bar goes when its rows come, gbRender / wbRender, 11-08)
+  E.modal.classList.toggle('pking', !!mode); E.sel.classList.toggle('on', mode === 'sel'); E.bin.classList.toggle('on', mode === 'bin'); E.sel.setAttribute('aria-pressed', mode === 'sel'); E.bin.setAttribute('aria-pressed', mode === 'bin');
+  if (k === 'g') { const c = $('gcmpBtn'); c.classList.toggle('on', mode === 'cmp'); c.setAttribute('aria-pressed', mode === 'cmp'); }
   if (!quiet) {
     if (mode === 'bin') {
       if (k === 'w') wbShow = 300;
       // (the old rows stay, out of reach, until the bin's come)
-      P.wait = true; E.list.classList.add('pkwait'); for (const el of E.list.querySelectorAll('.gx-sess.pk')) el.classList.remove('pk');
-      E.bar.hidden = true; E.bar._h = null;   // (its buttons too: they would act on the bin's rows before they are here; it rises in with them)
+      P.wait = true; E.list.classList.add('pkwait'); for (const el of E.list.querySelectorAll('.gx-sess.pk, .gx-sess.cqa, .gx-sess.cqb')) el.classList.remove('pk', 'cqa', 'cqb'); E.list.classList.remove('cqmode');   // (from Compare too: its A and B go with it)
+      { const o = E.bar; pkSink(o, () => pkEls(k).bar !== o || !PK[k].mode || PK[k].wait); } E.bar._h = null;   // (judged by the mode as it is when it has sunk: a quick second switch left it up, 11-09)   // (its buttons too: they would act on the bin's rows before they are here; it rises in with them)
       P.waitT = setTimeout(() => { if (P.wait) E.list.innerHTML = '<div class="wempty">loading...</div>'; }, 150);
       send({ t: k === 'g' ? 'games:bin' : 'alerts:bin' });
     }
-    else if (was === 'bin') { if (k === 'g') renderGames(gxText); else renderWarnings(wxText); pkSlide(k, -1); }   // (back: the list as it is now)
+    else if (was === 'bin') { flipHold++; try { if (k === 'g') renderGames(gxText); else renderWarnings(wxText); } finally { flipHold--; } pkSlide(k, -1, true); }   // (back: the list as it is now)
   }
   if (!P.wait) { pkMark(k); pkBar(k); }   // (waiting: the bin's rows mark them)
 }
 function pkMark(k) {
-  const P = PK[k], E = pkEls(k); E.list.classList.toggle('picking', !!P.mode);
-  if (!P.mode) { for (const el of E.list.querySelectorAll('.gx-sess.pk, .gx-sess.nopk, .gx-sess[aria-checked]')) { el.classList.remove('pk', 'nopk'); delete el.dataset.tip; el.removeAttribute('role'); el.removeAttribute('aria-checked'); el.removeAttribute('aria-disabled'); } return; }
+  const P = PK[k], E = pkEls(k), cq = P.mode === 'cmp'; E.list.classList.toggle('picking', !!P.mode); E.list.classList.toggle('cqmode', cq);
+  if (!P.mode) { for (const el of E.list.querySelectorAll('.gx-sess.pk, .gx-sess.nopk, .gx-sess.cqa, .gx-sess.cqb, .gx-sess[aria-checked]')) { el.classList.remove('pk', 'nopk', 'cqa', 'cqb'); delete el.dataset.tip; el.removeAttribute('role'); el.removeAttribute('aria-checked'); el.removeAttribute('aria-disabled'); } return; }
   // (picks the list no longer shows go: a period or a game picked meanwhile, a session renamed; the bar follows)
   const ok = new Set(pkItems(k).map(x => pkKey(k, x))); for (const key of [...P.pick]) if (!ok.has(key)) P.pick.delete(key);
+  if (cq) { const okG = new Set(pkItems(k).map(gxKey)); for (const s of ['a', 'b']) if (CQ[s] && !okG.has(CQ[s])) CQ[s] = null; }   // (A or B gone from the list: its slot empties)
   const old = P.mode === 'bin' ? 'Older than the ' + (k === 'g' ? feed.gameDays : feed.warnDays) + ' days you keep: keep more days to bring it back' : null;
   for (const el of E.list.querySelectorAll('.gx-sess')) {
-    const x = pkItemOf(k, el), can = pkCan(k, x); el.classList.toggle('nopk', !can); el.classList.toggle('pk', can && P.pick.has(pkKey(k, x)));
-    el.setAttribute('role', 'checkbox'); el.setAttribute('aria-checked', can && P.pick.has(pkKey(k, x))); if (can) el.removeAttribute('aria-disabled'); else el.setAttribute('aria-disabled', 'true');   // (11-06)
+    const x = pkItemOf(k, el), can = pkCan(k, x), ab = cq && can ? (gxKey(x) === CQ.a ? 'a' : gxKey(x) === CQ.b ? 'b' : '') : '', on = cq ? !!ab : can && P.pick.has(pkKey(k, x));
+    el.classList.toggle('nopk', !can); el.classList.toggle('pk', !cq && on); el.classList.toggle('cqa', ab === 'a'); el.classList.toggle('cqb', ab === 'b');
+    el.setAttribute('role', 'checkbox'); el.setAttribute('aria-checked', on); if (can) el.removeAttribute('aria-disabled'); else el.setAttribute('aria-disabled', 'true');   // (11-06)
     if (old && x && !can) el.dataset.tip = old; else if (el.dataset.tip) delete el.dataset.tip;
   }
   pkBar(k);
@@ -6279,19 +6973,37 @@ function pkMark(k) {
 function pkToggle(k, el) {
   const x = pkItemOf(k, el); if (!pkCan(k, x)) return;   // (the session in progress, a warning going on, a bin row too old: they stay)
   const P = PK[k], key = pkKey(k, x);
+  if (P.mode === 'cmp') { const g = gxKey(x); if (CQ.a === g) CQ.a = null; else if (CQ.b === g) CQ.b = null; else if (!CQ.a) CQ.a = g; else CQ.b = g; pkMark(k); return; }   // (A first, then B; with both, B's place)
   if (P.pick.has(key)) P.pick.delete(key); else P.pick.add(key);
   el.classList.toggle('pk', P.pick.has(key)); el.setAttribute('aria-checked', P.pick.has(key)); pkBar(k);
 }
+// (the selection bar sinks out as it rose in, 11-08: out of reach at once, then hidden unless it was asked back)
+function pkSink(bar, still) {
+  if (bar.hidden || bar._out) return;
+  if (motionMode() === 'off' || !bar.offsetParent) { bar.hidden = true; return; }
+  bar._out = true; bar.style.pointerEvents = 'none';
+  bar.animate([{ opacity: 1, translate: '0 0' }, { opacity: 0, translate: '0 8px' }], { duration: 150, easing: 'cubic-bezier(0.4, 0, 1, 1)' }).onfinish = () => { if (!bar._out) return; bar._out = false; bar.style.pointerEvents = ''; if (still()) bar.hidden = true; };
+}
 function pkBar(k) {
   const P = PK[k], E = pkEls(k), n = P.pick.size, all = pkItems(k).length, bin = P.mode === 'bin', tot = bin ? pkAll(k).length : all;
-  const shown = !E.bar.hidden; E.bar.hidden = !P.mode; if (!P.mode) { E.bar._h = null; return; }
+  const shown = !E.bar.hidden && !E.bar._out;
+  if (!P.mode) { E.bar._h = null; pkSink(E.bar, () => !PK[k].mode); return; }
+  if (E.bar._out) { E.bar._out = false; E.bar.style.pointerEvents = ''; for (const a of E.bar.getAnimations()) a.cancel(); }
+  E.bar.hidden = false;
   // (it rises in as it shows, only then: a CSS animation keyed on the motion setting replayed it. 11-02, the motion audit)
   if (!shown && motionMode() !== 'off') E.bar.animate([{ opacity: 0, translate: '0 8px' }, { opacity: 1, translate: '0 0' }], { duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
   // (written only when it changed: a list drawn again under the pointer doesn't take a button from under a click)
+  if (P.mode === 'cmp') {
+    const A = CQ.a && gxSs.find(x => gxKey(x) === CQ.a), B = CQ.b && gxSs.find(x => gxKey(x) === CQ.b);
+    const slot = (x, s) => '<span class="cq-s ' + s + (x ? ' full' : '') + '"><i>' + s.toUpperCase() + '</i>' + (x ? '<b>' + esc(x.game) + '</b> ' + gxLab(x) : s === 'a' ? 'pick a session' : 'then another') + '</span>';
+    const hc = '<span class="gb-n">Compare</span>' + slot(A, 'a') + '<button class="cq-sw" data-pk="swap" title="Swap"' + (A || B ? '' : ' disabled') + '>' + GX_SWAPI + '</button>' + slot(B, 'b') + '<span class="sp"></span>' +
+      '<button class="btn pk-q" data-pk="back">Cancel</button><button class="btn pk-go" data-pk="cmpgo"' + (A && B ? '' : ' disabled') + '>Compare</button>';
+    if (E.bar._h !== hc) { E.bar.innerHTML = hc; E.bar._h = hc; }
+    return;
+  }
   const h = '<span class="gb-n">' + (bin ? 'The bin: <b>' + pkWhat(k, tot) + '</b>' + (tot > all ? ', ' + (tot - all) + ' older than the days you keep' : '') + (n ? ', ' + n + ' picked' : '') : n ? '<b>' + n + '</b> picked' : 'Pick the ' + (k === 'g' ? 'sessions' : 'rows') + ' to move to the bin') + '</span><span class="sp"></span>' +
     (all ? '<button class="btn pk-q" data-pk="all">' + (n && n === all ? 'Pick none' : 'Pick all') + '</button>' : '') +
     '<button class="btn pk-q" data-pk="back">' + (bin ? 'Back' : 'Cancel') + '</button>' +
-    (k === 'g' && !bin && n === 2 ? '<button class="btn" data-pk="cmp">Compare</button>' : '') +
     '<button class="btn' + (bin ? ' pk-go' : ' warn') + '" data-pk="' + (bin ? 'restore' : 'del') + '"' + (n ? '' : ' disabled') + '>' + (bin ? 'Restore' : 'Move to the bin') + (n ? ' ' + n : '') + '</button>';
   if (E.bar._h !== h) { E.bar.innerHTML = h; E.bar._h = h; }
 }
@@ -6300,7 +7012,8 @@ function pkAct(k, a) {
   const P = PK[k], items = pkItems(k);
   if (a === 'all') { if (P.pick.size && P.pick.size === items.length) P.pick.clear(); else for (const x of items) P.pick.add(pkKey(k, x)); pkMark(k); pkBar(k); return; }
   if (a === 'back') { pkMode(k, null); return; }
-  if (a === 'cmp') { const xs = items.filter(x => P.pick.has(pkKey(k, x))); if (k === 'g' && xs.length === 2) gxCmpStart(xs); return; }
+  if (a === 'swap') { const had = !!document.activeElement && !!document.activeElement.closest && !!document.activeElement.closest('#gcbar .cq-sw'); [CQ.a, CQ.b] = [CQ.b, CQ.a]; pkMark(k); if (had) { const w = $('gcbar').querySelector('.cq-sw'); if (w) w.focus({ preventScroll: true }); } const s = $('gcbar').querySelector('.cq-sw svg'); if (s && motionMode() !== 'off') s.animate([{ transform: 'rotate(180deg)' }, { transform: 'none' }], { duration: 300, easing: SUM_E }); return; }
+  if (a === 'cmpgo') { const had = $('gcbar').contains(document.activeElement), A = gxSs.find(x => gxKey(x) === CQ.a), B = gxSs.find(x => gxKey(x) === CQ.b); if (A && B) { gxCmpStart([A, B], true); const f = had && document.querySelector('#glist .gx-cmpb'); if (f) f.focus({ preventScroll: true }); } return; }   // (the focus a key gave the bar goes to the comparison's Back, 11-09)
   const lines = [...new Set(items.filter(x => P.pick.has(pkKey(k, x))).flatMap(x => pkLines(k, x)))]; if (!lines.length) return;   // (once each: a mark can end crossings of several rows)
   const log = k === 'g' ? 'games' : 'alerts', to = a === 'restore' ? 'log' : 'bak';
   pkStep = JSON.stringify({ host: { t: 'log:move', log, to: to === 'log' ? 'bak' : 'log', lines, quiet: true }, redo: { t: 'log:move', log, to, lines, quiet: true } });
@@ -6333,7 +7046,7 @@ function pkForget(gone) {
 // the bins on show: sessions', warnings' (the same rows; a crossing the bin has without its end shows no "now")
 function gbRender(text) {
   if (PK.g.mode !== 'bin' || !$('gmodal').classList.contains('open')) return;   // (shut: it let go of its list)
-  const slide = pkArrived('g');
+  const slide = pkArrived('g'); $('gmodal').classList.add('binning');   // (the bar goes now, as the bin's rows slide in, 11-08)
   const ss = [];
   for (const line of (text || '').split(/\r?\n/)) { try { const x = line.trim() ? JSON.parse(line) : null; if (x && typeof x === 'object' && Number.isFinite(x.start) && Number.isFinite(x.end) && x.end >= x.start) { x._raw = line; ss.push(x); } } catch (e) { } }
   ss.sort((a, b) => b.start - a.start); PK.g.bin = ss;
@@ -6341,13 +7054,14 @@ function gbRender(text) {
   for (const x of ss) per[dk(x.start)] = (per[dk(x.start)] || 0) + 1;
   let h = '', last = null;
   ss.forEach((x, i) => { const d = dk(x.start); if (d !== last) { last = d; h += wxDayHd(d, per[d], today, yest, 'session'); } h += gxSessHtml(x, i, false, true); });
+  const fl = slide ? null : listTops($('glist'));
   $('glist').innerHTML = h ? '<div class="gx-cols"><span></span><span>session</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
     : '<div class="wempty ico pad">The bin is empty: what Delete, Keep or a move sets aside waits here.</div>';
-  pkMark('g'); pkBar('g'); if (slide) pkSlide('g', 1);
+  listGlide($('glist'), fl); pkMark('g'); pkBar('g'); if (slide) pkSlide('g', 1);
 }
 function wbRender(text) {
   if (PK.w.mode !== 'bin' || !wmodal.classList.contains('open')) return;   // (shut: it let go of its list)
-  const slide = pkArrived('w');
+  const slide = pkArrived('w'); wmodal.classList.add('binning');
   wbText = text || '';
   // (in time order: the bin gets its lines as they were set aside; with the log's marks, an app's exit or start, HWiNFO
   // stopping, which stay in the log: a crossing one ended ends there as in the log, and doesn't take in the next one of
@@ -6363,9 +7077,10 @@ function wbRender(text) {
   let h = '', last = null;
   groups.slice(0, wbShow).forEach((g, gi) => { if (g.day !== last) { last = g.day; h += wxDayHd(g.day, per[g.day], today, yest); } h += wxRow(g, gi, true); });
   if (groups.length > wbShow) h += '<button class="linkbtn wmore" id="wbMore">Show ' + plural(groups.length - wbShow, 'older row') + '</button>';
+  const fl = slide ? null : listTops($('wlist'));
   $('wlist').innerHTML = h ? '<div class="gx-cols"><span></span><span>warning</span><span class="gx-r">peak</span><span class="gx-r">lasted</span><span class="gx-r">times</span><span>its lines</span><span class="gx-r">level</span></div>' + h
     : '<div class="wempty ico pad">The bin is empty: what Keep or a move sets aside waits here.</div>';
-  pkMark('w'); pkBar('w'); if (slide) pkSlide('w', 1);
+  listGlide($('wlist'), fl); pkMark('w'); pkBar('w'); if (slide) pkSlide('w', 1);
 }
 for (const k of ['g', 'w']) {
   const E = pkEls(k);
@@ -6373,12 +7088,27 @@ for (const k of ['g', 'w']) {
   E.bin.onclick = () => pkMode(k, PK[k].mode === 'bin' ? null : 'bin');
   E.bar.addEventListener('click', e => { const b = e.target.closest('[data-pk]'); if (b && !b.disabled) pkAct(k, b.dataset.pk); });
 }
+$('gcbar').addEventListener('click', e => { const b = e.target.closest('[data-pk]'); if (b && !b.disabled) pkAct('g', b.dataset.pk); });
+$('gcmpBtn').onclick = () => {   // (on in the comparison too: a click there ends both)
+  if (PK.g.mode === 'cmp') { pkMode('g', null); return; }
+  if (gxCmp && gxCmp.cq) { gxCmp.cq = false; gxCmpEnd(); return; }
+  CQ.a = CQ.b = null; pkMode('g', 'cmp');
+};
 // ---------- game sessions ----------
 const gmodal = $('gmodal');
 // a closed popup lets go of its list (thousands of rows stayed in the page all day) and of Customize (its readings
 // stayed subscribed)
 // (after the fade: emptied as it starts to close, the card shrank and jumped while it faded)
 const afterFade = (el, fn) => setTimeout(() => { if (!el.classList.contains('open')) fn(); }, 250);
+const wxBarTint = k => { const w = wxCell(k), c = w ? cellTint(w.cid) : null; return c ? ';--cc:' + c : ''; };   // (a cell's share bar in its colour under Spectrum, 11-09)
+// a day's band stuck at the top of Sessions or Warning history (11-09, his "you can see a line where it's NOT supposed to
+// be one"): marked, so a fade under it lets the sessions slide away under it instead of being cut by a straight line
+function dayStuck(card) { if (!card.isConnected) return; const ct = card.getBoundingClientRect().top + card.clientTop, up = card.scrollTop > 0, days = [...card.querySelectorAll('.gx-day')]; let top = null; if (up) for (const el of days) if (Math.abs(el.getBoundingClientRect().top - ct) < 1.5) top = el; for (const el of days) el.classList.toggle('stuck', el === top); }   // (the days passed all sit stuck under the last one: only that one, on top, gets the fade)
+for (const id of ['gmodal', 'wmodal']) {
+  const card = $(id).querySelector('.mcard'), list = card.querySelector('#glist, #wlist') || card; let q = 0;
+  const go = () => { if (!q) q = requestAnimationFrame(() => { q = 0; dayStuck(card); }); };
+  card.addEventListener('scroll', go, { passive: true }); new MutationObserver(go).observe(list, { childList: true, subtree: true });   // (scrolled, or the list drawn again)
+}
 new MutationObserver(() => {
   if (gmodal.classList.contains('open')) return;
   if (gxLive.on !== false && host) { gxLive.on = false; send({ t: 'gamesLive', on: false }); }   // (no more Now playing until it opens again)
@@ -6401,14 +7131,28 @@ const recClock = s => { s = Math.floor(s); const h = Math.floor(s / 3600), m = M
 function renderRec() {
   const box = $('grun'), rs = feed.rec || [], k = rs.map(x => x[0]).join();
   if (k !== recKey) {   // (drawn again only when one starts or stops: a name being typed stays)
-    recKey = k; box.hidden = !rs.length;
+    const an = recKey !== null && motionMode() !== 'off' && $('gmodal').classList.contains('open'), h0 = !an ? -1 : box.hidden ? 0 : box.offsetHeight;
+    recKey = k;
     // (11-02: a REC badge, its name with a pencil (click to rename), since when, a large clock, Stop)
-    box.innerHTML = rs.map(x => '<div class="gx-rec" data-start="' + x[0] + '"><span class="gx-recb"><span class="rdot"></span>REC</span>' +
+    if (rs.length || h0 < 0) box.innerHTML = rs.map(x => '<div class="gx-rec" data-start="' + x[0] + '"><span class="gx-recb"><span class="rdot"></span>REC</span>' +
       '<label class="gx-rnw"><input class="gx-rn" value="' + esc(x[1]) + '" maxlength="60" spellcheck="false" title="Rename">' + ICONS.pen + '</label>' +
       '<span class="gx-rs">since ' + hhmm(x[0]) + '</span><span class="gx-rt"></span><button class="btn gx-stop" data-rec="stop"><i></i>Stop</button></div>').join('');
+    recFold(box, h0, rs.length, k);
   }
   for (const el of box.children) setText(el.querySelector('.gx-rt'), recClock(Math.max(0, nowTs - +el.dataset.start)));
   $('grec').disabled = rs.length >= 8 || Date.now() < recHold || !gxLoaded;
+}
+// (the REC strip unfolds as a recording starts and folds away as the last one stops, the details' way, 11-08; h0 -1:
+// at once)
+function recFold(box, h0, n, k) {
+  if (h0 < 0) { box.hidden = !n; return; }
+  for (const a of box.getAnimations()) a.cancel();
+  box.hidden = false;
+  const cs = getComputedStyle(box), vis = h => ({ height: h + 'px', marginTop: cs.marginTop, marginBottom: cs.marginBottom, opacity: 1 }), zero = { height: '0px', marginTop: '0px', marginBottom: '0px', opacity: 0 };
+  const h1 = n ? box.offsetHeight : 0;
+  if (Math.abs(h1 - h0) < 1) { if (!n) { box.hidden = true; box.innerHTML = ''; } return; }
+  box.style.overflow = 'hidden';
+  box.animate([h0 ? vis(h0) : zero, n ? vis(h1) : zero], { duration: 300, easing: SUM_E }).onfinish = () => { box.style.overflow = ''; if (!n && recKey === k) { box.hidden = true; box.innerHTML = ''; } };
 }
 // the next free 'Session n'
 function recName() {
@@ -6779,9 +7523,29 @@ function gzDraw() {
   for (const el of sp.children) if (el.dataset.key) setText(el.children[2], valTxt(BYKEY.get(el.dataset.key)));
   if (keys.join('\n') !== gzKeys.join('\n')) { gzKeys = keys; subscribe(); }
 }
+// (Customize, 11-08: its categories and readings glide to their new places and a new one fades in, as the game table's
+// rows do; the panel unfolds and folds as the details do. Off: at once)
+const gzKey = el => el.classList.contains('gz-s') ? 's|' + el.dataset.id : 'c|' + ((el.querySelector('.x') || {}).textContent || '');
+function gzTops(box) { if (box.hidden || box._out || motionMode() === 'off') return null; const m = new Map(); for (const el of box.querySelectorAll('.gz-s, .gz-c')) m.set(gzKey(el), el.getBoundingClientRect().top); return m; }
+function gzGlide(box, at) {
+  if (!at) return;
+  for (const el of box.querySelectorAll('.gz-s, .gz-c')) {
+    const t0 = at.get(gzKey(el)), t = el.getBoundingClientRect().top;
+    if (t0 === undefined) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: SUM_E });
+    else if (Math.abs(t0 - t) >= 1) el.animate([{ transform: 'translateY(' + (t0 - t).toFixed(1) + 'px)' }, { transform: 'none' }], { duration: 240, easing: SUM_E });
+  }
+}
+function gzFold(box, inn) {
+  if (!inn && (box.hidden || box._out)) return;
+  if (motionMode() === 'off' || !box.offsetParent || !gmodal.classList.contains('open')) { if (!inn) { box.hidden = true; box.innerHTML = ''; } return; }   // (Sessions closing: it goes with them, at once; it stayed for its fold, the suite 11-08)
+  const cs = getComputedStyle(box), full = { height: cs.height, marginTop: cs.marginTop, marginBottom: cs.marginBottom, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: 1 },
+    zero = { height: '0px', marginTop: '0px', marginBottom: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0 };
+  box._out = !inn; box.style.overflow = 'hidden';
+  box.animate(inn ? [zero, full] : [full, zero], { duration: 300, easing: SUM_E }).onfinish = () => { box.style.overflow = ''; if (box._out && !GZ.on) { box._out = false; box.hidden = true; box.innerHTML = ''; } };
+}
 function renderGz() {
   const box = $('gcz');
-  if (!GZ.on) { box.hidden = true; box.innerHTML = ''; $('gcustom').classList.remove('on'); if (gzKeys.length) { gzKeys = []; subscribe(); } return; }
+  if (!GZ.on) { gzFold(box, false); $('gcustom').classList.remove('on'); if (gzKeys.length) { gzKeys = []; subscribe(); } return; }
   $('gcustom').classList.add('on');
   const secs = gxLayout().secs, lists = secs.filter(s => s.kind === 'list');
   if (!lists.some(s => s.id === GZ.sel)) GZ.sel = lists.length ? lists[0].id : null;
@@ -6804,9 +7568,10 @@ function renderGz() {
   h += '<div class="gz-add"><div class="gx-ch">readings<span>' + (s ? '+ adds to ' + esc(s.name) : '') + '</span></div><div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>' +
     '<input id="gzQ" type="search" placeholder="Search sensors, labels, units" autocomplete="off" spellcheck="false" value="' + esc(GZ.q) + '"></div><div class="chips"></div><div class="vlist gz-list"><div class="vspace"></div></div></div></div>';
   const ae = document.activeElement, f = ae && ae.id === 'gzQ' ? [ae.selectionStart] : null, old = box.querySelector('.gz-list'), st = old ? old.scrollTop : 0;
-  const tw = togSnap(box);
+  const tw = togSnap(box), gt = gzTops(box), was = box.hidden || box._out;
+  for (const a of box.getAnimations()) a.cancel(); box._out = false; box.style.overflow = '';
   box.innerHTML = h; box.hidden = false;
-  togSlide(box, tw);
+  togSlide(box, tw); if (was) gzFold(box, true); else gzGlide(box, gt);
   const vl = box.querySelector('.gz-list'); vl.addEventListener('scroll', gzDraw);
   gzCompute(); gzChips(); gzDraw(); vl.scrollTop = st; gzDraw();
   if (f) { const q = $('gzQ'); if (q) { q.focus(); q.setSelectionRange(f[0], f[0]); } }
@@ -6907,14 +7672,13 @@ function gxByDay(ss) {
 // spans) and each game's share. The periods go as far back as Keep sessions keeps: 7, 30 and 90 days under it, then the
 // days kept, or "all" when they are kept forever; one alone (5 days kept, or 7): no switch. The list under it shows the
 // picked game's sessions; closing the bar shows them all again
-const GX = { open: false, period: 7, game: null, menu: false, slide: null, sort: { k: 't', d: -1 } };   // (days: Days' own, 11-07)   // (slide: a pick's direction, -1 / 1, while it is drawn)
-GX.W = mkWin({ min: () => Math.min(1, 3 / Math.max(1, GX.wn || 1)), draw: () => { if (GX.open) gxSum(gxAll); } });   // (its window, B)
+const GX = { open: false, period: 7, game: null, menu: false, slide: null, sort: { k: 't', d: -1 }, ws: 0, we: 0 };   // (days: Days' own, 11-07)   // (slide: a pick's direction, -1 / 1, while it is drawn)
+GX.W = mkWin({ min: () => Math.min(1, 3 / Math.max(1, GX.wn || 1)), draw: () => { if (!GX.open) return; gxSum(gxAll); if (!S.listFilt.g) return; clearTimeout(GX.lt); GX.lt = setTimeout(() => { if (GX.ws + '|' + GX.we === GX.lk) return; renderGames(gxText, gxOpen()); }, 250); } });   // (its window, B)
 let gxLc = null;   // the opened bar's chart: its points and scale, for the read-out
 let gxAll = [];   // every session (the list: gxSs, the picked game's)
 // ---- a number box with arrows (his pick 11-07, mock round 4): Settings' box, its style and size, with an up and a down
 // arrow in it. The arrows step it by one within data-min / data-max; a box with data-idle commits once they stop
 // (Settings: a few presses are one change, one question), the others at once. Up and Down do the same from the keys
-const SPIN_UD = '<span class="ud" aria-hidden="true"><b data-step="1"><svg viewBox="0 0 10 6"><path d="M1.5 5L5 1.5 8.5 5"/></svg></b><b data-step="-1"><svg viewBox="0 0 10 6"><path d="M1.5 1L5 4.5 8.5 1"/></svg></b></span>';
 const spinBox = (attrs, v, ph) => '<span class="setin spin"><input ' + attrs + ' inputmode="numeric" maxlength="4" spellcheck="false" autocomplete="off" placeholder="' + ph + '" value="' + v + '">' + SPIN_UD + '</span>';
 function spinStep(i, d) {
   const lo = Number.isFinite(+i.dataset.min) ? +i.dataset.min : 0, hi = +i.dataset.max || 9999, t = i.value.trim();
@@ -6924,11 +7688,23 @@ function spinStep(i, d) {
   clearTimeout(i._st); i._st = setTimeout(() => { if (i.isConnected && i.dataset.dirty) { delete i.dataset.dirty; i.dispatchEvent(new Event('change', { bubbles: true })); } }, +i.dataset.idle || 0);
 }
 // (pressed, not clicked: the box keeps the focus it has, and a press doesn't take it from the field being typed in)
-document.addEventListener('mousedown', e => { const b = e.target.closest('.spin .ud b'); if (!b) return; e.preventDefault(); const i = b.closest('.spin').querySelector('input'); if (i) spinStep(i, +b.dataset.step); });
+document.addEventListener('mousedown', e => { const b = e.target.closest('.spin .ud b'); if (!b || e.button !== 0) return; e.preventDefault(); const i = b.closest('.spin').querySelector('input'); if (i) (i.closest('.szin') ? szStep : spinStep)(i, +b.dataset.step); });
 document.addEventListener('keydown', e => {
   const i = e.target; if (!i.closest || !i.closest('.spin') || i.tagName !== 'INPUT') return;
-  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); spinStep(i, e.key === 'ArrowUp' ? 1 : -1); }
+  if (i.closest('.szin') && (e.ctrlKey || e.altKey || e.shiftKey || e.metaKey)) return;   // (Ctrl+arrows in a size box nudge the tile, as before)
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); (i.closest('.szin') ? szStep : spinStep)(i, e.key === 'ArrowUp' ? 1 : -1); }
 }, true);
+// the edit panel's size boxes (his 11-09: Settings' arrows on them): Width to the next or the last share it is drawn at (the
+// chips not greyed), Height a quarter row, a column a twelfth, within what it can take; each step goes in as a typed number
+function szStep(i, d) {
+  if (i.disabled) return;
+  const t = parseFloat(i.value); let n = null;
+  if (i.dataset.sz === 'f') { if (!isFinite(t)) return; const off = sel ? cfOff(sel) : () => false, ok = PCTS.filter(x => !off(x)), x = d > 0 ? ok.find(x => x > t + 0.5) : [...ok].reverse().find(x => x < t - 0.5); if (x != null) n = Math.round(x * 10) / 10; }
+  else if (i.dataset.sz === 'h') { const cur = isFinite(t) ? t : 1, x = Math.min(2, Math.max(0.25, (d > 0 ? Math.floor(cur * 4 + PE) + 1 : Math.ceil(cur * 4 - PE) - 1) / 4)); if (Math.abs(x - cur) > 1e-9) n = x; }
+  else if (i.dataset.cw) { const cur = isFinite(t) ? Math.round(t * 12 / 100) : 12, w = Math.max(+i.dataset.lo || 1, Math.min(+i.dataset.hi || 12, cur + d)); if (w !== cur) n = Math.round(w * 10000 / 12) / 100; }
+  if (n == null) return;
+  i.value = n; i.dispatchEvent(new Event('change', { bubbles: true }));
+}
 // the period slider of Sessions and Warning history: its periods on the left of the bar, the game or cell list on the
 // right (a window of any length within one: the chart's, range selector B, 11-07; Days and its box gone)
 function perSlider(ps, on) {
@@ -6952,13 +7728,13 @@ function gxSumOpen(all) {
   { const k = GX.period + '|' + a + '|' + n0; if (GX.wkey !== k) { GX.W.reset(); GX.wkey = k; } }
   GX.wn = n0;
   const tAt = f => { const k = f * n0, i = Math.min(n0 - 1, Math.floor(k)), d0 = i * per7, len = Math.min(per7, nd - d0), s0 = gxMid(a0.getFullYear(), a0.getMonth(), a0.getDate() + d0), s1 = gxMid(a0.getFullYear(), a0.getMonth(), a0.getDate() + d0 + len); return s0 + (k - i) * (s1 - s0); };   // (between midnights: a 23 or 25 hour day keeps its end)
-  const wa = GX.W.a, wb = GX.W.b, ws = tAt(wa), we = tAt(wb);
+  const wa = GX.W.a, wb = GX.W.b, ws = tAt(wa), we = tAt(wb); GX.ws = ws; GX.we = we;
   const per = Object.create(null);
   for (const x of games) { if (x.end <= ws || x.start >= we) continue; const o = per[x.game] || (per[x.game] = { t: 0, n: 0, fs: 0, fn: 0, last: 0 }); o.t += gxPlayIn(x, ws, we); o.n++; if (x.fps > 0) { o.fs += x.fps; o.fn++; } o.last = Math.max(o.last, Math.min(x.end, we)); }
   // the games in the order of the column picked (his pick 11-06): most played first until then; a game with no fps
   // last, whichever way
   const sv = { game: k => k.toLowerCase(), t: k => per[k].t, share: k => per[k].t, n: k => per[k].n, avg: k => per[k].t / per[k].n, fps: k => per[k].fn ? per[k].fs / per[k].fn : null, last: k => per[k].last }[GX.sort.k] || (k => per[k].t);
-  const names = Object.keys(per).sort((p, q) => { const a = sv(p), b = sv(q); if (a === null || b === null) return a === b ? 0 : a === null ? 1 : -1; return (a < b ? -1 : a > b ? 1 : 0) * GX.sort.d || per[q].t - per[p].t; });
+  const names = sumHold(GX, Object.keys(per).sort((p, q) => { const a = sv(p), b = sv(q); if (a === null || b === null) return a === b ? 0 : a === null ? 1 : -1; return (a < b ? -1 : a > b ? 1 : 0) * GX.sort.d || per[q].t - per[p].t; }));
   // the games to pick from: every game in the log, most played first
   let menu = '';
   if (GX.menu) {
@@ -6969,7 +7745,7 @@ function gxSumOpen(all) {
   }
   // (the game list and the periods, a pill that glides to the one picked, like the view tabs; nothing the row above
   // already says: no title, no totals)
-  const head = perSlider(ps, GX.period) +
+  const head = perSlider(ps, GX.period) + fltSw('g') +
     '<span class="gx-ddw"><button class="gx-dd' + (GX.menu ? ' on' : '') + '" title="Show one game" aria-haspopup="true" aria-expanded="' + !!GX.menu + '">' + (GX.game ? esc(GX.game) : 'All Games') + GX_CHEV + '</button>' + menu + '</span>';   // (the periods on the left, the game list on the right, 11-07)
   let h = '';
   // the chart: hours played a day (a week past 120 days) as a line, like a session's fps; the average dashed, hours on
@@ -6978,10 +7754,10 @@ function gxSumOpen(all) {
   if (nd > 120) { pts = []; for (let i = 0; i < nd; i += 7) pts.push({ t: days.slice(i, i + 7).reduce((p, d) => p + d[0], 0), d: days[i][1], w: Math.min(7, nd - i) }); }
   for (const o of pts) { const s = o.d.getTime() / 1000, e = gxMid(o.d.getFullYear(), o.d.getMonth(), o.d.getDate() + (o.w || 1)); o.n = rec.filter(x => gxPlayIn(x, s, e) > 0).length; }
   const n = pts.length, j0 = Math.max(0, Math.floor(wa * n + 1e-9)), j1 = Math.min(n - 1, Math.ceil(wb * n - 1e-9) - 1), vis = pts.slice(j0, j1 + 1), nv = vis.length;
-  const H = 120, ymax = Math.max(2, Math.ceil(Math.max(...vis.map(o => o.t)) / 3600 / 2) * 2) * 3600, Y = v => +(H - v / ymax * H).toFixed(1), X = i => +(((i + 0.5) / n - wa) / (wb - wa) * 100).toFixed(3);
+  const H = 120, ymT = Math.max(2, Math.ceil(Math.max(...vis.map(o => o.t)) / 3600 / 2) * 2) * 3600, ymax = sumYm(GX, GX.wkey, ymT, () => { if (GX.open) gxSum(gxAll, true); }), Y = v => +(H - v / ymax * H).toFixed(1), X = i => +(((i + 0.5) / n - wa) / (wb - wa) * 100).toFixed(3);
   const avg = vis.reduce((p, o) => p + o.t, 0) / Math.max(1, nv), line = pts.map((o, i) => X(i) + ',' + Y(o.t)).join(' ');
   gxLc = { pts, n, Y, wa, wb };
-  h += '<div class="gx-lc"><div class="gx-lcg"><div class="gx-lcy" style="height:' + H + 'px">' + [0, ymax / 2, ymax].map(v => '<span style="top:' + Y(v) + 'px">' + (v / 3600) + 'h</span>').join('') + '</div>' +
+  h += '<div class="gx-lc"><div class="gx-lcg"><div class="gx-lcy" style="height:' + H + 'px">' + [0, ymT / 2, ymT].map((v, i) => '<span style="top:' + (H - i * H / 2) + 'px">' + (v / 3600) + 'h</span>').join('') + '</div>' +
     '<div class="gx-lcp gx-hz" style="height:' + H + 'px"><div class="gx-lcclip"><svg viewBox="0 0 100 ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' +
     [0, ymax / 2, ymax].map(v => '<line class="g" x1="0" x2="100" y1="' + Y(v) + '" y2="' + Y(v) + '"/>').join('') +
     (avg ? '<line class="av" x1="0" x2="100" y1="' + Y(avg) + '" y2="' + Y(avg) + '"/>' : '') +
@@ -7047,7 +7823,8 @@ function gxSum(ss, live) {
     }
     if (bd._h !== o.body) {
       const h0 = slide ? det.offsetHeight : 0;
-      bd.innerHTML = o.body; bd._h = o.body;
+      if (slide) bd.innerHTML = o.body; else sumPatch(bd, o.body, box.classList.contains('open') && motionMode() !== 'off' && (!live || motionOn()));   // (the window dragged, a sort, a live update: in place, 11-08; a live one moves in Full only, the review)
+      bd._h = o.body;
       if (slide) {
         // (like Tiles to Overview: the new numbers come in from the side of the pick; the bar eases to their height)
         const e = 'cubic-bezier(0.2, 0.8, 0.2, 1)', h1 = det.offsetHeight;
@@ -7081,28 +7858,159 @@ function gxSet(o) {
   const ae = document.activeElement, gs = $('gsum'), q = !ae || !gs.contains(ae) ? null : ae.matches('.gx-per button') ? '.gx-per button[data-p="' + ae.dataset.p + '"]'
     : ae.matches('.gx-gr') ? '.gx-gr[data-game="' + CSS.escape(ae.dataset.game) + '"]' : ae.matches('.gx-dd, .gx-menu button') ? '.gx-dd' : ae.matches('.gx-srow') ? '.gx-srow' : ae.matches('.gx-sk') ? '.gx-sk[data-sort="' + ae.dataset.sort + '"]' : null;
   try {
-    if (GX.game !== g) {
+    flipHold++;
+    if (GX.game !== g || (S.listFilt.g && (GX.open !== was || GX.period !== p0))) {   // (Filter list on: a period or the bar shut changes the list too)
       renderGames(gxText, $('glist').querySelector('.gx-sess') ? gxOpen() : undefined);
       if (GX.slide && motionMode() !== 'off') $('glist').animate([{ transform: 'translateX(' + (GX.slide * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+      else if (GX.open !== was && motionMode() !== 'off') $('glist').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: SUM_E });   // (the bar shut with a game picked: all games again, faded in, 11-08)
     } else {
       const at = o.sort && motionMode() !== 'off' ? gxRowTops() : null;   // (a column picked: the rows glide to their new places, 11-07)
       gxSum(gxAll);
       if (at) gxRowGlide(at, o.sort.k === s0.k && o.sort.d !== s0.d);
     }
-  } finally { GX.slide = null; }
+  } finally { flipHold--; GX.slide = null; }
   const n = q && gs.querySelector(q); if (n && n !== document.activeElement) n.focus({ preventScroll: true });
 }
 // the game table sorted again (his ask 11-06, "add animations to the game sort"): each game's row glides from where it
 // was to its new place, and the arrow of a column picked again turns over. Motion off: it just changes
-function gxRowTops() { const m = new Map(); for (const r of $('gsum').querySelectorAll('.gx-gr')) m.set(r.dataset.game, r.getBoundingClientRect().top); return m; }
+function gxRowTops() { const m = new Map(); for (const r of $('gsum').querySelectorAll('.gx-gr:not(.gx-out)')) m.set(r.dataset.game, r.getBoundingClientRect().top); return m; }
 function gxRowGlide(at, flip) {
-  for (const r of $('gsum').querySelectorAll('.gx-gr')) {
+  for (const r of $('gsum').querySelectorAll('.gx-gr:not(.gx-out)')) {
     const t0 = at.get(r.dataset.game); if (t0 === undefined) continue;
-    const dy = t0 - r.getBoundingClientRect().top; if (Math.abs(dy) < 1) continue;
-    const k = [{ transform: 'translateY(' + dy.toFixed(1) + 'px)' }, { transform: 'none' }]; if (dy < 0) k.splice(1, 0, { opacity: 0.25, offset: 0.4 });   // (one going down fades as it passes: the one going up reads over it)
-    r.animate(k, { duration: 340, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    const dy = t0 - r.getBoundingClientRect().top; if (Math.abs(dy) >= 1) rowGlide(r, dy);   // (sumPatch already glides them: then nothing is left to move)
   }
-  const a = flip && $('gsum').querySelector('.gx-sk.on svg'); if (a) a.animate([{ transform: 'rotate(180deg)' }, { transform: 'none' }], { duration: 240, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  const a = flip && $('gsum').querySelector('.gx-sk.on svg'); if (a) a.animate([{ transform: 'rotate(180deg)' }, { transform: 'none' }], { duration: 240, easing: SUM_E });
+}
+function rowGlide(r, dy) {
+  const k = [{ transform: 'translateY(' + dy.toFixed(1) + 'px)' }, { transform: 'none' }]; if (dy < 0) k.splice(1, 0, { opacity: 0.25, offset: 0.4 });   // (one going down fades as it passes: the one going up reads over it)
+  r.animate(k, { duration: 340, easing: SUM_E, id: 'glide' });
+}
+// the open bar's body drawn again in place, not anew (his 11-08 "they snap in instead of having a smooth animation"):
+// the chart and the other parts as before, the table kept. Its rows go by their game (a cell in Warning history): one
+// that comes grows in, one that goes folds away (and opens again from where it is if it comes back first), one that
+// changes place glides there as a sort does, its numbers change in place and its share bar eases to its width. The
+// table itself, or the "nothing played" line, grows in and folds away the same. anim false (motion off, the bar shut):
+// drawn anew at once
+const SUM_E = 'cubic-bezier(0.2, 0.8, 0.2, 1)', SUM_FOLD = ['height', 'minHeight', 'marginTop', 'paddingTop', 'paddingBottom', 'opacity'];
+// the table's order while its window is dragged or gliding: as it was (a new row after them), so a row whose share keeps
+// crossing another's doesn't flip places on every move; let go, the sorted order (his recording 11-09: a row hung over
+// another for seconds, each move starting a new glide to a place already gone)
+function sumHold(X, names) {
+  const moving = (winDrag && winDrag.W === X.W) || !!X.W.raf;
+  if (moving && X.ord) { const pos = new Map(X.ord.map((k, i) => [k, i])); names = names.slice().sort((p, q) => (pos.has(p) ? pos.get(p) : 1e9) - (pos.has(q) ? pos.get(q) : 1e9)); }
+  X.ord = names; return names;
+}
+function sumPatch(bd, html, anim) {
+  if (!anim || !bd.firstElementChild) { bd.innerHTML = html; return; }
+  const tp = document.createElement('template'); tp.innerHTML = html;
+  const kind = e => e.className.split(' ')[0], olds = [...bd.children], used = new Set();
+  let at = null;
+  for (const n of [...tp.content.children]) {
+    const o = olds.find(e => !used.has(e) && kind(e) === kind(n)); let el = n;
+    if (o) {
+      used.add(o); el = o;
+      const out = o.classList.contains('gx-out');
+      if (o.classList.contains('gx-gtab')) sumRows(o, n); else if (o.innerHTML !== n.innerHTML) sumKids(o, n);
+      if (out) { o.classList.remove('gx-out'); sumFold(o, true); }
+    }
+    if (at ? at.nextElementSibling !== el : bd.firstElementChild !== el) { if (at) at.after(el); else bd.prepend(el); }
+    if (!o) sumFold(el, true);
+    at = el;
+  }
+  for (const o of olds) if (!used.has(o) && !o.classList.contains('gx-out')) { o.classList.add('gx-out'); sumFold(o, false); }
+}
+// a part or a row growing in from nothing (inn) or folding away into nothing (then gone); from where it is when it was
+// already on its way
+function sumFold(el, inn) {
+  const st = () => { const cs = getComputedStyle(el), o = {}; for (const k of SUM_FOLD) o[k] = cs[k]; return o; };
+  const run = el.getAnimations().filter(a => a.id === 'fold'), now = run.length ? st() : null;
+  run.forEach(a => a.cancel());
+  const full = st(), zero = { height: '0px', minHeight: '0px', marginTop: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0 };
+  el.style.overflow = 'hidden';
+  const a = el.animate([now || (inn ? zero : full), inn ? full : zero], { duration: 260, easing: SUM_E, id: 'fold' });
+  a.onfinish = () => { if (inn) el.style.overflow = ''; else el.remove(); };
+}
+function sumRows(ot, nt) {
+  const key = r => r.dataset.game !== undefined ? r.dataset.game : r.dataset.cell;
+  const oh = ot.querySelector(':scope > .gx-gh'), nh = nt.querySelector(':scope > .gx-gh');
+  if (oh && nh && oh.innerHTML !== nh.innerHTML) oh.innerHTML = nh.innerHTML;
+  const was = [...ot.querySelectorAll(':scope > .gx-gr')], by = new Map(), tops = new Map();
+  for (const r of was) { by.set(key(r), r); if (!r.classList.contains('gx-out')) tops.set(r, r.getBoundingClientRect().top); }   // (where they are seen, mid-glide too)
+  for (const r of was) for (const a of r.getAnimations()) if (a.id === 'glide') a.cancel();
+  const order = [], fresh = [];
+  for (const n of [...nt.querySelectorAll(':scope > .gx-gr')]) {
+    let r = by.get(key(n));
+    if (r) { const out = r.classList.contains('gx-out'); sumRow(r, n); if (out) sumFold(r, true); } else { r = n; fresh.push(r); }
+    order.push(r);
+  }
+  // in the new order; one that goes stays after the row it was after, as it folds
+  const keep = new Set(order), going = was.filter(r => !keep.has(r)), prev = new Map(was.map((r, i) => [r, was[i - 1] || null]));
+  let at = oh;
+  for (const r of order) { if (at ? at.nextElementSibling !== r : ot.firstElementChild !== r) { if (at) at.after(r); else ot.prepend(r); } at = r; }
+  for (const r of going) { const p = prev.get(r); if (p && p.parentNode === ot) p.after(r); else if (oh) oh.after(r); else ot.prepend(r); }
+  for (const r of fresh) sumFold(r, true);
+  for (const r of going) if (!r.classList.contains('gx-out')) { r.classList.add('gx-out'); sumFold(r, false); }
+  for (const r of order) { const t0 = tops.get(r); if (t0 === undefined) continue; const dy = t0 - r.getBoundingClientRect().top; if (Math.abs(dy) >= 1) rowGlide(r, dy); }
+}
+// (a part drawn again node by node: what is still there stays the same element, so its own transitions run, as the
+// range bar's grab highlight, and the chart's dots fade in only as they come, 11-08)
+function sumKids(o, n) {
+  const oc = [...o.childNodes], nc = [...n.childNodes];
+  nc.forEach((c, i) => { if (i < oc.length) sumMorph(oc[i], c); else o.appendChild(c); });
+  for (let i = nc.length; i < oc.length; i++) oc[i].remove();
+}
+function sumMorph(o, n) {
+  if (o.nodeType !== n.nodeType || o.nodeName !== n.nodeName || (o.nodeType !== 1 && o.nodeType !== 3)) { o.replaceWith(n); return; }
+  if (o.nodeType === 3) { if (o.data !== n.data) o.data = n.data; return; }
+  for (const a of [...o.attributes]) if (!n.hasAttribute(a.name)) o.removeAttribute(a.name);
+  for (const a of [...n.attributes]) if (o.getAttribute(a.name) !== a.value) o.setAttribute(a.name, a.value);
+  if (o.innerHTML !== n.innerHTML) sumKids(o, n);
+}
+// (a period chart's top eases to its new one as a tall day comes into the window or leaves it, with the window's own
+// step, 11-08; a new period, Minimal and Off: at once. The labels say the new top at once)
+function sumYm(X, key, to, redraw) {
+  if (!motionOn() || X.ymK !== key || !(X.ym > 0)) { cancelAnimationFrame(X.ymR); X.ymR = 0; X.ymT = 0; X.ymK = key; return X.ym = to; }
+  if (X.ym === to) return to;
+  const t = performance.now(), dt = X.ymT ? Math.min(64, t - X.ymT) : 1000 / 60; X.ymT = t;
+  X.ym += (to - X.ym) * (1 - Math.pow(0.7, dt / 16.7));
+  if (Math.abs(to - X.ym) < to * 0.003) { X.ym = to; X.ymT = 0; }
+  else if (!X.ymR) X.ymR = requestAnimationFrame(() => { X.ymR = 0; redraw(); });
+  return X.ym;
+}
+// (a list drawn again as the log changed: a move to the bin, a restore, an undo, a game starting, 11-08. Its rows and
+// day headers that stay glide from where they were; a new one fades in. Full; Minimal only right after a click or a
+// key, the change being the reply; Off, or a slide or a pick on its way (flipHold): at once)
+let flipHold = 0, userAt = 0;
+document.addEventListener('pointerdown', () => { userAt = performance.now(); }, true);
+document.addEventListener('keydown', () => { userAt = performance.now(); }, true);
+const listRowKey = el => el.dataset.k || (el.classList.contains('gx-day') ? 'd|' + (el.dataset.day || (el.firstElementChild ? el.firstElementChild.textContent : '')) : '');
+function listTops(list) {
+  const m = motionMode(); if (flipHold || m === 'off' || (m === 'minimal' && performance.now() - userAt > 2500) || !list.offsetParent) return null;
+  const t0 = list.getBoundingClientRect().top, at = new Map();
+  for (const el of list.querySelectorAll(':scope > .gx-sess, :scope > .gx-day')) { const k = listRowKey(el); if (k) at.set(k, el.getBoundingClientRect().top - t0); }
+  return at.size ? at : null;
+}
+function listGlide(list, at) {
+  if (!at) return;
+  const t0 = list.getBoundingClientRect().top, vh = innerHeight;
+  for (const el of list.querySelectorAll(':scope > .gx-sess, :scope > .gx-day')) {
+    const k = listRowKey(el), r = el.getBoundingClientRect(); if (!k || r.bottom < -200 || r.top > vh + 200) continue;   // (out of sight: nothing to see)
+    const y0 = at.get(k);
+    if (y0 === undefined) { el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: SUM_E }); continue; }
+    const dy = y0 - (r.top - t0); if (Math.abs(dy) >= 1 && Math.abs(dy) < vh) el.animate([{ transform: 'translateY(' + dy.toFixed(1) + 'px)' }, { transform: 'none' }], { duration: 300, easing: SUM_E });
+  }
+}
+// a row kept: what changed in it, in place (the share bar's width eases, deck.css)
+function sumRow(r, n) {
+  if (r.className !== n.className) r.className = n.className;
+  for (const a of ['aria-pressed', 'tabindex', 'role']) if (r.getAttribute(a) !== n.getAttribute(a)) { if (n.hasAttribute(a)) r.setAttribute(a, n.getAttribute(a)); else r.removeAttribute(a); }
+  const oc = r.children, nc = [...n.children];
+  if (oc.length !== nc.length) { r.replaceChildren(...nc); return; }
+  nc.forEach((c, i) => {
+    const o = oc[i]; if (o.outerHTML === c.outerHTML) return;
+    if (o.className === c.className && o.classList.contains('gx-gbar') && o.children.length === c.children.length) { [...c.children].forEach((s, j) => { if (o.children[j].style.cssText !== s.style.cssText) o.children[j].style.cssText = s.style.cssText; }); return; }
+    o.replaceWith(c);
+  });
 }
 // the games in the game list's order: all of them first, then the most played (a pick's side goes by it)
 function gxGameOrder() { const t = Object.create(null); for (const x of gxAll) if (!x.custom) t[x.game] = (t[x.game] || 0) + gxPlay(x); return [null].concat(Object.keys(t).sort((p, q) => t[q] - t[p])); }
@@ -7117,6 +8025,7 @@ $('gsum').addEventListener('click', e => {
   // (its row opens and shuts it, like a session's; what opened under it stays open under clicks)
   if (t.closest('.gx-srow')) { if (!pk) gxSet({ open: !GX.open }); return; }
   const mb = t.closest('.gx-menu button'); if (mb) { gxSet({ game: mb.dataset.game || null, menu: false }); return; }
+  if (t.closest('[data-flt]')) { const had = document.activeElement === t.closest('[data-flt]'); S.listFilt.g = !S.listFilt.g; saveState(); gxSum(gxAll); renderGames(gxText, gxOpen()); fltBack(gmodal, had); if (motionMode() !== 'off') $('glist').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: SUM_E }); return; }
   if (t.closest('.gx-dd')) { gxSet({ menu: !GX.menu }); return; }
   const pb = t.closest('.gx-per button'); if (pb) { if (perPick(pb.dataset.p) === GX.period && !GX.W.whole()) GX.W.set(0, 1, true); else gxSet({ period: perPick(pb.dataset.p), menu: false }); return; }   // (the period again: all of it)
   const sk = t.closest('.gx-sk'); if (sk) { const k = sk.dataset.sort; gxSet({ sort: { k, d: GX.sort.k === k ? -GX.sort.d : k === 'game' ? 1 : -1 }, menu: false }); return; }   // (a column again: the other way, 11-06)
@@ -7152,7 +8061,7 @@ for (const [id, X, plotSel] of [['gsum', GX, '.gx-lcp'], ['wsum', WX, '.wx-plot'
     if (e.button !== 0) return;
     const bar = e.target.closest('.mbar'); if (bar) { winBarDown(X.W, bar, e, v => { on(v); X.W.o.draw(); }); return; }
     const pl = e.target.closest(plotSel); if (!pl) return;
-    e.preventDefault(); winGrab(X.W, 'pan', e.clientX, pl.getBoundingClientRect().width, v => { on(v); if (v && id === 'gsum') gxLcHover(null); });
+    e.preventDefault(); winGrab(X.W, 'pan', e.clientX, pl.getBoundingClientRect().width, v => { on(v); if (v && id === 'gsum') gxLcHover(null); if (!v) X.W.o.draw(); });   // (let go: drawn again, the rows to their sorted places, 11-09)
   });
   box.addEventListener('dblclick', e => { if (e.target.closest(plotSel)) { e.preventDefault(); X.W.set(0, 1, true); } });
   box.addEventListener('mousemove', e => { const bar = e.target.closest && e.target.closest('.mbar'); if (bar) winBarCursor(X.W, bar, e); });
@@ -7183,6 +8092,8 @@ function renderGames(text, keep) {
   if (GX.game && !ss.some(x => x.game === GX.game)) GX.game = null;   // (its sessions all gone: all games again)
   gxSum(ss);
   if (GX.game) ss = ss.filter(x => x.game === GX.game);   // (the picked game's sessions; the headers count its time)
+  const gw = S.listFilt.g && GX.open && GX.we > GX.ws; GX.lk = GX.ws + '|' + GX.we;
+  if (gw) ss = ss.filter(x => x.end > GX.ws && x.start < GX.we);   // (Filter list on: the sessions in the chart's window, 11-09)
   gxSs = ss;
   if (gxCmp) { gxCmpDraw(); return; }   // (two compared: they stay on show, 11-06)
   const byDay = gxByDay(ss), now = Date.now() / 1000, dayKey = u => localDay(new Date(u * 1000));
@@ -7198,15 +8109,16 @@ function renderGames(text, keep) {
   // each day: its header, the sessions that started on it (a session past midnight stays whole under its first day)
   let h = '', last = null;
   ss.forEach((x, i) => { const dk = dayKey(x.start); if (dk !== last) { last = dk; h += dayHd(dk); } h += gxSessHtml(x, i, false); });
-  const list = $('glist');
+  const list = $('glist'), fl = listTops(list);
   list.innerHTML = h ? '<div class="gx-cols"><span></span><span>session</span><span class="gx-r">length</span><span class="gx-r">fps</span><span class="gx-r">1% low</span><span>limited by</span><span class="gx-r">warnings</span></div>' + h
+                     : gw && gxAll.length ? '<div class="wempty ico pad">Nothing played from ' + dMon(new Date(GX.ws * 1000)) + ' to ' + dMon(new Date(GX.we * 1000 - 1)) + (GX.game ? ' in ' + esc(GX.game) : '') + '.</div>'
                      : '<div class="wempty ico pad">No sessions yet. A game shows up here while you play it, and stays once you have played it for over a minute. Start session records one of your own.</div>';
   if (Array.isArray(keep)) {   // (drawn again: what was open stays open, at once; the popup itself opens with every session shut)
     list.classList.add('still');
     for (const el of list.querySelectorAll('.gx-sess')) { const x = gxSs[+el.dataset.g]; if (!x || !keep.includes(x.start)) continue; gxOpenSess(el, x); }
     requestAnimationFrame(() => requestAnimationFrame(() => list.classList.remove('still')));
   }
-  pkMark('g');
+  listGlide(list, fl); pkMark('g');
   if (nk) {
     const j = gxSs.findIndex(x => x.start === nk.start && x.game === nk.game), el = j >= 0 && list.querySelector('.gx-nm[data-g="' + j + '"]');
     if (el) {
@@ -7226,7 +8138,7 @@ function gxSessHtml(x, i, full, bin) {
     const len = durS(gxPlay(x)), lenT = x.live ? ' title="so far"' : !x.custom && away >= 60 ? ' title="' + durTxt(away) + ' not in front"' : '';
     const nm = '<span class="gx-gn' + (x.live ? ' lv"><span class="gx-gt">' + esc(x.game) + '</span><span class="gx-now">now playing</span>' : '">' + esc(x.game)) + '</span>';
     const lim = sp.n ? gxNbar(sp) + '<span class="gx-sub">' + sp.top[0] + ' ' + sp.top[1] + '%</span>' : '<span class="gx-sub">--</span>';
-    return '<div class="gx-sess' + (x.custom ? ' cust' : '') + (x.live ? ' live' : '') + '" data-g="' + i + '"><div class="gx-row" tabindex="0" role="button" aria-expanded="false">' + GX_CHEV +
+    return '<div class="gx-sess' + (x.custom ? ' cust' : '') + (x.live ? ' live' : '') + '" data-g="' + i + '" data-k="' + esc(x.start + '|' + x.game) + '"><div class="gx-row" tabindex="0" role="button" aria-expanded="false">' + GX_CHEV +
          '<span class="gx-gm">' + nm + '<span class="gx-sub">' + when + '</span></span>' +
          '<span class="gx-c gx-num"' + lenT + '>' + len + '</span><span class="gx-c gx-num gx-fps">' + gxF(x.fps) + '</span><span class="gx-c gx-num gx-lo">' + gxF(x.low) + '</span>' +
          '<span class="gx-c gx-lb">' + lim + '</span><span class="gx-c gx-st">' + wv + '</span>' + (bin ? PK_PURGE : '') + '</div>' +
@@ -7243,6 +8155,7 @@ function gxLive(s) {
   // (another game than the one picked: not in the list, only in the numbers)
   if (GX.game && gxNow.game !== GX.game) { const j = gxAll.findIndex(x => x.live); if (j >= 0 && gxAll[j].start === gxNow.start) gxAll[j] = gxNow; else renderGames(gxText, gxOpen()); gxSum(gxAll, true); return; }
   { const j = gxAll.findIndex(x => x.live); if (j >= 0) gxAll[j] = gxNow; }
+  if (i < 0 && S.listFilt.g && GX.open && GX.we > GX.ws && !(gxNow.end > GX.ws && gxNow.start < GX.we) && gxAll.some(x => x.live && x.start === gxNow.start && x.game === gxNow.game)) { gxSum(gxAll, true); return; }   // (Filter list on and it is outside the window: only the numbers, not the whole list each update, 11-09)
   if (i < 0 || gxSs[i].start !== gxNow.start || gxSs[i].game !== gxNow.game) { renderGames(gxText, list.querySelector('.gx-sess') ? gxOpen() : undefined); return; }
   const el = list.querySelector('.gx-sess[data-g="' + i + '"]'); if (!el || el.contains(document.activeElement)) return;   // (focused: kept, Enter and Space go on working, 11-06)
   // (the pointer on it, or text picked in it: not drawn again under the hover read-out, a click or the selection; the
@@ -7273,15 +8186,39 @@ const gxOpen = () => [...document.querySelectorAll('#glist .gx-sess.open')].map(
 // one's under each number, one chart with the older one's fps dashed (both from their start), and both maxima of each
 // reading with the change; worse past a step in yellow (fps 8% lower, 4 °C hotter). Back, Esc or the popup closing
 // end it ----
-let gxCmp = null;   // { a, b }: the two by start and game, a the older
+let gxCmp = null;   // { a, b, cq }: the two by start and game (a the older, or as picked in Compare: cq)
 const gxCmpOf = q => gxAll.find(x => x.start === q.start && x.game === q.game) || null;
-function gxCmpStart(xs) {
-  const [a, b] = xs.slice().sort((p, q) => p.start - q.start);
-  gxCmp = { a: { start: a.start, game: a.game }, b: { start: b.start, game: b.game } };
-  pkMode('g', null, true); GX.menu = false; gmodal.classList.add('cmp');
+function gxCmpStart(xs, cq) {   // (cq: from Compare, A and B as picked; Back goes back to it)
+  const [a, b] = cq ? xs : xs.slice().sort((p, q) => p.start - q.start);
+  gxCmp = { a: { start: a.start, game: a.game }, b: { start: b.start, game: b.game }, cq: !!cq };
+  pkMode('g', null, true); GX.menu = false; gmodal.classList.add('cmp'); $('gcmpBtn').classList.toggle('on', !!cq); $('gcmpBtn').setAttribute('aria-pressed', !!cq);
   gxCmpDraw(); const c = $('glist').closest('.mcard'); if (c) c.scrollTop = 0;
+  if (gxCmp) pkSlide('g', 1);   // (in as the bin's switch comes in, 11-08)
 }
-function gxCmpEnd() { gxCmp = null; gmodal.classList.remove('cmp'); renderGames(gxText); }
+// ---- the comparison's header (11-09): Back, A and B, the arrows between that swap them ----
+const GX_SWAPI = '<svg viewBox="0 0 24 24"><path d="M4 8h14l-3.5-3.5M20 16H6l3.5 3.5"/></svg>';
+const gxKey = x => x.start + '|' + x.game;
+const gxLab = x => { const d = new Date(x.start * 1000), cap = w => w.charAt(0).toUpperCase() + w.slice(1); return cap(GX_WD[d.getDay()].slice(0, 3)) + ' ' + d.getDate() + ' ' + cap(GX_MON[d.getMonth()]) + ' ' + hhmm(x.start); };
+const gxChip = (x, k) => '<span class="gx-chip" data-side="' + k + '"><span class="gx-ab' + (k === 'b' ? ' b' : '') + '">' + k.toUpperCase() + '</span><b>' + esc(x.game) + '</b>' + gxLab(x) + '</span>';
+// (A and B trade places: each session's button glides to the other's place, the arrows turn over)
+function gxCmpSwap() {
+  if (!gxCmp) return;
+  const r0 = [...document.querySelectorAll('#glist .gx-chip')].map(c => c.getBoundingClientRect());
+  gxCmp = { a: gxCmp.b, b: gxCmp.a, cq: gxCmp.cq }; gxCmpDraw();
+  const sw = document.querySelector('#glist .gx-swap'); if (sw) sw.focus({ preventScroll: true });
+  if (motionMode() === 'off' || r0.length !== 2) return;
+  const cs = [...document.querySelectorAll('#glist .gx-chip')]; if (cs.length !== 2) return;
+  cs.forEach((c, i) => { const b = c.getBoundingClientRect(); c.animate([{ transform: 'translateX(' + (r0[1 - i].left - b.left).toFixed(1) + 'px)' }, { transform: 'none' }], { duration: 300, easing: SUM_E }); });
+  const a = sw && sw.querySelector('svg'); if (a) a.animate([{ transform: 'rotate(180deg)' }, { transform: 'none' }], { duration: 300, easing: SUM_E });
+  const inn = document.querySelector('#glist .gx-cmp .gx-in'); if (inn) inn.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
+}
+function gxCmpEnd() {   // (from Compare: back to it, A and B as they are now)
+  const back = gxCmp && gxCmp.cq ? gxCmp : null, had = $('glist').contains(document.activeElement); gxCmp = null; gmodal.classList.remove('cmp'); if (back) { CQ.a = gxKey(back.a); CQ.b = gxKey(back.b); }
+  flipHold++; try { renderGames(gxText); } finally { flipHold--; }
+  if (back) pkMode('g', 'cmp', true); else { $('gcmpBtn').classList.remove('on'); $('gcmpBtn').setAttribute('aria-pressed', false); }
+  if (had) { const f = back ? $('gcbar').querySelector('[data-pk="cmpgo"]') : $('gcmpBtn'); if (f && !f.disabled) f.focus({ preventScroll: true }); }   // (Back from the keyboard: the focus to Compare again, 11-09)
+  pkSlide('g', -1, true);
+}
 function gxCmpDraw() {
   const A = gxCmpOf(gxCmp.a), B = gxCmpOf(gxCmp.b);
   if (!A || !B) { gxCmpEnd(); return; }   // (one of them went to the bin meanwhile, 11-06)
@@ -7332,7 +8269,7 @@ function gxCmpDraw() {
     }).join('');
     if (rows) grp += '<div class="gx-grp"><div class="gx-ch gx-ch4"><i>' + esc(s.name) + '</i><span>A max</span><span>B max</span><span>change</span></div>' + rows + '</div>';
   }
-  $('glist').innerHTML = '<div class="gx-cmp"><div class="gx-cmph"><button class="gxh-b gx-cmpb" title="Back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><b>' + esc(A.game === B.game ? B.game : A.game + ', ' + B.game) + '</b>' + lab(A) + ' and ' + lab(B) + '</div>' +
+  $('glist').innerHTML = '<div class="gx-cmp"><div class="gx-cmph"><button class="gxh-b gx-cmpb" title="Back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>' + gxChip(A, 'a') + '<button class="gxh-b gx-swap" title="Swap A and B">' + GX_SWAPI + '</button>' + gxChip(B, 'b') + '</div>' +
     row(A, 'A') + row(B, 'B') + '<div class="gx-in">' + s5.outerHTML + (tl ? tl.outerHTML : '') + (grp ? '<div class="gx-groups">' + grp + '</div>' : '') + '</div></div>';
 }
 // a custom session's new name: saved when the field changes, or when it is left with a name a redraw put back
@@ -7349,6 +8286,7 @@ $('glist').addEventListener('keydown', e => {
 });
 $('glist').addEventListener('click', e => {
   if (e.target.closest('.gx-cmpb')) { gxCmpEnd(); return; }
+  if (e.target.closest('.gx-swap')) { gxCmpSwap(); return; }
   const pg = e.target.closest('.gx-purge'); if (pg) { pkPurge('g', pg.closest('.gx-sess')); return; }   // (a bin row's own button: not a pick)
   if (PK.g.mode) { const s = e.target.closest('.gx-sess'); if (s) pkToggle('g', s); return; }   // (picking: a click picks)
   const d = e.target.closest('.gx-del');
@@ -7400,18 +8338,49 @@ function showGame() {
 const setmodal = $('setmodal');
 // (what Settings shows from the host: drawn again only when it changed, 11-06)
 const setSigOf = () => JSON.stringify([feed.autostart, feed.hwinfo, feed.keepBusy, feed.keepWait, feed.keep, feed.keepNote, feed.fpsBusy, feed.fpsWait, feed.fps, feed.fpsState, feed.updates, feed.latest, feed.canUpdate, feed.estNote, feed.gameDays, feed.warnDays, feed.gameMerge]);
+// (a slider of the look let go by a redraw or a pick, not by the pointer: its change kept as one step and saved first, so a
+// theme or a saved look picked right after isn't marked changed by it, 11-09)
+function lkFlush() { clearTimeout(lkIdle); if (lkDrag == null) return; const b = lkDrag; lkDrag = null; if (snapOf() !== b) { S.look.changed = true; pushUndo(b); saveState(); syncUndo(); } }
 function renderSettings() {
   // (a slider of the look let go by a redraw, not by the pointer: its change kept as one step and saved, the review 11-05)
-  if (lkDrag != null) { const b = lkDrag; lkDrag = null; if (snapOf() !== b) { S.look.changed = true; pushUndo(b); saveState(); syncUndo(); } }
+  lkFlush();
   // (a field being typed in keeps what was typed, and its focus)
   const fa = document.activeElement, typing = fa && fa.tagName === 'INPUT' && fa.type !== 'range' && fa.id && $('setbody').contains(fa) ? { id: fa.id, v: fa.value, a: fa.selectionStart, b: fa.selectionEnd } : null;
   const rng = fa && fa.type === 'range' && fa.id && $('setbody').contains(fa) ? fa.id : null;   // (a slider in focus keeps it, its value as drawn)
-  const tw = togSnap($('setbody')), sw = setmodal.classList.contains('open') ? segSnap($('setbody')) : null;
+  const tw = togSnap($('setbody')), sw = setmodal.classList.contains('open') ? segSnap($('setbody')) : null, pw = sw && pickSnap($('setbody')), spT = spinAt();
+  const fa0 = document.activeElement, fk = fa0 && fa0.closest && fa0.closest('#setbody [data-lk]') && fa0.matches(':focus-visible') ? [fa0.dataset.lk, fa0.dataset.k || ''] : null;   // (a key on a pick: the focus comes back to it, 11-09 review)
+  const pvEl = $('lkPv'), thL = $('lkThL'), hadSave = !!$('setbody').querySelector('.lk-save'); if (thL && setmodal.classList.contains('open')) lkThTop = thL.scrollTop;   // (the Look page, 11-09: a list from the last time it was open says nothing)
   renderSettings0(); feed.setSig = setSigOf();
-  togSlide($('setbody'), tw); segPills($('setbody'), sw);
+  togSlide($('setbody'), tw); segPills($('setbody'), sw); pickSlide($('setbody'), pw); spinOn(spT); dselUp($('setbody')); lkAfter(pvEl, hadSave); lkPopAnchor();
+  if (fk) { const b = $('setbody').querySelector('[data-lk="' + fk[0] + '"]' + (fk[1] ? '[data-k="' + CSS.escape(fk[1]) + '"]' : '')); if (b) b.focus({ preventScroll: true }); }
   if (rng && $(rng)) $(rng).focus({ preventScroll: true });
   const fi = typing && $(typing.id);
   if (fi) { if (fi.value !== typing.v) fi.dataset.dirty = '1'; fi.value = typing.v; fi.focus(); try { fi.setSelectionRange(typing.a, typing.b); } catch (e) { } }
+}
+// a pick drawn again (a theme, a palette, a colour chip or tone, a fade's spot): put back as it was for a frame, then
+// moved, so its ring and fill fade over as their CSS says (Settings is drawn anew on each pick; the motion audit 11-08).
+// Switches and pills have their own (togSlide, segPills). Not with animations Off
+const pickKey = x => [x.dataset.lk, x.dataset.k, x.dataset.at, x.dataset.v, x.dataset.c].join('|');
+const pickSnap = root => { const m = new Map(); for (const x of root.querySelectorAll('[data-lk]:not(.tog2)')) if (!x.closest('.seg3')) m.set(pickKey(x), x.classList.contains('on')); return m; };
+function pickSlide(root, was) {
+  if (!was || motionMode() === 'off') return;
+  const moved = [...root.querySelectorAll('[data-lk]:not(.tog2)')].filter(x => !x.closest('.seg3') && was.has(pickKey(x)) && was.get(pickKey(x)) !== x.classList.contains('on'));
+  if (!moved.length) return;
+  for (const x of moved) x.classList.toggle('on'); void root.offsetWidth; for (const x of moved) x.classList.toggle('on');
+}
+// the Check now arrow keeps turning through a redraw, and ends its turn when the answer comes (11-08)
+const spinAt = () => { const v = $('sUpdNow') && $('sUpdNow').querySelector('svg'), a = v && v.getAnimations()[0]; if (!a) return null;
+  if (a.id === 'spinEnd') { const ct = a.effect.getComputedTiming(), a0 = a._a0 || 0; return { end: a0 + (360 - a0) * (ct.progress || 0), left: Math.max(0, (ct.endTime || 0) - (a.currentTime || 0)) }; }   // (its last turn: where it is, what is left, 11-08 review)
+  return a.currentTime; };
+function spinOn(t) {
+  if (t == null) return;
+  const v = $('sUpdNow') && $('sUpdNow').querySelector('svg'); if (!v) return;
+  const a = v.getAnimations()[0];
+  if (typeof t === 'object') { if (a || !motionOn() || t.left < 16) return; const e = v.animate([{ transform: 'rotate(' + t.end.toFixed(1) + 'deg)' }, { transform: 'rotate(360deg)' }], { duration: t.left, easing: 'ease-out', id: 'spinEnd' }); e._a0 = t.end; return; }
+  if (a) { a.currentTime = t; return; }
+  if (!motionOn()) return;
+  const P = 1100, f = (t % P) / P;
+  const e = v.animate([{ transform: 'rotate(' + (f * 360).toFixed(1) + 'deg)' }, { transform: 'rotate(360deg)' }], { duration: Math.max(160, (1 - f) * P), easing: SUM_E, id: 'spinEnd' }); e._a0 = f * 360;
 }
 // a switch drawn again in its new state (Settings and Customize draw their rows again on a change, so CSS alone would
 // show it jump): put back in its old state for a frame, then switched, so it slides there. Not with animations Off
@@ -7427,12 +8396,15 @@ function togSlide(root, was) {
 // a segment's pick (Animations, Cards, Colour, Keep's Days or Forever) is a pill that slides over to it, like the view
 // tabs': Settings is drawn again on every pick, so the new pill starts where the last pick was (11-02, the motion audit).
 // Not with animations Off
-const segKey = s => s.id || (s.dataset.keep ? 'keep:' + s.dataset.keep : '');
+const segKey = s => s.id || (s.dataset.keep ? 'keep:' + s.dataset.keep : '') || (s.dataset.lay ? 'lay:' + s.dataset.lay : '');   // (lay: the edit panel's, 11-08)
 // (where each pill is now: mid-slide, from where it has got to, so a redraw then doesn't jump it to its end)
-const segSnap = root => { const o = {}; for (const s of root.querySelectorAll('.seg.seg3')) { const k = segKey(s), b = s.querySelector(':scope > button.on'), ind = s.querySelector(':scope > .ind'); if (!k || !b) continue; if (ind && ind.offsetWidth) { const sr = s.getBoundingClientRect(), ir = ind.getBoundingClientRect(), cs = getComputedStyle(s), kk = sr.width / (parseFloat(cs.width) || s.offsetWidth) || 1; o[k] = { x: (ir.left - sr.left) / kk - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(getComputedStyle(ind).left) || 0), w: ir.width / kk }; } else o[k] = ind ? pillTo(ind, b) : { x: b.offsetLeft - 2, w: b.offsetWidth }; } return o; };
+const segSnap = root => { const o = {}; for (const s of root.querySelectorAll('.seg.seg3, .seg.pills')) { const k = segKey(s), b = s.querySelector(':scope > button.on'), ind = s.querySelector(':scope > .ind'); if (!k || !b) continue; if (ind && ind.offsetWidth) { const sr = s.getBoundingClientRect(), ir = ind.getBoundingClientRect(), cs = getComputedStyle(s), kk = sr.width / (parseFloat(cs.width) || s.offsetWidth) || 1; o[k] = { x: (ir.left - sr.left) / kk - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(getComputedStyle(ind).left) || 0), w: ir.width / kk }; } else o[k] = ind ? pillTo(ind, b) : { x: b.offsetLeft - 2, w: b.offsetWidth }; const bs = [...s.querySelectorAll(':scope > button')]; o[k].i = bs.indexOf(b); o[k].n = bs.length; } return o; };   // (i, n: the pick, for the labels' cross, 11-09)
+const segX = new Map();   // (a seg's labels crossing over: from, to, when; by its key)
 function segPills(root, was) {
-  for (const s of root.querySelectorAll('.seg.seg3')) {
+  for (const s of root.querySelectorAll('.seg.seg3, .seg.pills')) {
     const k = segKey(s); if (!k) continue;
+    const bs = s.querySelectorAll(':scope > button');
+    if (s.classList.contains('pills') && bs.length && bs[0].offsetTop !== bs[bs.length - 1].offsetTop) { s.classList.remove('pills', 'pill'); const i0 = s.querySelector(':scope > .ind'); if (i0) i0.remove(); continue; }   // (chips on two rows: their own highlight, 11-08)
     const b = s.querySelector(':scope > button.on'), ind = s.querySelector(':scope > .ind') || s.insertBefore(document.createElement('i'), s.firstChild);
     ind.className = 'ind still'; s.classList.add('pill');
     if (!b) { ind.style.width = '0px'; continue; }
@@ -7440,46 +8412,265 @@ function segPills(root, was) {
     if (w && motionMode() !== 'off' && (Math.abs(w.x - P.x) > 0.1 || Math.abs(w.w - P.w) > 0.1)) { ind.style.transform = 'translateX(' + w.x + 'px)'; ind.style.width = w.w + 'px'; void ind.offsetWidth; ind.classList.remove('still'); }
     ind.style.transform = 'translateX(' + P.x + 'px)'; ind.style.width = P.w + 'px';
     if (ind.classList.contains('still')) { void ind.offsetWidth; ind.classList.remove('still'); }
+    // (11-09, his recording: drawn again, the picked button had its own fill until the pill took over, and that fill
+    // faded out: a second highlight under the sliding pill and a flash on every control's pick at each redraw. Its fade
+    // ends at once: the pill is the only highlight)
+    for (const x of bs) { getComputedStyle(x).backgroundColor; for (const a of x.getAnimations()) if (a.transitionProperty === 'background-color') a.finish(); }
+    // (the labels cross over as the pill goes, with its glide, 11-09: only when the pick changed; drawn again mid-cross
+    // (another control, a message), the cross carries on where it was, nothing lights or dims twice)
+    const bi = [...bs].indexOf(b), now = performance.now(); let x = segX.get(k);
+    if (w && w.n === bs.length && w.i >= 0 && w.i !== bi && motionMode() !== 'off') { x = { from: w.i, to: bi, t0: now }; segX.set(k, x); }
+    else if (x && (!w || x.to !== bi || now - x.t0 >= 300 || motionMode() === 'off')) { segX.delete(k); x = null; }
+    const old = x && bs[x.from], ref = old && (old.disabled ? [...bs].find(y => y !== b && !y.disabled) : old);
+    if (old && old !== b && ref) { const on = getComputedStyle(b).color, dim = getComputedStyle(ref).color, own = getComputedStyle(old).color, o = { duration: 300, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' };
+      b.animate([{ color: dim }, { color: on }], o).currentTime = now - x.t0; old.animate([{ color: on }, { color: own }], o).currentTime = now - x.t0; }
   }
 }
 // a section of Settings: its header, then its rows in one block
 // the Look's colours (11-02, his pick of the mockups): a palette to start from, then each colour on a chip that opens a
 // grid of tones (8 hues, light, mid and deep, all muted enough for the greys), any hex, the full picker, and for a
 // category Auto (its part's, from the palette). Folded until opened; one chip open at a time
-let lkOpen = false, lkPick = null, lkBg = false, lkCells = false, bgSel = null, lkDrag = null;
+let lkPick = null, lkBg = false, lkCells = false, bgSel = null, lkDrag = null;
+// a chip's tones open and shut as the folds beside them glide (the motion audit 11-08): Settings drawn again with the
+// pick, the one that was open folds away from where it was (a copy of it, inert), the new one unfolds. Off: at once
+function lkPickSet(k) {
+  const fo = document.querySelector('#setbody .lk-fl:not(.lk-gh)'), fg = fo && motionMode() !== 'off' ? fo.cloneNode(true) : null, fin = fo && (fo.parentNode.classList.contains('lk-rows') ? '.lk-rows' : '.lk-colr');
+  const old = lkPick && LK_OWN.has(lkPick) && document.querySelector('#setbody .lk-pop:not([aria-hidden])'), ok = lkPick, ghost = old && motionMode() !== 'off' ? old.cloneNode(true) : null;
+  lkPick = k; renderSettings();
+  if (fg) { const pa = document.querySelector('#setbody ' + fin); if (pa) { fg.querySelectorAll('[id]').forEach(x => x.removeAttribute('id')); fg.classList.add('lk-gh'); fg.inert = true; pa.append(fg); fg.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(0.97)' }], { duration: 140, easing: 'ease-out' }).onfinish = () => fg.remove(); } }
+  const nf = k && !LK_OWN.has(k) && document.querySelector('#setbody .lk-fl:not(.lk-gh)'); if (nf && motionMode() !== 'off') nf.animate([{ opacity: 0, transform: 'scale(0.97)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 140, easing: 'ease-out' });   // (the floating editor: a fade and a small scale from its swatch, 11-09)
+  if (ghost) {
+    const ch = document.querySelector('#setbody .lk-chip[data-k="' + CSS.escape(ok) + '"]'), row = ch && ch.closest('.lk-row');
+    if (row) { ghost.querySelectorAll('[id]').forEach(x => x.removeAttribute('id')); row.after(ghost); lkPopIO(ghost, false); }
+  }
+  const nw = k && LK_OWN.has(k) && document.querySelector('#setbody .lk-pop:not([aria-hidden])'); if (nw) lkPopIO(nw, true);
+}
+// the floating editor (11-09): over the rows under the one it opened from, at its right; its scale from that swatch
+function lkPopAnchor() {
+  const fl = document.querySelector('#setbody .lk-fl:not(.lk-gh)'); if (!fl) return;
+  const k = fl.dataset.for, row = k !== 'acc' && fl.parentNode.querySelector('.lk-cr[data-k="' + CSS.escape(k) + '"]');
+  if (row) fl.style.top = (row.offsetTop + row.offsetHeight + 4) + 'px';
+  const sw = k === 'acc' ? document.querySelector('#setbody .lk-acc i') : row && row.querySelector('.lk-hx i'); if (!sw) return;
+  const a = sw.getBoundingClientRect(), b = fl.getBoundingClientRect(); fl.style.transformOrigin = Math.round(a.left + a.width / 2 - b.left) + 'px ' + Math.round(a.top + a.height / 2 - b.top) + 'px';
+}
+function lkPopIO(el, inn) {
+  if (!inn) { el.setAttribute('aria-hidden', 'true'); el.inert = true; }
+  if (motionMode() === 'off') { if (!inn) el.remove(); return; }
+  const cs = getComputedStyle(el), full = { opacity: 1 }, zero = { opacity: 0 };
+  for (const p of ['height', 'paddingTop', 'paddingBottom', 'marginTop', 'marginBottom', 'borderTopWidth', 'borderBottomWidth']) { full[p] = cs[p]; zero[p] = '0px'; }
+  el.style.overflow = 'hidden';
+  const a = el.animate(inn ? [zero, full] : [full, zero], { duration: 300, easing: SUM_E });
+  a.onfinish = () => { if (inn) el.style.overflow = ''; else el.remove(); };
+}
 const hslHex = (h, s, l) => { s /= 100; l /= 100; const a = s * Math.min(l, 1 - l), f = n => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }; return '#' + [f(0), f(8), f(4)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join(''); };
 const TONES = [[78, 55], [68, 50], [56, 45]].map(([l, s]) => [250, 215, 190, 170, 145, 95, 35, 330].map(h => hslHex(h, s, l)));
 // (a background's base and a cell's fill: dark ones, greys first, then the tones' hues deep)
 const DARK = [['#000000', '#0b0b0b', '#101010', '#151515', '#1a1a1a', '#202020', '#262626', '#2e2e2e']].concat([[9, 32], [13, 26]].map(([l, s]) => [250, 215, 190, 170, 145, 95, 35, 330].map(h => hslHex(h, s, l))));
 const LK_OWN = new Set(['base', 'cell', 'fade']), LK_DARK = new Set(['base', 'cell']);
-const lkChip = (key, cur, name, tag) => '<div class="lk-row"><span class="lk-name">' + esc(name) + '</span><span class="lk-tag">' + tag + '</span><span class="sp"></span>' +
-  '<button class="lk-chip' + (lkPick === key ? ' on' : '') + '" data-lk="chip" data-k="' + esc(key) + '" aria-label="' + esc(name) + ', ' + (cur || 'grey') + '" aria-expanded="' + (lkPick === key) + '" style="--c:' + (cur || '#5a5a5a') + '"><i></i>' + (cur || 'grey') + '</button></div>' +
+// a colour's chip (its dot, and its hex beside a name, or the name alone in a row of chips) and, open, its tones
+const lkBtn = (key, cur, name, txt, cls) => '<button class="lk-chip' + (cls ? ' ' + cls : '') + (lkPick === key ? ' on' : '') + '" data-lk="chip" data-k="' + esc(key) + '" aria-label="' + esc(name) + ', ' + (cur || 'grey') + '" aria-expanded="' + (lkPick === key) + '" style="--c:' + (cur || '#5a5a5a') + '"><i></i>' + esc(txt) + '</button>';
+const lkPop = (key, cur) =>
   (lkPick === key ? '<div class="lk-pop"><div class="lk-g">' + (LK_DARK.has(key) ? DARK : TONES).flat().map(c => '<button data-lk="c" data-k="' + esc(key) + '" data-c="' + c + '" style="--c:' + c + '" aria-label="' + c + '" aria-pressed="' + (c === cur) + '"' + (c === cur ? ' class="on"' : '') + '></button>').join('') + '</div>' +
-    '<div class="lk-f"><input class="lk-hex" id="lkHex" data-k="' + esc(key) + '" value="' + (cur || '') + '" maxlength="7" spellcheck="false" placeholder="#rrggbb" title="Any colour: its hex, Enter to use it" aria-label="Hex">' +
-    '<label class="lk-any" title="Any colour: the full picker"><input type="color" id="lkAny" data-k="' + esc(key) + '" value="' + (isHex(cur) ? cur : ACC0) + '" aria-label="Any colour"></label>' +
-    (key !== 'acc' && !LK_OWN.has(key) ? '<button class="lk-auto' + (S.L.cats.some(c => c.id === key && !c.col) ? ' on' : '') + '" data-lk="c" data-k="' + esc(key) + '" data-c="" title="Its part\'s colour, from the palette">Auto</button>' : '') + '</div></div>' : '');
-function lookColours() {
-  const sp = S.look.tint === 'spectrum', pal = PALETTES[S.look.pal];
-  const dots = [S.look.acc].concat(sp ? S.L.cats.map(c => catTint(c) || '#5a5a5a') : []).slice(0, 9).map(c => '<i style="--c:' + c + '"></i>').join('');
-  return '<div class="setrow lk-head' + (lkOpen ? ' open' : '') + '" data-lk="fold" data-f="col" role="button" aria-expanded="' + lkOpen + '"><div>Colours<small>' + (sp ? 'Palette: ' + pal[0] + '. Open to change it, or any one colour.' : 'Open to pick the accent.') + '</small></div><span class="lk-prev">' + dots + '<svg class="lk-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg></span></div>' +
-    '<div class="lk-body lk-cols' + (lkOpen ? ' open' : '') + '"><div><div class="lk-in">' +
-    (sp ? '<div class="lk-pres">' + Object.keys(PALETTES).map(k => '<button data-lk="pal" data-k="' + k + '" class="' + (S.look.pal === k ? 'on' : '') + '">' + PALETTES[k][0] + '<span class="lk-dots">' + Object.values(PALETTES[k][1]).map(c => '<i style="--c:' + c + '"></i>').join('') + '</span></button>').join('') + '</div>' : '') +
-    lkChip('acc', S.look.acc, 'Accent', 'the view tabs, the periods, the switches') +
-    (sp ? S.L.cats.map(c => lkChip(c.id, catTint(c), c.name, c.col ? 'yours' : 'auto')).join('') : '') + '</div></div></div>';
-}
+    '<div class="lk-f"><input class="lk-hex" id="lkHex" data-k="' + esc(key) + '" value="' + (cur || '') + '" maxlength="7" spellcheck="false" placeholder="#rrggbb" title="Hex" aria-label="Hex">' +
+    '<label class="lk-any" title="Any colour"><input type="color" id="lkAny" data-k="' + esc(key) + '" value="' + (isHex(cur) ? cur : ACC0) + '" aria-label="Any colour"></label>' +
+    (key !== 'acc' && !LK_OWN.has(key) ? '<button class="lk-auto' + (S.L.cats.some(c => c.id === key && !c.col) ? ' on' : '') + '" data-lk="c" data-k="' + esc(key) + '" data-c="" title="Part\'s colour">Auto</button>' : '') + '</div></div>' : '');
+const lkChip = (key, cur, name, tag) => '<div class="lk-row"><span class="lk-name">' + esc(name) + '</span><span class="lk-tag">' + tag + '</span><span class="sp"></span>' + lkBtn(key, cur, name, cur || 'grey') + '</div>' + lkPop(key, cur);
 // ---- the theme, the background and the cells (11-05) ----
 const lkFold = (f, open, name, small, dots) => '<div class="setrow lk-head' + (open ? ' open' : '') + '" data-lk="fold" data-f="' + f + '" role="button" aria-expanded="' + !!open + '"><div>' + name + '<small>' + small + '</small></div><span class="lk-prev">' +
   dots.map(c => '<i class="dk" style="--c:' + c + '"></i>').join('') + '<svg class="lk-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg></span></div>';
 const lkRange = (k, name, v, lo, hi) => '<div class="lk-row"><span class="lk-name">' + name + '</span><span class="sp"></span><input type="range" class="lk-rng" id="lkr-' + k + '" data-k="' + k + '" aria-label="' + name + '" aria-valuetext="' + v + '%" min="' + lo + '" max="' + hi + '" step="1" value="' + v + '" style="--v:' + ((v - lo) / (hi - lo) * 100) + '%"><span class="lk-v">' + v + '%</span></div>';
-// a theme's card: its background, three cells, a graph line in each in its colour (grey, the accent, or the palette's)
-function thCard(id) {
-  const P = cleanLook(Object.assign({ theme: id }, THEME_PRESETS[id])), on = S.look.theme === id && !S.look.changed, pal = P.pal === 'match' ? palMatch(P)[0] : PALETTES[P.pal][1];
-  const r = P.corners === 'sharp' ? '2px' : P.corners === 'round' ? '6px' : '4px';
-  return '<button class="th-b' + (on ? ' on' : '') + '" data-lk="theme" data-k="' + id + '" aria-pressed="' + on + '"><span class="th-pv" style="background:' + bgiOf(P) + '">' +
-    ['gpu', 'cpu', 'fan'].map(k => '<i style="--t:' + tileOf(P) + ';--l:' + (P.line ? lineOf(P) : 'transparent') + ';--r:' + r + ';--g:' + (P.tint === 'spectrum' ? pal[k] : '#8f8f8f') + '"></i>').join('') +   // (graphs as the view draws them: grey but in Spectrum, 11-06)
-    '</span><span class="th-n">' + THEME_PRESETS[id].name + '</span></button>';
+// ---- the Look page (11-09, his OK 04:55 of the round 5 mockups): a live miniature of his window on the left, every theme
+// on the right by colour (Saved first) as tall as it, a dropdown that jumps to a colour, Save; the accent's box beside the
+// colour control; under Spectrum a palette dropdown and his categories, the colour editor floating over them ----
+const THEME_FAMS = ['Greys', 'Browns', 'Reds and oranges', 'Golds and yellows', 'Greens', 'Teals', 'Blues', 'Purples', 'Pinks', 'Mixes'];
+const LK_RAD = { sharp: 3, normal: 10, round: 14 };   // (the old corners in px at the base size: the slider's detents)
+const famsOn = () => THEME_FAMS.filter(f => Object.values(THEME_PRESETS).some(t => (t.fam || 'Mixes') === f));
+const themeFam = id => (THEME_PRESETS[id] && THEME_PRESETS[id].fam) || 'Mixes';
+const LK_PLUS = '<svg viewBox="0 0 12 12"><path d="M6 2v8M2 6h8"/></svg>', LK_X = '<svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>';
+let lkJf = null, lkThTop = null, lkThGo = null, lkJumpAt = 0, lkJumpTo = null, lkHov = null;   // (the colour the list is at, where it was scrolled, a glide asked for, a hovered tile)
+// a category's part (more than half of the cells that tell read it), as autoTint counts it
+const catPart = cat => { const n = {}; let told = 0; for (const cid of cat.cells) { const p = partOf(S.L.cells[cid]); if (p) { n[p] = (n[p] || 0) + 1; told++; } } let top = null; for (const p in n) if (!top || n[p] > n[top]) top = p; return top && n[top] * 2 > told ? top : null; };
+const lkCats = () => S.L.cats.filter(c => c.cells && c.cells.length);
+const palCol = (k, cat) => { const p = catPart(cat); return p ? (PALETTES[k] || PALETTES.muted)[1][p] : '#5a5a5a'; };
+const lkCols = () => { const o = {}; for (const c of S.L.cats) if (c.col) o[c.id] = c.col; return o; };
+const lkSaved = () => S.look.from ? S.lookSaved.find(x => x.id === S.look.from) || null : null;
+// (Save shows when the look is not the theme or the saved look it came from: changed, or its categories' own colours)
+const lkCore = L => { const o = cleanLook(Object.assign({}, L, { changed: true })); delete o.changed; delete o.from; delete o.pops; return JSON.stringify(o); };
+const lkColsKey = cols => S.look.tint === 'spectrum' ? JSON.stringify(Object.entries(cols || {}).sort()) : '';
+const lookDirty = () => { const sv = lkSaved(); return lkCore(S.look) !== lkCore(sv ? sv.look : lkPreset(S.look.theme)) || lkColsKey(lkCols()) !== lkColsKey(sv ? sv.cols : {}); };   // (by what it is, not a flag: an undo after a Save shows it changed again, 11-09 review)
+// (a saved look gone from under its look (deleted, then an undo; a state file): no longer from it, changed)
+function lkFromCheck() { if (S.look.from && !S.lookSaved.some(x => x.id === S.look.from)) { delete S.look.from; S.look.changed = true; } }
+const lkPreset = id => cleanLook(Object.assign({ theme: id }, THEME_PRESETS[id]));
+// a tile's swatch: the look's background, three short graph lines in its palette's colours when it is Spectrum
+const lkSw = L => { const pal = (PALETTES[L.pal] || PALETTES.muted)[1], sp = L.tint === 'spectrum';
+  return '<span class="lk-sw" style="background:' + bgiOf(L) + '"><span class="lk-ln">' + ['gpu', 'cpu', 'fan'].map(k => '<i style="background:' + (sp ? pal[k] : '#8f8f8f') + '"></i>').join('') + '</span></span>'; };
+const lkThemeTile = id => { const on = S.look.theme === id && !S.look.from;
+  return '<button class="lk-t' + (on ? ' on' : '') + '" data-lk="theme" data-k="' + esc(id) + '" aria-pressed="' + on + '">' + lkSw(lkPreset(id)) + '<span class="lk-tn">' + esc(THEME_PRESETS[id].name) + '</span></button>'; };
+const lkSavedTile = sv => { const on = S.look.from === sv.id;
+  return '<div class="lk-t lk-sv' + (on ? ' on' : '') + '"><button class="lk-tb" data-lk="saved" data-k="' + esc(sv.id) + '" aria-pressed="' + on + '" aria-label="' + esc(sv.name) + '">' + lkSw(sv.look) + '</button>' +
+    '<span class="lk-tn" data-k="' + esc(sv.id) + '">' + esc(sv.name) + '</span><button class="lk-x" data-lk="savex" data-k="' + esc(sv.id) + '" title="Delete" aria-label="Delete ' + esc(sv.name) + '">' + LK_X + '</button></div>'; };
+const lkSec = (f, tiles) => '<section data-f="' + esc(f) + '"><div class="lk-fh">' + esc(f) + '</div><div class="lk-tg">' + tiles + '</div></section>';
+function lookTheme() {
+  const L = S.look, sv = lkSaved(), dirty = lookDirty(), fams = famsOn();
+  if (!lkJf || (lkJf !== 'Saved' && !fams.includes(lkJf))) lkJf = sv ? 'Saved' : themeFam(L.theme);
+  return '<div class="setrow th-row lk-th"><div class="lk-th-h"><div>Theme<small>' + esc(sv ? sv.name : THEME_PRESETS[L.theme].name) + (dirty ? ', changed' : '') + '</small></div><span class="lk-th-r">' +
+    (dirty && (sv || S.lookSaved.length < 12) ? '<button class="btn lk-save" data-lk="save">Save</button>' : '') +
+    '<span class="lk-dd"><select id="lkJump" aria-label="Theme colours">' + ['Saved'].concat(fams).map(f => '<option value="' + esc(f) + '"' + (f === lkJf ? ' selected' : '') + '>' + esc(f) + '</option>').join('') + '</select></span></span></div>' +
+    '<div class="lk-th-w"><div class="lk-pv" id="lkPv" aria-hidden="true" style="aspect-ratio:' + innerWidth + ' / ' + innerHeight + '"></div><div class="lk-th-rc"><div class="lk-th-l" id="lkThL">' +
+    lkSec('Saved', S.lookSaved.map(lkSavedTile).join('') + (S.lookSaved.length < 12 ? '<button class="lk-t lk-add" data-lk="saveadd" title="Save" aria-label="Save the look"><span class="lk-sw lk-es">' + LK_PLUS + '</span><span class="lk-tn">&nbsp;</span></button>' : '')) +
+    fams.map(f => lkSec(f, Object.keys(THEME_PRESETS).filter(id => themeFam(id) === f).map(lkThemeTile).join(''))).join('') + '</div></div></div></div>';
 }
-function lookTheme() { return '<div class="setrow th-row"><div>Theme<small>' + THEME_PRESETS[S.look.theme].name + (S.look.changed ? ', changed' : '') + '</small></div><div class="th-grid">' + Object.keys(THEME_PRESETS).map(thCard).join('') + '</div></div>'; }
+// the accent's box, beside Mono / Accent / Spectrum in every one of them; its editor floats under the row
+const lkAccBox = () => '<button class="lk-acc' + (lkPick === 'acc' ? ' on' : '') + '" data-lk="chip" data-k="acc" title="Accent" aria-label="Accent, ' + S.look.acc + '" aria-expanded="' + (lkPick === 'acc') + '"><i style="--c:' + S.look.acc + '"></i></button>';
+// a category's sample line (the same for it each time)
+const lkSpark = seed => { let s = 7; for (const ch of seed) s = (s * 31 + ch.charCodeAt(0)) % 9973; const p = []; for (let i = 0; i <= 14; i++) { s = (s * 7919 + 13) % 9973; p.push((i / 14 * 100).toFixed(1) + ' ' + (3 + s / 9973 * 12).toFixed(1)); } return 'M' + p.join(' L'); };
+const lkCatRow = c => { const col = catTint(c) || '#7a7a7a', on = lkPick === c.id;
+  return '<div class="lk-cr' + (on ? ' on' : '') + '" data-k="' + esc(c.id) + '"><span class="lk-cn" style="--c:' + col + '">' + esc(c.name) + '</span><span class="lk-cl"><svg viewBox="0 0 100 18" preserveAspectRatio="none"><path style="stroke:' + col + '" d="' + lkSpark(c.id) + '"/></svg></span>' +
+    '<button class="lk-hx" data-lk="chip" data-k="' + esc(c.id) + '" aria-expanded="' + on + '" aria-label="' + esc(c.name) + ', ' + col + '"><i style="--c:' + col + '"></i>' + col.toUpperCase() + '</button></div>'; };
+// the palette (Spectrum): the theme's own first, then every theme's by colour, then the others; once a category's colour is
+// your own, Custom (from the one it was). Its categories under it, a row each
+function lookPalette() {
+  const L = S.look, cats = lkCats(), own = 't_' + L.theme, custom = Object.keys(lkCols()).length > 0, sq = k => cats.map(c => palCol(k, c)).join(',');
+  const nm = k => k === own ? THEME_PRESETS[L.theme].name + '\'s own' : k.startsWith('t_') && THEME_PRESETS[k.slice(2)] ? THEME_PRESETS[k.slice(2)].name : PALETTES[k][0];
+  const opt = k => '<option value="' + esc(k) + '" data-sq="' + sq(k) + '"' + (!custom && k === L.pal ? ' selected' : '') + '>' + esc(nm(k)) + '</option>';
+  let o = custom ? '<option value="__custom" data-sq="' + cats.map(c => catTint(c) || '#5a5a5a').join(',') + '" selected>Custom</option>' : '';
+  if (PALETTES[own]) o += opt(own);
+  for (const f of famsOn()) { const ks = Object.keys(THEME_PRESETS).filter(id => themeFam(id) === f && 't_' + id !== own && PALETTES['t_' + id]).map(id => 't_' + id); if (ks.length) o += '<optgroup label="' + esc(f) + '">' + ks.map(opt).join('') + '</optgroup>'; }
+  o += '<optgroup label="Others">' + Object.keys(PALETTES).filter(k => !k.startsWith('t_')).map(opt).join('') + '</optgroup>';
+  const ed = lkPick && lkPick !== 'acc' && cats.find(c => c.id === lkPick);
+  return '<div class="setrow lk-palh"><div>Palette<small' + (custom ? '>Custom, from ' + esc(nm(L.pal)) : ' class="lk-ph">&nbsp;') + '</small></div><span class="lk-dd"><select id="lkPal" aria-label="Palette">' + o + '</select></span></div>' +
+    '<div class="lk-rows">' + cats.map(lkCatRow).join('') + (ed ? '<div class="lk-fl" data-for="' + esc(ed.id) + '">' + lkPop(ed.id, catTint(ed)) + '</div>' : '') + '</div>';
+}
+// ---- the preview: his window as it is now, in the look pointed at (a tile under the pointer or the keys), else his own.
+// Drawn only then: a copy of the view in a shadow root (its own ids: nothing of the page finds it) with deck.css read for
+// it (its :root the copy's box), its graphs copied over in that look's colours. A 120 ms cross-fade ----
+let pvSheetP = null, pvKey = '', pvT = 0, pvWant = null;
+const PV_CSS = '.pvr { position: absolute; left: 0; top: 0; overflow: hidden; transform-origin: 0 0; background: var(--bgi, var(--bg)); color: var(--fg); font-family: var(--f-body); line-height: 1.4; pointer-events: none; } .pvr *, .pvr *::before, .pvr *::after { animation: none !important; transition: none !important; } .pvr * { -webkit-app-region: none !important; app-region: none !important; }';
+const pvSheet = () => pvSheetP || (pvSheetP = fetch('deck.css').then(r => r.text()).then(t => { const s = new CSSStyleSheet(); s.replaceSync(t.replace(/@font-face\s*\{[^}]*\}/g, '').replace(/:root/g, '.pvr') + PV_CSS); return s; }).catch(() => { pvSheetP = null; return null; }));
+const lkLookOf = (lk, k) => { if (lk === 'saved') { const sv = S.lookSaved.find(x => x.id === k); return sv ? Object.assign(JSON.parse(JSON.stringify(sv.look)), { pops: S.look.pops, _cols: sv.cols || {} }) : null; } return THEME_PRESETS[k] ? Object.assign(lkPreset(k), { pops: S.look.pops }) : null; };
+const lkHovLook = () => lkHov && lkLookOf(lkHov.lk, lkHov.k);
+function lkPvAsk(L) { pvWant = L; clearTimeout(pvT); pvT = setTimeout(() => lkPvDraw(pvWant), 60); }
+// (each category's colour in a look: Spectrum's from its palette, a colour of your own kept; asked of the look for a moment)
+function lkTintsFor(L) { const m = new Map(); if (L.tint !== 'spectrum') return m; const was = S.look, keep = L._cols ? S.L.cats.map(c => [c, c.col]) : null; S.look = L; TINT.clear();
+  if (keep) for (const c of S.L.cats) { if (L._cols[c.id]) c.col = L._cols[c.id]; else delete c.col; }   // (a saved look's own colours, for a moment)
+  try { for (const c of S.L.cats) { const t = catTint(c); if (t) m.set(c.id, t); } } finally { S.look = was; if (keep) for (const [c, col] of keep) { if (col) c.col = col; else delete c.col; } TINT.clear(); } return m; }
+// (a graph copied; a cell's own graph recoloured from his look's colour to that look's: a warning keeps its colours)
+function pvCanvas(s, d, L, tints) {
+  if (!s.width || !s.height) return;
+  d.width = s.width; d.height = s.height; const x = d.getContext('2d'); if (!x) return;
+  try { x.drawImage(s, 0, 0); } catch (e) { return; }
+  const tile = s.closest('[data-cid]'); if (!tile || s.closest('.xb') || tile.matches('.yellow, .red, .warm')) return;
+  const cat = catOf(tile.dataset.cid), grey = s.closest('.hero') ? '#8f8f8f' : '#7c7c7c';
+  const now = S.look.tint === 'spectrum' && cat ? catTint(cat) || grey : grey, want = L.tint === 'spectrum' && cat ? tints.get(cat.id) || grey : grey;
+  if (now === want) return;
+  x.globalCompositeOperation = 'source-in'; x.fillStyle = want; x.fillRect(0, 0, d.width, d.height);
+}
+async function lkPvDraw(L) {
+  const box = $('lkPv'), sm = document.getElementById('setmodal'); if (!L || !box || !sm.classList.contains('open') || !box.clientWidth) return;
+  const key = JSON.stringify(L) + JSON.stringify(lkCols()) + '|' + innerWidth + 'x' + innerHeight + '|' + box.clientWidth; if (key === pvKey && box.querySelector('.lk-pvh')) return;
+  const sheet = await pvSheet(); if (!sheet || !box.isConnected || pvWant !== L || !sm.classList.contains('open')) return;
+  pvKey = key;
+  const app = $('app'), W = innerWidth, H = innerHeight;
+  const host = document.createElement('div'); host.className = 'lk-pvh';
+  const sr = host.attachShadow({ mode: 'open' }); sr.adoptedStyleSheets = [sheet];
+  const root = document.createElement('div'); root.className = 'pvr'; root.dataset.tint = L.tint; root.dataset.pops = L.pops; root.dataset.motion = 'off';
+  root.style.width = W + 'px'; root.style.height = H + 'px'; root.style.transform = 'scale(' + (box.clientWidth / W) + ')';
+  const v = lookVars(L); for (const n in v) root.style.setProperty(n, v[n]);
+  root.style.setProperty('--acc', L.acc); root.style.setProperty('--edit', editCol(L.acc));
+  const cl = app.cloneNode(true); cl.inert = true; root.append(cl); sr.append(root);
+  const tints = lkTintsFor(L);
+  for (const d of cl.querySelectorAll('.dcat[data-cat]')) { const t = tints.get(d.dataset.cat); if (t) d.style.setProperty('--cc', t); else d.style.removeProperty('--cc'); }
+  const src = app.querySelectorAll('canvas'), dst = cl.querySelectorAll('canvas');
+  for (let i = 0; i < src.length && i < dst.length; i++) pvCanvas(src[i], dst[i], L, tints);
+  const old = [...box.querySelectorAll('.lk-pvh')];
+  box.append(host);
+  if (motionMode() === 'off' || !old.length) { old.forEach(x => x.remove()); return; }
+  host.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' }).onfinish = () => old.forEach(x => x.remove());
+}
+// (Settings shut: the preview goes once it has faded, nothing kept, nothing drawn while closed)
+new MutationObserver(() => { const sm = document.getElementById('setmodal'); if (sm.classList.contains('open')) { if (!pvKey) lkPvAsk(lkHovLook() || S.look); requestAnimationFrame(() => { const l = $('lkThL'); if (l && sm.classList.contains('open')) lkThHome(l); }); return; } clearTimeout(pvT); pvWant = null; pvKey = ''; lkThTop = null; lkJf = null; lkHov = null;
+  setTimeout(() => { if (!sm.classList.contains('open')) { const b = $('lkPv'); if (b) b.querySelectorAll('.lk-pvh').forEach(x => x.remove()); } }, 450); }).observe(document.getElementById('setmodal'), { attributes: true, attributeFilter: ['class'] });
+addEventListener('resize', () => { if (!document.getElementById('setmodal').classList.contains('open')) return; const b = $('lkPv'); if (b) b.style.aspectRatio = innerWidth + ' / ' + innerHeight; lkPvAsk(lkHovLook() || S.look); });   // (the window's new shape, 11-09 review)
+// ---- after Settings is drawn: the preview kept (a copy of it is costly), the list where it was, Save's fade ----
+function lkAfter(pvEl, hadSave) {
+  const nb = $('lkPv'); if (pvEl && nb && pvEl !== nb) { pvEl.style.aspectRatio = nb.style.aspectRatio; nb.replaceWith(pvEl); }
+  const l = $('lkThL');
+  if (l) {
+    if (lkThTop != null) l.scrollTop = lkThTop; else lkThHome(l);
+    if (lkThGo) { const s = l.querySelector('section[data-f="' + CSS.escape(lkThGo) + '"]'); lkThGo = null; if (s) lkThTo(l, s); }
+    lkMore(l);
+  }
+  const sv = $('setbody').querySelector('.lk-save'); if (sv && !hadSave && motionMode() !== 'off') sv.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' });   // (Save comes in: a fade, nothing moves)
+  if (document.getElementById('setmodal').classList.contains('open')) lkPvAsk(lkHovLook() || S.look);
+}
+// (at his theme's colour, his theme in view: at Settings' opening, and on the first drawing)
+function lkThHome(l) { lkJf = lkSaved() ? 'Saved' : themeFam(S.look.theme); lkJumpShow(); const s = l.querySelector('section[data-f="' + CSS.escape(lkJf) + '"]'); l.scrollTop = s ? s.offsetTop : 0;
+  const on = l.querySelector('.lk-t.on'); if (on) { const d = on.getBoundingClientRect().bottom - l.getBoundingClientRect().bottom; if (d > 0) l.scrollTop += d + 10; } lkThTop = l.scrollTop; lkMore(l); }
+// the list to a colour: it glides there (at once with animations Off); the dropdown says that colour
+function lkThTo(l, s) { lkJf = s.dataset.f; lkJumpAt = performance.now(); lkJumpTo = Math.min(s.offsetTop, l.scrollHeight - l.clientHeight); lkJumpShow(); l.scrollTo({ top: s.offsetTop, behavior: motionMode() === 'off' ? 'auto' : 'smooth' }); }
+function lkJumpShow() { const s = $('lkJump'); if (!s || s.value === lkJf) return; s.value = lkJf; const b = s.nextElementSibling; if (b && b.classList.contains('dsel')) b.firstChild.innerHTML = dselLab(s.options[s.selectedIndex]); }
+// (scrolled by the wheel: the dropdown follows the colour at the top; at the end, the last one in view)
+const lkMore = l => l.classList.toggle('lk-more', l.scrollTop + l.clientHeight < l.scrollHeight - 1);   // (more below: its bottom edge fades)
+function lkThScroll(l) {
+  if (!document.getElementById('setmodal').classList.contains('open')) return;   // (shut, or not yet open: its scroll says nothing)
+  lkThTop = l.scrollTop; lkMore(l); if (lkJumpTo != null) { if (Math.abs(l.scrollTop - lkJumpTo) > 1.5 && performance.now() - lkJumpAt < 2000) return; lkJumpTo = null; return; }   // (a jump gliding there: the colour picked stays shown until the list is there)
+  let f = null; const end = l.scrollTop + l.clientHeight >= l.scrollHeight - 2;
+  for (const s of l.querySelectorAll('section')) if (s.offsetTop <= l.scrollTop + 4 || (end && s.offsetTop < l.scrollTop + l.clientHeight)) f = s.dataset.f;
+  if (f && f !== lkJf) { lkJf = f; lkJumpShow(); }
+}
+$('setbody').addEventListener('scroll', e => { if (e.target.id === 'lkThL') lkThScroll(e.target); }, true);
+$('setbody').addEventListener('change', e => {
+  if (e.target.id === 'lkJump') { const l = $('lkThL'), s = l && l.querySelector('section[data-f="' + CSS.escape(e.target.value) + '"]'); if (s) lkThTo(l, s); }
+  else if (e.target.id === 'lkPal' && e.target.value !== '__custom') pickPalette(e.target.value);
+});
+const LK_TILE = '#lkThL [data-lk="theme"], #lkThL [data-lk="saved"]';
+const lkTileOf = el => { if (!el || !el.closest) return null; const t = el.closest(LK_TILE); if (t) return t; const s = el.closest('#lkThL .lk-sv'); return s ? s.querySelector('.lk-tb') : null; };   // (a saved look's name and x are its tile too)
+$('setbody').addEventListener('pointerover', e => { const t = lkTileOf(e.target); if (!t) return; lkHov = { lk: t.dataset.lk, k: t.dataset.k }; const L = lkHovLook(); if (L) lkPvAsk(L); });
+$('setbody').addEventListener('pointerout', e => { if (!(e.target.closest && e.target.closest('#lkThL'))) return; if (lkTileOf(e.relatedTarget)) return; lkHov = null; lkPvAsk(S.look); });
+$('setbody').addEventListener('focusin', e => { const t = e.target.closest && e.target.closest(LK_TILE); if (t && t.matches(':focus-visible')) { const L = lkLookOf(t.dataset.lk, t.dataset.k); if (L) lkPvAsk(L); } });
+// ---- your own looks: Save keeps the look (and its categories' own colours) as a new one, or the one it came from again;
+// the + slot always a new one; up to 12. A tile picks it; its x asks first; a double-click on its name renames it ----
+function lookSave(asNew) {
+  lkFlush();
+  const sv0 = lkSaved(), look = Object.assign(JSON.parse(JSON.stringify(S.look)), { changed: false }); delete look.from; delete look.pops;
+  let sv = asNew ? null : sv0;
+  if (sv) { sv.look = look; sv.cols = lkCols(); }
+  else {
+    if (S.lookSaved.length >= 12) return;
+    const base = sv0 ? sv0.name : THEME_PRESETS[S.look.theme].name, names = new Set(S.lookSaved.map(x => x.name)); let name = base, n = 2; while (names.has(name)) name = base + ' ' + n++;
+    let id; do id = 's' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36); while (S.lookSaved.some(x => x.id === id));
+    sv = { id, name: name.slice(0, 40), look, cols: lkCols() }; S.lookSaved.push(sv); lkThGo = 'Saved';
+  }
+  S.look = Object.assign({}, S.look, { changed: false, from: sv.id }); saveState(); renderSettings();
+}
+function lookApplySaved(id) {
+  lkFlush(); const sv = S.lookSaved.find(x => x.id === id); if (!sv || (S.look.from === id && !lookDirty())) return;   // (the one on, as saved: nothing)
+  const before = snapOf();
+  S.look = cleanLook(Object.assign(JSON.parse(JSON.stringify(sv.look)), { from: id, changed: false, pops: S.look.pops }));
+  for (const c of S.L.cats) { if (sv.cols && sv.cols[c.id]) c.col = sv.cols[c.id]; else delete c.col; }
+  pushUndo(before); bgSel = null; lkPick = null; applyLook(); afterChange(); renderSettings(); if (feed.got) updateView(true, true);
+}
+function lookAskDelete(id) {
+  const sv = S.lookSaved.find(x => x.id === id); if (!sv) return;
+  askConfirm('Delete ' + sv.name + '?', '', 'Delete', () => {
+    S.lookSaved = S.lookSaved.filter(x => x !== sv);
+    if (S.look.from === id) { S.look = Object.assign({}, S.look, { changed: true }); delete S.look.from; }   // (its look stays on, now "changed")
+    saveState(); if (document.getElementById('setmodal').classList.contains('open')) renderSettings();
+  });
+}
+$('setbody').addEventListener('dblclick', e => {
+  const n = e.target.closest && e.target.closest('.lk-sv .lk-tn'); if (!n) return; clearTimeout(lkNmT);
+  const sv = S.lookSaved.find(x => x.id === n.dataset.k); if (!sv) return;
+  e.preventDefault();
+  const i = document.createElement('input'); i.className = 'lk-rn'; i.maxLength = 40; i.value = sv.name; i.spellcheck = false; i.setAttribute('aria-label', 'Name');
+  n.replaceWith(i); i.focus(); i.select();
+  let done = false; const end = keep => { if (done) return; done = true; const v = i.value.trim(); if (keep && v && v !== sv.name) { sv.name = v.slice(0, 40); saveState(); } renderSettings(); };
+  i.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); end(true); } else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); end(false); } });   // (Enter keeps it, Escape leaves it as it was)
+  i.addEventListener('blur', () => end(true));
+});
+let lkNmT = 0, lkRadPtr = false;
+$('setbody').addEventListener('pointerdown', e => { if (e.target.id === 'lkr-rad') lkRadPtr = true; }); document.addEventListener('pointerup', () => { lkRadPtr = false; }, true);   // (the corners slider held by the pointer: its detents)
+$('setbody').addEventListener('click', e => { const n = e.target.closest && e.target.closest('.lk-sv .lk-tn'); if (!n || e.detail !== 1) return; const k = n.dataset.k; clearTimeout(lkNmT); lkNmT = setTimeout(() => lookApplySaved(k), 260); });   // (its name picks it too, after a double-click's time: a double-click renames it and picks nothing, 11-09 review)
 // the background: a small screen of it with a point on each edge and corner (a + where there is no fade, the fade's
 // colour where there is), its base, and the fade picked: its colour, size and strength
 function lookBg() {
@@ -7494,22 +8685,26 @@ function lookBg() {
 }
 function lookCells() {
   const L = S.look;
-  return lkFold('cells', lkCells, 'Cells', L.cell + ', ' + L.op + '% opacity' + (L.line ? ', outline' : '') + ', ' + L.corners + ' corners', [L.cell]) +
+  const rd = L.rad != null ? L.rad : LK_RAD[L.corners];
+  return lkFold('cells', lkCells, 'Cells', L.cell + ', ' + L.op + '% opacity' + (L.line ? ', outline' + (L.lineA ? ' ' + L.lineA + '%' : '') : '') + ', ' + (L.rad != null ? L.rad + ' px' : L.corners) + ' corners', [L.cell]) +
     '<div class="lk-body' + (lkCells ? ' open' : '') + '"><div><div class="lk-in ce-in">' + lkChip('cell', L.cell, 'Fill', '') + lkRange('op', 'Opacity', L.op, 0, 100) +
     '<div class="lk-row"><span class="lk-name">Outline</span><span class="sp"></span><button class="tog2' + (L.line ? ' on' : '') + '" data-lk="line" aria-pressed="' + L.line + '"></button></div>' +
-    '<div class="lk-row"><span class="lk-name">Corners</span><span class="sp"></span><span class="seg seg3" id="sCorners" role="group" aria-label="Corners">' + [['sharp', 'Sharp'], ['normal', 'Normal'], ['round', 'Round']].map(([v, t]) => '<button data-lk="cor" data-v="' + v + '" class="' + (L.corners === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div></div></div></div>';
+    (L.line ? lkRange('lineA', 'Strength', L.lineA || 100, 10, 200) : '') +
+    '<div class="lk-row"><span class="lk-name">Corners</span><span class="sp"></span><input type="range" class="lk-rng" id="lkr-rad" data-k="rad" data-u="px" aria-label="Corners" aria-valuetext="' + rd + ' px" min="0" max="24" step="1" value="' + rd + '" style="--v:' + (rd / 24 * 100) + '%"><span class="lk-v">' + rd + ' px</span></div></div></div></div>';   // (a slider in px, 11-09: its detents the old Sharp, Normal and Round)
 }
 // a theme picked: all of it, undone like any change
 function pickTheme(id) {
   if (!THEME_PRESETS[id]) return;
+  lkFlush();
   const before = snapOf();
-  S.look = cleanLook(Object.assign(JSON.parse(JSON.stringify(THEME_PRESETS[id])), { theme: id, changed: false }));
+  S.look = cleanLook(Object.assign(JSON.parse(JSON.stringify(THEME_PRESETS[id])), { theme: id, changed: false, pops: S.look.pops }));
   if (snapOf() === before) { renderSettings(); return; }
   pushUndo(before); bgSel = null; lkPick = null; applyLook(); saveState(); syncUndo(); renderSettings(); if (feed.got) updateView(true, true);
 }
 // a change to the background or the cells: undone like any change, the theme now "changed". A Match palette follows
 // the background, and so does its accent while it is Match's
 function lookEdit(fn) {
+  lkFlush();
   const before = snapOf(), m0 = PALETTES.match[2], L = JSON.parse(JSON.stringify(S.look));
   fn(L);
   const nl = cleanLook(Object.assign(L, { changed: S.look.changed }));
@@ -7519,10 +8714,11 @@ function lookEdit(fn) {
   pushUndo(before); applyLook(); saveState(); syncUndo(); renderSettings(); if (feed.got) updateView(true, true);
 }
 // a new fade's colour: the accent when the look has colour, else a violet
-const newFade = () => S.look.tint !== 'none' ? S.look.acc : '#6c5ce0';
+const newFade = () => S.look.tint !== 'none' && hueOf(S.look.acc)[1] >= 15 ? S.look.acc : '#6c5ce0';   // (a white or grey accent: the violet, not a white haze, 11-09)
 // a colour picked: the accent's ('acc'), the look's own (the base, the fill, the fade picked), or a category's ('' its
 // part's again: undo takes it back like any change)
 function pickColour(key, c) {
+  lkFlush();
   if (LK_OWN.has(key)) { if (!isHex(c)) return; c = c.toLowerCase(); lookEdit(L => { if (key === 'fade') { const f = L.fades.find(x => x.at === bgSel); if (f) f.c = c; } else L[key] = c; }); return; }
   if (key === 'acc') { if (!isHex(c) || S.look.acc === c.toLowerCase()) return; snap(); S.look = Object.assign({}, S.look, { acc: c.toLowerCase(), changed: true }); applyLook(); saveState(); syncUndo(); }
   else {
@@ -7534,6 +8730,7 @@ function pickColour(key, c) {
 // a palette: every category back to its part's colour from it, and its accent (undo brings the categories' own back)
 function pickPalette(k) {
   if (!PALETTES[k]) return;
+  lkFlush();
   const before = snapOf();
   for (const c of S.L.cats) delete c.col;
   S.look = Object.assign({}, S.look, { pal: k, acc: PALETTES[k][2] }, S.look.pal !== k || S.look.acc !== PALETTES[k][2] ? { changed: true } : {});
@@ -7558,9 +8755,11 @@ function renderSettings0() {
     '<div class="setrow"><div>Calmer during games<small>Full animations switch to Minimal while a game is in front or a session you started records, and back after. Saves CPU for the game.</small></div><button class="tog2' + (S.gameCalm !== false ? ' on' : '') + '" id="sCalm" aria-pressed="' + (S.gameCalm !== false) + '" title="Minimal animations while a game is in front"></button></div>') +
     setSec('Look',
     lookTheme() + lookBg() + lookCells() +
-    '<div class="setrow"><div>Colour<small>' + ({ none: 'Greys only: colour is kept for warnings.', accent: 'One colour on what you pick.', spectrum: 'A colour for each category, and the accent.' })[S.look.tint] + '</small></div><span class="seg seg3" id="sTint">' +
-      [['none', 'Mono'], ['accent', 'Accent'], ['spectrum', 'Spectrum']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.tint === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
-    (S.look.tint !== 'none' ? lookColours() : '')) +
+    '<div class="setrow lk-colr"><div>Colour<small>' + ({ none: 'Greys only: colour is kept for warnings.', accent: 'One colour on what you pick.', spectrum: 'A colour for each category, and the accent.' })[S.look.tint] + '</small></div><span class="lk-cw">' + lkAccBox() + '<span class="seg seg3" id="sTint">' +
+      [['none', 'Mono'], ['accent', 'Accent'], ['spectrum', 'Spectrum']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.tint === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></span>' + (lkPick === 'acc' ? '<div class="lk-fl" data-for="acc">' + lkPop('acc', S.look.acc) + '</div>' : '') + '</div>' +
+    (S.look.tint === 'spectrum' ? lookPalette() : '') +
+    '<div class="setrow"><div>Popups</div><span class="seg seg3" id="sPops">' +
+      [['view', 'View'], ['cells', 'Cells']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.pops === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>') +
     setSec('Startup',
     '<div class="setrow"><div>Start with Windows<small>Opens in the tray when you sign in.</small></div><button class="tog2' + (feed.autostart ? ' on' : '') + '" id="sAuto" aria-pressed="' + feed.autostart + '" title="Start with Windows"></button></div>' +
     (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub if there is a new version when HW Deck starts, then once a day. Nothing else is sent.') + '</small></div>' +
@@ -7604,23 +8803,29 @@ $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sGet')) send({ t: feed.canUpdate ? 'updateNow' : 'openRelease' });
   if (e.target.closest('#sClock')) { S.clock = !S.clock; renderTitle(); saveState(); renderSettings(); }
   if (e.target.closest('#sCalm')) { S.gameCalm = S.gameCalm === false; applyMotion(); calmSettle(); saveState(); renderSettings(); }
+  const pb = e.target.closest('#sPops button');   // (how the popups look: not the theme's, so the theme stays as picked)
+  if (pb && S.look.pops !== pb.dataset.v) { lkFlush(); snap(); S.look = Object.assign({}, S.look, { pops: pb.dataset.v }); applyLook(); saveState(); syncUndo(); renderSettings(); }
   const lb = e.target.closest('#sTint button'), lk = lb && 'tint';
-  if (lb && S.look[lk] !== lb.dataset.v) { snap(); S.look = Object.assign({}, S.look, { [lk]: lb.dataset.v, changed: true }); lkPick = null; applyLook(); saveState(); syncUndo(); renderSettings(); if (feed.got) updateView(true, true); }   // (seen at once behind Settings: the graphs take their colour as they are fed)
+  if (lb && S.look[lk] !== lb.dataset.v) { lkFlush(); snap(); S.look = Object.assign({}, S.look, { [lk]: lb.dataset.v, changed: true }); lkPick = null; applyLook(); saveState(); syncUndo(); renderSettings(); if (feed.got) updateView(true, true); }   // (seen at once behind Settings: the graphs take their colour as they are fed)
   const lq = e.target.closest('[data-lk]'), lw = lq && lq.dataset.lk;
-  if (lw === 'fold') { const f = lq.dataset.f, open = f === 'bg' ? (lkBg = !lkBg) : f === 'cells' ? (lkCells = !lkCells) : (lkOpen = !lkOpen);
+  if (lw === 'fold') { const f = lq.dataset.f, open = f === 'bg' ? (lkBg = !lkBg) : (lkCells = !lkCells);
+    if (lkPick && !LK_OWN.has(lkPick)) { lkPickSet(null); return; }   // (a floating editor open: it fades as it shuts, the fold drawn at its new state, 11-09 review)
     // (an open chip shuts, in place: drawn again, the fold wouldn't glide)
-    if (lkPick) { lkPick = null; document.querySelectorAll('#setbody .lk-pop').forEach(x => x.remove()); document.querySelectorAll('#setbody .lk-chip.on').forEach(x => x.classList.remove('on')); }
+    if (lkPick) { lkPick = null; document.querySelectorAll('#setbody .lk-pop:not([aria-hidden])').forEach(x => lkPopIO(x, false)); document.querySelectorAll('#setbody .lk-chip.on').forEach(x => x.classList.remove('on')); }
     lq.classList.toggle('open', open); lq.setAttribute('aria-expanded', open); lq.nextElementSibling.classList.toggle('open', open); return; }   // (folds in place: it glides)
   if (lw === 'theme') { pickTheme(lq.dataset.k); return; }
+  if (lw === 'saved') { lookApplySaved(lq.dataset.k); return; }   // (the Saved group, 11-09)
+  if (lw === 'save') { lookSave(false); return; }
+  if (lw === 'saveadd') { lookSave(true); return; }
+  if (lw === 'savex') { lookAskDelete(lq.dataset.k); return; }
   if (lw === 'fade') { const at = lq.dataset.at; lkPick = null; if (S.look.fades.some(f => f.at === at)) { bgSel = at; renderSettings(); } else { bgSel = at; lookEdit(L => { L.fades.push({ at, c: newFade(), size: 70, a: 30 }); }); } return; }
   if (lw === 'fadex') { if (e.detail > 1) return; const at = bgSel;   // (a double click: one fade, 11-06)
     lkPick = null; lookEdit(L => { L.fades = L.fades.filter(f => f.at !== at); }); bgSel = null; renderSettings(); return; }
   if (lw === 'line') { lookEdit(L => { L.line = !L.line; }); return; }
-  if (lw === 'cor') { const v = lq.dataset.v; if (S.look.corners !== v) lookEdit(L => { L.corners = v; }); return; }
-  if (lw === 'chip') { lkPick = lkPick === lq.dataset.k ? null : lq.dataset.k; renderSettings(); return; }
+  if (lw === 'chip') { lkPickSet(lkPick === lq.dataset.k ? null : lq.dataset.k); return; }
   if (lw === 'c') { pickColour(lq.dataset.k, lq.dataset.c); return; }
   if (lw === 'pal') { pickPalette(lq.dataset.k); return; }
-  if (lkPick && !e.target.closest('.lk-pop')) { lkPick = null; renderSettings(); }   // (a click anywhere else closes the open chip)
+  if (lkPick && !e.target.closest('.lk-pop') && !e.target.closest('.dsel')) lkPickSet(null);   // (a click anywhere else closes the open chip; a dropdown's opens its menu)
 });
 let lkUpAt = 0, lkIdle = 0, setPress = false;   // (a pointer let go in Settings, when; a press in it under way)
 document.addEventListener('pointerup', () => { lkUpAt = performance.now(); }, true);
@@ -7630,8 +8835,8 @@ $('setbody').addEventListener('input', e => {
   const r = e.target.closest('.lk-rng'); if (!r) return;
   if (lkDrag == null) lkDrag = snapOf();
   const v = +r.value, k = r.dataset.k;
-  if (k === 'op') S.look.op = v; else { const f = S.look.fades.find(x => x.at === bgSel); if (!f) return; f[k] = v; }
-  r.style.setProperty('--v', ((v - +r.min) / (+r.max - +r.min) * 100) + '%'); if (r.nextElementSibling) r.nextElementSibling.textContent = v + '%';
+  if (k === 'op') S.look.op = v; else if (k === 'rad') { const d = lkRadPtr && Object.values(LK_RAD).find(x => Math.abs(x - v) <= 1); if (d != null && d !== false && d !== v) { r.value = d; return r.dispatchEvent(new Event('input', { bubbles: true })); } S.look.rad = v; } else if (k === 'lineA') { if (v === 100) delete S.look.lineA; else S.look.lineA = v; } else { const f = S.look.fades.find(x => x.at === bgSel); if (!f) return; f[k] = v; }   // (corners: held at the old presets within 1 px, 11-09)
+  r.style.setProperty('--v', ((v - +r.min) / (+r.max - +r.min) * 100) + '%'); if (r.nextElementSibling) r.nextElementSibling.textContent = v + (r.dataset.u === 'px' ? ' px' : '%'); r.setAttribute('aria-valuetext', v + (r.dataset.u === 'px' ? ' px' : '%'));
   applyLook();
   // (the small screen in Settings too, the one look seen while it is dragged, 11-06)
   const mi = $('setbody').querySelector('.bg-mini'); if (mi) { mi.style.background = bgiOf(S.look); const gh = mi.querySelector('.bg-gh'); if (gh) { gh.style.setProperty('--t', tileOf(S.look)); gh.style.setProperty('--l', S.look.line ? lineOf(S.look) : 'transparent'); } }
@@ -7722,11 +8927,11 @@ $('rstBtn').onclick = restartHwinfo;
 // ---------- toast ----------
 let toastT = 0, toastDepth = -1;
 function toast(msg, withUndo, ms) {
-  setText($('toastTxt'), msg); $('toastUndo').hidden = !withUndo;
+  setText($('toastTxt'), msg); $('toastUndo').hidden = !withUndo; $('toastUndo').disabled = false; $('toastUndo').getAnimations().forEach(a => a.cancel());
   toastDepth = withUndo ? undoSeq : -1;
   const t = $('toast'), was = t.classList.contains('show'); t.classList.add('show'); clearTimeout(toastT);
   if (was && motionMode() !== 'off') t.animate([{ opacity: 0.4, translate: '0 4px' }, { opacity: 1, translate: '0 0' }], { duration: 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });   // (a new message, not the old one changing; 2.1)
-  toastT = setTimeout(() => { t.classList.remove('show'); $('toastUndo').hidden = true; toastDepth = -1; setTimeout(() => { if (!t.classList.contains('show')) setText($('toastTxt'), ''); }, 300); }, ms || (withUndo ? 8000 : msg.length > 60 ? 5000 : 2600));
+  toastT = setTimeout(() => { t.classList.remove('show'); toastDepth = -1; setTimeout(() => { if (!t.classList.contains('show')) { setText($('toastTxt'), ''); $('toastUndo').hidden = true; } }, 300); }, ms || (withUndo ? 8000 : msg.length > 60 ? 5000 : 2600));   // (its Undo goes with its text, after the fade: no narrower box while it fades, 11-08)
 }
 // ---------- tooltips: the page's own instead of Windows' (prettify 11-02) ----------
 // A hint (data-tip: every title becomes one, see the top) under the pointer shows as a tip in the app's greys after a
@@ -7767,7 +8972,14 @@ for (const ev of ['pointerdown', 'keydown', 'wheel']) document.addEventListener(
 document.addEventListener('scroll', tipHide, true);
 // another change after the toast: its Undo would undo that one instead, so it goes
 function toastStale() { if (toastDepth >= 0 && undoSeq !== toastDepth) retireToastUndo(); }
-function retireToastUndo() { $('toastUndo').hidden = true; toastDepth = -1; }
+function retireToastUndo() {   // (no width jump, 11-08: while the toast fades out the button goes with it; while it stays, the button fades first)
+  const b = $('toastUndo'), t = $('toast'); toastDepth = -1; if (b.hidden) return;
+  if (motionMode() === 'off') { b.hidden = true; return; }
+  b.disabled = true;
+  const end = () => { b.disabled = false; if (toastDepth < 0) b.hidden = true; };
+  if (!t.classList.contains('show')) { setTimeout(end, 300); return; }
+  const a = b.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, fill: 'forwards' }); a.onfinish = () => { a.cancel(); end(); };
+}
 
 // ---------- keys ----------
 // a curve point or a Customize row held: keys wait (Escape lets go), before any field's own handler gets them
@@ -7799,13 +9011,13 @@ document.addEventListener('keydown', ev => {
     if (smenu) { closeSmenu(); return; }
     // (the one on top first: Saves over a cell popup closed the popup under it, 11-06)
     const tm = topModal();
-    if (tm === setmodal && lkPick) { lkPick = null; renderSettings(); return; }   // (an open colour chip first, 11-06)
+    if (tm === setmodal && lkPick) { lkPickSet(null); return; }   // (an open colour chip first, 11-06; it folds away, 11-08)
     // (the log's cell list, or picking in the log or Sessions: a step back first, 11-06; it closed the popup)
     if (tm === wmodal && WX.menu) { wxSet({ menu: false }); return; }
-    for (const pk of ['w', 'g']) { const m = pk === 'w' ? wmodal : gmodal; if (tm === m && PK[pk].mode === 'sel') { pkMode(pk, null); return; } }   // (picking only: with the bin on show, Escape shuts the popup as before)
+    if (tm === gmodal && GX.menu) { gxSet({ menu: false }); return; }   // (Sessions' game list the same way, and a field being typed in: before Compare or Pick, 11-09)
+    if (tm === gmodal && typing && gmodal.contains(ev.target)) { ev.target.blur(); return; }
+    for (const pk of ['w', 'g']) { const m = pk === 'w' ? wmodal : gmodal; if (tm === m && (PK[pk].mode === 'sel' || PK[pk].mode === 'cmp')) { pkMode(pk, null); return; } }   // (picking or Compare only: with the bin on show, Escape shuts the popup as before)
     if (tm === gmodal) {
-      if (GX.menu) { gxSet({ menu: false }); return; }
-      if (typing && gmodal.contains(ev.target)) { ev.target.blur(); return; }
       if (GZ.on) { GZ.on = false; renderGz(); return; }
       if (gxCmp) { gxCmpEnd(); return; }   // (two compared: back to the list, 11-06)
     }
@@ -7872,6 +9084,10 @@ document.addEventListener('keydown', ev => {
   if (ev.altKey && ev.key.startsWith('Arrow')) {
     ev.preventDefault();
     const cat = catOf(sel), ci = S.L.cats.indexOf(cat), id = sel, lead = catLook(cat.id).lead;
+    // (out of its category: into the one drawn that way, as a category's Alt+arrows go; Left or Right with none beside
+    // it: the one above or below; Grid's tables read in list order. 11-08 audit: it went by list order, across the view)
+    const dir = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[ev.key] || [0, 0], near = S.screen === 'grid' ? null : nearestCat(cat.id, dir[0], dir[1]) || (dir[0] ? nearestCat(cat.id, 0, dir[0]) : null);
+    const upTo = S.screen === 'grid' ? S.L.cats[ci - 1] : near && dir[0] + dir[1] < 0 ? catById(near) : null, downTo = S.screen === 'grid' ? S.L.cats[ci + 1] : near && dir[0] + dir[1] > 0 ? catById(near) : null;
     const back = ev.key === 'ArrowLeft' || (S.screen !== 'tiles' && ev.key === 'ArrowUp'), fwd = ev.key === 'ArrowRight' || (S.screen !== 'tiles' && ev.key === 'ArrowDown');
     // within the category it moves among the others as drawn; the lead (drawn first) keeps its place
     const leadAt = lead && lead !== id ? cat.cells.indexOf(lead) : -1, rest = cat.cells.filter(x => x !== lead || x === id), i = rest.indexOf(id);
@@ -7881,8 +9097,8 @@ document.addEventListener('keydown', ev => {
       // (the lead, drawn first, keeps its place on a step forward, 11-06: it left its category; one that leaves takes its
       // lead setting with it)
       else if (id === lead && fwd && ev.key !== 'ArrowDown' && cat.cells.length > 1) return;
-      else if ((ev.key === 'ArrowUp' || back) && ci > 0) { if (id === lead) setLook('cat', cat.id, 'lead', ''); cat.cells.splice(cat.cells.indexOf(id), 1); S.L.cats[ci - 1].cells.push(id); S.L.cats[ci - 1].collapsed = false; }
-      else if ((ev.key === 'ArrowDown' || fwd) && ci < S.L.cats.length - 1) { if (id === lead) setLook('cat', cat.id, 'lead', ''); cat.cells.splice(cat.cells.indexOf(id), 1); S.L.cats[ci + 1].cells.unshift(id); S.L.cats[ci + 1].collapsed = false; }
+      else if ((ev.key === 'ArrowUp' || back) && upTo) { if (id === lead) setLook('cat', cat.id, 'lead', ''); cat.cells.splice(cat.cells.indexOf(id), 1); upTo.cells.push(id); upTo.collapsed = false; }
+      else if ((ev.key === 'ArrowDown' || fwd) && downTo) { if (id === lead) setLook('cat', cat.id, 'lead', ''); cat.cells.splice(cat.cells.indexOf(id), 1); downTo.cells.unshift(id); downTo.collapsed = false; }
     });
     const el = document.querySelector('#view .dc[data-cid="' + id + '"]'); if (el) el.focus();
     const now = catOf(id); if (now) { const ids = idsIn(now); live.textContent = nameIn(id) + ': ' + now.name + ', ' + (ids.indexOf(id) + 1) + ' of ' + ids.length; }   // (said where it went, 11-06)
@@ -7965,9 +9181,11 @@ function onHost(m) {
     // (a slot another program held at the start comes in later: the view is linked to it again then, see 'slots'; a
     // missing or damaged one never comes, so only a held one waits)
     slotWanted = st && Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && !S.slots[st.active] && Array.isArray(m.held) && m.held.includes(st.active) ? st.active : null;
-    if (st && st.L && Array.isArray(st.L.cats)) { S.L = cleanLayout(st.L); S.active = Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && S.slots[st.active] ? st.active : null; S.edit = st.edit !== false; S.screen = ['tiles', 'overview', 'grid'].includes(st.screen) ? st.screen : 'tiles'; S.motion = st.motion === false ? 'off' : st.motion === 'reduced' ? 'full' : MOTIONS.includes(st.motion) ? st.motion : undefined; S.look = cleanLook(st.look); applyLook(); }
+    if (st && st.L && Array.isArray(st.L.cats)) { S.L = cleanLayout(st.L); S.active = Number.isInteger(st.active) && st.active >= 0 && st.active < 5 && S.slots[st.active] ? st.active : null; S.edit = st.edit !== false; S.screen = ['tiles', 'overview', 'grid'].includes(st.screen) ? st.screen : 'tiles'; S.motion = st.motion === false ? 'off' : st.motion === 'reduced' ? 'full' : MOTIONS.includes(st.motion) ? st.motion : undefined; S.look = cleanLook(lookUp(st.look)); applyLook(); }
     else { S.L = emptyLayout(); S.active = null; S.edit = true; S.screen = 'tiles'; }   // first run: nothing, edit mode on
     S.gameCalm = !st || st.gameCalm !== false;
+    S.lookSaved = cleanSaved(st && st.lookSaved); lkFromCheck();   // (your own looks, the Look page's Saved, 11-09)
+    { const f = st && st.listFilt && typeof st.listFilt === 'object' ? st.listFilt : {}; S.listFilt = { g: f.g === true, w: f.w === true }; }
     // (a view that came in late, state.json held at the start: the readings are known already, so its cells are linked
     // by sensor name here, as a Load does, 11-06)
     if (READ.length) { const n = relinkByName(); if (ynFixAll()) saveState(); if (n) toast('Re-linked ' + plural(n, 'cell') + ' by sensor name'); }
@@ -8013,11 +9231,16 @@ function onHost(m) {
     // the same readings with new names (a rename in HWiNFO): no rebuild under someone typing in a field
     const typing = dselOpen || (document.activeElement && document.activeElement.closest && document.activeElement.closest('#insp input, #insp select, #insp textarea, .cn-in'));   // (and a list open: its menu, 11-06)
     if (sameKeys && typing) { for (const [cid, r] of E) { const c = S.L.cells[cid], n = r.root.querySelector('.tn > span, .nm > span, .gname > span'); if (c && n) { setText(n, nameIn(cid)); if (n.title) n.title = nameIn(cid); } } renderStorage(); }
-    else { if (!app.classList.contains('boot')) renderView(false); renderStorage(); renderInsp(); }   // (at a start, bootCheck builds the view once, 11-06)
+    else if (typing) { if (!app.classList.contains('boot')) { flipNext = flipNext || 'live'; renderView(false); } renderStorage(); if (document.activeElement.closest('#insp') || dselOpen) inspCatLater = true; else renderInsp(); }   // (the rename box in the view: the settings now, nothing of theirs is being typed, review 11-08)   // (new readings: the settings wait for the field or list to be left, 11-08 audit)
+    else { if (!app.classList.contains('boot')) { flipNext = flipNext || 'live'; renderView(false); } renderStorage(); renderInsp(); }   // (a reading gone or back: its neighbours glide, 11-08)   // (at a start, bootCheck builds the view once, 11-06)
     if (GZ.on) { if (document.activeElement && document.activeElement.matches('#gcz .gz-name')) { gzCompute(); gzChips(); gzDraw(); } else renderGz(); }   // (a name being typed stays: only the readings list is new)
     showFeed();
     starterCheck();   // (a new user's readings came: Starter now)
     boot.cat = true; bootCheck();
+  } else if (m.t === 'lastval') {
+    const goneNow = () => Object.values(S.L.cells).filter(c => isMissing(c)).map(c => c.key + (isPause(c) ? '' : ':' + missingTxt(c))).join('\n'), g0 = goneNow();   // (what each says too: never shared, or not for 7 days, the suite 11-08)
+    LASTV.clear(); for (const k in (m.at || {})) LASTV.set(k, +m.at[k] || 0); lastvSince = +m.since || 0;
+    if (goneNow() !== g0 && !app.classList.contains('boot')) { if (S.edit) { flipNext = flipNext || 'live'; redrawView(); } if (sel && S.L.cells[sel] && isMissing(S.L.cells[sel])) renderInsp(); }   // (Re-link comes or goes: the tiles and its panel again, 11-08)
   } else if (m.t === 'spark') {
     for (const k in m.keys) ringFill(k, m.ts, m.keys[k]);
     if (m.ts - nowTs > 2) { if (lastTick && m.ts - lastTick > 2) resetSeen(); nowTs = m.ts; catchUp = true; }   // (only after a gap, a show from the tray: else the second moves at its tick, with its values)
@@ -8092,7 +9315,7 @@ function onHost(m) {
   else if (m.t === 'zero') { feed.zero = new Set(Array.isArray(m.keys) ? m.keys : []); renderStorage(); if (GZ.on) { gzCompute(); gzChips(); gzDraw(); } }
   // the window just came up (from the tray, a cold start, or minimized): what was measured while it was hidden came
   // out short (a Smart Life tile without its bar), so every tile is measured again on screen
-  else if (m.t === 'shown') { if (drawnHidden) { drawnHidden = false; requestAnimationFrame(() => remeasureSoon(0)); } }
+  else if (m.t === 'shown') { if (drawnHidden) { drawnHidden = false; requestAnimationFrame(() => remeasureSoon(0, false)); } }
   else if (m.t === 'restarted') restartDone();
   else if (typeof m.t === 'string' && m.t.startsWith('x.')) {
     if (EXT.msg) EXT.msg(m);
@@ -8100,7 +9323,7 @@ function onHost(m) {
     // again, or a cold start keeps the heights they had empty
     // (a build names the message that fills its bodies, EXT.bootMsg, and the ones that fill none, EXT.quiet: the view
     // comes in on the first, measured once, 11-06)
-    if (!xSeen.has(m.t) && !(EXT.quiet && EXT.quiet.includes(m.t))) { xSeen.add(m.t); remeasureSoon(); }
+    if (!xSeen.has(m.t) && !(EXT.quiet && EXT.quiet.includes(m.t))) { xSeen.add(m.t); remeasureSoon(null, true); }
     if (!boot.x && (!EXT.bootMsg || m.t === EXT.bootMsg)) { boot.x = true; bootCheck(); }
   }
   else if (m.t === 'slots') {   // (slots that another program held at the start, free now: the view stays as it is)

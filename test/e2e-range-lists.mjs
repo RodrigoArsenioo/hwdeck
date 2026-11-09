@@ -28,6 +28,15 @@ await wheel(R, 0.8, -400);
 let W = await ev('({ a: GX.W.a, b: GX.W.b })');
 ok('Sessions: the wheel zooms the chart in around the pointer', W.b - W.a < 0.7 && near(W.a + 0.8 * (W.b - W.a), 0.8, 0.02), W);
 ok('Sessions: the games table is the window\'s', await ev(`[...document.querySelectorAll('#gsum .gx-gr')].map(r => r.textContent).join('|')`) !== tab0);
+{ const n0 = await ev(`document.querySelectorAll('#glist .gx-sess').length`);
+  ok('Sessions: Filter list beside the game list, off by default: the window leaves the list whole', await ev(`(() => { const b = document.querySelector('#gsum .gx-flt .tog2[data-flt="g"]'); return !!b && !b.classList.contains('on') && S.listFilt.g === false; })()`) && n0 === await ev(`gxAll.filter(x => !GX.game || x.game === GX.game).length`), [n0, await ev('gxAll.length')]);
+  const Wg = await ev('({ a: GX.W.a, b: GX.W.b })');
+  await ev(`document.querySelector('#gsum .gx-flt .tog2').click(), 1`); await sleep(800);
+  const inW = await ev(`gxAll.filter(x => (!GX.game || x.game === GX.game) && x.end > GX.ws && x.start < GX.we).length`);
+  ok('Sessions: Filter list on: the list is the window\'s sessions', await ev('S.listFilt.g === true') && await ev(`document.querySelectorAll('#glist .gx-sess').length`) === inW, [inW, await ev(`document.querySelectorAll('#glist .gx-sess').length`)]);
+  await ev(`(GX.W.set(${Wg.a}, ${Wg.b}), 1)`); await sleep(600);
+  await ev(`document.querySelector('#gsum .gx-flt .tog2').click(), 1`); await sleep(800);
+  ok('Sessions: Filter list off again: the list whole', await ev('S.listFilt.g === false') && await ev(`document.querySelectorAll('#glist .gx-sess').length`) === n0, [n0, await ev(`document.querySelectorAll('#glist .gx-sess').length`)]); }
 ok('Sessions: its bar shows the window, a date at each end', await ev(`(() => { const b = document.querySelector('#gsum .mbar'); return Math.abs(parseFloat(b.firstChild.style.left) - GX.W.a * 100) < 0.01 && /^\\d{1,2} [a-z]{3}$/.test(b.children[2].textContent); })()`));
 // (round 2's fix 2, 11-07 audit) a window whose edges cut a day: the hover at either edge reads a day drawn in it
 { const Wz = await ev('({ a: GX.W.a, b: GX.W.b })'); await ev(`(GX.W.set(0.06, 0.45), 1)`); await sleep(500);
@@ -101,10 +110,16 @@ await wheel(R, 0.9, -500); await sleep(500);
 ok('Warning history: the wheel zooms its chart (the bars widen)', await ev('WX.W.b - WX.W.a < 0.7') && await ev(`parseFloat(document.querySelector('#wsum .wx-bars').style.width) > 140`), await ev(`[WX.W.a, WX.W.b, document.querySelector('#wsum .wx-bars').style.width]`));
 // (a window after the newest warning: none in it)
 await ev(`(() => { const last = Math.max(...wxEps.map(e => e.when.getTime())) / 1000, f = (last - WX.ws) / (WX.we - WX.ws) * (WX.W.b - WX.W.a) + WX.W.a; WX.W.set(Math.min(0.99, f + 0.01), 1); return 1; })()`); await sleep(800);
-ok('Warning history: the list under it is the window\'s (a window after the newest: none)', await ev(`document.querySelectorAll('#wlist .gx-sess').length`) === 0 && rows0 > 0, [rows0, await ev(`document.querySelectorAll('#wlist .gx-sess').length`)]);
+// (his 11-09: the window filters the list only with Filter list on, off by default)
+ok('Warning history: Filter list beside the cell list, off by default', await ev(`(() => { const b = document.querySelector('#wsum .gx-flt .tog2[data-flt="w"]'); return !!b && !b.classList.contains('on') && S.listFilt.w === false; })()`));
+ok('Warning history: Filter list off: the window leaves the list whole', await ev(`document.querySelectorAll('#wlist .gx-sess').length`) === rows0, [rows0, await ev(`document.querySelectorAll('#wlist .gx-sess').length`)]);
+await ev(`document.querySelector('#wsum .gx-flt .tog2').click(), 1`); await sleep(800);
+ok('Warning history: Filter list on: the list under it is the window\'s (a window after the newest: none)', await ev(`S.listFilt.w === true && document.querySelector('#wsum .gx-flt .tog2').classList.contains('on')`) && await ev(`document.querySelectorAll('#wlist .gx-sess').length`) === 0 && rows0 > 0, [rows0, await ev(`document.querySelectorAll('#wlist .gx-sess').length`)]);
 ok('Warning history: so is the table, and the note says the window', (await ev(`(document.querySelector('#wsum .gx-gtab') || {}).textContent || ''`)) !== tb0 && /from \d{1,2} [a-z]{3} to \d{1,2} [a-z]{3}/.test(await ev(`$('wlist').textContent`)), await ev(`$('wlist').textContent`));
 R = await rect('#wsum .wx-plot'); await p.dblclick(R.l + R.w / 2, R.y); await sleep(900);
 ok('Warning history: a double click: the whole period, the list whole again', near(await ev('WX.W.a'), 0, 0.002) && near(await ev('WX.W.b'), 1, 0.002) && await ev(`document.querySelectorAll('#wlist .gx-sess').length`) === rows0);
+await ev(`document.querySelector('#wsum .gx-flt .tog2').click(), 1`); await sleep(600);
+ok('Warning history: Filter list off again', await ev(`S.listFilt.w === false && !document.querySelector('#wsum .gx-flt .tog2').classList.contains('on')`));
 await ev(`document.querySelector('#wmodal .mclose').click(), 1`);
 ok('no page errors', errs.length === 0, errs);
 { const all = done(); console.log(all ? 'ALL PASS' : 'SOME FAILED'); process.exit(all ? 0 : 1); }

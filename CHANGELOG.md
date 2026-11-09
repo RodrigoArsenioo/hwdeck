@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.4.4 (2026-11-09)
+
+- Themes: 107 to pick from, in ten colour families, each with a palette of its own. A theme that is no longer there opens as the nearest one.
+- Settings > Look is new:
+  - A live preview of your own window in the theme under the pointer, beside a list of every theme by colour. The dropdown above it jumps to a colour.
+  - Saved: keep looks of your own and come back to them. Save stores the current look, a double-click on a name renames it, and its x deletes it after asking.
+  - The accent has its own box beside Mono, Accent and Spectrum.
+  - Under Spectrum, a palette dropdown (the theme's own first, then every palette by colour) and a row for each category. A colour opens its editor over the rows. Once a category has a colour of your own, the palette shows as Custom, and Save keeps it.
+  - Cells: corners and outline strength are sliders.
+  - Popups: Cells, the default, draws them like the cells; View draws them like the view, with its background and fades.
+- Themes reach every window: Settings, Saves, the cell popup, Game sessions, Warning history, confirms, menus and the edit panel take the theme's colours instead of plain grey, the week days included. Classic looks as before.
+- OLED: popups, menus and panels stand out again on its black. Their greys start from a near-black instead of pure black, while the view stays true black.
+- Classic and OLED have a white accent instead of blue, and so does the Muted palette. A Classic or OLED look still on the old blue switches to white; an accent you picked yourself stays.
+- The charts in Game sessions and Warning history follow the colour setting: Spectrum draws them in the game's colour (a cell's own in Warning history), Accent in the accent, and Mono keeps them grey. Warnings stay yellow and red.
+- A day's title held at the top of Game sessions or Warning history fades into the list under it instead of cutting it with a line.
+- Edit mode:
+  - The selection, outlines and guides follow the accent colour instead of a fixed blue.
+  - Width and Height have arrows, always shown, as in Settings. Width steps through the widths that can be drawn there, Height by a quarter.
+  - A typed size that had to change flashes, so the change shows.
+  - Turning edit mode on moves nothing: the title bar keeps its height and the category names stay where they are.
+  - A width chip that can't be drawn there is greyed out, and a typed width under the smallest goes to the smallest that fits. Width of all shows the width a tile is drawn at.
+  - Categories side by side on a line get room for the same tiles per row, so they draw alike.
+  - A swap that Automatic can't draw makes the view your own, so the two trade places as marked.
+  - Undo and redo bring back exactly the size and place everything had.
+- Readings that come and go: a reading HWiNFO isn't sharing right now shows "not available now", and in edit mode says why. Re-link shows only when a reading is really gone: another PC's layout, a replaced drive or GPU, a renamed reading.
+- Game sessions: Compare has its own button beside Pick. Click a session for A and another for B (a click again lets one go), swap them in the bar, then Compare. Back from the comparison keeps A and B. It replaces the Compare in Pick's bar.
+- Game sessions and Warning history: the chart's window no longer filters the list under it unless Filter list is on. The table beside the chart still follows the window, and as it moves, its games and cells grow in, fold away and glide to their places.
+- The 12V-2x6 connector's pins are drawn in the tile's colour.
+- Smoother everywhere: Grid edits glide, a removed cell fades where it was, Storage's groups fold, the edit panel's choices slide, a colour's tones fold open, the cell popup keeps its line while a range loads, and more.
+- Fixes:
+  - A choice in Settings or the edit panel no longer flashes when picked: the sliding highlight is the only one, and the labels fade over with it. Yellow and Yellow + Red no longer draw a coloured edge under them.
+  - Graphs no longer blink when their colour changes (a theme, the colour setting, a cell turning yellow or red).
+  - Edit mode: chips and column widths, Alt+arrows, drops before New row, a row's own Fill, and typing kept when the catalog changes.
+  - Smaller fixes to the toast's Undo, the update notes and Settings.
+
 ## 2.4.3 (2026-11-08)
 
 - Side by side in a column: Beside above on a category stacked under another puts it next to that one, both still in their column, up to four on a line. Press it again to put it back under. Where there is no room for them, they stack again.

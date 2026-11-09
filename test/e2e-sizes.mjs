@@ -118,6 +118,14 @@ let a0b = await box('a0');
 ok('width 50% from the panel: half its row', (await look('a0')).f === 0.5 && near(a0b.w, 0.5 * (aw + g) - g, 1), JSON.stringify({ look: await look('a0'), now: a0b.w, want: 0.5 * (aw + g) - g }));
 await field('h', '1.5'); await p.sleep(600);
 ok('height 1.5 rows from the panel', (await look('a0')).h === 1.5 && (await box('a0')).h > (await box('a1')).h * 1.3, JSON.stringify(await look('a0')));
+await field('f', '120'); await p.sleep(250);
+ok('a typed 120: 100%, the field and the 100% chip flash', await E(`(() => { const i = document.querySelector('#insp input[data-sz="f"]'), c = [...document.querySelectorAll('#insp [data-lay="cf"] button.szfl')]; return i.value === '100' && i.classList.contains('szfl') && c.length === 1 && c[0].dataset.v === '100'; })()`),
+  await E(`document.querySelector('#insp input[data-sz="f"]').value + ' ' + document.querySelector('#insp input[data-sz="f"]').className + ' ' + [...document.querySelectorAll('#insp .szfl')].length`));
+await p.sleep(900);
+ok('the flash goes', await E(`!document.querySelector('#insp .szfl')`));
+await field('f', '50'); await p.sleep(250);
+ok('a typed 50, kept as typed: no flash', await E(`(() => { const i = document.querySelector('#insp input[data-sz="f"]'); return i.value === '50' && !document.querySelector('#insp .szfl'); })()`), await E(`document.querySelector('#insp input[data-sz="f"]').value`));
+await p.sleep(600);
 
 // ---- Ctrl+arrows: 1% of its row; with Shift the next share; a pixel taller or shorter, with Shift a quarter row ----
 await click('#view .tile[data-cid="a0"]');

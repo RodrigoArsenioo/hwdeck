@@ -183,7 +183,15 @@ node test/seed-range.mjs "$d\test\data-range" | Out-Null
 $p = Start-Deck 'data-range' 9242 300
 Run 'range selector' test/e2e-range.mjs 9242 ''
 Run 'range selector in the lists' test/e2e-range-lists.mjs 9242 ''
+Run 'compare two sessions' test/e2e-compare.mjs 9242 ''
 Quit-Deck $p 9242
+
+# every surface in every look (11-09, port 9244): each window opened once and walked in every theme, the popups as View
+# and as Cells: no plain grey surface in a coloured look, Classic's greys as before (a folder seeded with sessions)
+node test/seed-range.mjs "$d\test\data-surf" | Out-Null
+$p = Start-Deck 'data-surf' 9244 300
+Run 'every surface in every look' test/e2e-surfaces.mjs 9244 ''
+Quit-Deck $p 9244
 
 # sessions from before 2.0.1 re-estimated at the start (port 9237): old lines in the log and the bin before it starts
 if (Test-Path "$d\test\data-re") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-re" }
@@ -215,8 +223,19 @@ $p = Start-Deck 'data-lay' 9238 300
 Run 'layouts' test/e2e-layout.mjs 9238 test/data-lay
 Quit-Deck $p 9238
 
-# tile sizes, lines on both sides, a game session's own numbers, the looks (port 9238 again, a fresh copy each)
-foreach ($t in @(@('tile sizes', 'test/e2e-sizes.mjs', 'data-sz'), @('lines on both sides', 'test/e2e-lines2.mjs', 'data-l2'), @('game session numbers', 'test/e2e-gamestats.mjs', 'data-gs'), @('themes', 'test/e2e-themes.mjs', 'data-th'), @('bins', 'test/e2e-bins.mjs', 'data-bins'))) {
+# edit mode, hard (his rule 11-08): random edits on five layouts at a fixed seed, undo and redo after each, every
+# tile's place and the fitted size checked after every step (port 9241, a fresh folder; the full run with its sweeps
+# and every chip: local\part2\stress.ps1)
+if (Test-Path "$d\test\data-es") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-es" }
+$p = Start-Deck 'data-es' 9241 300
+"== edit mode stress"
+$out = node test/e2e-edit-stress.mjs 9241 42 130 random
+$out
+if (-not ($out -match 'ALL PASS')) { $failed++ }
+Quit-Deck $p 9241
+
+# tile sizes, lines on both sides, a game session's own numbers, the looks, redraw flashes (port 9238 again, a fresh copy each)
+foreach ($t in @(@('tile sizes', 'test/e2e-sizes.mjs', 'data-sz'), @('lines on both sides', 'test/e2e-lines2.mjs', 'data-l2'), @('game session numbers', 'test/e2e-gamestats.mjs', 'data-gs'), @('themes', 'test/e2e-themes.mjs', 'data-th'), @('the Look page', 'test/e2e-look.mjs', 'data-lk'), @('redraw flashes', 'test/e2e-flash.mjs', 'data-fl'), @('bins', 'test/e2e-bins.mjs', 'data-bins'))) {
   if (Test-Path "$d\test\$($t[2])") { Remove-Item -Recurse -Force -LiteralPath "$d\test\$($t[2])" }
   $p = Start-Deck $t[2] 9238 300
   Run $t[0] $t[1] 9238 "test/$($t[2])"
@@ -240,7 +259,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$d\scripts\build-demo.ps1" 
 if ($LASTEXITCODE) { "== browser demo`nFAIL the demo didn't build"; $failed++ } else { Run 'browser demo' test/e2e-demo.mjs 0 '' }
 
 # the update notes across upgrades: it starts and closes its own copies, one at a time (11-07 audit: never run here)
-Run 'update notes' test/e2e-upgrade.mjs 9272 ''
+# (ports 9400 and up, one per copy: 9272 and up reached 9300-9302, where mockup copies of the app may run, 11-09)
+Run 'update notes' test/e2e-upgrade.mjs 9400 ''
 
 # the app goes on after an exception in its own code (it logs "unhandled:", "tick failed:", "message ... failed:" or,
 # from the game poll, "games:"),

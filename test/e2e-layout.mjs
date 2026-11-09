@@ -94,14 +94,15 @@ ok('the view is drawn in rows now', await E('document.querySelectorAll("#view.ar
 await E('undo()'); await p.sleep(300);
 ok('Undo: Automatic again', !(await rows('tiles')) && await E('!!document.querySelector("#view.arr.auto")'));
 
-// swap in Automatic keeps it automatic
-const order0 = await J('S.L.cats.map(c => c.id)');
+// a swap in Automatic: the two trade the places drawn; Automatic is kept when it draws them traded, else the view
+// becomes your own (11-08 audit: only the list order changed, so often nothing moved)
+const order0 = await J('S.L.cats.map(c => c.id)'), placesOf = () => J(`['home', 'gpu'].map(id => { const q = posIn(rowsNow('tiles'), id); return q && [q.ri, q.ci, q.k]; })`), pl0 = await placesOf();
 a = await p.center(grip('home')); b = await rect(cat('gpu'));
 await p.drag(a, { x: b.x, y: b.y }); await p.sleep(450);
-const order1 = await J('S.L.cats.map(c => c.id)');
-ok('dropping on the middle of another category in Automatic swaps them and stays automatic', !(await rows('tiles')) && order1[0] === 'home' && order1[6] === 'gpu', order1.join());
+const pl1 = await placesOf();
+ok('dropping on the middle of another category in Automatic: the two trade places', JSON.stringify(pl1) === JSON.stringify([pl0[1], pl0[0]]), JSON.stringify([pl0, pl1, (await rows('tiles')) ? 'your own' : 'automatic']));
 await E('undo()'); await p.sleep(300);
-ok('Undo restores the order', JSON.stringify(await J('S.L.cats.map(c => c.id)')) === JSON.stringify(order0));
+ok('Undo restores the order and Automatic', JSON.stringify(await J('S.L.cats.map(c => c.id)')) === JSON.stringify(order0) && !(await rows('tiles')));
 
 // ---- the owner's Tiles arrangement, then editing it ----
 await E(`(() => { mutate(() => { S.L.views = { tiles: { gap: 'tight', rows: [
@@ -150,7 +151,9 @@ ok('double-click on the strip: the row fits again', (await rows('tiles'))[3].h =
 const bs = await J(`(() => { const c = S.L.cats.filter(x => cellsOf(x).length > 1).sort((a, b) => cellsOf(b).length - cellsOf(a).length); return [c[0].id, c[c.length - 1].id, cellsOf(c[0]).length, cellsOf(c[c.length - 1]).length]; })()`);
 await E(`mutate(() => { S.L.views.tiles = { rows: [{ cols: [{ stack: ['${bs[1]}'] }, { stack: ['${bs[0]}'] }] }] }; })`); await p.sleep(600);
 const aw = await E(`(() => [...document.querySelectorAll('#view .lrow')[0].querySelectorAll(':scope > .lcol')].map(c => [Math.round(c.getBoundingClientRect().width), Math.round(c.querySelector('.tile').getBoundingClientRect().width)]))()`);
-ok('Auto widths: the column with more tiles is wider, the tiles in both are one width', aw[1][0] > aw[0][0] && Math.abs(aw[0][1] - aw[1][1]) <= 2, JSON.stringify(bs) + ' ' + JSON.stringify(aw));
+// (his pick 11-08, "stable split": the tracks are counted at the full text size, so the column with more tiles no longer
+// has to be the wider one; a row's split doesn't move when an edit elsewhere fits the text a little smaller)
+ok('Auto widths: the tiles in both columns are one width (the split counted at the full text size)', Math.abs(aw[0][1] - aw[1][1]) <= 2 && aw[1][0] >= aw[0][0] - 2, JSON.stringify(bs) + ' ' + JSON.stringify(aw));
 await E('undo()'); await p.sleep(500);
 
 // drops on a custom arrangement (nothing selected first: the settings stay out while something is, his 11-06, and would
@@ -396,6 +399,23 @@ await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 300 });
 ok('Selected off: once the pointer leaves they go, nothing selected', await E('!document.querySelector(".insp").classList.contains("open") && !selCat && !DR.R.pinned'), await E('DR.R.el.className + " " + selCat'));
 await p.key('Escape', 'Escape', 27); await p.sleep(400);
 await E('(() => { DR.L.side = "l"; DR.R.side = "r"; syncDrawers(); saveState(); return 1; })()'); await p.sleep(300);
+
+// ---- edit mode moves nothing (his 11-09: "the edit mode changes position of stuff (by pixels) making them off
+// centered"): every tile and every category's name, in each view, before and after edit mode turns on. (Empty
+// categories show in edit mode on purpose, room to drop into: measured on the layout without them)
+{ const L0 = await E('JSON.stringify(S.L)');
+  await E(`(() => { const L = JSON.parse(JSON.stringify(S.L)); L.cats = L.cats.filter(c => c.cells && c.cells.length); S.L = cleanLayout(L); sel = null; selCat = null; return 1; })()`);
+  const at = `(() => { const o = {}; for (const e of document.querySelectorAll('#view .dc[data-cid], #view .dch .cn')) { const c = e.closest('[data-cat]'), k = e.dataset.cid || ('name ' + (c ? c.dataset.cat : '?')); const r = e.getBoundingClientRect(); if (r.width) o[k] = [r.left, r.top, r.width, r.height]; } return JSON.stringify(o); })()`;
+  for (const scr of ['tiles', 'overview', 'grid']) {
+    await E(`(() => { setEdit(false); showScreen('${scr}', true); return 1; })()`); await p.sleep(1400);
+    const A = JSON.parse(await E(at));
+    await E('setEdit(true)'); await p.sleep(1400);
+    const B = JSON.parse(await E(at));
+    const moved = Object.keys(A).filter(k => B[k] && A[k].some((v, i) => Math.abs(v - B[k][i]) > 0.5));
+    ok('edit mode moves nothing in ' + scr + ': every tile and category name within 0.5 px', Object.keys(A).length > 3 && moved.length === 0,
+      Object.keys(A).length + ' measured; ' + moved.slice(0, 4).map(k => k + ' ' + A[k].map(x => x.toFixed(1)).join(',') + ' > ' + B[k].map(x => x.toFixed(1)).join(',')).join(' | '));
+  }
+  await E(`(() => { S.L = cleanLayout(${L0}); sel = null; selCat = null; setEdit(true); showScreen('tiles', true); return 1; })()`); await p.sleep(700); }
 
 // ---- the title bar: this PC's name (or your title), the clock, Restart HWiNFO ----
 const pc = await E('feed.pc');

@@ -70,14 +70,16 @@ b = await p.centerOf(`[...document.querySelectorAll('#view .dcat[data-cat="${cat
 await p.drag({ x: a.x - 60, y: a.y }, { x: b.x + b.w / 2 - 4, y: b.y }); await p.sleep(300);
 await storage(false);
 ok('Tiles: a Storage row dragged to the end of a category', await E(`S.L.cells[S.L.cats[0].cells[S.L.cats[0].cells.length - 1]].key === ${JSON.stringify(rowKey)}`));
+const placesOf = () => E(`JSON.stringify([${JSON.stringify(cat1)}, ${JSON.stringify(cat0)}].map(id => { const q = posIn(rowsNow('tiles'), id); return q && [q.ri, q.ci, q.k]; }))`).then(JSON.parse), pl0 = await placesOf();
 a = await p.center(`#view .dcat[data-cat="${cat1}"] .grip`); b = await p.center(`#view .dcat[data-cat="${cat0}"]`);
 await p.drag(a, { x: b.x, y: b.y }); await p.sleep(300);
-ok('Tiles: a category dropped on the middle of another swaps them (the view stays automatic)', await E(`S.L.cats[0].id === "${cat1}" && !(S.L.views && S.L.views.tiles && S.L.views.tiles.rows)`), await E('S.L.cats.map(c => c.name)'));
+const pl1 = await placesOf();
+ok('Tiles: a category dropped on the middle of another: the two trade places (Automatic kept when it draws that, 11-08)', JSON.stringify(pl1) === JSON.stringify([pl0[1], pl0[0]]), JSON.stringify([pl0, pl1]));
 // "+ New category" shows up over the bottom of the view while a reading is dragged (Storage open for it)
 await storage(true);
 a = await p.centerOf('[...document.querySelectorAll("#vspace .vrow.r")][8]'); b = await E('(() => { const r = document.querySelector(".viewwrap").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.bottom - 40 }; })()');
 await p.drag({ x: a.x - 60, y: a.y }, b); await p.sleep(300);
-ok('a row dropped on "New category" makes one', await E('S.L.cats.length === 3'), await E('S.L.cats.map(c => c.name)'));
+ok('a row dropped on "New category" makes one', await E('S.L.cats.length === 3'), await E('S.L.cats.map(c => c.name)') + ' at ' + JSON.stringify(b) + ' zone ' + await E(`JSON.stringify((() => { const r = $('newcat').getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom)]; })())`) + ' view bottom ' + await E(`Math.round(document.getElementById('view').getBoundingClientRect().bottom)`));
 await storage(false);
 
 // ---- the other views: the same cells, and dragging goes up and down there ----
@@ -167,7 +169,7 @@ await E(`document.querySelector('#mrng button[data-r="7d"]').click()`);
 ok('7 days comes from the host', await until('bigHist && bigHist.range === "7d" && bigHist.avg.length === 1008', 3000));
 await p.key('Escape', 'Escape', 27); await p.sleep(200);
 ok('Esc closes it', await E('!$("modal").classList.contains("open")'));
-await click('#editDone');
+await click('#editDone'); await p.sleep(450);   // (the drawers slide out as edit mode ends, 320 ms: 11-08)
 ok('pencil off: Storage and the settings go, the view fits itself', await E('!S.edit && getComputedStyle(document.querySelector(".storage")).display === "none" && parseFloat(document.documentElement.style.fontSize) > 9'));
 await p.sleep(700);   // (the view settles first: a cell redrawn under a still pointer gets no hover until it moves)
 c = await p.center('#view .dc'); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y }); await p.sleep(800);

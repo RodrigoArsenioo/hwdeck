@@ -31,7 +31,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 static class AppInfo
 {
-    public const string Version = "2.4.3";
+    public const string Version = "2.4.4";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;
@@ -1421,6 +1421,31 @@ class History
             if (secAt[k] == s) a[i] = R(t.Sec[k]);
         }
         return a;
+    }
+
+    // when a reading last had a value (unix s): the newest of its seconds, minutes, blocks and hours kept, or now while
+    // the minute, block or hour in progress has one; 0 when the history has none (11-08: a reading in the layout that
+    // HWiNFO doesn't share and that had no value for 7 days is taken as gone, Re-link back; less is a pause)
+    public long LastAt(string key, long now)
+    {
+        Track t;
+        if (!tracks.TryGetValue(key, out t)) return 0;
+        if (t.MCnt > 0 || t.TCnt > 0 || t.HCnt > 0) return now;
+        long best = 0;
+        for (int k = 0; k < SecLen; k++) if (secAt[k] > best && !float.IsNaN(t.Sec[k])) best = secAt[k];
+        for (int k = 0; k < MinLen; k++) if (minAt[k] >= 0 && !float.IsNaN(t.MAvg[k])) best = Math.Max(best, (minAt[k] + 1) * 60L);
+        for (int k = 0; k < TenLen; k++) if (tenAt[k] >= 0 && !float.IsNaN(t.TAvg[k])) best = Math.Max(best, (tenAt[k] + 1) * 600L);
+        if (t.HAvg != null) for (int k = 0; k < HourLen; k++) if (hourAt[k] >= 0 && !float.IsNaN(t.HAvg[k])) best = Math.Max(best, (hourAt[k] + 1) * 3600L);
+        return Math.Min(best, now);
+    }
+    // the oldest time the history holds anything for (unix s; now when it holds nothing yet)
+    public long Since(long now)
+    {
+        long s = now;
+        for (int k = 0; k < MinLen; k++) if (minAt[k] >= 0) s = Math.Min(s, minAt[k] * 60L);
+        for (int k = 0; k < TenLen; k++) if (tenAt[k] >= 0) s = Math.Min(s, tenAt[k] * 600L);
+        for (int k = 0; k < HourLen; k++) if (hourAt[k] >= 0) s = Math.Min(s, hourAt[k] * 3600L);
+        return s;
     }
 
     // 1 h, 6 h, 12 h, 24 h as 1-minute points, 1 to 7 days ("3d") as 10-minute points, 30 days, 90 days and all of the
@@ -3679,6 +3704,14 @@ partial class DeckForm : Form
                         // the bottleneck: the share of each minute (block) each call held (an average of the calls means nothing)
                         if (key == Bottleneck.Key) for (int i = 0; i < 3; i++) h["s" + "gcf"[i]] = hist.Range(Bottleneck.ShareKeys[i], range)["avg"];
                         h["t"] = "hist"; Post(h);
+                    }
+                    break;
+                case "lastval":   // (readings of the layout HWiNFO isn't sharing now: when each last had a value, 11-08)
+                    {
+                        long lvNow = Source.Unix(); var lvAt = new Dictionary<string, object>();
+                        var lvKs = m.ContainsKey("keys") ? m["keys"] as System.Collections.ArrayList : null;
+                        if (lvKs != null) foreach (var lvO in lvKs.Cast<object>().Take(500)) { var lvK = lvO as string; if (lvK != null) lvAt[lvK] = hist.LastAt(lvK, lvNow); }
+                        var lvMsg = Msg("lastval"); lvMsg["at"] = lvAt; lvMsg["since"] = hist.Since(lvNow); Post(lvMsg);
                     }
                     break;
                 case "alerts": SendLog("alerts.log", "alerts"); break;

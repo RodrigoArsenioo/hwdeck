@@ -39,6 +39,12 @@ await pin([3, 3, 9.6, 3, 3, 3]);
 ok('at 9.6 A: red', await until(`evalCell("${cid}", S.L.cells["${cid}"], true, true).lvl === 2`, 5000));
 await pin([3, 3, 3, 3, 3, 3]); await p.sleep(4500);
 ok('even again: back to normal', await ev(`evalCell("${cid}", S.L.cells["${cid}"], true, true).lvl === 0`));
+ok('the pins in the tile\'s graph colour: Mono, the graphs\' grey', await until(`${el}.querySelector('.xb .xpins').style.getPropertyValue('--pc') === '#7c7c7c' && getComputedStyle(${el}.querySelector('.xb .xpins b')).backgroundColor === 'rgb(124, 124, 124)'`, 3000),
+  await ev(`${el}.querySelector('.xb .xpins').style.getPropertyValue('--pc')`));
+await ev(`(() => { S.look.tint = 'spectrum'; applyLook(); renderView(); return 1; })()`); await p.sleep(400);
+ok('Spectrum: its category\'s colour', await until(`(() => { const c = catTint(catOf("${cid}")); return !!c && ${el}.querySelector('.xb .xpins').style.getPropertyValue('--pc') === c; })()`, 3000),
+  await ev(`[catTint(catOf("${cid}")), ${el}.querySelector('.xb .xpins').style.getPropertyValue('--pc')].join(' ')`));
+await ev(`(() => { S.look.tint = 'none'; applyLook(); renderView(); return 1; })()`); await p.sleep(400);
 
 // the pins' bars and its popup's rows are coloured by the cell's own lines, not by a fixed 9.2 / 9.5 A
 {

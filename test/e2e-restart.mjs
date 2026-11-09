@@ -42,6 +42,21 @@ ok('Re-link filters Storage to the label', await E('!$("relinkBar").hidden && $(
 await E('(() => { const e = $("q"); e.value = ""; e.dispatchEvent(new Event("input")); })()'); await p.sleep(150);
 await click('#vspace .vrow.r .add.link');
 ok('picking a reading re-links the cell', await E('BYKEY.has(S.L.cells.m2.key) && !document.querySelector("#view .dc.missing")'), await E('S.L.cells.m2.key'));
+// readings that come and go (his pick E, 11-08): a reading HWiNFO drops while its sensor stays (the battery's time left
+// while plugged in) is a pause: "not available now" outside edit mode, the note only in edit mode, no Re-link; one the
+// history has had no value for in 7 days counts as gone and gets Re-link back
+const pz = await E(`(() => { endRelink(true); const key = READ.find(r => !/^(hwdeck|x)\\./.test(r.key)).key.split('/')[0] + '/ffff0001'; mutate(() => { S.L.cells.pz = { key, name: 'Time left', graph: true }; S.L.cats[0].cells.push('pz'); }); setEdit(false); return key; })()`);
+const capOf = () => E(`(document.querySelector('#view .dc[data-cid="pz"] .tc') || {}).textContent || ''`);
+ok('a reading whose sensor is here, out of edit mode: "not available now", no Re-link', await until(`(document.querySelector('#view .dc[data-cid="pz"] .tc') || {}).textContent === 'not available now'`, 3000) && await E(`!document.querySelector('#view .dc[data-cid="pz"] .rl')`), await capOf());
+await E('setEdit(true)'); await p.sleep(400);
+ok('in edit mode: HWiNFO isn\'t sharing it, still no Re-link', await until(`/HWiNFO isn't sharing this right now|not shared by HWiNFO/.test((document.querySelector('#view .dc[data-cid="pz"] .tc') || {}).textContent || '')`, 3000) && await E(`!document.querySelector('#view .dc[data-cid="pz"] .rl')`), await capOf());
+await E(`(() => { sel = 'pz'; selCat = null; renderInsp(); return 1; })()`); await p.sleep(200);
+ok('its panel: the note in grey, no Re-link', await E(`(() => { const s = document.querySelector('#insp .src > span'); return !!s && !/e08a8d/i.test(s.getAttribute('style') || '') && !document.getElementById('iRelink'); })()`), await E(`(document.querySelector('#insp .src') || {}).innerHTML`));
+ok('the host says when it last had a value: never for a made-up key, now for a shared one', await (async () => { await E(`send({ t: 'lastval', keys: [${JSON.stringify(pz)}, READ.find(r => !/^(hwdeck|x)\\./.test(r.key)).key] })`); return await until(`LASTV.get(${JSON.stringify(pz)}) === 0 && LASTV.get(READ.find(r => !/^(hwdeck|x)\\./.test(r.key)).key) > Date.now() / 1000 - 120 && lastvSince > 0`, 4000); })(), await E(`JSON.stringify([...LASTV], null, 0) + ' since ' + lastvSince`));
+ok('a made-up key never in a history only minutes old: still a pause', await E(`isPause(S.L.cells.pz)`));
+await E(`onHost({ t: 'lastval', at: { ${JSON.stringify(pz)}: Math.floor(Date.now() / 1000) - 8 * 86400 }, since: Math.floor(Date.now() / 1000) - 30 * 86400 })`); await p.sleep(400);
+ok('no value for 8 days: gone, Re-link back in the tile and the panel', await until(`!!document.querySelector('#view .dc[data-cid="pz"] .rl') && !!document.getElementById('iRelink')`, 3000) && /7 days/.test(await capOf()), await capOf());
+await E(`(() => { mutate(() => { delete S.L.cells.pz; S.L.cats[0].cells = S.L.cats[0].cells.filter(x => x !== 'pz'); }); sel = null; setEdit(false); return 1; })()`); await p.sleep(300);
 await p.shot('test/out/restart.png');
 p.close();
 console.log(done() ? 'ALL PASS' : 'SOME FAILED');
