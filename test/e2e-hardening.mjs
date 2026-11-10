@@ -249,12 +249,12 @@ ok('on, with the task\'s last trouble under it, in yellow', await E(`(() => { co
 await E(`onHost({ t: 'settings', keep: true, keepBusy: false })`);
 ok('and without one, no note', await E('!$("sKeep").closest(".setrow").querySelector("small.y")'));
 
-// ---- the task's script is pinned to its version: a task keeps the script it was made with, and only a higher
-// KeepVersion tells Settings to say "turn this off and on once to update it" (1.5.1 changed the script and kept 3,
-// so 1.5.0's tasks never heard). What reaches a task is hashed with C# comments and spacing left out. Changed it?
-// Bump KeepVersion in src/app.cs, then pin both here. Only a change that can't reach a made task (the one-time
-// part after RegisterTask) takes a new hash without a bump ----
-const KEEP_PIN = { version: 5, hash: '325d31dab18738ba' };
+// ---- the HWiNFO task's definition is pinned to its version: a task keeps what it was made with (what it starts, how,
+// as whom) until the installer or Settings makes it again, and its version says which it is (Settings tells an older
+// one apart). Since 6 it starts HWDeck.exe (--hwinfo-task), whose work follows the exe; before, a PowerShell script
+// kept in HKLM. TaskXml is hashed with C# comments and spacing left out. Changed it? Bump TaskVersion in src/app.cs
+// (Elevated), then pin both here ----
+const KEEP_PIN = { version: 6, hash: '01bf65d76e40b498' };
 const cs = readFileSync(new URL('../src/app.cs', import.meta.url), 'utf8');
 const csDecl = at => {   // the declaration from `at` to its ';' or closing '}', comments out, spacing squeezed
   let i = cs.indexOf(at), o = '', d = 0;
@@ -272,10 +272,12 @@ const csDecl = at => {   // the declaration from `at` to its ';' or closing '}',
   }
   return o.replace(/\r\n/g, '\n');
 };
-const keepParts = ['const string WinApi =', 'const string RestartScript =', 'const string KeepScript =', 'static string PowerShellExe', 'static string PsText(', 'string KeepOnScript()'].map(csDecl);
+const keepParts = ['public static string TaskXml('].map(csDecl);
 const keepHash = keepParts.includes(null) ? 'missing' : createHash('sha256').update(keepParts.join('\n')).digest('hex').slice(0, 16);
-const keepVer = +((cs.match(/const int KeepVersion = (\d+);/) || [])[1]);
-ok('the Keep task\'s script matches the hash pinned to its KeepVersion (changed: bump KeepVersion, then pin both)', keepVer === KEEP_PIN.version && keepHash === KEEP_PIN.hash, `KeepVersion ${keepVer}, hash ${keepHash} (pinned ${KEEP_PIN.version}, ${KEEP_PIN.hash})`);
+const keepVer = +((cs.match(/public const int TaskVersion = (\d+);/) || [])[1]);
+ok('the HWiNFO task\'s definition matches the hash pinned to its TaskVersion (changed: bump TaskVersion, then pin both)', keepVer === KEEP_PIN.version && keepHash === KEEP_PIN.hash, `TaskVersion ${keepVer}, hash ${keepHash} (pinned ${KEEP_PIN.version}, ${KEEP_PIN.hash})`);
+// ---- no script anywhere in the exe's admin work (11-09: Windows Defender took the hidden PowerShell for malware) ----
+ok('no PowerShell, encoded command or base64 script left in src/app.cs\'s admin work', !/EncodedCommand|FromBase64String|ExecutionPolicy|powershell\.exe|DefinePInvokeMethod/i.test(cs), (cs.match(/EncodedCommand|FromBase64String|ExecutionPolicy|powershell\.exe|DefinePInvokeMethod/ig) || []).join(', '));
 
 // ---- Accurate game fps (Settings): off by default, under Keep HWiNFO sharing; a click asks the host, its answer shows ----
 await E(`(() => { feed.fake = true; send({ t: 'getSettings' }); return 1; })()`); await until('feed.keep === false', 4000);

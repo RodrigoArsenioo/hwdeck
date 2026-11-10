@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.4.5 (2026-11-10)
+
+- Keep HWiNFO sharing and Accurate game fps are on from the start. The installer sets both up in the one Windows prompt it asks anyway, and an update does the same.
+- Settings asks Windows for permission less often: Keep HWiNFO sharing turns off and on, and Restart HWiNFO runs, without a prompt.
+- HW Deck does its admin work itself, without hidden PowerShell scripts, which Windows Defender could take for malware. Update now goes the same way: the installer closes HW Deck and opens it again when it is done.
+- On an administrator account, Update now and the PowerShell install start Windows Installer with admin rights themselves, so the Windows prompt shows Windows Installer and its publisher, Microsoft, instead of an installer file from an unknown publisher. HW Deck still opens without admin rights, also from the installer's last page.
+- Accurate game fps turned off stops counting; the permission it needed stays until HW Deck is uninstalled.
+- A cell's popup grows out of the cell you clicked and goes back into it when it closes.
+- Settings > Look:
+  - On Mono the accent box folds away, and edit mode's selection is white.
+  - The palette dropdown shows each palette's colours at the right end of its row.
+  - The preview draws the 12V-2x6 connector's pins in the previewed theme's colour.
+- Undo, redo and moves: the view no longer comes back smaller with an empty band under it when cells changed order, and captions no longer show their short wording for a moment.
+- A long game name on a wide Game cell keeps more of the name: its cut caption is never swapped for a longer wording.
+
 ## 2.4.4 (2026-11-09)
 
 - Themes: 107 to pick from, in ten colour families, each with a palette of its own. A theme that is no longer there opens as the nearest one.

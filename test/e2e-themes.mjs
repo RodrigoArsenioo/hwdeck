@@ -63,7 +63,7 @@ const r0 = parseFloat(await css('#view .tile', 'borderTopLeftRadius'));
 // ---- Settings: Look, its rows ----
 await click('#setBtn');
 ok('Settings has Look: Theme (every one there is, Classic on), Background and Cells folded, Colour (Mono, Accent, Spectrum), no Cards', await ev('[...document.querySelectorAll("#setbody .lk-t[data-lk=theme] .lk-tn")].map(b => b.textContent).sort().join() === Object.values(THEME_PRESETS).map(x => x.name).sort().join() && !!THEME_PRESETS.classic && !!document.querySelector("#setbody .lk-head[data-f=bg]:not(.open)") && !!document.querySelector("#setbody .lk-head[data-f=cells]:not(.open)") && [...document.querySelectorAll("#sTint button")].map(b => b.textContent).join() === "Mono,Accent,Spectrum" && $("sTint").querySelector(".on").dataset.v === "none" && !document.getElementById("sCards")') && await thOn() === 'classic');
-ok('Mono: the accent\'s box beside the control, no palette', await ev('!!document.querySelector("#setbody .lk-acc") && !document.querySelector("#setbody .lk-rows") && !document.getElementById("lkPal")'));
+ok('Mono: the accent\'s box folded away (no width, not seen, off for the keys), no palette', await ev('(() => { const a = document.querySelector("#setbody .lk-acc"); return !!a && a.disabled && a.getBoundingClientRect().width < 0.5 && getComputedStyle(a).visibility === "hidden" && a.getAnimations().length === 0 && !document.querySelector("#setbody .lk-rows") && !document.getElementById("lkPal"); })()'));
 ok('Mono: a switch that is on is light on dark, no blue', await css('#sClock', 'backgroundColor') === 'rgb(208, 208, 208)' && await css('#sClock', 'backgroundColor', '::after') === 'rgb(22, 22, 22)', await css('#sClock', 'backgroundColor') + ' ' + await css('#sClock', 'backgroundColor', '::after'));
 
 // ---- the themes ----
@@ -257,6 +257,41 @@ await p.key('Tab', 'Tab', 9); await p.key('Tab', 'Tab', 9);
 ok('Tab: the focus stays where it was', await ev('document.activeElement ? document.activeElement.outerHTML.slice(0, 60) : ""') === before, before);
 ok('a key after a click: no ring on the button', await ev('(() => { const a = document.activeElement; return !a || a === document.body || getComputedStyle(a).outlineStyle === "none"; })()'));
 await click('nav#screens button[data-s="tiles"]'); await p.sleep(400);
+
+// ---- Mono shows the accent nowhere (11-10, his "the accent color should not display when it's on mono (add
+// animation)"): its box folds away behind the control and slides back out with Accent or Spectrum; edit mode's colour
+// is the plain white there, and the look keeps its accent ----
+const accBox = `(() => { const a = document.querySelector('#setbody .lk-acc'), s = $('sTint'); if (!a) return null; const ar = a.getBoundingClientRect(), cs = getComputedStyle(a);
+  return { w: +ar.width.toFixed(2), gap: +(s.getBoundingClientRect().left - ar.right).toFixed(2), vis: cs.visibility, dis: a.disabled, moving: a.getAnimations().some(x => x.transitionProperty === 'width'), anims: a.getAnimations().length,
+    edit: document.documentElement.style.getPropertyValue('--edit'), acc: S.look.acc, pop: !!document.querySelector('#setbody .lk-fl') }; })()`;
+const AJ = async x => JSON.parse(await ev(`JSON.stringify(${x})`));
+const tintTo = v => AJ(`(() => { document.querySelector('#sTint button[data-v="${v}"]').click(); return ${accBox}; })()`);
+await ev(`(() => { window.__lk0 = JSON.stringify(S.look); window.__mo0 = S.motion; S.motion = 'full'; applyMotion(); S.look = Object.assign({}, S.look, { tint: 'none', acc: '#55aa77', changed: true }); lkPick = null; applyLook(); $('setBtn').click(); return 1; })()`); await p.sleep(900);
+const mb0 = await AJ(accBox);
+ok('Mono with an accent kept: its box folded away as Settings opens, nothing slides, edit mode in the plain white', !!mb0 && mb0.w < 0.5 && mb0.vis === 'hidden' && mb0.dis && mb0.anims === 0 && mb0.edit === '#ffffff' && mb0.acc === '#55aa77', JSON.stringify(mb0));
+const ab0 = await tintTo('accent'); await p.sleep(700); const ab1 = await AJ(accBox);
+ok('Mono to Accent: the box slides out from behind the control, then stands 30 px wide, 10 px before it; edit mode in the accent', ab0.moving && ab0.w < 6 && !ab0.dis && ab0.vis === 'visible' && Math.abs(ab1.w - 30) < 0.6 && Math.abs(ab1.gap - 10) < 0.6 && ab1.anims === 0 && ab1.edit === await ev(`editCol('#55aa77')`), JSON.stringify([ab0, ab1]));
+await ev(`(() => { document.querySelector('#setbody .lk-acc').click(); return 1; })()`); await p.sleep(500);
+const gb0 = await tintTo('none'); await p.sleep(700); const gb1 = await AJ(accBox);
+ok('Accent to Mono with its editor open: the editor shuts, the box slides away (off for the keys at once, hidden once folded), the white again, the accent kept', await ev(`lkPick === null`) && gb0.moving && gb0.w > 24 && gb0.dis && gb0.vis === 'visible' && !gb0.pop && gb1.w < 0.5 && gb1.vis === 'hidden' && gb1.anims === 0 && gb0.edit === '#ffffff' && gb1.acc === '#55aa77', JSON.stringify([gb0, gb1]));
+// (the review 11-10) drawn again mid-slide, it goes on from where it had got to: the slide is held 60 ms in, so the
+// clock plays no part
+const hold = `(() => { const a = document.querySelector('#setbody .lk-acc'); for (const x of a.getAnimations()) { x.pause(); x.currentTime = 60; } return a.getBoundingClientRect().width; })()`;
+const md = await AJ(`(() => { document.querySelector('#sTint button[data-v="accent"]').click(); const w1 = ${hold}; renderSettings(); const b = document.querySelector('#setbody .lk-acc'), w2 = b.getBoundingClientRect().width, mv2 = b.getAnimations().some(x => x.transitionProperty === 'width'), w2b = ${hold};
+  document.querySelector('#sTint button[data-v="none"]').click(); const c = document.querySelector('#setbody .lk-acc'); return { w1, w2, mv2, w2b, w3: c.getBoundingClientRect().width, mv3: c.getAnimations().some(x => x.transitionProperty === 'width'), vis3: getComputedStyle(c).visibility, dis3: c.disabled }; })()`);
+await p.sleep(700); const md2 = await AJ(accBox);
+ok('drawn again mid-slide (another redraw, then Mono picked again): the box goes on from where it was, no jump to an end', md.w1 > 1 && md.w1 < 29 && Math.abs(md.w2 - md.w1) < 0.5 && md.mv2 && md.w2b > md.w1 && md.w2b < 29.9 && Math.abs(md.w3 - md.w2b) < 0.5 && md.mv3 && md.vis3 === 'visible' && md.dis3 && md2.w < 0.5 && md2.vis === 'hidden' && md2.anims === 0, JSON.stringify(md));
+await tintTo('accent'); await p.sleep(500);
+await ev(`(() => { document.querySelector('#setbody .lk-acc').focus(); return 1; })()`); await p.key('Shift', 'ShiftLeft', 16);
+const fc = await AJ(`(() => { const a = document.querySelector('#setbody .lk-acc'), fv = document.activeElement === a && a.matches(':focus-visible'); undo(); const e = document.activeElement; return { fv, on: !!e && e.matches('#sTint button.on'), at: e ? e.tagName + '.' + e.className : '', tint: S.look.tint }; })()`); await p.sleep(700);
+ok('the box in key focus, undo brings Mono: the focus goes to the control beside it, not to the page', fc.tint === 'none' && (!fc.fv || fc.on), JSON.stringify(fc));
+const sb0 = await tintTo('spectrum'); await p.sleep(700);
+const kb0 = await tintTo('accent');
+ok('Mono to Spectrum: it slides out too; Spectrum to Accent: it stays, nothing slides', sb0.moving && !kb0.moving && Math.abs(kb0.w - 30) < 0.6, JSON.stringify([sb0.moving, kb0.moving, kb0.w]));
+await ev(`(() => { S.motion = 'off'; applyMotion(); return 1; })()`);
+const ob0 = await tintTo('none'), ob1 = await tintTo('accent');
+ok('animations Off: gone at once, there at once, nothing slides', ob0.anims === 0 && ob0.w < 0.5 && ob0.vis === 'hidden' && ob1.anims === 0 && Math.abs(ob1.w - 30) < 0.6 && ob1.vis === 'visible', JSON.stringify([ob0, ob1]));
+await ev(`(() => { S.look = JSON.parse(window.__lk0); S.motion = window.__mo0; applyMotion(); lkPick = null; applyLook(); saveState(); $('setmodal').classList.remove('open'); return 1; })()`); await p.sleep(400);
 
 ok('no page errors', errs.length === 0, errs.join(' | '));
 p.close();

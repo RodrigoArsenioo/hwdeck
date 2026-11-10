@@ -5,6 +5,7 @@
 //   HWDeck.exe -min       start in the tray
 //   --fake [N]            a made-up machine with N readings instead of HWiNFO (tests, demos)
 //   --data <dir>          keep layouts, slots, logs and history in <dir> instead of %APPDATA%\HW Deck
+//   --install-setup, --hwinfo-task, --admin-task ...   the admin work: the installer's, the HWiNFO task's, Settings' (see Elevated)
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -31,7 +32,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 static class AppInfo
 {
-    public const string Version = "2.4.4";
+    public const string Version = "2.4.5";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;
@@ -3536,7 +3537,7 @@ partial class DeckForm : Form
     long savedAt;
     bool ended;
     void SaveAll() { try { ExtStop(); } catch { } Try(() => { if (src.Frames != null) src.Frames.Stop(); }); if (settingsRetry) SaveSettings(); SaveData(); EndMark(); }   // (a trace left running stays until Windows restarts)
-    bool FpsWanted { get { return settings.ContainsKey("gameFps") && true.Equals(settings["gameFps"]); } }
+    bool FpsWanted { get { return !settings.ContainsKey("gameFps") || true.Equals(settings["gameFps"]); } }   // (on unless turned off, 11-09)
 
     // ---- extras: a build may add readings (Extra), cell kinds (web\extras.js) and messages of its own ("x.*" both
     // ways); HW Deck itself has none, so these calls compile away ----
@@ -3971,7 +3972,7 @@ partial class DeckForm : Form
         var r = Msg("settings");
         r["autostart"] = Autostart(); r["hwinfo"] = settings.ContainsKey("hwinfo") ? settings["hwinfo"] : null;
         keepLast = 0; keepOld = false; r["keep"] = KeepSharing(); r["keepNote"] = KeepNote(); r["keepBusy"] = keepBusy; r["keepDone"] = keepDone;   // (until done, the page shows what was asked)
-        r["fps"] = FpsWanted; r["fpsState"] = FpsState(); r["fpsBusy"] = fpsBusy; r["fpsDone"] = fpsDone;
+        r["fps"] = src.Frames != null && FpsWanted; r["fpsState"] = FpsState(); r["fpsBusy"] = fpsBusy; r["fpsDone"] = fpsDone;
         r["updates"] = UpdatesOn();
         r["gameDays"] = DaysSet("gameDays") ? KeepDays("gameDays") : (object)null; r["warnDays"] = DaysSet("warnDays") ? KeepDays("warnDays") : (object)null;   // (null: not set, nothing cut)
         r["gameMerge"] = MergeMins();
@@ -4073,12 +4074,15 @@ partial class DeckForm : Form
             })));
         });
     }
-    // ---- one-click update (an msi install only): the newest release's installer, checked against its SHA256SUMS.txt,
-    // installed by a small script once HW Deck has quit (msiexec asks for permission, as for Program Files), then HW Deck
-    // starts again. A zip copy, or anything else, gets the releases page instead ----
+    // ---- one-click update (an msi install only): the newest release's installer, checked against its SHA256SUMS.txt and
+    // held open from then on, so nothing can change it, then msiexec started from here (it asks for permission, as for
+    // Program Files). Once Windows said yes the installer closes HW Deck itself (util:CloseApplication in
+    // installer\HWDeck.wxs) and, asked to (HWDECKRESTART), starts it again when it is done, without admin rights; a No, or an install that
+    // couldn't start, comes back here (with msiexec's exit code when it ran). No script in between (11-09: Windows Defender took the old hidden PowerShell one for
+    // malware). A zip copy, or anything else, gets the releases page instead ----
     bool updating;
     // the msi's install folder when this exe is the one installed there (HKLM\Software\<name>\InstallFolder), else null
-    string Installed()
+    static string Installed()
     {
         try
         {
@@ -4096,9 +4100,13 @@ partial class DeckForm : Form
         if (updating) return;
         updating = true;
         var r = Msg("toast"); r["text"] = "Downloading the new HW Deck..."; Post(r);
-        System.Threading.ThreadPool.QueueUserWorkItem(delegate
+        // (a thread of its own, in the background: the installer's start waits at the Windows prompt, and a HW Deck quit
+        // meanwhile has to be able to end. From a pool thread .NET would start through the shell on a thread it makes
+        // itself, one the process waits for)
+        var worker = new System.Threading.Thread(delegate()
         {
-            string msi = null, err = null, dir = null, want = null;
+            string msi = null, err = null, dir = null;
+            FileStream held = null;
             try
             {
                 ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;   // TLS 1.2
@@ -4112,70 +4120,127 @@ partial class DeckForm : Form
                     if (!m.Success) throw new Exception("the latest release has no installer");
                     // ("latest" can change after the check that showed the button: never an older or the same version)
                     if (!Newer(m.Groups[3].Value, AppInfo.Version)) throw new Exception("the latest release (" + m.Groups[3].Value + ") isn't newer than this one");
-                    want = m.Groups[1].Value;
                     msi = Path.Combine(dir, m.Groups[2].Value);
                     wc.DownloadFile(ReleasesPage + "latest/download/" + m.Groups[2].Value, msi);
-                    // (an antivirus looks at a new installer as it lands and may hold it a moment: tried again for 10 s)
-                    string hash = null;
-                    for (int i = 0; hash == null; i++)
-                        try { using (var sha = System.Security.Cryptography.SHA256.Create()) using (var fs = File.OpenRead(msi)) hash = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", ""); }
+                    // (held from here: read, never written, by anyone else. An antivirus looks at a new installer as it
+                    // lands and may hold it a moment: tried again for 10 s)
+                    for (int i = 0; held == null; i++)
+                        try { held = new FileStream(msi, FileMode.Open, FileAccess.Read, FileShare.Read); }
                         catch (IOException) { if (i >= 19) throw; System.Threading.Thread.Sleep(500); }
                         catch (UnauthorizedAccessException) { if (i >= 19) throw; System.Threading.Thread.Sleep(500); }
+                    string hash;
+                    using (var sha = System.Security.Cryptography.SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(held)).Replace("-", "");
                     if (!hash.Equals(m.Groups[1].Value, StringComparison.OrdinalIgnoreCase)) throw new Exception("the download doesn't match its published checksum");
                 }
             }
             catch (Exception ex) { Log("update failed: " + ex.Message); err = ex is System.Net.WebException ? "no connection to GitHub, or the release isn't there" : ex is IOException || ex is UnauthorizedAccessException ? "a file it needs can't be written now" : ex.Message; }
-            if (err != null && dir != null) try { Directory.Delete(dir, true); } catch { }   // (a partial or wrong download goes too)
-            Try(() => BeginInvoke((Action)(() =>
+            if (err != null)
             {
-                if (err != null) { updating = false; Log("update failed: " + err); var t = Msg("toast"); t["text"] = "Couldn't update: " + err; Post(t); return; }
-                // after this app quits: the installer (its own window, one Windows prompt), then HW Deck again, with this
-                // copy's own arguments and the installer's result (it says so once it is up: see UpdateNote)
-                // (the installer is checked once more right before it runs and held so nothing can change it until it
-                // is done: the folder is the user's to write)
-                string script = "$Msi = " + PsText(msi) + "; $Exe = " + PsText(Application.ExecutablePath) + "; $More = " + PsText(RestartArgs()) + "; $Want = '" + want + "'; $Pid0 = " + Process.GetCurrentProcess().Id + @"
-try { Wait-Process -Id $Pid0 -Timeout 30 -ErrorAction SilentlyContinue } catch { }
-$code = -1
-$lk = $null
-try {
-  $lk = [IO.File]::Open($Msi, 'Open', 'Read', 'Read')
-  $h = -join ([Security.Cryptography.SHA256]::Create().ComputeHash($lk) | ForEach-Object { $_.ToString('x2') })
-  if ($h -ne $Want) { $code = -2 }
-  else { $p = Start-Process msiexec.exe -ArgumentList '/i', ('""' + $Msi + '""'), '/passive', '/norestart' -PassThru; $null = $p.Handle; $p.WaitForExit(); $code = $p.ExitCode }
-} catch { }
-if ($lk) { $lk.Dispose() }
-Remove-Item -LiteralPath (Split-Path $Msi) -Recurse -Force -ErrorAction SilentlyContinue
-$a = @('--updated', $code); if ($More) { $a = @($More) + $a }
-Start-Process -FilePath $Exe -ArgumentList $a";
+                if (held != null) held.Dispose(); if (dir != null) try { Directory.Delete(dir, true); } catch { }   // (a partial or wrong download goes too)
+                Try(() => BeginInvoke((Action)(() => { updating = false; var t = Msg("toast"); t["text"] = "Couldn't update: " + err; Post(t); })));
+                return;
+            }
+            // the installer, started from this thread (with a Windows prompt of its own, the start only comes back at the
+            // answer: the window keeps running meanwhile). On an admin's account where HW Deck isn't running as admin (the
+            // usual one), Windows Installer itself is started as admin: the one Windows prompt then names Windows Installer
+            // and its publisher, Microsoft, with this installer's file under "Show more details". Started as the account,
+            // the installer asks by itself, and that prompt names the file alone, from an unknown publisher (it isn't
+            // signed). Any other account: as the account (its prompt asks for an admin's password; started as that admin,
+            // the install would be that admin's). A No is Win32Exception 1223
+            Process p = null; string bad = null; int code = -1;
+            bool asAdmin = Elevated.LimitedAdmin();
+            Elevated.SetUpdateFrom(AppInfo.Version);   // (for the copy the installer starts when it is done: see UpdateMarker)
+            AllowSetForegroundWindow(-1);   // (the installer's window and the Windows prompt may take the front)
+            for (int go = 0; ; go++)
+            {
+                p = null;
                 try
                 {
-                    var psi = new ProcessStartInfo(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
-                    psi.UseShellExecute = false; psi.CreateNoWindow = true;
-                    Process.Start(psi);
-                    Log("update: installing " + Path.GetFileName(msi));
-                    var t = Msg("toast"); t["text"] = "Installing the update: HW Deck closes and opens again"; Post(t);
-                    // (a moment for the toast; still updating, so a second click does nothing). What comes next may take
-                    // the front: the installer's window and its Windows prompt
-                    AllowSetForegroundWindow(-1);
-                    var q = new Timer { Interval = 1500 };
-                    q.Tick += delegate { q.Stop(); exiting = true; tray.Visible = false; Application.Exit(); };
-                    q.Start();
+                    var si = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "msiexec.exe"), "/i \"" + msi + "\" /passive /norestart HWDECKRESTART=1") { UseShellExecute = false };
+                    if (asAdmin) { si.UseShellExecute = true; si.Verb = "runas"; }
+                    p = Process.Start(si);
                 }
-                catch (Exception ex) { updating = false; Try(() => Directory.Delete(dir, true)); Log("update failed: " + ex.Message); var t = Msg("toast"); t["text"] = "Couldn't update: the installer didn't start"; Post(t); }
+                catch (Exception ex)
+                {
+                    var w = ex as System.ComponentModel.Win32Exception;
+                    bool no = w != null && w.NativeErrorCode == 1223;
+                    Log(no ? "update: No in the Windows prompt" : "update failed: " + ex.Message);
+                    bad = no ? UpdateText(1602) : "Couldn't update: the installer didn't start";
+                }
+                if (p == null && bad == null) bad = "Couldn't update: the installer didn't start";
+                if (bad != null)
+                {
+                    Elevated.SetUpdateFrom(null); held.Dispose(); try { Directory.Delete(dir, true); } catch { }
+                    Try(() => BeginInvoke((Action)(() => { updating = false; var t = Msg("toast"); t["text"] = bad; Post(t); })));
+                    return;
+                }
+                if (go == 0)
+                {
+                    Log("update: installing " + Path.GetFileName(msi) + (asAdmin ? " (Windows Installer started as admin)" : ""));
+                    Try(() => BeginInvoke((Action)(() => { var u = Msg("toast"); u["text"] = "Installing the update: HW Deck closes and opens again"; Post(u); })));
+                }
+                // still here when msiexec is done: a No in the installer's own Windows prompt, or an install that didn't go
+                // (once Windows said yes, the installer closes this copy first)
+                code = -1;
+                try { p.WaitForExit(); code = p.ExitCode; } catch { }
+                // (as admin, Windows Installer runs in the account's other sign-in session, which has none of the drive
+                // letters made in this one (subst, a network drive): a download folder on such a drive can't be opened
+                // there, 1619 or 1620. Once more as the account, as before 2.4.5)
+                if (asAdmin && (code == 1619 || code == 1620)) { Log("update: Windows Installer as admin couldn't open the download (" + code + "), started again as the account"); asAdmin = false; continue; }
+                break;
+            }
+            Elevated.SetUpdateFrom(null);
+            Try(() => BeginInvoke((Action)(() =>
+            {
+                updating = false; held.Dispose(); Try(() => Directory.Delete(dir, true));
+                Log("update: the installer ended with " + code);
+                var t = Msg("toast"); t["text"] = code == 0 ? "The update is in: quit " + Brand.Name + " from its tray icon and start it again" : UpdateText(code); Post(t);
             })));
         });
+        worker.IsBackground = true; worker.SetApartmentState(System.Threading.ApartmentState.STA); worker.Start();
     }
-    // started again by the update script with msiexec's exit code: what the user is told once the window is up
+    // a start after Update now: the installer starts HW Deck through the Windows shell, which passes no arguments, so the
+    // copy that asked for the update left the version it had (HKCU UpdateFrom). This one is newer when the update went in.
+    // Only the installed copy takes the note (never one next to it, on another data folder or from a zip), and a note
+    // that can't be read (it is the account's own to write) is no note
+    public static void UpdateMarker()
+    {
+        try
+        {
+            if (Installed() == null) return;
+            string from = Elevated.TakeUpdateFrom();
+            if (from == null || UpdateResult != int.MinValue) return;
+            UpdateResult = Newer(AppInfo.Version, from) ? 0 : -3;
+        }
+        catch { }
+    }
+    // an update's leftovers (the installer closed HW Deck while it held the download): gone at the next start
+    public static void UpdateLeftovers()
+    {
+        try
+        {
+            foreach (var d in Directory.GetDirectories(Path.GetTempPath(), "hwdeck-update-*"))
+                try { if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(d) > TimeSpan.FromMinutes(5)) Directory.Delete(d, true); } catch { }
+        }
+        catch { }
+    }
+    // started again by the installer (or by an older HW Deck's update script) with msiexec's exit code: what the user is told once the window is up
     [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
     public static int UpdateResult = int.MinValue;   // (none: an ordinary start)
     static string UpdateNote()
     {
         int c = UpdateResult;
         if (c == int.MinValue) return null;
-        return c == 0 ? Brand.Name + " is updated to " + AppInfo.Version : c == 3010 || c == 1641 ? Brand.Name + " is updated to " + AppInfo.Version + ". Windows needs a restart to finish it"
-             : c == 1602 || c == 1625 ? "The update was cancelled, so this is still " + AppInfo.Version
+        return c == 0 ? Brand.Name + " is updated to " + AppInfo.Version : c == 3010 || c == 1641 ? Brand.Name + " is updated to " + AppInfo.Version + ". Windows needs a restart to finish it" : UpdateText(c);
+    }
+    // an install that didn't go (or not all the way)
+    static string UpdateText(int c)
+    {
+        return c == 1602 || c == 1625 ? "The update was cancelled, so this is still " + AppInfo.Version
              : c == 1618 ? "The update didn't install: another installation was running. Try Update now again in a minute"
              : c == -2 ? "The update didn't install: the downloaded installer changed before it could run"
+             : c == -3 ? "The update didn't install, so this is still " + AppInfo.Version + ". Try Update now again, or get it from the releases page"
+             : c == 3010 || c == 1641 ? "The update is in: Windows needs a restart to finish it"
              : "The update didn't install (installer code " + c + "). Try Update now again, or get it from the releases page";
     }
     void OpenRelease()
@@ -4722,293 +4787,144 @@ Start-Process -FilePath $Exe -ArgumentList $a";
         }
         catch { }
     }
-    // kills HWiNFO, switches its shared memory back on in its INI (the free version writes SensorsSM=0 after 12 h)
-    // and starts it again. Exit codes: 0 done, 2 the INI couldn't be written, 3 no HWiNFO found. Every restart comes
-    // back in the tray and never bothers anyone: the INI also gets its welcome screen off, Sensors-only, started
-    // minimized, and its close button minimizing (to the tray); then, until it shares (its own poll time: another program
-    // can keep the old map open) and 5 s more, 25 s at most, a Sensors window that shows anyway is closed into the tray,
-    // and the window in front as it starts gets the focus back (HWiNFO takes it, with all its windows hidden; a hung
-    // window is left alone). Windows refuses SetForegroundWindow to a script in
-    // the background (and flashes the taskbar button), so this one joins HWiNFO's input and that window's and brings
-    // it to the top. Never a minimize: on a window in the tray it shows it, minimized on the taskbar.
-    // $W (WinApi) is made first. Program Files comes from Windows (the known folder), not from the environment, which
-    // the user's own settings can change, and HWiNFO only from this Windows session
-    const string WinApi = @"
-$tb = [AppDomain]::CurrentDomain.DefineDynamicAssembly(([Reflection.AssemblyName]'KeepHw'), 'Run').DefineDynamicModule('KeepHw').DefineType('KeepHw', 'Public, Class')
-foreach ($f in ('user32.dll', 'GetForegroundWindow', [IntPtr], @()), ('user32.dll', 'BringWindowToTop', [Boolean], @([IntPtr])), ('user32.dll', 'GetWindowThreadProcessId', [UInt32], @([IntPtr], [UInt32].MakeByRefType())),
-  ('user32.dll', 'AttachThreadInput', [Boolean], @([UInt32], [UInt32], [Boolean])), ('kernel32.dll', 'GetCurrentThreadId', [UInt32], @()), ('user32.dll', 'FindWindowExW', [IntPtr], @([IntPtr], [IntPtr], [String], [String])),
-  ('user32.dll', 'GetWindowTextW', [Int32], @([IntPtr], [Text.StringBuilder], [Int32])), ('user32.dll', 'IsWindow', [Boolean], @([IntPtr])), ('user32.dll', 'IsWindowVisible', [Boolean], @([IntPtr])), ('user32.dll', 'IsHungAppWindow', [Boolean], @([IntPtr])),
-  ('user32.dll', 'PostMessageW', [Boolean], @([IntPtr], [UInt32], [IntPtr], [IntPtr])), ('shell32.dll', 'SHQueryUserNotificationState', [Int32], @([Int32].MakeByRefType())),
-  ('user32.dll', 'GetLastInputInfo', [Boolean], @([UInt32[]])), ('kernel32.dll', 'GetTickCount', [UInt32], @())) {
-  $m = $tb.DefinePInvokeMethod($f[1], $f[0], 'Public, Static, PinvokeImpl', 'Standard', $f[2], [Type[]]$f[3], 'Winapi', 'Unicode'); $m.SetImplementationFlags('PreserveSig')
-}
-$W = $tb.CreateType()";
-    const string RestartScript = @"
-$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')   # (as admin: Windows' own modules only, never the user's)
-$ErrorActionPreference = 'Stop'
-$pfs =@([Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86')) | Where-Object { $_ }
-if (-not $Exe -or -not (Test-Path -LiteralPath $Exe)) {
-  $Exe = $null
-  foreach ($c in @(foreach ($d in $pfs) { ""$d\HWiNFO64\HWiNFO64.EXE"", ""$d\HWiNFO32\HWiNFO32.EXE"" })) {
-    if (Test-Path -LiteralPath $c) { $Exe = $c; break }
-  }
-}
-if (-not $Exe) { exit 3 }
-try { $sig = Get-AuthenticodeSignature -LiteralPath $Exe } catch { $sig = $null }
-if (-not $sig -or $sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -cnotmatch '^CN=""?REALiX, s\.r\.o\.""?,') { exit 4 }
-$ses = (Get-Process -Id $PID).SessionId
-Get-Process HWiNFO64, HWiNFO32 -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $ses } | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 3
-$code = 0
-try {
-  $ini = [IO.Path]::ChangeExtension($Exe, '.INI')
-  $lines = @(if (Test-Path -LiteralPath $ini) { Get-Content -LiteralPath $ini })
-  $want = [ordered]@{ SensorsSM = '1'; ShowWelcomeAndProgress = '0'; SensorsOnly = '1'; MinimalizeMainWnd = '1'; MinimalizeSensors = '1'; MinimalizeSensorsClose = '1' }
-  foreach ($k in $want.Keys) {
-    $set = $k + '=' + $want[$k]
-    if ($lines -match ('^' + $k + '=')) { $lines = @($lines | ForEach-Object { if ($_ -match ('^' + $k + '=')) { $set } else { $_ } }) }
-    elseif ($lines | Where-Object { $_.Trim() -eq '[Settings]' }) {
-      $out = New-Object System.Collections.ArrayList
-      foreach ($l in $lines) { [void]$out.Add($l); if ($l.Trim() -eq '[Settings]') { [void]$out.Add($set) } }
-      $lines = $out
-    }
-    else { $lines = @($lines) + @('[Settings]', $set) }
-  }
-  Set-Content -LiteralPath $ini -Value $lines -Encoding Default
-} catch { $code = 2 }
-try { $sig = Get-AuthenticodeSignature -LiteralPath $Exe } catch { $sig = $null }
-if (-not $sig -or $sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -cnotmatch '^CN=""?REALiX, s\.r\.o\.""?,') { exit 4 }   # (again: the file could have changed meanwhile)
-$Front = $W::GetForegroundWindow(); $st0 = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$new = [Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo $Exe))
-try {
-  $t0 = [DateTime]::UtcNow; $up = $null
-  while ($new -and ([DateTime]::UtcNow - $t0).TotalSeconds -lt 25 -and -not ($up -and ([DateTime]::UtcNow - $up).TotalSeconds -gt 5)) {
-    Start-Sleep -Milliseconds 200
-    if (-not $up) { try { $mm = [IO.MemoryMappedFiles.MemoryMappedFile]::OpenExisting('Global\HWiNFO_SENS_SM2', 'Read'); $va = $mm.CreateViewAccessor(0, 20, 'Read'); if ($va.ReadUInt32(0) -eq 0x53695748 -and $va.ReadInt64(12) -ge $st0) { $up = [DateTime]::UtcNow }; $va.Dispose(); $mm.Dispose() } catch { } }
-    $h = [IntPtr]::Zero
-    while ($code -eq 0 -and ($h = $W::FindWindowExW([IntPtr]::Zero, $h, '#32770', [NullString]::Value)) -ne [IntPtr]::Zero) {
-      $q = [UInt32]0; [void]$W::GetWindowThreadProcessId($h, [ref]$q)
-      if ($q -eq $new.Id -and $W::IsWindowVisible($h)) { $t = New-Object Text.StringBuilder 256; [void]$W::GetWindowTextW($h, $t, 256); if ($t.ToString() -match 'Sensors') { [void]$W::PostMessageW($h, 0x112, [IntPtr]0xF060, [IntPtr]::Zero) } }
-    }
-    $q = [UInt32]0; $ft = $W::GetWindowThreadProcessId($W::GetForegroundWindow(), [ref]$q)
-    if ($q -eq $new.Id -and $Front -ne [IntPtr]::Zero -and $W::IsWindow($Front) -and -not $W::IsHungAppWindow($Front)) {
-      $q = [UInt32]0; $tt = $W::GetWindowThreadProcessId($Front, [ref]$q); $me = $W::GetCurrentThreadId()
-      $a = $W::AttachThreadInput($me, $ft, $true); $b = $W::AttachThreadInput($ft, $tt, $true); [void]$W::BringWindowToTop($Front)
-      if ($b) { [void]$W::AttachThreadInput($ft, $tt, $false) }; if ($a) { [void]$W::AttachThreadInput($me, $ft, $false) }
-    }
-  }
-} catch { }
-exit $code
-";
+    // Restart HWiNFO (Settings, the setup screen, the stale banner): this copy's HWiNFO task does it with no Windows prompt
+    // (the installer made it, see Elevated); without one, or for an HWiNFO outside its installer's folder, this exe as admin
+    // through one Windows prompt. What a restart does: Elevated.Restart
     void RestartHwinfo()
     {
         var r = Msg("toast");
         if (fake) { r["text"] = "Demo data: there is no HWiNFO to restart"; Post(r); Restarted(-3); return; }
         if (Brand.NoActions) { r["text"] = "Test copy: HWiNFO isn't restarted"; Post(r); Restarted(-3); return; }
         if (restarting) { r["text"] = "HWiNFO is restarting already"; Post(r); return; }   // (the page's button keeps turning)
+        string exe = settings.ContainsKey("hwinfo") ? settings["hwinfo"] as string : null;
+        if (exe != null && (!Regex.IsMatch(Path.GetFileName(exe), @"^HWiNFO(64|32)\.exe$", RegexOptions.IgnoreCase) || !File.Exists(exe))) exe = null;
+        // (none where a restart looks either: said now, without a Windows prompt for nothing, 11-06)
+        if (exe == null && Elevated.FindHwinfo() == null)
+        { Log("hwinfo restart: not found"); r["text"] = "HWiNFO wasn't found: start it once yourself, " + Brand.Name + " remembers where it is"; Post(r); Restarted(3); return; }
+        restarting = true;
+        Log("hwinfo restart asked");
+        r["text"] = "Restarting HWiNFO..."; Post(r);
+        System.Threading.ThreadPool.QueueUserWorkItem(delegate
+        {
+            int code = exe == null || Elevated.Standard(exe) ? TaskRestart() : -9;   // (an HWiNFO of his choice somewhere else: the prompt's way, which starts that one)
+            if (code != -9) Log("hwinfo restart by the task: " + code);
+            // (no task to ask, or one that can't: an HWiNFO outside its installer's folder, an account without admin rights)
+            if (code == -9 || code == 6 || code == 7) Try(() => BeginInvoke((Action)(() => PromptRestart(exe))));
+            else Try(() => BeginInvoke((Action)(() => RestartDone(code))));
+        });
+    }
+    // Restart HWiNFO through the task: the ask goes into this account's registry (only "now": what is restarted, and
+    // how, is the task's own), the task is started, and its answer comes back the same way. -9: no task of this copy's
+    // for this account, or Windows wouldn't start it; -1: no answer in time
+    int TaskRestart()
+    {
+        if (KeepTaskVersion() < Elevated.TaskVersion || !Elevated.NetConfigClean()) return -9;
+        long t = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        try { using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(Elevated.Key)) k.SetValue("RestartAsked", t.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+        catch { return -9; }
+        if (!Elevated.StartTask()) return -9;
+        for (int i = 0; i < 450; i++)
+        {
+            System.Threading.Thread.Sleep(200);
+            int c; if (Elevated.Answered(t, out c)) return c;
+        }
+        return -1;
+    }
+    // this exe as admin, through one Windows prompt
+    void PromptRestart(string exe)
+    {
         try
         {
-            string exe = settings.ContainsKey("hwinfo") ? settings["hwinfo"] as string : null;
-            if (exe != null && (!Regex.IsMatch(Path.GetFileName(exe), @"^HWiNFO(64|32)\.exe$", RegexOptions.IgnoreCase) || !File.Exists(exe))) exe = null;
-            // (none where the script looks either: said now, without a Windows prompt for nothing, 11-06)
-            if (exe == null && !new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }.Select(Environment.GetFolderPath).Where(d => d.Length > 0)
-                    .Any(d => File.Exists(Path.Combine(d, @"HWiNFO64\HWiNFO64.EXE")) || File.Exists(Path.Combine(d, @"HWiNFO32\HWiNFO32.EXE"))))
-            { Log("hwinfo restart: not found"); r["text"] = "HWiNFO wasn't found: start it once yourself, " + Brand.Name + " remembers where it is"; Post(r); Restarted(3); return; }
-            string script = "$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')\n$Exe = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + Convert.ToBase64String(Encoding.Unicode.GetBytes(exe ?? "")) + "'))" + WinApi + RestartScript;
-            var psi = new ProcessStartInfo(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
-            psi.Verb = "runas"; psi.WindowStyle = ProcessWindowStyle.Hidden; psi.UseShellExecute = true;   // HWiNFO runs as admin: so must its restart
-            var proc = Process.Start(psi);
-            restarting = true;
-            Log("hwinfo restart asked");
-            r["text"] = "Restarting HWiNFO..."; Post(r);
+            var proc = Elevated.Prompt("--admin-restart " + Elevated.Arg(exe ?? ""));
+            Log("hwinfo restart: through the Windows prompt");
             System.Threading.ThreadPool.QueueUserWorkItem(delegate
             {
                 int code = -1;
                 try { if (proc != null && proc.WaitForExit(90000)) code = proc.ExitCode; } catch { }
-                string text = code == 0 ? "HWiNFO restarted with its shared memory on" : code == 2 ? "HWiNFO restarted, but its settings file couldn't be changed: turn on Shared Memory Support in its settings"
-                            : code == 3 ? "HWiNFO wasn't found: start it once yourself, " + Brand.Name + " remembers where it is"
-                            : code == 4 ? "That HWiNFO isn't signed by its maker (REALiX), so " + Brand.Name + " didn't start it as admin" : "The HWiNFO restart didn't finish";
-                Log("hwinfo restart: " + code);
-                Try(() => BeginInvoke((Action)(() => { restarting = false; var t = Msg("toast"); t["text"] = text; Post(t); Restarted(code); })));
+                Try(() => BeginInvoke((Action)(() => RestartDone(code))));
             });
         }
         catch (Exception ex)
         {
+            restarting = false;
             var w = ex as System.ComponentModel.Win32Exception;
-            if (w != null && w.NativeErrorCode == 1223) { r["text"] = "HWiNFO restart cancelled"; Post(r); Restarted(-2); return; }   // No in the Windows prompt
-            Log("hwinfo restart failed: " + ex.Message); r["text"] = "Couldn't restart HWiNFO"; Post(r); Restarted(-1);
+            var t = Msg("toast");
+            if (w != null && w.NativeErrorCode == 1223) { t["text"] = "HWiNFO restart cancelled"; Post(t); Restarted(-2); return; }   // No in the Windows prompt
+            Log("hwinfo restart failed: " + ex.Message); t["text"] = "Couldn't restart HWiNFO"; Post(t); Restarted(-1);
         }
+    }
+    void RestartDone(int code)
+    {
+        restarting = false;
+        Log("hwinfo restart: " + code);
+        var t = Msg("toast");
+        t["text"] = code == 0 ? "HWiNFO restarted with its shared memory on" : code == 2 ? "HWiNFO restarted, but its settings file couldn't be changed: turn on Shared Memory Support in its settings"
+                  : code == 3 ? "HWiNFO wasn't found: start it once yourself, " + Brand.Name + " remembers where it is"
+                  : code == 4 ? "That HWiNFO isn't signed by its maker (REALiX), so " + Brand.Name + " didn't start it as admin" : "The HWiNFO restart didn't finish";
+        Post(t); Restarted(code);
     }
     // the page's restart button spins until this comes (code 0: restarted with shared memory on)
     void Restarted(int code) { var m = Msg("restarted"); m["code"] = code; Post(m); }
 
-    // ---- Keep HWiNFO sharing: a Windows task that looks every hour and restarts HWiNFO (RestartScript) once it has run
-    // 10 h 50 min, so about every 11 h and always before the free version's 12 h. It runs as admin like HWiNFO, so all
-    // it runs is stored where only admins can write (HKLM\SOFTWARE\<name>\Keep, its result next to it), never a file
-    // anyone could swap, and it starts through cmd.exe, which clears what the user's own environment could slip into
-    // an admin PowerShell (the .NET profiler and COMPLUS_ settings) first. It only restarts an HWiNFO installed under
-    // Program Files (started as admin with no prompt, a copy in a folder anyone can
-    // write to could bring someone else's files along). A closed HWiNFO stays closed. Once this copy of HW Deck is gone
-    // (a deleted zip folder) the task deletes itself; the msi's uninstall deletes it too (installer\HWDeck.wxs, under the
-    // same name). Anything full screen in front (a game, a video) gets to finish first, and so does someone at the PC (it
-    // waits for 2 minutes without a key or the mouse touched: HWiNFO takes the focus for a moment as it starts), until
-    // HWiNFO has run 11 h 40 min, and HWiNFO comes back in the tray with the focus left where it was (RestartScript).
-    // The Win32 calls for that are made in memory (WinApi): Add-Type would compile a file into the user's temp folder
-    // and load it as admin. On and off are one Windows prompt each ----
-    const int KeepVersion = 5;   // in its description: a later HW Deck can tell a task made before a change to its script (test/e2e-hardening.mjs pins the script to it)
-    string KeepTask { get { return runName + " - Keep HWiNFO sharing"; } }
-    string KeepMark { get { return Brand.Name + ": " + Application.ExecutablePath; } }   // the end of its description: whose it is
-    static bool InProgramFiles(string exe)
-    {
-        try
-        {
-            string full = Path.GetFullPath(exe);
-            return new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }.Select(Environment.GetFolderPath)
-                .Any(d => d != "" && full.StartsWith(d.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase));
-        }
-        catch { return false; }
-    }
+    // ---- Keep HWiNFO sharing: the HWiNFO task (see Elevated: the installer makes it for the account installing; every
+    // hour it restarts HWiNFO once it has run 10 h 50 min, so about every 11 h and always before the free version's 12 h,
+    // in a quiet moment). On when the task is there, this copy's (after a move, the old folder's task starts nothing)
+    // and this account's (one task per PC: another account's shows off), and not turned off here: on a task of version 6
+    // or later the switch is this account's own setting (HKCU KeepOff), with no Windows prompt. With no task (another
+    // account installed, or it was deleted) on makes one through one Windows prompt; an older task (a PowerShell script,
+    // version 5 and before, which keeps working as it is) is deleted through one when turned off ----
+    string KeepTask { get { return Elevated.TaskName; } }
+    string KeepMark { get { return Elevated.TaskMark; } }
     bool keepBusy;   // the Windows prompt for the switch, or the change after it, under way
-    // exit codes past RestartScript's: 5 HW Deck is gone (the task deleted), 6 that HWiNFO isn't under Program Files,
-    // 7 not admin (left alone). A drive that isn't there (unplugged, not mapped for admins) deletes nothing. Notification
-    // states 2, 3, 4: a full-screen app, a Direct3D game, presentation mode
-    const string KeepScript = @"
-$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')   # (as admin: Windows' own modules only, never the user's)
-$ErrorActionPreference = 'Stop'
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 7 }
-if (-not (Test-Path -LiteralPath $App)) {
-  if (-not (Test-Path -LiteralPath ([IO.Path]::GetPathRoot($App)))) { exit 0 }
-  Start-Sleep -Seconds 120
-  if (-not (Test-Path -LiteralPath $App)) {
-    try { $f = New-Object -ComObject Schedule.Service; $f.Connect(); $f = $f.GetFolder('\'); if ($f.GetTask($Name).Definition.RegistrationInfo.Description.EndsWith(': ' + $App, [StringComparison]::OrdinalIgnoreCase)) { $f.DeleteTask($Name, 0); $r = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').OpenSubKey($Key, $true); $r.DeleteValue($Name, $false); $r.DeleteValue($Name + ' result', $false); $n = $r.ValueCount + $r.SubKeyCount; $r.Close(); if (-not $n) { [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').DeleteSubKey($Key, $false) } } } catch { }
-    exit 5
-  }
-}
-$ses = (Get-Process -Id $PID).SessionId
-$p = @(Get-Process HWiNFO64, HWiNFO32 -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $ses } | Sort-Object StartTime)
-if ($p.Count -eq 0) { exit 0 }
-if (([DateTime]::UtcNow - $p[0].StartTime.ToUniversalTime()).TotalMinutes -lt $Min) { exit 0 }
-$Exe = $p[0].Path; $ok = $false
-if ($Exe) { $full = [IO.Path]::GetFullPath($Exe); foreach ($d in [Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86')) { if ($d -and $full.StartsWith($d.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { $ok = $true } } }
-if (-not $ok) { exit 6 }
-$Unattended = $true" + WinApi + @"
-$until = $p[0].StartTime.ToUniversalTime().AddMinutes(700)
-while ([DateTime]::UtcNow -lt $until) { $q = 0; [void]$W::SHQueryUserNotificationState([ref]$q); $li = [UInt32[]](8, 0); if (2, 3, 4 -notcontains $q -and (-not $W::GetLastInputInfo($li) -or ([long]$W::GetTickCount() - $li[1] + 4294967296) % 4294967296 -ge $Idle * 1000)) { break }; Start-Sleep -Seconds 30 }
-$p[0].Refresh(); if ($p[0].HasExited) { exit 0 }";
-    static string PowerShellExe { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"); } }
-    static string PsText(string s) { return "[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + Convert.ToBase64String(Encoding.Unicode.GetBytes(s ?? "")) + "'))"; }
-    static object Com(object o, string name, System.Reflection.BindingFlags how, params object[] a) { return o.GetType().InvokeMember(name, how, null, o, a); }
-    // on only when the task is there, enabled, this copy's (after a move or a fresh unzip it is the old folder's, which
-    // deletes itself: turning it on here makes it this one's) and this user's (one task per PC: another account's shows off)
-    bool KeepSharing()
+    // this copy's task for this account: its version (0: none, or not this copy's or this account's)
+    int KeepTaskVersion()
     {
-        if (fake) return false;
+        if (fake) return 0;
         object svc = null;
-        var call = System.Reflection.BindingFlags.InvokeMethod; var get = System.Reflection.BindingFlags.GetProperty;
         try
         {
             svc = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));
-            Com(svc, "Connect", call);
-            object task = Com(Com(svc, "GetFolder", call, "\\"), "GetTask", call, KeepTask);   // (none: throws)
-            object def = Com(task, "Definition", get);
-            string desc = Com(Com(def, "RegistrationInfo", get), "Description", get) as string, uid = Com(Com(def, "Principal", get), "UserId", get) as string;
+            Elevated.Com(svc, "Connect", Elevated.Call);
+            object task = Elevated.Com(Elevated.Com(svc, "GetFolder", Elevated.Call, "\\"), "GetTask", Elevated.Call, KeepTask);   // (none: throws)
+            object def = Elevated.Com(task, "Definition", Elevated.Get);
+            string desc = Elevated.Com(Elevated.Com(def, "RegistrationInfo", Elevated.Get), "Description", Elevated.Get) as string, uid = Elevated.Com(Elevated.Com(def, "Principal", Elevated.Get), "UserId", Elevated.Get) as string;
             var me = System.Security.Principal.WindowsIdentity.GetCurrent();
             bool mine = string.IsNullOrEmpty(uid) || uid.Equals(me.User.Value, StringComparison.OrdinalIgnoreCase) || uid.Equals(me.Name, StringComparison.OrdinalIgnoreCase)
                      || uid.Equals(Environment.UserName, StringComparison.OrdinalIgnoreCase);
-            bool on = mine && true.Equals(Com(task, "Enabled", get)) && desc != null && desc.EndsWith(KeepMark, StringComparison.OrdinalIgnoreCase);
-            if (on)
-            {
-                var v = Regex.Match(desc, @"Task version (\d+)\.");
-                keepOld = !v.Success || int.Parse(v.Groups[1].Value) < KeepVersion;
-                try
-                {
-                    using (var k = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64).OpenSubKey(KeepKey))
-                    { int c; if (k != null && int.TryParse((k.GetValue(KeepTask + " result") as string) ?? "", out c)) keepLast = c; }
-                }
-                catch { }
-                if (!AdminAccount()) keepLast = 7;   // (its hourly run stops there, and can't write that next to its script)
-            }
-            return on;
+            if (!mine || !true.Equals(Elevated.Com(task, "Enabled", Elevated.Get)) || desc == null || !desc.EndsWith(KeepMark, StringComparison.OrdinalIgnoreCase)) return 0;
+            var v = Regex.Match(desc, @"Task version (\d+)\.");
+            return v.Success ? Math.Max(1, int.Parse(v.Groups[1].Value)) : 1;
         }
-        catch { return false; }
+        catch { return 0; }
         finally { if (svc != null) Try(() => Marshal.ReleaseComObject(svc)); }
     }
-    // the task's last result (its exit code, which it writes next to its script: Task Scheduler never sees it through
-    // conhost), and a task made by an older HW Deck (its script is the old one), read with KeepSharing
+    bool KeepSharing()
+    {
+        int v = KeepTaskVersion();
+        if (v == 0 || (v >= Elevated.TaskVersion && Elevated.KeepOff())) return false;
+        keepOld = v < 5;   // (5: the last PowerShell one, still fine as it is)
+        try
+        {
+            using (var k = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64).OpenSubKey(Elevated.Key + @"\Keep"))
+            { int c; if (k != null && int.TryParse((k.GetValue(KeepTask + " result") as string) ?? "", out c)) keepLast = c; }
+        }
+        catch { }
+        if (!AdminAccount()) keepLast = 7;   // (its run stops there, and can't write that down)
+        else if (v >= Elevated.TaskVersion && !Elevated.NetConfigClean()) keepLast = 11;   // (its cmd.exe doesn't start it, see Elevated.TaskXml)
+        return true;
+    }
+    // the task's last result (it writes it in HKLM: Task Scheduler never sees it through conhost), and a task made by an
+    // older HW Deck, read with KeepSharing
     int keepLast; bool keepOld;
-    string KeepKey { get { return @"SOFTWARE\" + Brand.Name + @"\Keep"; } }
     // the task is on but from an older HW Deck, or its last run couldn't restart HWiNFO: for under the switch (null: nothing)
     string KeepNote()
     {
         if (keepOld) return "Its task is from an older " + Brand.Name + ": turn this off and on once to update it.";
-        string why = keepLast == 4 ? "that HWiNFO isn't signed by its maker (REALiX)" : keepLast == 6 ? "HWiNFO now runs from outside Program Files"
-                   : keepLast == 7 ? "this account isn't an admin anymore" : keepLast == 2 ? "it restarted HWiNFO, but couldn't change HWiNFO's settings file" : null;
+        string why = keepLast == 4 ? "that HWiNFO isn't signed by its maker (REALiX)" : keepLast == 6 ? "HWiNFO now runs from outside its default install folder"
+                   : keepLast == 7 ? "this account isn't an admin anymore" : keepLast == 2 ? "it restarted HWiNFO, but couldn't change HWiNFO's settings file"
+                   : keepLast == 11 ? "this account has settings for .NET programs in its registry (Software\\Microsoft\\.NETFramework), and it won't run as admin with those" : null;
         return why == null ? null : "Last time it couldn't keep HWiNFO sharing: " + why + ".";
     }
-    // the elevated script that makes the task: the hourly script into HKLM, then the task that starts it
-    string KeepOnScript()
-    {
-        int min = 650, idle = 120, m;
-        if (customData && int.TryParse(Environment.GetEnvironmentVariable("HWDECK_KEEP_MIN"), out m) && m >= 0) min = m;   // (tests, with their own --data: another age)
-        if (customData && int.TryParse(Environment.GetEnvironmentVariable("HWDECK_KEEP_IDLE"), out m) && m >= 0) idle = m;   // (and another idle time, in seconds)
-        string sid = System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
-        string sys = Environment.GetFolderPath(Environment.SpecialFolder.System), x = System.Security.SecurityElement.Escape(Brand.Name);
-        // what the task runs: cmd.exe (no .NET, no AutoRun) drops the profiler settings and the COMPLUS_ ones that load
-        // code (another runtime, another JIT, a v2 profiler), then a short loader reads the hourly script from HKLM and
-        // runs it. Named one by one: listing them all takes FOR /F, whose child cmd.exe runs the user's AutoRun (no /D),
-        // as admin. No quotes inside cmd's line: conhost passes it on re-quoted, which drops every inner pair
-        string loader = "$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')\n$k = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').OpenSubKey(" + PsText(KeepKey) +
-            ")\nif (-not $k) { exit 3 }\n$s = $k.GetValue(" + PsText(KeepTask) + ")\nif (-not $s) { exit 3 }\n& ([ScriptBlock]::Create($s))";
-        string args = "--headless " + Path.Combine(sys, "cmd.exe") + " /d /s /c \"set COR_ENABLE_PROFILING=&set COR_PROFILER=&set COR_PROFILER_PATH=&set COR_PROFILER_PATH_32=&set COR_PROFILER_PATH_64=" +
-            "&set COMPLUS_Version=&set COMPLUS_InstallRoot=&set COMPLUS_DefaultVersion=&set COMPLUS_ProfAPI_ProfilerCompatibilitySetting=&set COMPLUS_AltJit=&set COMPLUS_AltJitName=" +
-            "&set COMPLUS_AltJitNgen=&set COMPLUS_JitName=&set COMPLUS_GCName=&set APPDOMAIN_MANAGER_ASM=&set APPDOMAIN_MANAGER_TYPE=&" + PowerShellExe + " -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " +
-            Convert.ToBase64String(Encoding.Unicode.GetBytes(loader)) + "\"";
-        string xml = "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">" +
-            "<RegistrationInfo><Author>" + x + "</Author><Description>" + System.Security.SecurityElement.Escape("Restarts HWiNFO once it has run about 11 hours, with its shared memory on, so the free version never stops sharing. " +
-                "Turn it off in " + Brand.Name + "'s Settings (Keep HWiNFO sharing). Task version " + KeepVersion + ". " + KeepMark) + "</Description></RegistrationInfo>" +
-            "<Triggers><TimeTrigger><StartBoundary>" + DateTime.Now.AddMinutes(1).ToString("yyyy-MM-dd'T'HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + "</StartBoundary><Repetition><Interval>PT1H</Interval></Repetition></TimeTrigger></Triggers>" +
-            "<Principals><Principal id=\"Author\"><UserId>" + sid + "</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>" +
-            "<Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>" +
-            "<StartWhenAvailable>true</StartWhenAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><ExecutionTimeLimit>PT1H</ExecutionTimeLimit>" +
-            "<Priority>4</Priority></Settings>" +   // (the default, 7, would start HWiNFO below normal priority)
-            // (conhost --headless: no window, where -WindowStyle Hidden still flashes one or opens Windows Terminal)
-            "<Actions Context=\"Author\"><Exec><Command>" + Path.Combine(sys, "conhost.exe") + "</Command><Arguments>" + System.Security.SecurityElement.Escape(args) + "</Arguments></Exec></Actions></Task>";
-        // (every exit records its code next to the script first, while the task's script is still there)
-        string hourly = Regex.Replace(KeepScript + RestartScript, @"\bexit (\d+|\$code)", "Leave $1");
-        string stored = "$App = " + PsText(Application.ExecutablePath) + "; $Name = " + PsText(KeepTask) + "; $Key = " + PsText(KeepKey) + "; $Min = " + min + "; $Idle = " + idle +
-            // (a run with nothing to do yet, exit 0 before the restart, keeps the last real result)
-            "\nfunction Leave($c) { try { $r = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').OpenSubKey($Key, $true); if ($r -and $null -ne $r.GetValue($Name) -and ($c -ne 0 -or $Unattended)) { $r.SetValue($Name + ' result', [string]$c) } } catch { }; exit $c }" +
-            hourly;
-        // (deflated on the way: this whole script goes to the admin PowerShell on its command line, which holds 32767
-        // characters, and -EncodedCommand makes each one 2.7)
-        var zs = new MemoryStream();
-        using (var z = new System.IO.Compression.DeflateStream(zs, System.IO.Compression.CompressionMode.Compress, true)) { var b = Encoding.UTF8.GetBytes(stored); z.Write(b, 0, b.Length); }
-        return "$Name = " + PsText(KeepTask) + "; $Key = " + PsText(KeepKey) + "\n$hourly = (New-Object IO.StreamReader((New-Object IO.Compression.DeflateStream((New-Object IO.MemoryStream(,[Convert]::FromBase64String('" +
-            Convert.ToBase64String(zs.ToArray()) + "'))), [IO.Compression.CompressionMode]::Decompress)), [Text.Encoding]::UTF8)).ReadToEnd()\n$xml = @'\n" + xml + "\n'@\n$Me = '" + sid + "'" + @"
-$ErrorActionPreference = 'Stop'
-if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne $Me) { exit 8 }
-$s = New-Object -ComObject Schedule.Service; $s.Connect(); $f = $s.GetFolder('\')
-" + KeepOwner + @"
-$r = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').CreateSubKey($Key)
-$r.SetValue($Name, $hourly); $r.DeleteValue($Name + ' result', $false); $r.Close()
-[void]$f.RegisterTask($Name, $xml, 6, $null, $null, 3)
-exit 0";
-    }
-    // one task per PC: another account's (exit 9) is neither taken over nor deleted, unless that account is gone
-    const string KeepOwner = @"
-try { $u = $f.GetTask($Name).Definition.Principal.UserId } catch { $u = $null }
-if ($u) {
-  try { $u = (New-Object Security.Principal.NTAccount $u).Translate([Security.Principal.SecurityIdentifier]).Value } catch { }
-  $alive = $true; try { [void](New-Object Security.Principal.SecurityIdentifier $u).Translate([Security.Principal.NTAccount]) } catch { $alive = $false }
-  if ($alive -and $u -ne $Me) { exit 9 }
-}";
-    const string KeepOffScript = @"
-$ErrorActionPreference = 'Stop'
-$s = New-Object -ComObject Schedule.Service; $s.Connect(); $f = $s.GetFolder('\')
-" + KeepOwner + @"
-try { $f.DeleteTask($Name, 0) } catch { }
-try { $r = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').OpenSubKey($Key, $true); if ($r) { $r.DeleteValue($Name, $false); $r.DeleteValue($Name + ' result', $false); $n = $r.ValueCount + $r.SubKeyCount; $r.Close(); if (-not $n) { [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64').DeleteSubKey($Key, $false) } } } catch { }
-try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
     void SetKeepSharing(bool on)
     {
         var r = Msg("toast");
@@ -5016,13 +4932,22 @@ try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
         if (Brand.NoActions) { r["text"] = "Test copy: no task is made or deleted"; Post(r); SendSettings(true); return; }
         if (keepBusy) { SendSettings(true); return; }
         string hw = settings.ContainsKey("hwinfo") ? settings["hwinfo"] as string : null;
-        if (on && hw != null && !InProgramFiles(hw)) { r["text"] = "Keep HWiNFO sharing only restarts an HWiNFO installed in Program Files, and yours runs from " + Path.GetDirectoryName(hw); Post(r); SendSettings(true); return; }
+        if (on && hw != null && !Elevated.Standard(hw)) { r["text"] = "Keep HWiNFO sharing only restarts HWiNFO in its default install folder, and yours runs from " + Path.GetDirectoryName(hw); Post(r); SendSettings(true); return; }
+        int v = KeepTaskVersion();
+        if (v >= Elevated.TaskVersion)   // (this account's own setting: no Windows prompt)
+        {
+            try { Elevated.SetKeepOff(!on); }
+            catch (Exception ex) { Log("keep sharing failed: " + ex.Message); r["text"] = "Couldn't change Keep HWiNFO sharing: " + ex.Message; Post(r); SendSettings(true); return; }
+            Log("keep sharing " + (on ? "on" : "off"));
+            r["text"] = on ? "Keep HWiNFO sharing is on: HWiNFO restarts after about 11 hours" : "Keep HWiNFO sharing is off";
+            Post(r); SendSettings(true); return;
+        }
+        if (on && Elevated.InstalledFolder() == null) { r["text"] = "Keep HWiNFO sharing needs " + Brand.Name + " installed with its installer"; Post(r); SendSettings(true); return; }
+        if (!on && v == 0) { SendSettings(true); return; }   // (nothing of this copy's to turn off)
         try
         {
-            string script = "$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')\n" + (on ? KeepOnScript() : "$Name = " + PsText(KeepTask) + "; $Key = " + PsText(KeepKey) + "; $Me = '" + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value + "'" + KeepOffScript);
-            var psi = new ProcessStartInfo(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
-            psi.Verb = "runas"; psi.WindowStyle = ProcessWindowStyle.Hidden; psi.UseShellExecute = true;   // a task that runs as admin takes an admin to make (or delete)
-            var proc = Process.Start(psi);
+            // a task that runs as admin takes an admin to make (or delete): this exe, through one Windows prompt
+            var proc = Elevated.Prompt("--admin-task " + (on ? "on " : "off ") + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value);
             keepBusy = true;
             Log("keep sharing " + (on ? "on" : "off") + " asked");
             System.Threading.ThreadPool.QueueUserWorkItem(delegate
@@ -5033,9 +4958,11 @@ try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
                 Try(() => BeginInvoke((Action)(() =>
                 {
                     keepBusy = false;
+                    if (on && code == 0) Try(() => Elevated.SetKeepOff(false));
                     var t = Msg("toast");
                     t["text"] = code == 8 ? "Keep HWiNFO sharing needs your own account to be an admin (Windows asked for another one)"
                               : code == 9 ? "Another account on this PC has Keep HWiNFO sharing on: there is one for the whole PC"
+                              : code == 10 ? "Keep HWiNFO sharing needs " + Brand.Name + " installed with its installer"
                               : code == -1 ? "Couldn't turn Keep HWiNFO sharing " + (on ? "on" : "off") + ": Windows didn't finish the change in time"
                               : code != 0 ? "Couldn't turn Keep HWiNFO sharing " + (on ? "on" : "off")
                               : on ? "Keep HWiNFO sharing is on: HWiNFO restarts after about 11 hours" : "Keep HWiNFO sharing is off, and its task is deleted";
@@ -5052,14 +4979,14 @@ try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
         }
     }
 
-    // ---- Accurate game fps (Frames): Windows lets admins and the Performance Log Users group trace frames. Turned
-    // on, HW Deck adds this account to that group (one Windows prompt) and notes it in HKLM\Software\<name>\PerfLogUsers,
-    // so turning it off (or the msi's uninstall) takes away only what HW Deck gave. A new group counts from the next
-    // sign-in. An account already in the group (or HW Deck run as admin) needs no prompt ----
+    // ---- Accurate game fps (Frames): Windows lets admins and the Performance Log Users group trace frames. On unless
+    // turned off here. The installer puts the account installing in that group (Elevated, noted in HKLM\Software\<name>\
+    // PerfLogUsers, so the uninstall takes back only what HW Deck gave); an account not in it yet gets in through one
+    // Windows prompt when it turns this on. A new group counts from the next sign-in. Off stops the counting only: the
+    // group stays until the uninstall (taking it back took a prompt of its own). An account already in the group (or HW
+    // Deck run as admin) needs no prompt ----
     const string PerfLogUsers = "S-1-5-32-559";
     bool fpsBusy;
-    [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern int NetLocalGroupGetMembers(string server, string group, int level, out IntPtr buf, int max, out int read, out int total, IntPtr resume);
-    [DllImport("netapi32.dll")] static extern int NetApiBufferFree(IntPtr buf);
     // the account in the group as Windows has it now (the sign-in's token may be older)
     [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int cls, out int info, int len, out int ret);
     // this account is an admin's: unelevated, Windows gives an admin a limited token (TokenElevationType 3); elevated, or
@@ -5079,30 +5006,7 @@ try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
     }
     static bool InPerfLogUsers()
     {
-        try
-        {
-            var me = System.Security.Principal.WindowsIdentity.GetCurrent().User;
-            string g = new System.Security.Principal.SecurityIdentifier(PerfLogUsers).Translate(typeof(System.Security.Principal.NTAccount)).Value;
-            g = g.Substring(g.IndexOf('\\') + 1);
-            IntPtr buf; int read, total;
-            if (NetLocalGroupGetMembers(null, g, 0, out buf, -1, out read, out total, IntPtr.Zero) != 0) return false;
-            try
-            {
-                for (int i = 0; i < read; i++)
-                    if (new System.Security.Principal.SecurityIdentifier(Marshal.ReadIntPtr(buf, i * IntPtr.Size)).Equals(me)) return true;
-            }
-            finally { NetApiBufferFree(buf); }
-        }
-        catch { }
-        return false;
-    }
-    bool PerfLogUsersByUs()
-    {
-        try
-        {
-            using (var k = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64).OpenSubKey(@"Software\" + Brand.Name))
-                return k != null && ((k.GetValue("PerfLogUsers") as string) ?? "").Split(';').Contains(System.Security.Principal.WindowsIdentity.GetCurrent().User.Value);
-        }
+        try { return Elevated.InGroup(PerfLogUsers, System.Security.Principal.WindowsIdentity.GetCurrent().User); }
         catch { return false; }
     }
     // for the page: on (counting) | signin (allowed from the next sign-in) | denied | failed | off (not wanted)
@@ -5112,26 +5016,6 @@ try { [void]$f.GetTask($Name); exit 1 } catch { exit 0 }";
         if (src.Frames.On) return "on";
         return src.Frames.State == "denied" ? (InPerfLogUsers() ? "signin" : "denied") : "failed";
     }
-    // adds the account to the group (on) or takes it out if HW Deck put it there (off); exit 0 done, 3 nothing to do
-    const string FpsAddScript = @"
-$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
-$ErrorActionPreference = 'Stop'
-try { Add-LocalGroupMember -SID 'S-1-5-32-559' -Member $Sid } catch { if ($_.FullyQualifiedErrorId -like 'MemberExists*') { exit 3 } else { throw } }
-$k = 'HKLM:\SOFTWARE\' + $Name
-if (-not (Test-Path $k)) { New-Item $k | Out-Null }
-$v = @(((Get-ItemProperty $k -ErrorAction SilentlyContinue).PerfLogUsers -split ';') | Where-Object { $_ -and $_ -ne $Sid }) + $Sid
-Set-ItemProperty $k -Name PerfLogUsers -Value ($v -join ';')
-exit 0";
-    const string FpsRemoveScript = @"
-$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
-$ErrorActionPreference = 'Stop'
-$k = 'HKLM:\SOFTWARE\' + $Name
-$v = @(((Get-ItemProperty $k -ErrorAction SilentlyContinue).PerfLogUsers -split ';') | Where-Object { $_ })
-if ($v -notcontains $Sid) { exit 3 }
-try { Remove-LocalGroupMember -SID 'S-1-5-32-559' -Member $Sid } catch { if ($_.FullyQualifiedErrorId -notlike 'MemberNotFound*') { throw } }
-$v = @($v | Where-Object { $_ -ne $Sid })
-if ($v.Count) { Set-ItemProperty $k -Name PerfLogUsers -Value ($v -join ';') } else { Remove-ItemProperty $k -Name PerfLogUsers }
-exit 0";
     void SetGameFps(bool on)
     {
         var r = Msg("toast");
@@ -5139,32 +5023,28 @@ exit 0";
         if (Brand.NoActions) { r["text"] = "Test copy: Accurate game fps isn't changed"; Post(r); SendSettings(fpsDone: true); return; }
         if (fpsBusy) { SendSettings(fpsDone: true); return; }
         settings["gameFps"] = on; SaveSettings();
-        // (a trace that runs proves only this sign-in's token: turned off, then on again, the account is out of the group
-        // and the next sign-in would be refused, so the group is what decides)
-        if (on) { src.Frames.Start(); if (src.Frames.State == "failed" || InPerfLogUsers() || new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator)) { r["text"] = FpsText(); Post(r); SendSettings(fpsDone: true); return; } }
-        else { src.Frames.Stop(); if (!PerfLogUsersByUs()) { r["text"] = "Accurate game fps is off"; Post(r); SendSettings(fpsDone: true); return; } }
-        // the group: one Windows prompt
-        string sid = System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
-        string script = "$Sid = '" + sid + "'; $Name = " + PsText(Brand.Name) + (on ? FpsAddScript : FpsRemoveScript);
+        if (!on) { src.Frames.Stop(); r["text"] = "Accurate game fps is off"; Post(r); SendSettings(fpsDone: true); return; }
+        // (a trace that runs proves only this sign-in's token: the group is what decides)
+        src.Frames.Start();
+        if (src.Frames.State == "failed" || InPerfLogUsers() || new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
+        { r["text"] = FpsText(); Post(r); SendSettings(fpsDone: true); return; }
+        // into the group: this exe, through one Windows prompt
         try
         {
-            var psi = new ProcessStartInfo(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
-            psi.Verb = "runas"; psi.WindowStyle = ProcessWindowStyle.Hidden; psi.UseShellExecute = true;
-            var proc = Process.Start(psi);
+            var proc = Elevated.Prompt("--admin-fps " + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value);
             fpsBusy = true;
-            Log("game fps " + (on ? "on" : "off") + ": group change asked");
+            Log("game fps on: group change asked");
             System.Threading.ThreadPool.QueueUserWorkItem(delegate
             {
                 int code = -1;
                 try { if (proc != null && proc.WaitForExit(60000)) code = proc.ExitCode; } catch { }
-                Log("game fps " + (on ? "on: " : "off: ") + code);
+                Log("game fps on: " + code);
                 Try(() => BeginInvoke((Action)(() =>
                 {
                     fpsBusy = false;
                     var t = Msg("toast");
-                    if (on && code != 0 && code != 3) { settings["gameFps"] = false; SaveSettings(); src.Frames.Stop(); }   // (the trace started to try it stops too)
-                    t["text"] = code != 0 && code != 3 ? "Couldn't turn Accurate game fps " + (on ? "on" : "off") + (code == -1 ? ": Windows didn't finish the change in time" : "")
-                              : on ? FpsText() : "Accurate game fps is off, and the permission it needed is taken back";
+                    if (code != 0 && code != 3) { settings["gameFps"] = false; SaveSettings(); src.Frames.Stop(); }   // (the trace started to try it stops too)
+                    t["text"] = code != 0 && code != 3 ? "Couldn't turn Accurate game fps on" + (code == -1 ? ": Windows didn't finish the change in time" : "") : FpsText();
                     Post(t); SendSettings(fpsDone: true);
                 })));
             });
@@ -5173,9 +5053,9 @@ exit 0";
         {
             var w = ex as System.ComponentModel.Win32Exception;
             bool no = w != null && w.NativeErrorCode == 1223;   // No in the Windows prompt
-            if (on) { settings["gameFps"] = false; SaveSettings(); src.Frames.Stop(); }
+            settings["gameFps"] = false; SaveSettings(); src.Frames.Stop();
             if (!no) Log("game fps failed: " + ex.Message);
-            r["text"] = no ? (on ? "Cancelled: Accurate game fps stays off" : "Accurate game fps is off; the permission stays (Windows prompt cancelled)") : "Couldn't change Accurate game fps: " + ex.Message;
+            r["text"] = no ? "Cancelled: Accurate game fps stays off" : "Couldn't change Accurate game fps: " + ex.Message;
             Post(r); SendSettings(fpsDone: true);
         }
     }
@@ -5689,11 +5569,754 @@ static class UiTrace
     public static void TimerFired() { if (!on) return; long t = sw.ElapsedMilliseconds, d = t - lastTimer; lastTimer = t; if (d > maxTimerGap) maxTimerGap = d; }
 }
 
+// ---- the admin work, done by this exe itself, never by a script (11-09: Windows Defender took HW Deck's hidden
+// PowerShell, and the HWDeck.exe that carried it, for malware). One job per switch; none opens a window or takes the
+// single-instance lock, so each runs beside a running HW Deck:
+//   --install-setup <sid>   the installer, as SYSTEM once its files are in: that account goes into Performance Log Users
+//                           (Accurate game fps) and gets the HWiNFO task (Keep HWiNFO sharing, and Restart HWiNFO with no
+//                           Windows prompt), so both are on with no prompt but the install's own. An update does it
+//                           again; a switch turned off in Settings stays off (that is Settings' own)
+//   --uninstall-cleanup     the uninstall, as SYSTEM: the task, its notes, and the accounts HW Deck put in the group
+//   --drop-run              the installer, as the user: a Start with Windows entry that starts this install goes
+//   --hwinfo-task           the task, as its account with its admin rights: HWiNFO restarted once it has run about 11
+//                           hours, or at once when Restart HWiNFO asks
+//   --admin-task on|off <sid>, --admin-fps <sid>, --admin-restart <exe>: Settings and Restart HWiNFO through one Windows
+//                           prompt, where the installer's setup isn't there (another account, an older task, an HWiNFO
+//                           outside its installer's folder)
+//   --check-hwinfo <exe>    0 when that file is signed by HWiNFO's maker (tests)
+// Each job's exit codes are with it ----
+static class Elevated
+{
+    public const System.Reflection.BindingFlags Call = System.Reflection.BindingFlags.InvokeMethod, Get = System.Reflection.BindingFlags.GetProperty;
+    public static object Com(object o, string name, System.Reflection.BindingFlags how, params object[] a) { return o.GetType().InvokeMember(name, how, null, o, a); }
+    static readonly string[] verbs = { "--install-setup", "--uninstall-cleanup", "--drop-run", "--hwinfo-task", "--admin-task", "--admin-fps", "--admin-restart", "--check-hwinfo" };
+    public static bool IsVerb(string a) { return Array.IndexOf(verbs, (a ?? "").ToLowerInvariant()) >= 0; }
+    // a test build's trace (its name ends in " Test"): every switch, in %TEMP%\hwdeck-test-run.txt
+    public static void T(string m)
+    {
+        if (Brand.Name.EndsWith(" Test", StringComparison.Ordinal))
+            try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "hwdeck-test-run.txt"), AppInfo.Stamp() + " " + m + Environment.NewLine); } catch { }
+    }
+    public static int Run(string[] a)
+    {
+        string x = a.Length > 1 ? a[1] : null, y = a.Length > 2 ? a[2] : null;
+        T(string.Join(" ", a) + " | " + Environment.CurrentDirectory);
+        try
+        {
+            switch (a[0].ToLowerInvariant())
+            {
+                case "--install-setup": return InstallSetup(x);
+                case "--uninstall-cleanup": return UninstallCleanup();
+                case "--drop-run": return DropRun();
+                case "--hwinfo-task": return HwinfoTask();
+                case "--admin-task": return AdminTask(x, y);
+                case "--admin-fps": return AdminFps(x);
+                case "--admin-restart": return Restart(string.IsNullOrEmpty(x) ? null : x, false);
+                case "--check-hwinfo": return x != null && ByRealix(x) ? 0 : 4;
+            }
+        }
+        catch (Exception ex) { T("failed: " + ex); }
+        return 1;
+    }
+
+    // HKLM\SOFTWARE\<name>: InstallFolder (the msi's), PerfLogUsers, Keep\<task> result; HKCU\SOFTWARE\<name>: KeepOff,
+    // RestartAsked, RestartDone (this account's own)
+    public static string Key { get { return @"SOFTWARE\" + Brand.Name; } }
+    public static string TaskName { get { return Brand.Name + " - Keep HWiNFO sharing"; } }
+    public static string TaskMark { get { return Brand.Name + ": " + Application.ExecutablePath; } }   // the end of its description: whose it is
+    // in its description. 6: the task starts this exe (5 and before: a PowerShell script kept in HKLM, which still works
+    // as it is). Bump it when TaskXml changes (test/e2e-hardening.mjs pins TaskXml to it)
+    public const int TaskVersion = 6;
+    const string PerfLogUsers = "S-1-5-32-559", Admins = "S-1-5-32-544";
+    static Microsoft.Win32.RegistryKey Lm() { return Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64); }
+    static string LmGet(string sub, string name)
+    {
+        using (var b = Lm()) using (var k = b.OpenSubKey(sub)) return k != null ? k.GetValue(name) as string : null;
+    }
+
+    public static bool InProgramFiles(string exe)
+    {
+        try
+        {
+            string full = Path.GetFullPath(exe);
+            return new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }.Select(Environment.GetFolderPath)
+                .Any(d => d != "" && full.StartsWith(d.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase));
+        }
+        catch { return false; }
+    }
+    // this exe's folder when it is the msi's install (HKLM InstallFolder) under Program Files, named by cmd.exe without
+    // quotes (see TaskXml): the only copy an admin task may start, since only an admin can change what is there (null: not)
+    public static string InstalledFolder()
+    {
+        try
+        {
+            string f = LmGet(Key, "InstallFolder"), exe = Path.GetFullPath(Application.ExecutablePath);
+            if (string.IsNullOrEmpty(f) || !string.Equals(Path.GetFullPath(Path.Combine(f, Path.GetFileName(exe))), exe, StringComparison.OrdinalIgnoreCase)) return null;
+            string dir = Path.GetDirectoryName(exe);
+            return InProgramFiles(exe) && dir.IndexOfAny("&|<>^%!\"()".ToCharArray()) < 0 ? dir : null;
+        }
+        catch { return null; }
+    }
+
+    // ---- Performance Log Users (Accurate game fps): who HW Deck put there is noted in HKLM (PerfLogUsers), so the
+    // uninstall takes back only that ----
+    [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern int NetLocalGroupAddMembers(string server, string group, int level, IntPtr buf, int n);
+    [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern int NetLocalGroupDelMembers(string server, string group, int level, IntPtr buf, int n);
+    [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern int NetLocalGroupGetMembers(string server, string group, int level, out IntPtr buf, int max, out int read, out int total, IntPtr resume);
+    [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern int NetUserGetLocalGroups(string server, string user, int level, int flags, out IntPtr buf, int max, out int read, out int total);
+    [DllImport("netapi32.dll")] static extern int NetApiBufferFree(IntPtr buf);
+    // (the group's name in this Windows' language)
+    static string GroupName(string sid) { string g = new System.Security.Principal.SecurityIdentifier(sid).Translate(typeof(System.Security.Principal.NTAccount)).Value; return g.Substring(g.IndexOf('\\') + 1); }
+    public static bool InGroup(string group, System.Security.Principal.SecurityIdentifier who)
+    {
+        try
+        {
+            IntPtr buf; int read, total;
+            if (NetLocalGroupGetMembers(null, GroupName(group), 0, out buf, -1, out read, out total, IntPtr.Zero) != 0) return false;
+            try
+            {
+                for (int i = 0; i < read; i++)
+                    if (new System.Security.Principal.SecurityIdentifier(Marshal.ReadIntPtr(buf, i * IntPtr.Size)).Equals(who)) return true;
+            }
+            finally { NetApiBufferFree(buf); }
+        }
+        catch { }
+        return false;
+    }
+    // Windows' code: 0 done, 1378 in already, 1377 not in
+    static int Member(string group, System.Security.Principal.SecurityIdentifier who, bool add)
+    {
+        var b = new byte[who.BinaryLength]; who.GetBinaryForm(b, 0);
+        IntPtr p = Marshal.AllocHGlobal(b.Length), info = Marshal.AllocHGlobal(IntPtr.Size);
+        try
+        {
+            Marshal.Copy(b, 0, p, b.Length); Marshal.WriteIntPtr(info, p);
+            return add ? NetLocalGroupAddMembers(null, GroupName(group), 0, info, 1) : NetLocalGroupDelMembers(null, GroupName(group), 0, info, 1);
+        }
+        finally { Marshal.FreeHGlobal(info); Marshal.FreeHGlobal(p); }
+    }
+    static List<string> Noted() { return (LmGet(Key, "PerfLogUsers") ?? "").Split(';').Where(s => s.Length > 0).ToList(); }
+    // 0 put in (and noted), 3 in already, 1 Windows refused
+    static int AddToGroup(System.Security.Principal.SecurityIdentifier who)
+    {
+        if (InGroup(PerfLogUsers, who)) return 3;
+        int e = Member(PerfLogUsers, who, true);
+        if (e == 1378) return 3;
+        if (e != 0) return 1;
+        var l = Noted();
+        if (!l.Contains(who.Value)) l.Add(who.Value);
+        using (var b = Lm()) using (var k = b.CreateSubKey(Key)) k.SetValue("PerfLogUsers", string.Join(";", l));
+        return 0;
+    }
+    // an admin's account (straight in Administrators, or through a group of the domain's): only its task can restart an
+    // HWiNFO that runs as admin
+    static bool IsAdmin(System.Security.Principal.SecurityIdentifier who)
+    {
+        if (InGroup(Admins, who)) return true;
+        try
+        {
+            string name = who.Translate(typeof(System.Security.Principal.NTAccount)).Value, adm = GroupName(Admins);
+            IntPtr buf; int read, total;
+            if (NetUserGetLocalGroups(null, name, 0, 1 /*LG_INCLUDE_INDIRECT*/, out buf, -1, out read, out total) != 0) return false;
+            try
+            {
+                for (int i = 0; i < read; i++)
+                    if (string.Equals(Marshal.PtrToStringUni(Marshal.ReadIntPtr(buf, i * IntPtr.Size)), adm, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            finally { NetApiBufferFree(buf); }
+        }
+        catch { }
+        return false;
+    }
+    // a person's account that Windows knows (local, Microsoft, domain or Entra): never SYSTEM or a service
+    static System.Security.Principal.SecurityIdentifier Account(string sid)
+    {
+        try
+        {
+            var s = new System.Security.Principal.SecurityIdentifier(sid);
+            if (!s.Value.StartsWith("S-1-5-21-", StringComparison.Ordinal) && !s.Value.StartsWith("S-1-12-1-", StringComparison.Ordinal)) return null;
+            s.Translate(typeof(System.Security.Principal.NTAccount));
+            return s;
+        }
+        catch { return null; }
+    }
+
+    // ---- the installer's and Settings' jobs ----
+    // 0 done (what couldn't be done shows off in Settings), 2 not a person's account, 10 not the installed copy
+    static int InstallSetup(string sid)
+    {
+        var who = Account(sid);
+        if (who == null) return 2;
+        string dir = InstalledFolder();
+        if (dir == null) return 10;
+        try { AddToGroup(who); } catch { }
+        try { if (IsAdmin(who)) MakeTask(who, dir); } catch { }
+        return 0;
+    }
+    // Keep HWiNFO sharing through a Windows prompt: 0 done, 8 Windows asked for another account (the task runs as this
+    // one, with its admin rights), 9 another account's task is there, 10 (on) not the installed copy
+    static int AdminTask(string onoff, string sid)
+    {
+        var me = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+        if (sid == null || me == null || me.Value != sid) return 8;
+        if (onoff == "on") { string dir = InstalledFolder(); return dir == null ? 10 : MakeTask(me, dir); }
+        return DeleteTask(me);
+    }
+    // Accurate game fps through a Windows prompt: that account into the group (an admin may let another one in): 0, 3 in
+    // already, 2 not a person's account
+    static int AdminFps(string sid) { var who = Account(sid); return who == null ? 2 : AddToGroup(who); }
+    // the uninstall: the task (it starts this exe, which is going; the installer's schtasks line deletes it too), its
+    // notes, and the accounts HW Deck put in Performance Log Users (only those: one that was in it before stays)
+    static int UninstallCleanup()
+    {
+        try { DeleteTask(null); } catch { }
+        foreach (var s in Noted()) try { Member(PerfLogUsers, new System.Security.Principal.SecurityIdentifier(s), false); } catch { }
+        try { using (var b = Lm()) using (var k = b.OpenSubKey(Key, true)) if (k != null) k.DeleteValue("PerfLogUsers", false); } catch { }
+        try
+        {
+            using (var b = Lm())
+            {
+                bool empty;
+                using (var k = b.OpenSubKey(Key)) empty = k != null && k.ValueCount + k.SubKeyCount == 0;   // (the installer's own values went before this)
+                if (empty) b.DeleteSubKey(Key, false);
+            }
+        }
+        catch { }
+        return 0;
+    }
+    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run", ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    // a Start with Windows entry that starts this install: one made in Settings belongs to no product, so the installer
+    // can't take it away alone
+    static int DropRun()
+    {
+        string f = LmGet(Key, "InstallFolder");
+        if (string.IsNullOrEmpty(f)) return 0;
+        using (var r = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, true))
+        {
+            string v = r != null ? r.GetValue(Brand.Name) as string : null;
+            if (v == null || v.IndexOf(f, StringComparison.OrdinalIgnoreCase) < 0) return 0;
+            r.DeleteValue(Brand.Name, false);
+        }
+        using (var a = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(ApprovedKey, true)) if (a != null) a.DeleteValue(Brand.Name, false);
+        return 0;
+    }
+    // this exe as admin through one Windows prompt (a No: Win32Exception 1223)
+    public static Process Prompt(string args)
+    {
+        return Process.Start(new ProcessStartInfo(Application.ExecutablePath, args) { Verb = "runas", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden });
+    }
+    public static string Arg(string a) { a = (a ?? "").Replace("\"", ""); return "\"" + a + (a.EndsWith("\\") ? "\\" : "") + "\""; }
+
+    // ---- the HWiNFO task ----
+    // every 5 minutes from a minute after it is made (each look is over in a moment), and on demand (Restart HWiNFO), as
+    // that account with its admin rights. It starts this exe through cmd.exe (its own extensions on, no AutoRun, no
+    // delayed expansion, whatever the account set), which first refuses when the account's registry holds settings for
+    // .NET programs (the profiler among them, which .NET reads from there too: code loaded into this exe as admin; the
+    // page says so under the switch, see NetConfigClean), then clears what its environment could slip in the same way
+    // (the profiler and the COMPLUS_ settings that load code, named one by one: FOR /F would start a cmd.exe that runs
+    // the user's AutoRun; the switch that would make cmd look for it on the PATH; compatibility shims), and starts it
+    // from its own folder (no quotes in cmd's line: conhost passes it on re-quoted, which drops every inner pair).
+    // conhost --headless: no window, where cmd.exe alone shows one. The account may start it and read it, never change
+    // it (MakeTask). Still the account's own: code of its that wins a race (the setting put back between cmd's look
+    // and .NET's) gets in, as it could into any program it starts as admin
+    public static string TaskXml(string sid, string dir)
+    {
+        string sys = Environment.GetFolderPath(Environment.SpecialFolder.System), x = System.Security.SecurityElement.Escape(Brand.Name);
+        string args = "--headless " + Path.Combine(sys, "cmd.exe") + " /d /e:on /v:off /s /c \"" + Path.Combine(sys, "reg.exe") + " query HKCU\\Software\\Microsoft\\.NETFramework /s 2>nul | " +
+            Path.Combine(sys, "findstr.exe") + " REG_ >nul && exit /b 11 & set COR_ENABLE_PROFILING=&set COR_PROFILER=&set COR_PROFILER_PATH=&set COR_PROFILER_PATH_32=&set COR_PROFILER_PATH_64=" +
+            "&set COMPLUS_Version=&set COMPLUS_InstallRoot=&set COMPLUS_DefaultVersion=&set COMPLUS_ProfAPI_ProfilerCompatibilitySetting=&set COMPLUS_AltJit=&set COMPLUS_AltJitName=" +
+            "&set COMPLUS_AltJitNgen=&set COMPLUS_JitName=&set COMPLUS_GCName=&set APPDOMAIN_MANAGER_ASM=&set APPDOMAIN_MANAGER_TYPE=&set NoDefaultCurrentDirectoryInExePath=&set __COMPAT_LAYER=" +
+            "&cd /d " + dir + "&&.\\" + Path.GetFileName(Application.ExecutablePath) + " --hwinfo-task\"";
+        return "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">" +
+            "<RegistrationInfo><Author>" + x + "</Author><Description>" + System.Security.SecurityElement.Escape("Restarts HWiNFO once it has run about 11 hours, with its shared memory on, so the free version never stops sharing, " +
+                "and at once when " + Brand.Name + "'s Restart HWiNFO asks. Turn the restarts off in " + Brand.Name + "'s Settings (Keep HWiNFO sharing). Task version " + TaskVersion + ". " + TaskMark) + "</Description></RegistrationInfo>" +
+            "<Triggers><TimeTrigger><StartBoundary>" + DateTime.Now.AddMinutes(1).ToString("yyyy-MM-dd'T'HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + "</StartBoundary><Repetition><Interval>PT5M</Interval></Repetition></TimeTrigger></Triggers>" +
+            "<Principals><Principal id=\"Author\"><UserId>" + sid + "</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>" +
+            "<Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>" +
+            "<StartWhenAvailable>true</StartWhenAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><ExecutionTimeLimit>PT10M</ExecutionTimeLimit>" +
+            "<Priority>4</Priority></Settings>" +   // (the default, 7, would start HWiNFO below normal priority)
+            "<Actions Context=\"Author\"><Exec><Command>" + Path.Combine(sys, "conhost.exe") + "</Command><Arguments>" + System.Security.SecurityElement.Escape(args) + "</Arguments></Exec></Actions></Task>";
+    }
+    static object Tasks() { var s = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service")); Com(s, "Connect", Call); return s; }
+    // the task's account as a SID (null: no task, "": none named)
+    static string Owner(object folder)
+    {
+        string u;
+        try { u = Com(Com(Com(Com(folder, "GetTask", Call, TaskName), "Definition", Get), "Principal", Get), "UserId", Get) as string; }
+        catch { return null; }
+        if (string.IsNullOrEmpty(u)) return "";
+        try { return new System.Security.Principal.NTAccount(u).Translate(typeof(System.Security.Principal.SecurityIdentifier)).Value; } catch { }
+        try { return new System.Security.Principal.SecurityIdentifier(u).Value; } catch { return u; }
+    }
+    static bool Alive(string sid)
+    {
+        try { new System.Security.Principal.SecurityIdentifier(sid).Translate(typeof(System.Security.Principal.NTAccount)); return true; }
+        catch { return false; }
+    }
+    // made (or made again: a newer TaskXml, this copy's folder): 0; 9 another account's is there (one task for the whole
+    // PC, left alone while that account exists). One already there is deleted first, so nothing of it stays (its owner,
+    // its rights). Owned by the admins; the account may start it and read it, not change it
+    static int MakeTask(System.Security.Principal.SecurityIdentifier who, string dir)
+    {
+        object s = Tasks();
+        try
+        {
+            object f = Com(s, "GetFolder", Call, "\\");
+            string o = Owner(f);
+            if (!string.IsNullOrEmpty(o) && o != who.Value && Alive(o)) return 9;
+            if (o != null) Com(f, "DeleteTask", Call, TaskName, 0);
+            Com(f, "RegisterTask", Call, TaskName, TaskXml(who.Value, dir), 6 /*create or update*/, null, null, 3 /*interactive token*/, "O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;" + who.Value + ")");
+            Forget();
+            return 0;
+        }
+        finally { Marshal.ReleaseComObject(s); }
+    }
+    // 0 deleted (or none), 9 another account's (left alone; who null: the uninstall, any), 1 still there
+    static int DeleteTask(System.Security.Principal.SecurityIdentifier who)
+    {
+        object s = Tasks();
+        try
+        {
+            object f = Com(s, "GetFolder", Call, "\\");
+            string o = Owner(f);
+            if (o != null && who != null && o.Length > 0 && o != who.Value && Alive(o)) return 9;
+            if (o != null) try { Com(Com(f, "GetTask", Call, TaskName), "Stop", Call, 0); } catch { }   // (a run under way first: it holds this exe)
+            if (o != null) try { Com(f, "DeleteTask", Call, TaskName, 0); } catch { }
+            Forget();
+            return Owner(f) == null ? 0 : 1;
+        }
+        finally { Marshal.ReleaseComObject(s); }
+    }
+    // an older task's script (version 5 and before) and the last result, next to it in HKLM
+    static void Forget()
+    {
+        try
+        {
+            using (var b = Lm())
+            {
+                using (var k = b.OpenSubKey(Key + @"\Keep", true))
+                {
+                    if (k == null) return;
+                    k.DeleteValue(TaskName, false); k.DeleteValue(TaskName + " result", false);
+                    if (k.ValueCount + k.SubKeyCount > 0) return;
+                }
+                b.DeleteSubKey(Key + @"\Keep", false);
+            }
+        }
+        catch { }
+    }
+    // Restart HWiNFO's start of the task, from the page's account (it may, see MakeTask): one already running takes the ask
+    public static bool StartTask()
+    {
+        object s = null;
+        try
+        {
+            s = Tasks();
+            object t = Com(Com(s, "GetFolder", Call, "\\"), "GetTask", Call, TaskName);
+            try { Com(t, "Run", Call, (object)null); return true; }
+            catch { return 4.Equals(Com(t, "State", Get)); }   // (4: running)
+        }
+        catch { return false; }
+        finally { if (s != null) try { Marshal.ReleaseComObject(s); } catch { } }
+    }
+
+    // no settings for .NET programs in this account's registry (HKCU\Software\Microsoft\.NETFramework, any value at any
+    // depth): with one, the task's cmd.exe doesn't start this exe as admin (see TaskXml)
+    public static bool NetConfigClean()
+    {
+        try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\.NETFramework")) return k == null || !AnyValue(k, 0); }
+        catch { return false; }
+    }
+    static bool AnyValue(Microsoft.Win32.RegistryKey k, int depth)
+    {
+        if (k.ValueCount > 0) return true;
+        if (depth > 8) return false;
+        foreach (var n in k.GetSubKeyNames())
+            using (var sub = k.OpenSubKey(n)) if (sub != null && AnyValue(sub, depth + 1)) return true;
+        return false;
+    }
+
+    // ---- this account's own (HKCU): Keep HWiNFO sharing turned off, and Restart HWiNFO's ask and its answer ----
+    public static bool KeepOff()
+    {
+        try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Key)) return k != null && 1.Equals(k.GetValue("KeepOff")); }
+        catch { return false; }
+    }
+    public static void SetKeepOff(bool off)
+    {
+        using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(Key))
+        {
+            if (off) k.SetValue("KeepOff", 1, Microsoft.Win32.RegistryValueKind.DWord); else k.DeleteValue("KeepOff", false);
+        }
+    }
+    // an admin's account with HW Deck not running as admin, where "as admin" gives this same account its admin rights at
+    // one Windows prompt (a Yes or a No, no password): the limited token (TokenElevationType 3) whose linked token is this
+    // account's own and is in Administrators. Not a split token of another kind (Backup Operators: its other half is no
+    // admin), and not where Windows gives admin rights through an account of its own (Windows 11's Administrator
+    // protection: what is started as admin there runs as that other account, with its own registry and folders)
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int cls, out int info, int len, out int ret);
+    [DllImport("advapi32.dll", SetLastError = true, EntryPoint = "GetTokenInformation")] static extern bool GetLinkedToken(IntPtr token, int cls, out IntPtr info, int len, out int ret);
+    public static bool LimitedAdmin()
+    {
+        try
+        {
+            using (var me = System.Security.Principal.WindowsIdentity.GetCurrent())
+            {
+                int t, n; IntPtr linked;
+                if (!GetTokenInformation(me.Token, 18, out t, 4, out n) || t != 3) return false;
+                if (!GetLinkedToken(me.Token, 19, out linked, IntPtr.Size, out n) || linked == IntPtr.Zero) return false;
+                try
+                {
+                    using (var full = new System.Security.Principal.WindowsIdentity(linked))
+                        return full.User != null && full.User.Equals(me.User) && new System.Security.Principal.WindowsPrincipal(full).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+                }
+                finally { CloseHandle(linked); }
+            }
+        }
+        catch { return false; }
+    }
+    // Update now's note for the copy the installer starts when it is done: the version the update started from (null: none)
+    public static void SetUpdateFrom(string v)
+    {
+        try { using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(Key)) { if (v != null) k.SetValue("UpdateFrom", v); else k.DeleteValue("UpdateFrom", false); } }
+        catch { }
+    }
+    public static string TakeUpdateFrom()
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Key, true))
+            {
+                string v = k != null ? k.GetValue("UpdateFrom") as string : null;
+                if (v != null) k.DeleteValue("UpdateFrom", false);
+                return v;
+            }
+        }
+        catch { return null; }
+    }
+    static long Stamp(string s)
+    {
+        long t; return long.TryParse(s ?? "", System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out t) ? t : 0;
+    }
+    // the ask (its time, unix ms) when it is new: not answered yet, from the last 2 minutes; 0: none
+    static long Asked()
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Key))
+            {
+                if (k == null) return 0;
+                long t = Stamp(k.GetValue("RestartAsked") as string), done = Stamp(((k.GetValue("RestartDone") as string) ?? "").Split(':')[0]);
+                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                return t > done && now - t < 120000 && t - now < 5000 ? t : 0;
+            }
+        }
+        catch { return 0; }
+    }
+    static void Answer(long t, int code)
+    {
+        try { using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(Key)) k.SetValue("RestartDone", t.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + code.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+        catch { }
+    }
+    public static bool Answered(long t, out int code)
+    {
+        code = 0;
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Key))
+            {
+                var p = ((k != null ? k.GetValue("RestartDone") as string : null) ?? "").Split(':');
+                return p.Length == 2 && Stamp(p[0]) == t && int.TryParse(p[1], System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out code);
+            }
+        }
+        catch { return false; }
+    }
+
+    // ---- the task's run: a look (Look), then Restart HWiNFO's ask when there is one (each answered by a restart of
+    // its own, one that came in meanwhile too). One run at a time: another one (Restart HWiNFO's start while this one
+    // works) leaves at once, and this one takes the ask. Exit codes: Restart's, 7 no admin rights ----
+    static int HwinfoTask()
+    {
+        using (var mu = new System.Threading.Mutex(false, @"Local\HWDeck hwinfo task " + Brand.Name))
+        {
+            bool mine = true;
+            try { mine = mu.WaitOne(0); } catch (System.Threading.AbandonedMutexException) { }
+            if (!mine) return 0;
+            try
+            {
+                bool admin = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+                if (Brand.Name.EndsWith(" Test", StringComparison.Ordinal))   // (a test build: that it ran, how, and from where)
+                    try { using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(Key)) k.SetValue("TestRan", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + " admin=" + admin + " dir=" + Environment.CurrentDirectory + " cor=" + (Environment.GetEnvironmentVariable("COR_ENABLE_PROFILING") ?? "(none)")); } catch { }
+                long asked = Asked();
+                int code = asked != 0 ? 0 : Look(admin);
+                if (asked == 0) asked = Asked();
+                for (int i = 0; asked != 0 && i < 5; i++)
+                {
+                    try { code = admin ? Restart(null, true) : 7; } catch { code = 1; }
+                    Answer(asked, code);
+                    asked = Asked();
+                }
+                return code;
+            }
+            finally { try { mu.ReleaseMutex(); } catch { } }
+        }
+    }
+    // every 5 minutes: once HWiNFO (where its installer puts it, in this Windows session) has run 10 h 50 min, so always
+    // before the free version's 12 h, it is restarted in a quiet moment: nothing full screen in front (a game, a video)
+    // and 2 minutes without a key or the mouse touched (HWiNFO takes the focus for a moment as it starts); from 11 h 40
+    // min on, anyway. A closed HWiNFO stays closed; Keep HWiNFO sharing off: nothing. Over in a moment, so nothing holds
+    // this exe for long (an update replaces it)
+    static int Look(bool admin)
+    {
+        if (!admin) return Leave(7);   // (this account isn't an admin anymore: said under the switch)
+        if (KeepOff()) return 0;
+        int min = 650, idle = 120, m;
+        if (Brand.Name.EndsWith(" Test", StringComparison.Ordinal))   // (a test build: another age and idle time, in minutes and seconds)
+        {
+            if (int.TryParse(Environment.GetEnvironmentVariable("HWDECK_KEEP_MIN"), out m) && m >= 0) min = m;
+            if (int.TryParse(Environment.GetEnvironmentVariable("HWDECK_KEEP_IDLE"), out m) && m >= 0) idle = m;
+        }
+        var hw = Hwinfos();
+        if (hw.Count == 0) return 0;
+        var p = hw[0];
+        double age;
+        try { age = (DateTime.UtcNow - p.StartTime.ToUniversalTime()).TotalMinutes; } catch { return 0; }
+        if (age < min) return 0;
+        string exe = Image(p);
+        if (exe == null || !Standard(exe)) return Leave(6);
+        if (age < Math.Max(700, min + 50) && !Calm(idle)) return 0;   // (the next look, in 5 minutes)
+        return Leave(Restart(exe, true), true);
+    }
+    // a look's result for the note under the switch (KeepNote): one with nothing to do keeps the last one
+    static int Leave(int code, bool restarted = false)
+    {
+        if (code != 0 || restarted)
+            try { using (var b = Lm()) using (var k = b.CreateSubKey(Key + @"\Keep")) k.SetValue(TaskName + " result", code.ToString(System.Globalization.CultureInfo.InvariantCulture)); } catch { }
+        return code;
+    }
+    [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
+    [DllImport("user32.dll")] static extern bool GetLastInputInfo(uint[] info);
+    // nothing full screen in front (2, 3, 4: a full-screen app, a Direct3D game, presentation mode), nobody at the PC
+    static bool Calm(int idle)
+    {
+        int q = 0;
+        try { SHQueryUserNotificationState(out q); } catch { }
+        if (q == 2 || q == 3 || q == 4) return false;
+        var li = new uint[] { 8, 0 };
+        return !GetLastInputInfo(li) || unchecked((uint)Environment.TickCount - li[1]) >= (uint)idle * 1000;
+    }
+    // the HWiNFOs running in this Windows session, the oldest first
+    static List<Process> Hwinfos()
+    {
+        int ses = Process.GetCurrentProcess().SessionId;
+        var l = new List<Process>();
+        foreach (var n in new[] { "HWiNFO64", "HWiNFO32" })
+            foreach (var p in Process.GetProcessesByName(n))
+                try { if (p.SessionId == ses) { var t = p.StartTime; l.Add(p); } } catch { }
+        return l.OrderBy(x => x.StartTime).ToList();
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageNameW(IntPtr h, int flags, StringBuilder name, ref int size);
+    static string Image(Process p)
+    {
+        try { var sb = new StringBuilder(1024); int n = sb.Capacity; return QueryFullProcessImageNameW(p.Handle, 0, sb, ref n) ? sb.ToString(0, n) : null; }
+        catch { return null; }
+    }
+    // where HWiNFO's installer puts it (Program Files from Windows, the known folder: never from the environment). The
+    // only HWiNFO started as admin with nobody asked: any other folder, under Program Files too, may be one anyone can
+    // write to, and bring someone else's files along
+    static IEnumerable<string> StandardPaths()
+    {
+        string a = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), b = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        if (a.Length > 0) yield return Path.Combine(a, @"HWiNFO64\HWiNFO64.EXE");
+        if (b.Length > 0) yield return Path.Combine(b, @"HWiNFO32\HWiNFO32.EXE");
+        if (a.Length > 0) yield return Path.Combine(a, @"HWiNFO32\HWiNFO32.EXE");
+    }
+    public static bool Standard(string exe)
+    {
+        try { string f = Path.GetFullPath(exe); return StandardPaths().Any(x => string.Equals(x, f, StringComparison.OrdinalIgnoreCase)); }
+        catch { return false; }
+    }
+    public static string FindHwinfo() { return StandardPaths().FirstOrDefault(File.Exists); }
+
+    // ---- a restart: kills HWiNFO, switches its shared memory back on in its INI (the free version writes SensorsSM=0
+    // after 12 h) and starts it again. 0 done, 1 it wouldn't start, 2 the INI couldn't be written, 3 no HWiNFO, 4 not
+    // signed by its maker (REALiX), 6 (silent: the task's, with no prompt) that HWiNFO isn't where its installer puts it
+    // (see StandardPaths). The exe is held from its check until it has started: nothing can swap it in between. Every
+    // restart comes back in the tray and never bothers anyone: the INI also gets its welcome screen off, Sensors-only,
+    // started minimized, and its close button minimizing (to the tray); then, until it shares (its own poll time: another
+    // program can keep the old map open) and 5 s more, 25 s at most, a Sensors window that shows anyway is closed into
+    // the tray, and the window in front as it starts gets the focus back (HWiNFO takes it, with all its windows hidden;
+    // a hung window is left alone). Windows refuses SetForegroundWindow from the background (and flashes the taskbar
+    // button), so this joins HWiNFO's input and that window's and brings it to the top. Never a minimize: on a window in
+    // the tray it shows it, minimized on the taskbar. HWiNFO only from this Windows session ----
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowExW(IntPtr parent, IntPtr after, string cls, string title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsHungAppWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool PostMessageW(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    static int Restart(string exe, bool silent)
+    {
+        if (exe != null && (!Regex.IsMatch(Path.GetFileName(exe), @"^HWiNFO(64|32)\.exe$", RegexOptions.IgnoreCase) || !File.Exists(exe))) exe = null;
+        if (exe == null && silent) { var hw = Hwinfos(); if (hw.Count > 0) exe = Image(hw[0]); }   // (the one running)
+        if (exe == null) exe = FindHwinfo();
+        if (exe == null) return 3;
+        if (silent && !Standard(exe)) return 6;
+        FileStream hold;
+        try { hold = new FileStream(exe, FileMode.Open, FileAccess.Read, FileShare.Read); } catch { return 1; }
+        using (hold) return Restart(exe, hold);
+    }
+    static int Restart(string exe, FileStream hold)
+    {
+        if (!ByRealix(exe)) return 4;
+        int ses = Process.GetCurrentProcess().SessionId;
+        foreach (var n in new[] { "HWiNFO64", "HWiNFO32" })
+            foreach (var p in Process.GetProcessesByName(n))
+                try { if (p.SessionId == ses) p.Kill(); } catch { }
+        System.Threading.Thread.Sleep(3000);
+        int code = 0;
+        try { Ini(Path.ChangeExtension(exe, ".INI")); } catch { code = 2; }
+        if (!ByRealix(exe)) return 4;   // (again: the file could have changed meanwhile)
+        IntPtr front = GetForegroundWindow();
+        long st0 = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        int np;
+        try { np = Launch(exe); } catch (Exception ex) { T("restart: HWiNFO wouldn't start: " + ex.Message); return 1; }
+        try
+        {
+            DateTime t0 = DateTime.UtcNow, up = DateTime.MinValue;
+            while ((DateTime.UtcNow - t0).TotalSeconds < 25 && !(up != DateTime.MinValue && (DateTime.UtcNow - up).TotalSeconds > 5))
+            {
+                System.Threading.Thread.Sleep(200);
+                if (np == 0) { var hw = Hwinfos(); if (hw.Count > 0) np = hw[hw.Count - 1].Id; }   // (Windows named none: the newest one)
+                if (up == DateTime.MinValue)
+                    try
+                    {
+                        using (var mm = MemoryMappedFile.OpenExisting(@"Global\HWiNFO_SENS_SM2", MemoryMappedFileRights.Read))
+                        using (var va = mm.CreateViewAccessor(0, 20, MemoryMappedFileAccess.Read))
+                            if (va.ReadUInt32(0) == 0x53695748 && va.ReadInt64(12) >= st0) up = DateTime.UtcNow;
+                    }
+                    catch { }
+                IntPtr h = IntPtr.Zero;
+                while (code == 0 && (h = FindWindowExW(IntPtr.Zero, h, "#32770", null)) != IntPtr.Zero)
+                {
+                    uint q; GetWindowThreadProcessId(h, out q);
+                    if (np != 0 && q == (uint)np && IsWindowVisible(h))
+                    {
+                        var t = new StringBuilder(256); GetWindowTextW(h, t, 256);
+                        if (t.ToString().IndexOf("Sensors", StringComparison.OrdinalIgnoreCase) >= 0) PostMessageW(h, 0x112, (IntPtr)0xF060, IntPtr.Zero);   // SC_CLOSE: into the tray
+                    }
+                }
+                uint fq; uint ft = GetWindowThreadProcessId(GetForegroundWindow(), out fq);
+                if (np != 0 && fq == (uint)np && front != IntPtr.Zero && IsWindow(front) && !IsHungAppWindow(front))
+                {
+                    uint tq; uint tt = GetWindowThreadProcessId(front, out tq), me = GetCurrentThreadId();
+                    bool a = AttachThreadInput(me, ft, true), b = AttachThreadInput(ft, tt, true);
+                    BringWindowToTop(front);
+                    if (b) AttachThreadInput(ft, tt, false);
+                    if (a) AttachThreadInput(me, ft, false);
+                }
+            }
+        }
+        catch { }
+        if (Hwinfos().Count == 0) return 1;   // (it started and left again)
+        return code;
+    }
+    // HWiNFO's manifest asks for uiAccess, and CreateProcess refuses such a program (error 740) from an admin process
+    // too: only Windows' own launcher starts it, which the shell reaches. So through the shell, but with the machine's
+    // own class for programs (HKLM's exefile): never this account's file associations (HKCU\Software\Classes), which
+    // its programs can change. No window of the shell's own, and done before this returns (no message loop here).
+    // Its process id (0: Windows named none); throws when it wouldn't start
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct ShellExec
+    {
+        public int Size; public uint Mask; public IntPtr Hwnd;
+        public string Verb, File, Parameters, Directory;
+        public int Show; public IntPtr InstApp, IdList;
+        public string Class; public IntPtr ClassKey; public uint HotKey; public IntPtr Icon, Process;
+    }
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool ShellExecuteExW(ref ShellExec info);
+    [DllImport("kernel32.dll")] static extern int GetProcessId(IntPtr h);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    static int Launch(string exe)
+    {
+        using (var b = Lm()) using (var k = b.OpenSubKey(@"SOFTWARE\Classes\exefile"))
+        {
+            if (k == null) throw new InvalidOperationException("no exefile class");
+            // (0x40 its process handle back, 0x3 the class key given, 0x400 no error boxes, 0x100 finished before it returns)
+            var i = new ShellExec { Mask = 0x40 | 0x3 | 0x400 | 0x100, File = exe, Directory = Path.GetDirectoryName(exe), Show = 1, ClassKey = k.Handle.DangerousGetHandle() };
+            i.Size = Marshal.SizeOf(typeof(ShellExec));
+            if (!ShellExecuteExW(ref i)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            if (i.Process == IntPtr.Zero) return 0;
+            try { return GetProcessId(i.Process); } finally { CloseHandle(i.Process); }
+        }
+    }
+    // HWiNFO's INI, as HWiNFO keeps it (the system's ANSI code page): each setting replaced where it is, else put under
+    // [Settings] (made at the end when there is none)
+    static void Ini(string ini)
+    {
+        var lines = File.Exists(ini) ? File.ReadAllLines(ini, Encoding.Default).ToList() : new List<string>();
+        foreach (var kv in new[] { "SensorsSM=1", "ShowWelcomeAndProgress=0", "SensorsOnly=1", "MinimalizeMainWnd=1", "MinimalizeSensors=1", "MinimalizeSensorsClose=1" })
+        {
+            var re = new Regex("^" + kv.Substring(0, kv.IndexOf('=') + 1), RegexOptions.IgnoreCase);
+            if (lines.Any(l => re.IsMatch(l))) lines = lines.Select(l => re.IsMatch(l) ? kv : l).ToList();
+            else if (lines.Any(l => l.Trim().Equals("[Settings]", StringComparison.OrdinalIgnoreCase)))
+            {
+                var o = new List<string>();
+                foreach (var l in lines) { o.Add(l); if (l.Trim().Equals("[Settings]", StringComparison.OrdinalIgnoreCase)) o.Add(kv); }
+                lines = o;
+            }
+            else { lines.Add("[Settings]"); lines.Add(kv); }
+        }
+        File.WriteAllLines(ini, lines, Encoding.Default);
+    }
+    // signed by HWiNFO's maker, and Windows' own check of the signature passes (as PowerShell's "Valid" did)
+    [StructLayout(LayoutKind.Sequential)] struct TrustFile { public int Size; public IntPtr Path, File, Subject; }
+    [StructLayout(LayoutKind.Sequential)] struct TrustData { public int Size; public IntPtr Policy, Sip; public int Ui, Revocation, Choice; public IntPtr Info; public int StateAction; public IntPtr State, Url; public int ProvFlags, UiContext; public IntPtr Settings; }
+    [DllImport("wintrust.dll")] static extern int WinVerifyTrust(IntPtr hwnd, ref Guid action, IntPtr data);
+    public static bool ByRealix(string file)
+    {
+        IntPtr p = IntPtr.Zero, f = IntPtr.Zero, d = IntPtr.Zero;
+        try
+        {
+            p = Marshal.StringToHGlobalUni(file);
+            var tf = new TrustFile { Size = Marshal.SizeOf(typeof(TrustFile)), Path = p };
+            f = Marshal.AllocHGlobal(tf.Size); Marshal.StructureToPtr(tf, f, false);
+            // no UI, no revocation check, one file, checked and done in one call
+            var td = new TrustData { Size = Marshal.SizeOf(typeof(TrustData)), Ui = 2, Revocation = 0, Choice = 1, Info = f, StateAction = 0 };
+            d = Marshal.AllocHGlobal(td.Size); Marshal.StructureToPtr(td, d, false);
+            var g = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");   // WINTRUST_ACTION_GENERIC_VERIFY_V2
+            if (WinVerifyTrust(new IntPtr(-1), ref g, d) != 0) return false;
+            var c = new System.Security.Cryptography.X509Certificates.X509Certificate2(System.Security.Cryptography.X509Certificates.X509Certificate.CreateFromSignedFile(file));
+            if (!Regex.IsMatch(c.Subject, "^CN=\"?REALiX, s\\.r\\.o\\.\"?,")) return false;
+            // (and its chain ends in a root the whole PC trusts: one put in this account's own store, which its programs
+            // can do, doesn't count. An expired certificate is fine: the signature has its time stamp)
+            var ch = new System.Security.Cryptography.X509Certificates.X509Chain(true);
+            ch.ChainPolicy.RevocationMode = System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck;
+            ch.ChainPolicy.VerificationFlags = System.Security.Cryptography.X509Certificates.X509VerificationFlags.IgnoreNotTimeValid | System.Security.Cryptography.X509Certificates.X509VerificationFlags.IgnoreCtlNotTimeValid;
+            try { return ch.Build(c); } finally { ch.Reset(); }
+        }
+        catch { return false; }
+        finally
+        {
+            if (d != IntPtr.Zero) Marshal.FreeHGlobal(d);
+            if (f != IntPtr.Zero) Marshal.FreeHGlobal(f);
+            if (p != IntPtr.Zero) Marshal.FreeHGlobal(p);
+        }
+    }
+}
+
 static class Program
 {
     [STAThread]
     static void Main(string[] args)
     {
+        // the admin work and the installer's (see Elevated): before anything else, with no window and no single-instance lock
+        if (args.Length > 0 && Elevated.IsVerb(args[0])) { Environment.ExitCode = Elevated.Run(args); return; }
         string data = Brand.DataDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), Brand.Name);
         int fake = 0; bool min = false, custom = false, after = false;
         string appDir = AppDomain.CurrentDomain.BaseDirectory;
@@ -5769,6 +6392,7 @@ static class Program
             }
             if (!created) return;
         }
+        if (fake == 0 && !custom) DeckForm.UpdateMarker();   // (the copy that runs: a launch that only brought the running one forward left the note)
         var show = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, "HWDeck-show-" + id);
         var shown = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, "HWDeck-shown-" + id);
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -5786,6 +6410,7 @@ static class Program
         }
         // the flag first, then the handle: a window made in between still sees the flag (HandleCreated shows it)
         System.Threading.ThreadPool.RegisterWaitForSingleObject(show, delegate { if (form.Quitting) return; shown.Set(); form.showAsked = true; if (form.IsHandleCreated) { try { form.BeginInvoke((Action)form.ShowWin); } catch { } } }, null, -1, false);
+        System.Threading.ThreadPool.QueueUserWorkItem(delegate { DeckForm.UpdateLeftovers(); });
         Application.Run(form);
         GC.KeepAlive(mu); GC.KeepAlive(show); GC.KeepAlive(shown);
     }

@@ -78,30 +78,58 @@
     <WixVariable Id="WixUIDialogBmp" Value="installer\dialog.bmp" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open HW Deck now" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
-    <CustomAction Id="LaunchHWDeck" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixShellExec" Impersonate="yes" />
+    <!-- (opened through the Windows shell: without admin rights also when the installer itself was started as admin, as
+         install.ps1 does on an admin's account and as an admin's command prompt does; 11-10) -->
+    <CustomAction Id="LaunchHWDeck" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixUnelevatedShellExec" Impersonate="yes" Return="ignore" />
 
-    <!-- Keep HWiNFO sharing's task (Settings makes it, under this name) goes with the app, and so does its script (in
-         HKLM\SOFTWARE\HW Deck\Keep, removed below); an update keeps both -->
+    <!-- the HWiNFO task (Keep HWiNFO sharing; the admin step below or Settings makes it, under this name) goes with the
+         app, and so do its notes (in HKLM\SOFTWARE\HW Deck\Keep, removed below); an update keeps them -->
     <SetProperty Id="DeleteKeepTask" Value="&quot;[System64Folder]schtasks.exe&quot; /Delete /TN &quot;HW Deck - Keep HWiNFO sharing&quot; /F" Before="DeleteKeepTask" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     <CustomAction Id="DeleteKeepTask" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
     <!-- Accurate game fps put accounts in Performance Log Users (S-1-5-32-559) and noted them in PerfLogUsers: they come out
-         with the app, and only those (an account that was in the group before is left alone); an update keeps them -->
-    <SetProperty Id="RemovePerfLogUsers" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$k='HKLM:\SOFTWARE\HW Deck'; foreach ($s in ((Get-ItemProperty $k -ErrorAction SilentlyContinue).PerfLogUsers -split ';')) { if ($s) { try { Remove-LocalGroupMember -SID 'S-1-5-32-559' -Member $s -ErrorAction Stop } catch { } } }; Remove-ItemProperty $k -Name PerfLogUsers -ErrorAction SilentlyContinue; $n = 'HW Deck - Keep HWiNFO sharing'; Remove-ItemProperty ($k + '\Keep') -Name $n, ($n + ' result') -ErrorAction SilentlyContinue; foreach ($x in ($k + '\Keep'), $k) { $i = Get-Item $x -ErrorAction SilentlyContinue; if ($i -and -not $i.ValueCount -and -not $i.SubKeyCount) { Remove-Item $x } }; exit 0&quot;" Before="RemovePerfLogUsers" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
-    <CustomAction Id="RemovePerfLogUsers" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+         with the app, and only those (an account that was in the group before is left alone); an update keeps them.
+         HWDeck.exe does it itself (Elevated in src\app.cs), as SYSTEM, while its files are still there: only from under
+         Program Files (a folder picked elsewhere may be one anyone can write to, and its exe anyone's) -->
+    <SetProperty Id="HwCleanup" Value="&quot;[INSTALLFOLDER]HWDeck.exe&quot; --uninstall-cleanup" Before="HwCleanup" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND INSTALLFOLDER ~&lt;&lt; ProgramFiles64Folder" />
+    <CustomAction Id="HwCleanup" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
     <!-- a Start with Windows turned on later in Settings is HW Deck's own Run value, not the installer's: removed too, as
-         the user who uninstalls (impersonated: that user's HKCU), when it starts this install (a zip copy uses the same name) -->
-    <SetProperty Id="RemoveRunValue" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$r = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $v = (Get-ItemProperty $r -ErrorAction SilentlyContinue).'HW Deck'; $f = (Get-ItemProperty 'HKLM:\SOFTWARE\HW Deck' -ErrorAction SilentlyContinue).InstallFolder; if ($v -and $f -and $v.ToLower().Contains($f.ToLower())) { Remove-ItemProperty $r -Name 'HW Deck'; Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name 'HW Deck' -ErrorAction SilentlyContinue }; exit 0&quot;" Before="RemoveRunValue" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+         the user who uninstalls (impersonated: that user's HKCU), when it starts this install (a zip copy uses the same
+         name); and when the box is unticked (or AUTOSTART=0) on an install or an upgrade, the same way -->
+    <SetProperty Id="RemoveRunValue" Value="&quot;[INSTALLFOLDER]HWDeck.exe&quot; --drop-run" Before="RemoveRunValue" Sequence="execute" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     <CustomAction Id="RemoveRunValue" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="yes" Return="ignore" />
-    <!-- the box unticked (or AUTOSTART=0) on an install or an upgrade: a Run value made in Settings (no product owns it),
-         or left by an older uninstall, goes too, the same way -->
-    <SetProperty Id="DropRunValue" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$r = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $v = (Get-ItemProperty $r -ErrorAction SilentlyContinue).'HW Deck'; $f = (Get-ItemProperty 'HKLM:\SOFTWARE\HW Deck' -ErrorAction SilentlyContinue).InstallFolder; if ($v -and $f -and $v.ToLower().Contains($f.ToLower())) { Remove-ItemProperty $r -Name 'HW Deck'; Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name 'HW Deck' -ErrorAction SilentlyContinue }; exit 0&quot;" Before="DropRunValue" Sequence="execute" Condition="NOT (AUTOSTART = 1) AND NOT REMOVE" />
+    <SetProperty Id="DropRunValue" Value="&quot;[INSTALLFOLDER]HWDeck.exe&quot; --drop-run" Before="DropRunValue" Sequence="execute" Condition="NOT (AUTOSTART = 1) AND NOT REMOVE" />
     <CustomAction Id="DropRunValue" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <!-- the admin step, in the Windows prompt the install asks anyway (11-09): as SYSTEM, once the files are in, HWDeck.exe
+         puts the account installing in Performance Log Users (Accurate game fps) and makes its HWiNFO task (Keep HWiNFO
+         sharing, and Restart HWiNFO with no prompt), so both are on from the start, with no prompt of their own. An update
+         does it again, so both come on with it too (a task deleted meanwhile comes back; until 2.4.5, turning Keep HWiNFO
+         sharing off deleted it and left nothing to tell); one turned off in Settings since stays off. Only from under
+         Program Files (as SYSTEM: see the cleanup's note); an install as SYSTEM (no account in UserSID) does nothing -->
+    <SetProperty Id="HwSetup" Value="&quot;[INSTALLFOLDER]HWDeck.exe&quot; --install-setup [UserSID]" Before="HwSetup" Sequence="execute" Condition="NOT REMOVE AND INSTALLFOLDER ~&lt;&lt; ProgramFiles64Folder" />
+    <CustomAction Id="HwSetup" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+    <!-- a running HW Deck is closed before its files change (as a quit from the tray: it saves first), so an installer run
+         while it runs needs no restart of Windows. Update now in Settings starts this installer with HWDECKRESTART=1 (no
+         script of its own) and HW Deck starts again once the install is done: through the Windows shell, so as the account
+         and without admin rights, also when the installer itself runs as admin (on an admin's account Settings starts
+         Windows Installer that way, so the Windows prompt names Windows Installer and not a file from an unknown publisher;
+         a program this action started directly would then run as admin too). The shell passes no arguments: HW Deck
+         knows it was updated from the note its old copy left (HKCU UpdateFrom). Never for SYSTEM; a start that fails
+         leaves the install as it is -->
+    <Property Id="HWDECKRESTART" Secure="yes" />
+    <util:CloseApplication Id="CloseHWDeck" Target="HWDeck.exe" CloseMessage="yes" RebootPrompt="no" Timeout="20" Description="HW Deck" />
+    <SetProperty Id="WixUnelevatedShellExecTarget" Value="[INSTALLFOLDER]HWDeck.exe" Before="StartAgain" Sequence="execute" Condition="HWDECKRESTART = 1 AND NOT REMOVE AND UserSID &lt;&gt; &quot;S-1-5-18&quot; AND INSTALLFOLDER ~&lt;&lt; ProgramFiles64Folder" />
+    <CustomAction Id="StartAgain" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixUnelevatedShellExec" Execute="immediate" Impersonate="yes" Return="ignore" />
     <InstallExecuteSequence>
       <Custom Action="DeleteKeepTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
-      <Custom Action="RemovePerfLogUsers" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="HwCleanup" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND INSTALLFOLDER ~&lt;&lt; ProgramFiles64Folder" />
       <!-- (the folder is read from HKLM\Software\HW Deck in the script: a path with an apostrophe can't go in its text) -->
       <Custom Action="RemoveRunValue" Before="RemoveRegistryValues" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="DropRunValue" After="WriteRegistryValues" Condition="NOT (AUTOSTART = 1) AND NOT REMOVE" />
+      <Custom Action="HwSetup" Before="InstallFinalize" Condition="NOT REMOVE AND INSTALLFOLDER ~&lt;&lt; ProgramFiles64Folder" />
+      <!-- (first, before Windows looks for files in use: the old version comes out right after the install starts, and
+           nothing may go into the install's script before that, so it is the message alone, no kill as admin) -->
+      <Custom Action="override Wix4CloseApplications_$(sys.BUILDARCHSHORT)" Before="InstallValidate" />
+      <Custom Action="StartAgain" After="InstallFinalize" Condition="HWDECKRESTART = 1 AND NOT REMOVE AND UserSID &lt;&gt; &quot;S-1-5-18&quot; AND INSTALLFOLDER ~&lt;&lt; ProgramFiles64Folder" />
     </InstallExecuteSequence>
 
     <UI>
@@ -131,7 +159,7 @@
       <Publish Dialog="OptionsDlg" Control="Next" Property="AUTOSTART" Value="0" Order="1" Condition="NOT AUTOSTARTBOX" />
       <Publish Dialog="OptionsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="2" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="OptionsDlg" Order="3" Condition="NOT Installed" />
-      <Publish Dialog="ExitDialog" Control="Finish" Property="WixShellExecTarget" Value="[INSTALLFOLDER]HWDeck.exe" Order="997" />
+      <Publish Dialog="ExitDialog" Control="Finish" Property="WixUnelevatedShellExecTarget" Value="[INSTALLFOLDER]HWDeck.exe" Order="997" />
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchHWDeck" Order="998" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
     </UI>
   </Package>

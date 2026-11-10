@@ -601,6 +601,11 @@ select.dsel-n { display: none; }
 .dsel:disabled { opacity: 0.5; cursor: default; }
 .smenu.dsel-m { position: fixed; z-index: 106; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--g34, #343434) transparent; }
 .dsel-m button { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* an option with colours (a palette's squares): its name left, the colours at the right end of its row. Said with the
+   menu's two classes: the row rule above loses to the plain menu's `.smenu button { display: block }` further down, so
+   the colours sat right against the name (11-10, his "WAY too close to the name, place them on the right"). Plain
+   options stay as they are, their long text cut with "..." */
+.smenu.dsel-m button:has(> .lk-sq) { display: flex; justify-content: space-between; align-items: center; gap: 18px; }
 .dsel-m button.on { background: var(--g26, #262626); color: #fff; }
 .dsel-m button:focus-visible { outline: none; background: var(--g26, #262626); }
 .dsel-m button:disabled { opacity: 0.45; cursor: default; }
@@ -1418,7 +1423,11 @@ select.dsel-n { display: none; }
 /* the colour row: the accent's box beside its control, the same box as the control's */
 .setrow.lk-colr { position: relative; }
 .lk-cw { display: inline-flex; align-items: stretch; gap: 10px; }
-.lk-acc { width: 30px; padding: 0; display: grid; place-items: center; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; cursor: pointer; transition: border-color 140ms ease-out; }
+.lk-acc { width: 30px; padding: 0; display: grid; place-items: center; overflow: hidden; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; cursor: pointer;
+  transition: border-color 140ms ease-out, width var(--t-move) var(--e-move), margin-right var(--t-move) var(--e-move), opacity var(--t-move) var(--e-move), border-left-width var(--t-move) var(--e-move), border-right-width var(--t-move) var(--e-move), visibility 0s; }
+/* Mono shows the accent nowhere: its box folds away behind the control and slides back out with Accent or Spectrum
+   (11-10). The gap beside it goes with it; hidden only once it has folded */
+.lk-acc.off { width: 0; margin-right: -10px; border-left-width: 0; border-right-width: 0; opacity: 0; visibility: hidden; pointer-events: none; transition-delay: 0s, 0s, 0s, 0s, 0s, 0s, var(--t-move); }
 .lk-acc:hover, .lk-acc.on { border-color: var(--g55, #555555); } .lk-acc:focus-visible { outline: none; border-color: var(--edit); }
 .lk-acc i { width: 18px; height: 18px; border-radius: 5px; background: var(--c); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15); }
 /* the colour editor, floating: over what is under it, nothing moves */

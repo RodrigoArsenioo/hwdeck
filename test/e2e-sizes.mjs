@@ -321,6 +321,12 @@ ok('a caption in a cell with padding (a Grid cell): cut when its text is wider t
 const subS = await E(`(() => { for (const id in S.L.cells) { const c = S.L.cells[id], r = c.key ? BYKEY.get(c.key) : null; if (!r || isBneck(c) || c.key === GTIME || gfKind(r) || isYN(r) || c.curve || c.pred) continue; const e = evalCell(id, c, true, false); if (/^15 min max /.test(e.sub || '')) return [e.sub, e.subS && e.subS.of, e.subS && e.subS.s]; } return null; })()`);
 ok('a reading\'s "15 min max" caption carries its shorter words, "max ..." (2.1.2)', !!subS && subS[1] === subS[0] && subS[2] === subS[0].replace(/^15 min /, ''), JSON.stringify(subS));
 ok('a missing reading\'s words have shorter ones (2.2)', await E(`missingShort({ key: 'x.none/none' }).length < 20`));
+// (11-10) a tile's narrow wording stands in for a cut caption only when it is shorter: a last session's fps says "avg,
+// <game>" on a wide tile and "last avg, <game>" on a narrow one, so a long game name cut on the wide tile keeps "avg, "
+const capS = await E(`(() => { const g = 'The Elder Scrolls V: Skyrim Special Edition', fps = { tsub: 'avg, ' + g, tsubS: 'last avg, ' + g, sub: 'last session avg, ' + g }; fps.subS = { of: fps.sub, s: fps.tsubS };
+  const gt = { tsub: g + ', ended 2h ago', tsubS: 'ended 2h ago', sub: g + ', ended 2h ago, 3h in 24 h' }; gt.subS = { of: gt.sub, s: gt.tsubS };
+  return [capShort(fps, fps.tsub, true), capShort(fps, fps.tsubS, true), capShort(fps, fps.sub, false), capShort(gt, gt.tsub, true), capShort({ sub: 'x' }, 'x', true)]; })()`);
+ok('a cut caption\'s stand-in is never longer than it: the fps of a last session keeps "avg, <game>" on a wide tile, Game time drops the name, a list row takes the short line', capS[0] === null && capS[1] === null && capS[2] === 'last avg, The Elder Scrolls V: Skyrim Special Edition' && capS[3] === 'ended 2h ago' && capS[4] === null, JSON.stringify(capS));
 await p.sleep(1200);
 const cutNow = await E(`[...document.querySelectorAll('#view .tile .tc')].filter(c => c.offsetParent && /^15 min max /.test(c.textContent) && capCut(c)).length`);
 ok('no "15 min max" caption left cut in the view', cutNow === 0, String(cutNow));

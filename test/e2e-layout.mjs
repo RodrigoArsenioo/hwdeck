@@ -417,6 +417,59 @@ await E('(() => { DR.L.side = "l"; DR.R.side = "r"; syncDrawers(); saveState(); 
   }
   await E(`(() => { S.L = cleanLayout(${L0}); sel = null; selCat = null; setEdit(true); showScreen('tiles', true); return 1; })()`); await p.sleep(700); }
 
+// ---- a move inside a category is fitted for itself (11-10, his recording: the remembered size was kept per count of
+// cells, so a move that needed another row left every other order of the same cells at its smaller size: a blank band
+// under the view after a drop or an undo, kept across restarts). Four 25% tiles and three 33% ones in a view whose
+// height sets the text size: in two rows, in three, in two again ----
+{ const L0 = await E('JSON.stringify(S.L)');
+  const made = await E(`(() => {
+    const keys = READ.slice(0, 60).map(r => r.key); if (keys.length < 40) return 'too few readings';
+    const L = { v: 1, cats: [], cells: {}, views: { tiles: { rows: [], cell: {} } } }; let n = 0;
+    const cat = (id, name, sizes) => { const c = { id, name, collapsed: false, cells: [] };
+      for (const [f, fx] of sizes) { const cid = 'fo' + n; L.cells[cid] = { key: keys[n++], graph: true }; c.cells.push(cid); L.views.tiles.cell[cid] = fx ? { f, fx: true } : { f }; }
+      L.cats.push(c); L.views.tiles.rows.push({ cols: [{ stack: [id] }] }); };
+    cat('foT', 'Order', [[0.25], [0.25], [0.25], [0.25], [0.3333, true], [0.3333, true], [0.3333, true]]);
+    for (let i = 0; i < 3; i++) cat('foF' + i, 'Fill ' + i, Array.from({ length: 8 }, () => [0.25]));
+    S.L = cleanLayout(L); sel = null; selCat = null; undoStack = []; redoStack = []; setEdit(false); showScreen('tiles', true); renderView(false); syncUndo(); return 'ok';
+  })()`);
+  await p.sleep(1300);
+  const at = () => J(`({ fs: parseFloat(document.documentElement.style.fontSize), target: cssScale(), band: sectionsEl.clientHeight - $('view').offsetHeight,
+    rows: [...new Set([...document.querySelectorAll('#view .dcat[data-cat="foT"] .tile')].map(t => Math.round(t.getBoundingClientRect().top)))].length,
+    tiles: [...document.querySelectorAll('#view .dcat[data-cat="foT"] .tile')].map(t => { const r = t.getBoundingClientRect(); return Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height); }).join(' | ') })`);
+  const move = async (from, to) => { await E(`(mutate(() => { const c = S.L.cats.find(c => c.id === 'foT'), x = c.cells.splice(${from}, 1)[0]; c.cells.splice(${to}, 0, x); }), 1)`); await p.sleep(900); return at(); };
+  const a = await at();
+  ok('seven tiles, four of 25% and three of 33%, sit in two rows, and the window\'s height sets the text size', made === 'ok' && a.rows === 2 && a.fs < a.target - 0.3, made + ' ' + JSON.stringify(a));
+  await E('setEdit(true)'); await p.sleep(900);
+  const b1 = await move(2, 6), b2 = await move(2, 6);   // (25, 25, 33, 33, 33, 25, 25: three rows)
+  ok('a 25% one moved behind the 33% ones: three rows, at a smaller text size', b2.rows === 3 && b2.fs < a.fs - 0.8, JSON.stringify([b1, b2]));
+  const c = await move(5, 2);   // (25, 25, 25, 33, 33, 33, 25: two rows again, the last 25% one fills the first)
+  ok('moved back in front: two rows, fitted for this order (not kept at the three-row size)', c.rows === 2 && Math.abs(c.fs - a.fs) < 0.35, JSON.stringify(c) + ' start ' + a.fs.toFixed(3) + ' three rows ' + b2.fs.toFixed(3));
+  await E('setEdit(false)'); await p.sleep(1100);
+  const d = await at();
+  ok('edit mode off: still that size, no blank band under the view', Math.abs(d.fs - a.fs) < 0.35 && d.band < a.band + 25, JSON.stringify(d) + ' start band ' + a.band);
+  for (let i = 0; i < 2; i++) { await E('($("undo").click(), 1)'); await p.sleep(350); }
+  // the last undo and, before a frame or a second's readings can measure again, each caption that has shorter words:
+  // does it show the ones its box calls for now that the view is fitted (they were measured before the fit, and changed
+  // twice within a second)
+  const cap = JSON.parse(await E(`(() => { $('undo').click(); let bad = 0, had = 0; const which = [];
+    for (const r of E.values()) { const el = r.cap, f = el && el._fit; if (!f || !el.isConnected) continue; had++;
+      const shown = el._t; setText(el, f.full); const cut = capCut(el); setText(el, shown); if ((shown === f.short) !== cut) { bad++; which.push(shown); } }
+    return JSON.stringify({ bad, had, which: which.slice(0, 4) }); })()`));
+  await p.sleep(1200);
+  const u = await at();
+  ok('undone from the title bar, not in edit mode: the first order back at its own size', u.rows === 2 && Math.abs(u.fs - a.fs) < 0.35 && u.band < a.band + 25 && await E('undoStack.length') === 0, JSON.stringify(u) + ' start ' + JSON.stringify(a));
+  ok('right after that draw every caption shows the words its fitted box calls for', cap.bad === 0 && cap.had > 0, JSON.stringify(cap));
+  // (11-10, the stress test at seeds 7112 and 7113) a step's size put back by an undo holds through a second draw of the
+  // same view, which comes without the pin: the size is remembered for it, also when a fresh fit would give another.
+  // And it goes back when the room is as it was when the step was taken, whatever room the last fit started in
+  const two = JSON.parse(await E(`(() => { const n0 = fitNow(), small = +(n0.fs - 0.9).toFixed(3), fsNow = () => parseFloat(document.documentElement.style.fontSize), k0 = fitKey(cssScale());
+    fitPin = Object.assign({}, n0, { fs: small }); renderView(false); const f1 = fsNow();
+    renderView(false); const f2 = fsNow();
+    fitPin = Object.assign({}, n0, { fs: small, w: n0.w + 40 }); delete fitMemo[k0]; renderView(false); const f3 = fsNow();   // (another room: not put back, fitted)
+    return JSON.stringify({ start: n0.fs, small, f1, f2, f3 }); })()`));
+  ok('a size put back by an undo holds through a second draw of the view; a step taken in another room is fitted afresh', Math.abs(two.f1 - two.small) < 0.001 && Math.abs(two.f2 - two.small) < 0.001 && Math.abs(two.f3 - two.start) < 0.35, JSON.stringify(two));
+  await E(`(() => { S.L = cleanLayout(${L0}); sel = null; selCat = null; undoStack = []; redoStack = []; setEdit(true); showScreen('tiles', true); syncUndo(); saveState(); subscribe(); return 1; })()`); await p.sleep(700); }
+
 // ---- the title bar: this PC's name (or your title), the clock, Restart HWiNFO ----
 const pc = await E('feed.pc');
 ok('the title is the name of this PC', pc.length > 0 && await E('$("title").textContent') === pc, pc);

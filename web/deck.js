@@ -850,6 +850,9 @@ const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 // light at least 0.18; Classic's white is far above it, 11-09)
 const relLum = h => { const [r, g, b] = hexRgb(h).map(v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 const editCol = h => { if (!/^#[0-9a-f]{6}$/i.test(h || '')) return ACC0; let c = h; for (let i = 0; i < 12 && relLum(c) < 0.18; i++) c = mixHex(c, '#ffffff', 0.12); return c; };
+// (Mono shows the accent nowhere, his 11-10 "the accent color should not display when it's on mono": edit mode's colour
+// is the plain white there; the look keeps its accent for Accent and Spectrum)
+const editOf = L => editCol(L.tint === 'none' ? ACC0 : L.acc);
 const rgbaOf = (h, a) => 'rgba(' + hexRgb(h).join(', ') + ', ' + a + ')';
 function hueOf(h) { const [r, g, b] = hexRgb(h).map(v => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; if (!d) return [0, 0]; const l = (mx + mn) / 2; return [(mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60, (l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn)) * 100]; }
 function lookHsl(h, s, l) { h = ((h % 360) + 360) % 360; s /= 100; l /= 100; const a = s * Math.min(l, 1 - l), f = n => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }; return '#' + [f(0), f(8), f(4)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join(''); }
@@ -893,7 +896,7 @@ function applyLook() {
   const d = document.documentElement, L = S.look, m = palMatch(L);
   d.classList.add('lk-now'); requestAnimationFrame(() => requestAnimationFrame(() => d.classList.remove('lk-now')));   // (a new look all at once: tiles faded over 300 ms behind the rest, 11-06)
   PALETTES.match[1] = m[0]; PALETTES.match[2] = m[1];   // (Match always the current background's: its dots in Colours too)
-  delete d.dataset.cards; d.dataset.tint = L.tint; d.dataset.pops = L.pops; d.style.setProperty('--acc', L.acc); d.style.setProperty('--edit', editCol(L.acc)); GV.clear();
+  delete d.dataset.cards; d.dataset.tint = L.tint; d.dataset.pops = L.pops; d.style.setProperty('--acc', L.acc); d.style.setProperty('--edit', editOf(L)); GV.clear();
   const v = lookVars(L); for (const k in v) d.style.setProperty(k, v[k]);
   TINT.clear(); paintGc();
 }
@@ -1126,6 +1129,11 @@ function restore(json) {
 }
 let undoSeq = 0;   // (counts every step: the stack's length stops changing at its cap)
 // (each step keeps the size the view was fitted at then: undo and redo put that very size back, fitPin)
+// (11-10: a stricter pin was tried and taken out again. It put the size back only on the layout and in the room the
+// size had been FITTED for. But the view a step is taken from is often not freshly fitted: a window resized with the
+// refit still to come, a scrollbar that came with the fit, a second draw. Undo then fitted afresh and came back at
+// another size or with the tiles placed another way: the stress test at seeds 7112 and 7113. So, as in 2.4.4: the size
+// a step had goes back when the view, the text size asked for and the room are as they were when the step was taken)
 const fitOf = new Map(); let fitPin = null, fitOkNow = true;
 const fitNow = () => ({ fs: parseFloat(document.documentElement.style.fontSize) || 0, ok: fitOkNow, w: sectionsEl.clientWidth, h: sectionsEl.clientHeight, screen: S.screen, target: cssScale() });
 function fitKeep(st, s) { st.push(s); fitOf.set(s, fitNow()); if (fitOf.size > 400) fitOf.delete(fitOf.keys().next().value); }
@@ -1515,13 +1523,14 @@ function popAt(card, r) {
 }
 // what opened it, where it is NOW (it may have moved, or been drawn again: found by its cell or id), or null: gone,
 // hidden, or out of the window (then it leaves as before)
-function popHome(m) {
+function popSrc(m) {
   let el = m._src; if (!el) return null;
   if (!el.isConnected && m._srcKey) el = [...document.querySelectorAll(m._srcKey)].find(e => !e.closest('.modal:not(.open)') && e.getClientRects().length) || null;
   if (!el || !el.isConnected || el.closest('.modal:not(.open)') || m.contains(el)) return null;
   const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
-  return r.width > 0 && r.height > 0 && x >= 0 && y >= 0 && x <= innerWidth && y <= innerHeight ? r : null;
+  return r.width > 0 && r.height > 0 && x >= 0 && y >= 0 && x <= innerWidth && y <= innerHeight ? el : null;
 }
+function popHome(m) { const el = popSrc(m); return el ? el.getBoundingClientRect() : null; }
 // the card and the dim as drawn this frame (read before any of their animations is cancelled: a cancelled one no longer counts)
 function popNow(m) {
   const card = popCard(m); if (!card) return null;
@@ -1530,9 +1539,133 @@ function popNow(m) {
 }
 const popStop = m => { for (const k of ['_grow', '_dimIn', '_zout', '_dimOut', '_fade']) if (m[k]) { const a = m[k]; m[k] = null; a.cancel(); } };
 const popDimIn = (m, bg, bf) => { m._dimIn = m.animate([{ opacity: 1, backgroundColor: bg, backdropFilter: bf }, { opacity: 1 }], { duration: 280, easing: POP_DIM_EASE }); };
-function growFrom(m) {
-  const card = popCard(m); m._src = m._srcKey = null;
-  if (!card || !motionOn() || !lastPress || performance.now() - lastPress.t > 700 || m.contains(lastPress.el) || !lastPress.el.isConnected) return;
+// ---- the morph (11-09, his pick after the mocks: "instead of fading from or into black fade from or into the cell
+// preview"): a popup's card IS what was clicked, grown. Its box goes from that thing's exact box and corners to the
+// card's own, and back: the card is scaled to cover the box and clipped to it, a shell behind it carries the border
+// and the shadow. A copy of the clicked cell rides on top, scaled with the box's width: it fades into the popup's
+// content on the way up, and the content fades back into it on the way home, where it lands on the cell itself, so
+// the box is never empty. A button has no picture worth growing: its popup's content comes in early instead. The dim
+// comes and goes with the card. Every morph starts from where the box and each fade are that frame (a close while it
+// opens, a reopen on its way home). A card with a panel beside it (.mwrap) and a popup with nothing to come from keep
+// the plain motion (growPlain, shrinkPlain, popBack without a morph) ----
+const PM_IN = 380, PM_OUT = 280, PM_N = 24, PM_SRC = '.dc, .tile, .row, .bcell, .gx-row, .card, button, .ib', PM_CELL = '.dc, .tile, .row, .bcell, .gx-row';
+// where a morph is when it is turned around (0: the source's box, 1: the card's): the eased progress of the card's own
+// flight, which is what is drawn (a clock kept here would run a frame or two ahead of the screen)
+const pmAt = pm => { const p = pm.a.effect ? pm.a.effect.getComputedTiming().progress : null; return pm.ta + (pm.tb - pm.ta) * (p == null ? 1 : p); };
+const pmRad = el => { const v = parseFloat(getComputedStyle(el).borderTopLeftRadius); return isFinite(v) ? v : 0; };
+const pmOp = el => el ? +getComputedStyle(el).opacity : 0;
+// the frame at t (0: the source's box, 1: the card's): the box, the card scaled to cover it (centred across, from its top
+// down) and clipped to it, 1 px inside where it cuts the card (the shell's border is the edge there)
+function pmFrame(g, R, rs, t) {
+  const l = R.left + (g.L - R.left) * t, tp = R.top + (g.T - R.top) * t, w = R.width + (g.W - R.width) * t, h = R.height + (g.H - R.height) * t, r = rs + (g.r - rs) * t;
+  const s = Math.max(w / g.W, h / g.H), cw = g.W * s, ch = g.H * s, x = l + (w - cw) / 2;
+  let side = (cw - w) / 2 / s, bot = (ch - h) / s; side = side > 0.01 ? side + 1 / s : 0; bot = bot > 0.01 ? bot + 1 / s : 0;
+  return { l, t: tp, w, h, r, tf: 'translate(' + (x - g.L).toFixed(2) + 'px, ' + (tp - g.T).toFixed(2) + 'px) scale(' + s.toFixed(4) + ')',
+    clip: 'inset(0px ' + side.toFixed(2) + 'px ' + bot.toFixed(2) + 'px ' + side.toFixed(2) + 'px round ' + (r / s).toFixed(2) + 'px)' };
+}
+// a cell's picture: a copy of it as it is drawn this frame (every element's computed style written onto its copy, so it
+// looks the same outside its view, and each graph's pixels drawn over), in a box of its own that the morph moves. Null:
+// not a cell (a button, a table's row: it has no box of its own outside its table) or it can't be copied
+// (what it writes: on the cell itself every property; on an element inside it only what differs from a bare element of
+// its kind or from its parent, the rest comes out the same by itself: about a quarter of the time of writing them all)
+let pmNames = null, pmHold = null;
+const pmBare = new Map();
+function pmBareOf(el) {
+  const key = el.namespaceURI + ' ' + el.localName; let v = pmBare.get(key);
+  if (!v) {
+    if (!pmHold) { pmHold = document.createElement('i'); pmHold.style.display = 'none'; pmHold.setAttribute('aria-hidden', 'true'); document.documentElement.appendChild(pmHold); }
+    const e = pmHold.appendChild(document.createElementNS(el.namespaceURI, el.localName)), cs = getComputedStyle(e);
+    v = pmNames.map(n => cs.getPropertyValue(n)); e.remove(); pmBare.set(key, v);
+  }
+  return v;
+}
+function pmCopy(src) {
+  if (!src.matches(PM_CELL) || src.tagName === 'TR' || !src.offsetWidth) return null;
+  try {
+    const g = src.cloneNode(true), a = [src, ...src.querySelectorAll('*')], b = [g, ...g.querySelectorAll('*')];
+    if (a.length !== b.length || a.length > 300) return null;
+    if (!pmNames) pmNames = [...getComputedStyle(document.documentElement)];
+    const at = new Map(), vals = [], n = pmNames.length;
+    for (let i = 0; i < a.length; i++) {
+      const cs = getComputedStyle(a[i]), el = b[i], v = new Array(n), up = i ? vals[at.get(a[i].parentNode)] : null, bare = up ? pmBareOf(a[i]) : null, odd = [];
+      let css = '';
+      for (let j = 0; j < n; j++) {
+        const x = v[j] = cs.getPropertyValue(pmNames[j]);
+        if (up && x === bare[j] && x === up[j]) continue;
+        if (x.indexOf(';') >= 0) odd.push(j); else css += pmNames[j] + ':' + x + ';';
+      }
+      at.set(a[i], i); vals.push(v);
+      el.style.cssText = css + 'transition:none;animation:none;pointer-events:none';   // (a picture: it holds still, and a click goes through it to the card)
+      for (const j of odd) el.style.setProperty(pmNames[j], v[j]);
+      for (const k of ['id', 'class', 'data-cid', 'title', 'tabindex']) el.removeAttribute(k);
+      if (a[i].tagName === 'CANVAS' && a[i].width && a[i].height) { const x = el.getContext('2d'); if (x) x.drawImage(a[i], 0, 0); }
+    }
+    g.style.position = 'absolute'; g.style.left = g.style.top = '0'; g.style.margin = '0'; g.style.transform = 'none'; g.style.transformOrigin = '0 0';
+    const box = document.createElement('i'); box.className = 'pm-ghost'; box.setAttribute('aria-hidden', 'true'); box._w = src.offsetWidth;
+    box.style.cssText = 'position:absolute;box-sizing:border-box;pointer-events:none;overflow:hidden;z-index:9;display:block';
+    box.appendChild(g);
+    return box;
+  }
+  catch (e) { return null; }
+}
+// ends a morph's own pieces (popStop has the card's flight and the dim); keep: its picture stays, for the next morph
+function pmStop(m, keep) {
+  const pm = m._pm; if (!pm) return null; m._pm = null;
+  for (const a of pm.anims) a.cancel(); pm.shell.remove();
+  if (pm.ghost && !keep) pm.ghost.remove();
+  return keep ? pm.ghost : null;
+}
+// one morph from ta to tb (open: up to 1, close: down to 0). from: the content's, the box's and the picture's opacity
+// now; ghost: the clicked cell's picture (null: none)
+function pmRun(m, card, R, rs, ta, tb, dur, from, ghost) {
+  const c = getComputedStyle(card), g = { L: card.offsetLeft, T: card.offsetTop, W: card.offsetWidth, H: card.offsetHeight, r: parseFloat(c.borderTopLeftRadius) || 14 };
+  const ks = [], ss = [], gs = [];
+  for (let i = 0; i <= PM_N; i++) {
+    const f = pmFrame(g, R, rs, ta + (tb - ta) * i / PM_N);
+    ks.push({ offset: i / PM_N, transform: f.tf, clipPath: f.clip, transformOrigin: '0 0', boxShadow: 'none' });
+    ss.push({ offset: i / PM_N, left: f.l + 'px', top: f.t + 'px', width: f.w + 'px', height: f.h + 'px', borderRadius: f.r + 'px' });
+    if (ghost) gs.push({ offset: i / PM_N, transform: 'scale(' + (f.w / ghost._w).toFixed(4) + ')' });
+  }
+  const shell = document.createElement('i'); shell.className = 'pm-shell'; shell.setAttribute('aria-hidden', 'true');
+  shell.style.cssText = 'position:absolute;box-sizing:border-box;pointer-events:none;display:block;background:' + c.backgroundColor + ';border:1px solid ' + c.borderTopColor + ';box-shadow:' + c.boxShadow;
+  m.insertBefore(shell, m.firstChild);
+  const open = tb > ta, o = { duration: dur, easing: POP_EASE_IN, fill: 'forwards' }, lin = { duration: dur, easing: 'linear', fill: 'forwards' };
+  const a = card.animate(ks, o), anims = [shell.animate(ss, o)];
+  let bo, ko;
+  if (ghost) {
+    if (ghost.parentNode !== m) m.appendChild(ghost);
+    anims.push(ghost.animate(ss, o), ghost.firstChild.animate(gs, o));
+    // the picture: out between 12 and 62 % of the way up (the content is under it by then); in between 25 and 72 % of the
+    // way home, whole from there until it has landed
+    anims.push(ghost.animate(open ? [{ opacity: from.gh }, { opacity: from.gh, offset: 0.12 }, { opacity: 0, offset: 0.62 }, { opacity: 0 }]
+                                  : [{ opacity: from.gh }, { opacity: from.gh, offset: 0.25 }, { opacity: 1, offset: 0.72 }, { opacity: 1 }], lin));
+    // the box (the card's ground, its border and shadow): there at once on the way up (the picture covers it), gone over
+    // the last fifth of the way home (the picture is the cell again by then). The content: in under the picture over the
+    // first 45 %, and on the way home it stays until the picture is half in
+    bo = open ? [{ opacity: from.box }, { opacity: 1, offset: 0.1 }, { opacity: 1 }] : [{ opacity: from.box }, { opacity: from.box, offset: 0.8 }, { opacity: 0 }];
+    ko = open ? [{ opacity: from.kid }, { opacity: 1, offset: 0.45 }, { opacity: 1 }] : [{ opacity: from.kid }, { opacity: from.kid, offset: 0.45 }, { opacity: 0, offset: 0.85 }, { opacity: 0 }];
+  }
+  else {
+    // no picture (a button): the box in over the first tenth and out over the last half of the way home; the content
+    // in early (from 5 to 45 %) and out over the first half of the way home
+    bo = open ? [{ opacity: from.box }, { opacity: 1, offset: 0.1 }, { opacity: 1 }] : [{ opacity: from.box }, { opacity: from.box, offset: 0.5 }, { opacity: 0 }];
+    ko = open ? [{ opacity: from.kid }, { opacity: from.kid, offset: 0.05 }, { opacity: 1, offset: 0.45 }, { opacity: 1 }] : [{ opacity: from.kid }, { opacity: 0, offset: 0.5 }, { opacity: 0 }];
+  }
+  anims.push(card.animate(bo, lin), shell.animate(bo, lin));
+  for (const k of card.children) anims.push(k.animate(ko, lin));
+  m._pm = { anims, shell, ghost: ghost || null, a, ta, tb, R, rs };
+  return a;
+}
+// where a morph under way is: for the next one to start from (its picture stays)
+function pmTake(m, card) {
+  const pm = m._pm; if (!pm) return null;
+  const st = { t: pmAt(pm), R: pm.R, rs: pm.rs, from: { kid: pmOp(card.firstElementChild) || 0, box: pmOp(card), gh: pmOp(pm.ghost) } };
+  st.ghost = pmStop(m, true);
+  return st;
+}
+// open all the way: the morph's pieces go (the card as the page draws it, its own shadow where the shell's was)
+const pmLanded = (m, a) => { a.onfinish = () => { if (m._grow !== a) return; a.cancel(); m._grow = null; pmStop(m); }; };
+function growPlain(m, card) {
   const src = lastPress.el.closest('.tile, .row, .bcell, .gx-row, .card, button, .ib') || lastPress.el, br = src.getBoundingClientRect();
   const has = br.width > 0 && br.height > 0, r = has ? br : { left: lastPress.x - 16, top: lastPress.y - 16, width: 32, height: 32 };
   const from = popAt(card, r); if (!from) return;
@@ -1540,13 +1673,48 @@ function growFrom(m) {
   m._grow = card.animate([{ transform: from, opacity: 0 }, { opacity: 1, offset: 0.12 }, { transform: 'none', opacity: 1 }], { duration: POP_IN, easing: POP_EASE_IN });
   popDimIn(m, 'rgba(0, 0, 0, 0)', 'blur(0px)');
 }
-// opened again on its way home: back out from where it got to, dim and all
-function popBack(m, now) {
-  m._grow = now.card.animate([{ transform: now.tf, opacity: now.op }, { transform: 'none', opacity: 1 }], { duration: POP_IN, easing: POP_EASE_IN });
+function growFrom(m) {
+  const card = popCard(m); m._src = m._srcKey = null; pmStop(m);
+  if (!card || !motionOn() || !lastPress || performance.now() - lastPress.t > 700 || m.contains(lastPress.el) || !lastPress.el.isConnected) return;
+  if (card.classList.contains('mwrap')) return growPlain(m, card);
+  const src = lastPress.el.closest(PM_SRC) || lastPress.el, br = src.getBoundingClientRect();
+  if (!(br.width > 0 && br.height > 0) || !card.offsetWidth) return growPlain(m, card);
+  m._src = src; m._srcKey = src.dataset.cid ? '[data-cid="' + CSS.escape(src.dataset.cid) + '"]' : src.id ? '#' + CSS.escape(src.id) : null; m._srcR = pmRad(src);
+  pmLanded(m, m._grow = pmRun(m, card, br, m._srcR, 0, 1, PM_IN, { kid: 0, box: 0, gh: 1 }, pmCopy(src)));
+  popDimIn(m, 'rgba(0, 0, 0, 0)', 'blur(0px)');
+}
+// opened again on its way home: back out from where it got to, dim and all (st: where its morph was, null: a plain flight)
+function popBack(m, now, st) {
+  if (st) pmLanded(m, m._grow = pmRun(m, now.card, st.R, st.rs, st.t, 1, Math.max(160, PM_IN * (1 - st.t)), st.from, st.ghost));
+  else m._grow = now.card.animate([{ transform: now.tf, opacity: now.op }, { transform: 'none', opacity: 1 }], { duration: POP_IN, easing: POP_EASE_IN });
   popDimIn(m, now.bg, now.bf);
 }
 // closing: back into what opened it, from wherever the card is now
 function shrinkHome(m, busy) {
+  const card = popCard(m), el = card && !card.classList.contains('mwrap') && !busy && motionOn() ? popSrc(m) : null;
+  if (!el) {
+    // nothing to go home to (what opened it is gone, or another popup is taking over): the plain way out. From a morph
+    // still on its way up, the box holds where it is and the whole popup fades (the plain flight would take the
+    // morph's transform for one around the card's centre, and jump)
+    if (m._pm && m._grow) {
+      m._grow.pause(); for (const x of m._pm.anims) x.pause();
+      const d = m._dimOut = m.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 150, easing: 'ease-in', fill: 'forwards' });
+      d.onfinish = () => { if (m._dimOut === d) { popStop(m); pmStop(m); } };
+      return;
+    }
+    pmStop(m); return shrinkPlain(m, busy);
+  }
+  const now = popNow(m), r = el.getBoundingClientRect();
+  // (from a morph still on its way up: where it is, its picture kept; from the open card: a new picture of the cell)
+  const st = pmTake(m, card) || { t: 1, from: { kid: 1, box: 1, gh: 0 }, ghost: pmCopy(el) };
+  popStop(m);
+  m.classList.add('zout'); m.inert = true;   // (drawn while it goes home; nothing on it takes a click or a key meanwhile)
+  const dur = Math.max(140, PM_OUT * st.t);
+  m._dimOut = m.animate([{ backgroundColor: now.bg, backdropFilter: now.bf }, { backgroundColor: 'rgba(0, 0, 0, 0)', backdropFilter: 'blur(0px)' }], { duration: dur, easing: POP_EASE_IN, fill: 'forwards' });
+  const a = m._zout = pmRun(m, card, r, pmRad(el), st.t, 0, dur, st.from, st.ghost);
+  a.onfinish = () => { if (m._zout !== a) return; m.style.transition = 'none'; m.classList.remove('zout'); m.inert = false; void m.offsetWidth; m.style.transition = ''; popStop(m); pmStop(m); };
+}
+function shrinkPlain(m, busy) {
   const now = popNow(m), r = !busy && now && motionOn() ? popHome(m) : null, to = r ? popAt(now.card, r) : null;
   const coming = !!(m._dimIn || m._grow);   // (closed before it had come all the way in)
   popStop(m);
@@ -1598,9 +1766,13 @@ const modalObs = new MutationObserver(rs => {
   for (const r of firstOf.values()) {
     const m = r.target, wasOpen = /(^|\s)open(\s|$)/.test(r.oldValue || '');
     if (m.classList.contains('open') && !wasOpen) {
-      const back = m._zout && motionOn() ? popNow(m) : null;   // (opened again on its way home, 11-09)
+      // (opened again on its way home, 11-09: back out from where it is. Not when something else was clicked meanwhile,
+      // another cell while this one's popup closes: that is a new popup, from the new cell)
+      const press = lastPress && performance.now() - lastPress.t <= 700 && lastPress.el.isConnected && !m.contains(lastPress.el) ? lastPress.el.closest(PM_SRC) || lastPress.el : null;
+      const back = m._zout && motionOn() && !(press && press !== m._src) ? popNow(m) : null;
+      const st = back ? pmTake(m, back.card) : null;   // (where its morph was, its picture kept)
       popStop(m); m.classList.remove('zout'); m.inert = false; m._openAt = performance.now();
-      if (back) popBack(m, back); else growFrom(m);
+      if (back) popBack(m, back, st); else growFrom(m);
     }
     else if (!m.classList.contains('open') && wasOpen) shrinkHome(m, opening);   // (one closing as another opens, a swap: it fades as before, two flights at once were busy)
     if (FOCUS_M.includes(m.id) && m.classList.contains('open') !== wasOpen) modalFocus(m, !wasOpen);
@@ -2066,7 +2238,7 @@ function setupHtml() {
   return '<div class="setup" id="view"><h2>HWiNFO isn\'t sharing its sensors yet</h2><span>' + esc(feed.brand || 'HW Deck') + ' shows what HWiNFO measures. Set HWiNFO up once:</span><ol>' +
     '<li>Install HWiNFO from hwinfo.com and start it with <b>Sensors-only</b> ticked.</li><li>In its sensors window, click <b>Config</b>, then <b>Main Settings</b>.</li>' +
     '<li>On the <b>General / User Interface</b> tab, tick <b>Shared Memory Support</b>, then OK.</li>' +
-    '<li>Keep HWiNFO running. The free version stops sharing after 12 hours. Optional: turn on <b>Keep HWiNFO sharing</b> in Settings and ' + esc(feed.brand || 'HW Deck') + ' restarts it for you, so it never runs out.</li></ol>' +
+    '<li>Keep HWiNFO running. The free version stops sharing after 12 hours. ' + (feed.keep ? esc(feed.brand || 'HW Deck') + ' restarts it before that (<b>Keep HWiNFO sharing</b> in Settings).' : 'Optional: turn on <b>Keep HWiNFO sharing</b> in Settings and ' + esc(feed.brand || 'HW Deck') + ' restarts it for you, so it never runs out.') + '</li></ol>' +
     '<span>This screen goes away by itself once the readings arrive. Already set up, and still nothing?</span>' +
     '<span><button class="btn" id="setupRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></span></div>';
 }
@@ -2278,7 +2450,7 @@ let sightPre = null;
 const capRO = new ResizeObserver(es => { for (const e of es) e.target._fit = null; });
 let capQ = [];
 function capSet(el, full, short) {
-  if (!short || short === full) { setText(el, full); return; }
+  if (!short || short === full) { if (el) el._fit = null; setText(el, full); return; }   // (no measure kept of a caption it had before: capRefit would put that one back)
   if (!el._capRO) { el._capRO = true; capRO.observe(el); }
   const f = el._fit;
   if (f && f.full === full && f.short === short) { setText(el, f.cut ? short : full); return; }
@@ -2296,6 +2468,25 @@ function capCut(el) {
 function capMeasure() {
   if (!capQ.length) return;
   const q = capQ; capQ = [];
+  const cut = q.map(([el]) => capCut(el));
+  q.forEach(([el, full, short], i) => { el._fit = { full, short, cut: cut[i] }; if (cut[i]) setText(el, short); });
+}
+// a cut caption's shorter words: the ones written for where it is cut (subS), else a tile's narrow wording, when that
+// one IS shorter. (A last session's fps says "avg, <game>" on a wide tile, "last session" in its corner, and "last avg,
+// <game>" on a narrow one, which has no corner note: cut on the wide tile, a very long game name, it took the narrow
+// wording and cut ten letters more of the name, 11-10)
+const capShort = (e, full, tile) => e.subS && e.subS.of === full ? e.subS.s : tile && e.tsubS && full === e.tsub && e.tsubS.length < full.length ? e.tsubS : null;
+// after a fit: a view drawn again (an undo, a drop, a view picked) had its captions measured before it was fitted, at the
+// text size and in the boxes it had until then, so they showed their shorter words for up to a second and then the whole
+// ones again (11-10, his recording). Measured again here, at the size and in the boxes the view is drawn with
+// (only on a page that is laid out: measured right after growPass, with its growth still to lay out, the browser left
+// every category of a Fill row at its height without the growth and its last row of tiles stuck out under it, for good;
+// reading a caption's style inside a tile sized by its own box did it, the tile looks test 11-10)
+function capRefit() {
+  const q = [];
+  for (const r of E.values()) { const el = r.cap, f = el && el._fit; if (f && el.isConnected) q.push([el, f.full, f.short]); }
+  if (!q.length) return;
+  for (const [el, full] of q) setText(el, full);
   const cut = q.map(([el]) => capCut(el));
   q.forEach(([el, full, short], i) => { el._fit = { full, short, cut: cut[i] }; if (cut[i]) setText(el, short); });
 }
@@ -2340,7 +2531,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
     const nq = r.kind === 'tile' && r.root.classList.contains('nq');
     if (r.cap) {
       const full = r.kind === 'tile' && e.tsub != null ? (nq && e.tsubS ? e.tsubS : e.tsub) : e.sub;
-      capSet(r.cap, full, e.subS && e.subS.of === full ? e.subS.s : r.kind === 'tile' && e.tsubS && full === e.tsub && e.tsubS !== full ? e.tsubS : null);   // (cut: its shorter words; 2.1.2 tiles, 2.2 everywhere)
+      capSet(r.cap, full, capShort(e, full, r.kind === 'tile'));   // (cut: its shorter words; 2.1.2 tiles, 2.2 everywhere)
       r.cap.classList.toggle('y', e.lvl === 1); r.cap.classList.toggle('r', e.lvl === 2);
     }
     if (r.tq) setText(r.tq, e.tsub != null && e.tag && !nq ? e.tag : '');   // (a narrow tile: none, its name keeps the room; his ask 11-04)
@@ -2942,7 +3133,11 @@ let fitNoEven = false;
 const fillEven = el => !fitNoEven && !!el && !!el.closest('.lrow[data-fill]');
 const fitView = v => { if (!v) return v; const o = Object.assign({}, v); delete o.fill; if (Array.isArray(v.rows)) o.rows = v.rows.map(r => { const x = Object.assign({}, r); delete x.h; return x; }); return o; };   // (Fill or not: one size)
 // (the cells too: a name, a graph turned on or off, a missing reading change what fits)
-const fitKey = target => hashKey(JSON.stringify([S.screen, target, !!EXT.ready, sectionsEl.clientWidth, sectionsEl.clientHeight, S.L.cats.map(c => [c.id, cellsOf(c).length, c.collapsed]),
+// (and their order in a category: tiles pack into rows by it. The key had only how many, so every order of the same cells
+// shared one remembered size: a move that needed three rows left the two-row orders at its smaller size, a blank band
+// under the view after an undo or a drop, kept across restarts, 11-10 his recording. Grid keeps the count: its rows sit
+// one under the other in any order, and Automatic Grid decides its tables per key)
+const fitKey = target => hashKey(JSON.stringify([S.screen, target, !!EXT.ready, sectionsEl.clientWidth, sectionsEl.clientHeight, S.L.cats.map(c => [c.id, S.screen === 'grid' ? cellsOf(c).length : cellsOf(c), c.collapsed]),
   fitView(viewOf(S.screen)), S.L.cells, Object.keys(S.L.cells).filter(id => isMissing(S.L.cells[id]))]));
 function autofit() {
   if (document.hidden) drawnHidden = true;   // (measured in the tray: again when the window shows)
@@ -3014,11 +3209,16 @@ function autofit() {
   if (window.__fitLog) __fitLog.push({ k: mkey, memo: memo || 0, memoOk, fb, lo: +lo.toFixed(3), ok, still });   // (the stress test reads how each fit went)
   lastFit[S.screen] = lo / target;
   if (ok) noFit.delete(mkey);
+  // (a step's size put back is remembered like any fit, as in 2.4.4: a second draw of the same view, which comes
+  // without the pin, has to land on it again. Left out for a few hours on 11-10, that draw fitted afresh and an undo
+  // came back a size off: 14.949 before a click, 16.12 after its undo, the stress test at seed 7113)
   rememberFit(mkey, lo);
   app.classList.remove('fitting'); fitNoEven = false; layoutPass();
   if (v.querySelector('.lrow[data-fill]') && sectionsEl.scrollHeight > sectionsEl.clientHeight) { fitNoEven = true; layoutPass(); }   // (even rows don't fit: as All fit)
   growPass(); markSlots(); rememberPacks();
-  document.querySelector('.panes').style.setProperty('--sbw', (sectionsEl.offsetWidth - sectionsEl.clientWidth) + 'px');   // the right tab sits left of the scrollbar
+  const sbw = sectionsEl.offsetWidth - sectionsEl.clientWidth;   // (read before the captions are measured: it lays the page out with the Fill rows' growth, see capRefit)
+  capRefit();
+  document.querySelector('.panes').style.setProperty('--sbw', sbw + 'px');   // the right tab sits left of the scrollbar
   fitRatio = lo / target;
   // Automatic Grid, decided from one table: one that had to go under the size two can have (or that doesn't fit at all)
   // gives two, fitted again. Two on screen with nothing decided for this window: left undecided, the next draw starts
@@ -6373,6 +6573,11 @@ const NOTES = [
     'The chart in Game sessions and Warning history filters the list only with Filter list on.',
     'Edit mode: in your accent colour, arrows on Width and Height, nothing moves as it turns on, and undo brings back exactly what was there.',
     'A reading HWiNFO isn\'t sharing right now just says so; Re-link shows only when it is really gone.']],
+  ['2.4.5', '2.4.5', ['Keep HWiNFO sharing and Accurate game fps are on from the start, and Settings asks Windows for permission less often.',
+    'Update now needs no hidden PowerShell script, and its Windows prompt shows Windows Installer on an administrator account.',
+    'A cell\'s popup grows out of the cell you clicked.',
+    'Look: the accent box folds away on Mono, and the palette list shows each palette\'s colours.',
+    'Undo no longer brings the view back smaller with an empty band under it.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
@@ -8347,12 +8552,13 @@ function renderSettings() {
   // (a field being typed in keeps what was typed, and its focus)
   const fa = document.activeElement, typing = fa && fa.tagName === 'INPUT' && fa.type !== 'range' && fa.id && $('setbody').contains(fa) ? { id: fa.id, v: fa.value, a: fa.selectionStart, b: fa.selectionEnd } : null;
   const rng = fa && fa.type === 'range' && fa.id && $('setbody').contains(fa) ? fa.id : null;   // (a slider in focus keeps it, its value as drawn)
-  const tw = togSnap($('setbody')), sw = setmodal.classList.contains('open') ? segSnap($('setbody')) : null, pw = sw && pickSnap($('setbody')), spT = spinAt();
+  const tw = togSnap($('setbody')), sw = setmodal.classList.contains('open') ? segSnap($('setbody')) : null, pw = sw && pickSnap($('setbody')), aw = sw ? accSnap($('setbody')) : null, spT = spinAt();
+  if (lkPick === 'acc' && S.look.tint === 'none') lkPick = null;   // (Mono by an undo or a look picked with the accent's editor open: no box to hang it on)
   const fa0 = document.activeElement, fk = fa0 && fa0.closest && fa0.closest('#setbody [data-lk]') && fa0.matches(':focus-visible') ? [fa0.dataset.lk, fa0.dataset.k || ''] : null;   // (a key on a pick: the focus comes back to it, 11-09 review)
   const pvEl = $('lkPv'), thL = $('lkThL'), hadSave = !!$('setbody').querySelector('.lk-save'); if (thL && setmodal.classList.contains('open')) lkThTop = thL.scrollTop;   // (the Look page, 11-09: a list from the last time it was open says nothing)
   renderSettings0(); feed.setSig = setSigOf();
-  togSlide($('setbody'), tw); segPills($('setbody'), sw); pickSlide($('setbody'), pw); spinOn(spT); dselUp($('setbody')); lkAfter(pvEl, hadSave); lkPopAnchor();
-  if (fk) { const b = $('setbody').querySelector('[data-lk="' + fk[0] + '"]' + (fk[1] ? '[data-k="' + CSS.escape(fk[1]) + '"]' : '')); if (b) b.focus({ preventScroll: true }); }
+  togSlide($('setbody'), tw); segPills($('setbody'), sw); pickSlide($('setbody'), pw); accSlide($('setbody'), aw); spinOn(spT); dselUp($('setbody')); lkAfter(pvEl, hadSave); lkPopAnchor();
+  if (fk) { const b0 = $('setbody').querySelector('[data-lk="' + fk[0] + '"]' + (fk[1] ? '[data-k="' + CSS.escape(fk[1]) + '"]' : '')), b = b0 && b0.disabled ? $('setbody').querySelector('#sTint button.on') : b0; if (b) b.focus({ preventScroll: true }); }   // (the accent's box folded away under Mono: the control beside it, not the page, 11-10)
   if (rng && $(rng)) $(rng).focus({ preventScroll: true });
   const fi = typing && $(typing.id);
   if (fi) { if (fi.value !== typing.v) fi.dataset.dirty = '1'; fi.value = typing.v; fi.focus(); try { fi.setSelectionRange(typing.a, typing.b); } catch (e) { } }
@@ -8367,6 +8573,23 @@ function pickSlide(root, was) {
   const moved = [...root.querySelectorAll('[data-lk]:not(.tog2)')].filter(x => !x.closest('.seg3') && was.has(pickKey(x)) && was.get(pickKey(x)) !== x.classList.contains('on'));
   if (!moved.length) return;
   for (const x of moved) x.classList.toggle('on'); void root.offsetWidth; for (const x of moved) x.classList.toggle('on');
+}
+// the accent's box folds away under Mono and comes back with Accent or Spectrum (11-10): Settings is drawn again on the
+// pick, so the new box is put back where the last one was, then let go, and slides to its place as its CSS says. Not
+// with animations Off, nor as Settings opens. (Put back with its transition off: the pills before it have the page
+// styled already, so the way back would itself start a slide, and letting go then turned that one around at its start:
+// nothing moved. And where it was, not at an end: drawn again mid-slide, by a second pick or any other control, it goes
+// on from where it had got to instead of jumping to an end first, the review 11-10)
+const ACC_AT = ['width', 'marginRight', 'opacity', 'borderLeftWidth', 'borderRightWidth'];
+const accSnap = root => { const a = root.querySelector('.lk-acc'); if (!a) return null; const cs = getComputedStyle(a), o = {}; for (const k of ACC_AT) o[k] = cs[k]; return o; };
+function accSlide(root, was) {
+  const a = root.querySelector('.lk-acc');
+  if (!a || !was || motionMode() === 'off') return;
+  const cs = getComputedStyle(a), st = a.style;
+  if (ACC_AT.every(k => Math.abs(parseFloat(was[k]) - parseFloat(cs[k])) < 0.01)) return;   // (where it ends already)
+  st.transition = 'none'; for (const k of ACC_AT) st[k] = was[k]; st.visibility = 'visible';   // (seen on its way: folded it is hidden)
+  void a.offsetWidth;
+  st.transition = ''; for (const k of ACC_AT) st[k] = ''; st.visibility = '';
 }
 // the Check now arrow keeps turning through a redraw, and ends its turn when the answer comes (11-08)
 const spinAt = () => { const v = $('sUpdNow') && $('sUpdNow').querySelector('svg'), a = v && v.getAnimations()[0]; if (!a) return null;
@@ -8520,8 +8743,10 @@ function lookTheme() {
     lkSec('Saved', S.lookSaved.map(lkSavedTile).join('') + (S.lookSaved.length < 12 ? '<button class="lk-t lk-add" data-lk="saveadd" title="Save" aria-label="Save the look"><span class="lk-sw lk-es">' + LK_PLUS + '</span><span class="lk-tn">&nbsp;</span></button>' : '')) +
     fams.map(f => lkSec(f, Object.keys(THEME_PRESETS).filter(id => themeFam(id) === f).map(lkThemeTile).join(''))).join('') + '</div></div></div></div>';
 }
-// the accent's box, beside Mono / Accent / Spectrum in every one of them; its editor floats under the row
-const lkAccBox = () => '<button class="lk-acc' + (lkPick === 'acc' ? ' on' : '') + '" data-lk="chip" data-k="acc" title="Accent" aria-label="Accent, ' + S.look.acc + '" aria-expanded="' + (lkPick === 'acc') + '"><i style="--c:' + S.look.acc + '"></i></button>';
+// the accent's box, beside the control under Accent and Spectrum; its editor floats under the row. Under Mono, where the
+// accent shows nowhere, it is folded away behind the control (off: no width, not seen, not for the keys; 11-10)
+const lkAccBox = () => { const off = S.look.tint === 'none';
+  return '<button class="lk-acc' + (off ? ' off' : '') + (lkPick === 'acc' ? ' on' : '') + '" data-lk="chip" data-k="acc" title="Accent" aria-label="Accent, ' + S.look.acc + '" aria-expanded="' + (lkPick === 'acc') + '"' + (off ? ' disabled aria-hidden="true" tabindex="-1"' : '') + '><i style="--c:' + S.look.acc + '"></i></button>'; };
 // a category's sample line (the same for it each time)
 const lkSpark = seed => { let s = 7; for (const ch of seed) s = (s * 31 + ch.charCodeAt(0)) % 9973; const p = []; for (let i = 0; i <= 14; i++) { s = (s * 7919 + 13) % 9973; p.push((i / 14 * 100).toFixed(1) + ' ' + (3 + s / 9973 * 12).toFixed(1)); } return 'M' + p.join(' L'); };
 const lkCatRow = c => { const col = catTint(c) || '#7a7a7a', on = lkPick === c.id;
@@ -8576,12 +8801,20 @@ async function lkPvDraw(L) {
   const root = document.createElement('div'); root.className = 'pvr'; root.dataset.tint = L.tint; root.dataset.pops = L.pops; root.dataset.motion = 'off';
   root.style.width = W + 'px'; root.style.height = H + 'px'; root.style.transform = 'scale(' + (box.clientWidth / W) + ')';
   const v = lookVars(L); for (const n in v) root.style.setProperty(n, v[n]);
-  root.style.setProperty('--acc', L.acc); root.style.setProperty('--edit', editCol(L.acc));
+  root.style.setProperty('--acc', L.acc); root.style.setProperty('--edit', editOf(L));
   const cl = app.cloneNode(true); cl.inert = true; root.append(cl); sr.append(root);
   const tints = lkTintsFor(L);
   for (const d of cl.querySelectorAll('.dcat[data-cat]')) { const t = tints.get(d.dataset.cat); if (t) d.style.setProperty('--cc', t); else d.style.removeProperty('--cc'); }
   const src = app.querySelectorAll('canvas'), dst = cl.querySelectorAll('canvas');
   for (let i = 0; i < src.length && i < dst.length; i++) pvCanvas(src[i], dst[i], L, tints);
+  // (the 12V-2x6 connector's pins are drawn in their tile's graph colour, written on them by their update: the copy kept
+  // HIS look's, so a Mono theme pointed at showed the pins in his Spectrum colour, 11-10 his "preview bug on the 12v
+  // pin". That look's colour, as a graph gets in pvCanvas; a dimmed tile's pins stay as they are)
+  for (const sp of cl.querySelectorAll('.xpins')) {
+    const tile = sp.closest('[data-cid]'), cat = tile && catOf(tile.dataset.cid), grey = '#7c7c7c';
+    const now = S.look.tint === 'spectrum' && cat ? catTint(cat) || grey : grey, want = L.tint === 'spectrum' && cat ? tints.get(cat.id) || grey : grey;
+    if (now !== want && sp.style.getPropertyValue('--pc') === now) sp.style.setProperty('--pc', want);
+  }
   const old = [...box.querySelectorAll('.lk-pvh')];
   box.append(host);
   if (motionMode() === 'off' || !old.length) { old.forEach(x => x.remove()); return; }
@@ -8756,7 +8989,7 @@ function renderSettings0() {
     setSec('Look',
     lookTheme() + lookBg() + lookCells() +
     '<div class="setrow lk-colr"><div>Colour<small>' + ({ none: 'Greys only: colour is kept for warnings.', accent: 'One colour on what you pick.', spectrum: 'A colour for each category, and the accent.' })[S.look.tint] + '</small></div><span class="lk-cw">' + lkAccBox() + '<span class="seg seg3" id="sTint">' +
-      [['none', 'Mono'], ['accent', 'Accent'], ['spectrum', 'Spectrum']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.tint === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></span>' + (lkPick === 'acc' ? '<div class="lk-fl" data-for="acc">' + lkPop('acc', S.look.acc) + '</div>' : '') + '</div>' +
+      [['none', 'Mono'], ['accent', 'Accent'], ['spectrum', 'Spectrum']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.tint === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></span>' + (lkPick === 'acc' && S.look.tint !== 'none' ? '<div class="lk-fl" data-for="acc">' + lkPop('acc', S.look.acc) + '</div>' : '') + '</div>' +
     (S.look.tint === 'spectrum' ? lookPalette() : '') +
     '<div class="setrow"><div>Popups</div><span class="seg seg3" id="sPops">' +
       [['view', 'View'], ['cells', 'Cells']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.pops === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>') +
@@ -8765,12 +8998,12 @@ function renderSettings0() {
     (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub if there is a new version when HW Deck starts, then once a day. Nothing else is sent.') + '</small></div>' +
       '<span style="display:flex;gap:10px;align-items:center">' + (feed.latest ? '<button class="btn" id="sGet">' + (feed.canUpdate ? 'Update now' : 'Get it') + '</button>' : '') + (feed.updates ? '<button class="ib' + (feed.updBusy ? ' spin' : '') + '" id="sUpdNow" title="Check now"' + (feed.updBusy ? ' aria-busy="true"' : '') + '><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4.5h-4.5"/></svg></button>' : '') + '<button class="tog2' + (feed.updates ? ' on' : '') + '" id="sUpd" aria-pressed="' + feed.updates + '" title="Check for new versions"></button></span></div>')) +
     setSec('HWiNFO',
-    '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>A restart turns its sharing back on. Windows asks for permission.</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
-    '<div class="setrow"><div>Keep HWiNFO sharing<small>The free HWiNFO stops sharing after 12 hours. With this on, a Windows task restarts it with sharing on after about 11 hours of running, with a few seconds without readings. It turns HWiNFO\'s welcome screen off and starts it in Sensors-only mode, so it comes back by itself. Windows asks for permission once.</small>' +
+    '<div class="setrow"><div>HWiNFO<small' + (feed.hwinfo ? ' class="k">' + esc(feed.hwinfo) : '>Not seen running yet') + '</small><small>A restart turns its sharing back on.</small></div><button class="btn" id="sRestart"' + (feed.fake ? ' disabled' : '') + '>Restart HWiNFO</button></div>' +
+    '<div class="setrow"><div>Keep HWiNFO sharing<small>The free HWiNFO stops sharing after 12 hours. With this on, a Windows task restarts it with sharing on after about 11 hours of running, with a few seconds without readings. It turns HWiNFO\'s welcome screen off and starts it in Sensors-only mode, so it comes back by itself.</small>' +
       (feed.keep && feed.keepNote && !feed.keepWait ? '<small class="y">' + esc(feed.keepNote) + '</small>' : '') + '</div>' +
       '<button class="tog2' + (feed.keep ? ' on' : '') + '" id="sKeep" aria-pressed="' + feed.keep + '" title="Keep HWiNFO sharing"' + (feed.fake || feed.keepBusy || feed.keepWait ? ' disabled' : '') + '></button></div>') +
     setSec('Games',
-    '<div class="setrow"><div>Accurate game fps<small>HWiNFO\'s fps can be another app\'s: a browser, Discord, a game\'s launcher. With this on, ' + esc(feed.brand || 'HW Deck') + ' counts the game\'s own frames in DirectX games. Windows asks for permission once, then you sign out and back in.</small>' + fpsNote() + '</div>' +
+    '<div class="setrow"><div>Accurate game fps<small>HWiNFO\'s fps can be another app\'s: a browser, Discord, a game\'s launcher. With this on, ' + esc(feed.brand || 'HW Deck') + ' counts the game\'s own frames in DirectX games.</small>' + fpsNote() + '</div>' +
       '<button class="tog2' + (feed.fps ? ' on' : '') + '" id="sFps" aria-pressed="' + feed.fps + '" title="Accurate game fps"' + (feed.fake || feed.fpsBusy || feed.fpsWait ? ' disabled' : '') + '></button></div>' +
     '<div class="setrow"><div>Same game again<small>A game started again within this many minutes of closing goes on with its session. The break shows in its chart but doesn\'t count as play. 0: always a new session.</small></div><span class="setdays">' + spinBox('id="sGameMerge" data-min="0" data-max="240" data-idle="600" maxlength="3"', Number.isFinite(feed.gameMerge) ? feed.gameMerge : 30, '30') + '<i>min</i></span></div>') +
     setSec('Data',

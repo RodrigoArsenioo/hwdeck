@@ -44,6 +44,13 @@ ok('the pins in the tile\'s graph colour: Mono, the graphs\' grey', await until(
 await ev(`(() => { S.look.tint = 'spectrum'; applyLook(); renderView(); return 1; })()`); await p.sleep(400);
 ok('Spectrum: its category\'s colour', await until(`(() => { const c = catTint(catOf("${cid}")); return !!c && ${el}.querySelector('.xb .xpins').style.getPropertyValue('--pc') === c; })()`, 3000),
   await ev(`[catTint(catOf("${cid}")), ${el}.querySelector('.xb .xpins').style.getPropertyValue('--pc')].join(' ')`));
+// the Look page's preview (11-10, his "preview bug on the 12v pin"): the copy of the view kept HIS look's pin colour, so
+// a Mono theme pointed at showed the pins in his Spectrum colour. The copy's pins take that look's colour
+await ev(`$('setBtn').click(), 1`); await p.sleep(1300);
+const pvPins = th => ev(`(async () => { const L = Object.assign(lkPreset(${JSON.stringify(th)}), { pops: S.look.pops }); lkPvAsk(L); await new Promise(r => setTimeout(r, 900)); const h = [...$('lkPv').querySelectorAll('.lk-pvh')].pop(), sp = h && h.shadowRoot.querySelector('[data-cid="${cid}"] .xpins'); return [sp ? sp.style.getPropertyValue('--pc') : 'no pins', lkTintsFor(L).get(catOf("${cid}").id) || '', L.tint].join('|'); })()`);
+const pvMono = await pvPins('classic'), pvSpec = (await pvPins('sunset')).split('|');
+ok('the preview of a Mono theme: the pins in the graphs\' grey, not his Spectrum colour; of a Spectrum theme: that theme\'s colour for the category; his own tile keeps his', pvMono === '#7c7c7c||none' && pvSpec[2] === 'spectrum' && pvSpec[0] === (pvSpec[1] || '#7c7c7c') && await ev(`${el}.querySelector('.xb .xpins').style.getPropertyValue('--pc') === catTint(catOf("${cid}"))`), pvMono + ' ' + pvSpec.join('|') + ' his ' + await ev(`catTint(catOf("${cid}"))`));
+await ev(`(() => { $('setmodal').classList.remove('open'); return 1; })()`); await p.sleep(500);
 await ev(`(() => { S.look.tint = 'none'; applyLook(); renderView(); return 1; })()`); await p.sleep(400);
 
 // the pins' bars and its popup's rows are coloured by the cell's own lines, not by a fixed 9.2 / 9.5 A

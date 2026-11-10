@@ -91,6 +91,53 @@ try {
     const back = await E(`[$('${mod}').classList.contains('open'), document.activeElement && document.activeElement.id]`);
     ok(btn + ': its popup takes the focus, Escape closes it and gives the focus back', inside && !back[0] && back[1] === btn, [inside, back]);
   }
+  // the popup morph (2.4.5, his pick 11-09): a cell's popup grows out of the cell with a copy of the cell on top, and
+  // goes back into it. Turned around mid-way (closed while it grows, another cell or the same one clicked while it
+  // closes, what opened it gone) it leaves no piece behind, a press over the copy reaches the card, and it opens
+  // clean after (the fresh review's findings, 11-09)
+  {
+    const click = async (x, y) => { await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }); await p.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 }); };
+    await E(`(() => { document.querySelectorAll('.modal.open').forEach(m => m.classList.remove('open')); S.motion = 'full'; if (typeof applyMotion === 'function') applyMotion(); window.__prev = showPrev; showPrev = function () {};
+      const b = [...document.querySelectorAll('nav#screens button')].find(b => b.textContent.trim() === 'Tiles'); if (b) b.click(); return 1; })()`);
+    await sleep(1500);
+    const tiles = JSON.parse(await E(`JSON.stringify([...document.querySelectorAll('#view .tile')].filter(t => { const b = t.getBoundingClientRect(); return b.top > 60 && b.bottom < innerHeight - 40 && t.querySelector('canvas'); }).slice(0, 6).map(t => { const b = t.getBoundingClientRect(); return [Math.round(b.left + b.width / 2), Math.round(b.top + b.height / 2), t.dataset.cid || '']; }))`));
+    const A = tiles[0] || [0, 0, ''], B = tiles[tiles.length - 1] || A;
+    const state = async () => JSON.parse(await E(`JSON.stringify((() => { const m = document.getElementById('modal'), c = m.querySelector(':scope > .mcard'); return { open: m.classList.contains('open'), zout: m.classList.contains('zout'), inert: !!m.inert, pieces: document.querySelectorAll('.pm-shell, .pm-ghost').length, pm: !!m._pm, src: m._src ? (m._src.dataset.cid || m._src.className) : null, anims: m.getAnimations({ subtree: true }).length, tf: getComputedStyle(c).transform, op: getComputedStyle(c).opacity, kid: c.firstElementChild ? getComputedStyle(c.firstElementChild).opacity : null, vis: getComputedStyle(m).visibility }; })())`));
+    const settle = async () => { await sleep(900); return state(); };
+    const closeBtn = () => E(`(() => { const b = document.querySelector('#modal .mclose'); if (!b) return null; const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+    const closeAll = async () => { await E(`(() => { document.querySelectorAll('.modal.open').forEach(m => m.classList.remove('open')); return 1; })()`); await sleep(900); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); };
+    const clean = s => s.pieces === 0 && !s.pm && s.anims === 0;
+    ok('popup morph: two tiles to click', tiles.length >= 2 && A[2] !== B[2], JSON.stringify(tiles));
+    await click(A[0], A[1]); let s = await settle();
+    ok('popup morph: open, the card as the page draws it, no pieces left', s.open && clean(s) && s.tf === 'none' && s.op === '1' && s.kid === '1' && s.src === A[2], JSON.stringify(s));
+    let x = await closeBtn(); await click(x[0], x[1]); s = await settle();
+    ok('popup morph: closed, hidden, no pieces left', !s.open && !s.zout && !s.inert && clean(s) && s.vis === 'hidden', JSON.stringify(s));
+    await click(A[0], A[1]); await sleep(110);
+    const hit = await E(`(() => { const g = document.querySelector('.pm-ghost'); if (!g) return 'no copy'; const r = g.getBoundingClientRect(), e = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height, 60) / 2); return e && e.closest('.pm-ghost') ? 'the copy' : e && e.closest('#modal > .mcard') ? 'the card' : e ? e.tagName : 'nothing'; })()`);
+    await p.key('Escape', 'Escape', 27); await sleep(60); const mid = await state(); s = await settle();
+    ok('popup morph: while it grows a press over the cell\'s copy reaches the card, and Escape closes it from there', hit === 'the card' && !mid.open && !s.open && clean(s) && s.vis === 'hidden', hit + ' ' + JSON.stringify(s));
+    await click(A[0], A[1]); await settle(); x = await closeBtn(); await click(x[0], x[1]); await sleep(90);
+    await click(B[0], B[1]); await sleep(60); const midB = await state(); s = await settle();
+    ok('popup morph: another cell clicked while the popup closes: it opens from that cell', s.open && s.src === B[2] && midB.src === B[2] && clean(s) && s.tf === 'none' && s.kid === '1', midB.src + ' ' + JSON.stringify(s));
+    await closeAll();
+    await click(A[0], A[1]); await settle(); x = await closeBtn(); await click(x[0], x[1]); await sleep(90);
+    await click(A[0], A[1]); s = await settle();
+    ok('popup morph: the same cell clicked again while its popup closes: open again, clean', s.open && s.src === A[2] && clean(s) && s.tf === 'none' && s.kid === '1' && s.op === '1', JSON.stringify(s));
+    await closeAll();
+    await click(A[0], A[1]); await sleep(100);
+    await E(`(() => { const m = document.getElementById('modal'); m._src = document.createElement('div'); m._srcKey = null; return 1; })()`);
+    await p.key('Escape', 'Escape', 27); await sleep(50);
+    const at = JSON.parse(await E(`JSON.stringify((() => { const r = document.querySelector('#modal > .mcard').getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), innerWidth, innerHeight]; })())`));
+    s = await settle();
+    ok('popup morph: what opened it gone while it grows, then Escape: it fades where it is, clean after', !s.open && clean(s) && s.vis === 'hidden' && at[0] > -50 && at[1] > -50 && at[0] < at[2] && at[1] < at[3], JSON.stringify(at) + ' ' + JSON.stringify(s));
+    for (let i = 0; i < 6; i++) { await click(A[0], A[1]); await sleep(70); await p.key('Escape', 'Escape', 27); await sleep(70); }
+    s = await settle();
+    ok('popup morph: six quick opens and closes: hidden, no pieces left', !s.open && !s.zout && !s.inert && clean(s), JSON.stringify(s));
+    await click(A[0], A[1]); s = await settle();
+    ok('popup morph: and it opens clean after', s.open && clean(s) && s.tf === 'none' && s.kid === '1', JSON.stringify(s));
+    await closeAll();
+    await E(`(() => { if (window.__prev) showPrev = window.__prev; return 1; })()`);
+  }
   ok('nothing fetched from anywhere but its own server', urls.length > 0 && urls.every(u => u.startsWith(URL0) || u.startsWith('data:') || u.startsWith('blob:')), urls.filter(u => !u.startsWith(URL0)).join(' '));
   ok('no page errors', errs.length === 0, errs.join(' | '));
 } catch (e) { ok('the run gets to its end', false, e.message); }

@@ -118,6 +118,15 @@ await clickOn(`document.querySelector('.lk-acc')`);
 ok('the accent\'s editor floats under its row, at the right; nothing under it moves', await ev(`(() => { const f = document.querySelector('.lk-colr > .lk-fl'), r = document.querySelector('.lk-colr').getBoundingClientRect(); if (!f) return false; const fr = f.getBoundingClientRect(); return getComputedStyle(f).position === 'absolute' && Math.abs(fr.right - r.right) < 1.5 && fr.top >= r.bottom; })()`) && JSON.stringify(await rects('.lk-cr, .lk-palh')) === JSON.stringify(rowsBefore));
 await p.key('Escape', 'Escape', 27); await sleep(300);
 ok('Escape shuts it, Settings stays', await until(`!document.querySelector('.lk-fl')`, 1000) && await ev(`$('setmodal').classList.contains('open')`));
+// the palette list (11-10, his "the colors are WAY too close to the name, place them on the right"): an option's colours
+// at the right end of its row; the plain menu's `display: block` had won over the list's own row rule
+await ev(`(() => { $('lkPal').nextElementSibling.click(); return 1; })()`); await sleep(400);
+const pm = await J(`(() => { const m = document.querySelector('.dsel-m'); if (!m) return null; const sq = [...m.querySelectorAll('button')].filter(b => b.querySelector('.lk-sq'));
+  const rows = sq.map(b => { const br = b.getBoundingClientRect(), n = b.querySelector('.dsel-t').getBoundingClientRect(), q = b.querySelector('.lk-sq').getBoundingClientRect(), pr = parseFloat(getComputedStyle(b).paddingRight); return { gap: q.left - n.right, end: br.right - pr - q.right, h: Math.round(br.height * 10) / 10, mid: Math.abs((q.top + q.bottom) / 2 - (n.top + n.bottom) / 2) }; });
+  return { n: rows.length, minGap: Math.min(...rows.map(r => r.gap)), maxEnd: Math.max(...rows.map(r => Math.abs(r.end))), maxMid: Math.max(...rows.map(r => r.mid)), hs: [...new Set(rows.map(r => r.h))], mw: m.getBoundingClientRect().width, bw: $('lkPal').nextElementSibling.getBoundingClientRect().width }; })()`);
+ok('the palette list: every option\'s colours at the right end of its row, well clear of its name, level with it, all rows one height', !!pm && pm.n > 20 && pm.minGap >= 18 && pm.maxEnd < 0.6 && pm.maxMid < 1.5 && pm.hs.length === 1 && pm.mw >= pm.bw - 0.5, pm);
+await ev(`(() => { const b = document.querySelector('.dsel-m button.on'); if (b) b.click(); return 1; })()`); await sleep(300);
+ok('the option that is on, picked again: the list shuts, nothing changes', await ev(`!document.querySelector('.dsel-m') && $('setmodal').classList.contains('open')`) && JSON.stringify(await rects('.lk-cr, .lk-palh')) === JSON.stringify(rowsBefore));
 // a category's own colour: Custom, from the palette it was; Save keeps it with the look
 const cat1 = await ev(`lkCats()[1].id`);
 await clickOn(`document.querySelector('.lk-hx[data-k="${cat1}"]')`);
