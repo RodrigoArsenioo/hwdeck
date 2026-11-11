@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.6 (2026-11-11)
+
+- A cell's popup opens as a plain box: it grows out of the cell you clicked, and its content fades in once the box is out. Closing, the content fades first and the box goes back into the cell. The 2.4.5 motion drew an enlarged copy of the cell over the popup on the way.
+- Edit mode:
+  - After a cell is dragged its settings open again, for the cell that was dragged. Dragging a cell other than the selected one used to leave them closed, through every later drag.
+  - Storage and the settings move out of the way while a cell's corner, a column's line or a row's line is held, and come back when it is let go, as they already do while a cell is dragged.
+  - The view keeps fitting the window while a cell, a column or a row is being sized. It used to be fitted only when the handle was let go, so everything moved at once then.
+
 ## 2.4.5 (2026-11-10)
 
 - Keep HWiNFO sharing and Accurate game fps are on from the start. The installer sets both up in the one Windows prompt it asks anyway, and an update does the same.

@@ -32,7 +32,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 static class AppInfo
 {
-    public const string Version = "2.4.5";
+    public const string Version = "2.4.6";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;

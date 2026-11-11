@@ -50,11 +50,40 @@ const at = sel => E(`(() => { const r = document.querySelector(${JSON.stringify(
 let a = await at(`#view .dc[data-cid="${moving}"]`), b = await at(`#view .dcat[data-cat="${cat0}"] .dc`);
 await p.drag(a, { x: b.x - b.w / 2 + 6, y: b.y }); await p.sleep(300);
 ok('Tiles: a cell dragged into another category, before its first cell', await E(`S.L.cats[0].cells[0] === "${moving}"`), await E('S.L.cats.map(c => c.cells.length)'));
-ok('the dragged cell stays selected, but its settings don\'t open (a drag isn\'t a click)', await E(`sel === "${moving}" && !document.querySelector(".insp").classList.contains("open") && !$("modal").classList.contains("open")`),
+// (11-10, his "after a successful drag, you simply open the menu again and then close when dragging": before, a drag
+// selected the cell but never opened its settings)
+ok('the dragged cell stays selected and its settings come out again, no popup', await E(`sel === "${moving}" && document.querySelector(".insp").classList.contains("open") && !$("modal").classList.contains("open")`),
   await E('JSON.stringify([sel, DR.R.byPick, document.querySelector(".insp").className])'));
 a = await at(`#view .dc[data-cid="${moving}"]`);
 await p.click(a.x, a.y); await p.sleep(400);
-ok('a click on it then opens its settings', await E(`sel === "${moving}" && document.querySelector(".insp").classList.contains("open")`));
+ok('a click on it keeps its settings out', await E(`sel === "${moving}" && document.querySelector(".insp").classList.contains("open")`));
+// (his recording 11-10: one cell's settings out, another cell dragged: the settings went and stayed away through every
+// later drag, the selected cell's own too)
+{
+  const other = await E(`(S.L.cats[0].cells.find(id => id !== "${moving}" && document.querySelector('#view .dc[data-cid="' + id + '"]')) || '')`);
+  const cells0 = await E('JSON.stringify(S.L.cats.map(c => c.cells))');
+  const nudgeIt = async () => { const q = await at(`#view .dc[data-cid="${other}"]`); await p.drag(q, { x: q.x + 10, y: q.y + 2 }); await p.sleep(500); };
+  const state = () => E('JSON.stringify([sel, DR.R.byPick, document.querySelector(".insp").className, $("inspTitle")._k])');
+  await nudgeIt();
+  ok('a cell that wasn\'t the selected one dragged: it is selected and the settings are out, for it', await E(`sel === "${other}" && document.querySelector(".insp").classList.contains("open") && $("inspTitle")._k === "Cell|" + nameIn("${other}")`), await state());
+  await nudgeIt();
+  ok('dragged again, now the selected one: its settings are still out', await E(`sel === "${other}" && document.querySelector(".insp").classList.contains("open")`), await state());
+  // (the review, 11-10: the settings out for a cell on the left half, a cell on the right half dragged: they came out
+  // on the first one's side and swept across the view to the other side. They open once, from their own edge)
+  const ends = JSON.parse(await E(`JSON.stringify((() => { const t = [...document.querySelectorAll('#view .tile')].map(e => { const r = e.getBoundingClientRect(); return { cid: e.dataset.cid, x: r.left + r.width / 2, y: r.top + r.height / 2, l: r.left, rt: r.right, top: r.top, bot: r.bottom }; }).filter(q => q.top > 60 && q.bot < innerHeight - 20);
+    return [t.filter(q => q.rt < innerWidth / 2).sort((a, b) => a.l - b.l)[0] || null, t.filter(q => q.l > innerWidth / 2 && q.l + 24 < innerWidth - 330).sort((a, b) => a.l - b.l).map(q => Object.assign(q, { x: q.l + 24 }))[0] || null]; })())`));
+  if (ends[0] && ends[1]) {
+    await p.click(ends[0].x, ends[0].y); await p.sleep(500);
+    const side0 = await E('JSON.stringify([document.querySelector(".insp").classList.contains("open"), document.querySelector(".insp").classList.contains("left")])');
+    await p.drag(ends[1], { x: ends[1].x + 10, y: ends[1].y + 2 });
+    const at0 = await E('JSON.stringify([sel, !!DR.R.sliding, document.querySelector(".insp").classList.contains("open"), document.querySelector(".insp").classList.contains("left")])');
+    await p.sleep(500);
+    ok('the settings out on the right for a cell on the left half, a cell on the right half dragged: they open on the left at once, no slide across the view', side0 === '[true,false]' && at0 === JSON.stringify([ends[1].cid, false, true, true]), side0 + ' ' + at0);
+  } else ok('a tile on each half of the view for the across-the-middle drag', false, JSON.stringify(ends));
+  if (await E('JSON.stringify(S.L.cats.map(c => c.cells))') !== cells0) await E('(() => { while (JSON.stringify(S.L.cats.map(c => c.cells)) !== ' + JSON.stringify(cells0) + ' && undoStack.length) undo(); return 1; })()');   // (a nudge that moved it: back, the checks after this count on the order)
+  a = await at(`#view .dc[data-cid="${moving}"]`);
+  await p.click(a.x, a.y); await p.sleep(400);
+}
 // out of edit mode: a press dragged across a cell and let go on it opens nothing; a plain click opens its popup
 await E('(() => { clearSel(); setEdit(false); return 1; })()'); await p.sleep(400);
 a = await at(`#view .dc[data-cid="${moving}"]`);

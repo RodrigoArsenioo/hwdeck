@@ -91,10 +91,10 @@ try {
     const back = await E(`[$('${mod}').classList.contains('open'), document.activeElement && document.activeElement.id]`);
     ok(btn + ': its popup takes the focus, Escape closes it and gives the focus back', inside && !back[0] && back[1] === btn, [inside, back]);
   }
-  // the popup morph (2.4.5, his pick 11-09): a cell's popup grows out of the cell with a copy of the cell on top, and
-  // goes back into it. Turned around mid-way (closed while it grows, another cell or the same one clicked while it
-  // closes, what opened it gone) it leaves no piece behind, a press over the copy reaches the card, and it opens
-  // clean after (the fresh review's findings, 11-09)
+  // the popup's grow (2.4.5 the morph, his pick 11-09; since 11-10 without the cell's copy on top): a cell's popup grows
+  // out of the cell and goes back into it. Turned around mid-way (closed while it grows, another cell or the same one
+  // clicked while it closes, what opened it gone) it leaves no piece behind, a press on its box reaches the card, and
+  // it opens clean after (the fresh review's findings, 11-09)
   {
     const click = async (x, y) => { await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }); await p.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 }); };
     await E(`(() => { document.querySelectorAll('.modal.open').forEach(m => m.classList.remove('open')); S.motion = 'full'; if (typeof applyMotion === 'function') applyMotion(); window.__prev = showPrev; showPrev = function () {};
@@ -112,10 +112,23 @@ try {
     ok('popup morph: open, the card as the page draws it, no pieces left', s.open && clean(s) && s.tf === 'none' && s.op === '1' && s.kid === '1' && s.src === A[2], JSON.stringify(s));
     let x = await closeBtn(); await click(x[0], x[1]); s = await settle();
     ok('popup morph: closed, hidden, no pieces left', !s.open && !s.zout && !s.inert && clean(s) && s.vis === 'hidden', JSON.stringify(s));
+    // (11-10, his "i can almost see the small cell in the big pop up window": no picture of the cell rides on the box any
+    // more. The box is empty while it grows, the content comes in at the end, and on the way home it goes first)
+    await click(A[0], A[1]); await sleep(40);
+    const emp = JSON.parse(await E(`JSON.stringify((() => { const m = document.getElementById('modal'), c = m.querySelector(':scope > .mcard'), as = m.getAnimations({ subtree: true });
+      const at = t => { for (const a of as) { a.pause(); a.currentTime = t; } return [+getComputedStyle(c.firstElementChild).opacity, +getComputedStyle(c).opacity, document.querySelectorAll('.pm-shell').length, document.querySelectorAll('.pm-ghost').length, +(c.getBoundingClientRect().width / c.offsetWidth).toFixed(2)]; };
+      const r = [at(PM_IN * 0.25), at(PM_IN * 0.95)]; for (const a of as) a.finish(); return r; })())`));
+    ok('popup grow: a quarter of the way out the box is there and empty (no content, no picture of the cell), the content is in at the end', emp[0][0] === 0 && emp[0][1] === 1 && emp[0][2] === 1 && emp[0][3] === 0 && emp[0][4] > 0.3 && emp[1][0] > 0.99, JSON.stringify(emp));
+    s = await settle(); let x0 = await closeBtn(); await click(x0[0], x0[1]); await sleep(40);
+    const out = JSON.parse(await E(`JSON.stringify((() => { const m = document.getElementById('modal'), c = m.querySelector(':scope > .mcard'), as = m.getAnimations({ subtree: true });
+      const at = t => { for (const a of as) { a.pause(); a.currentTime = t; } return [+getComputedStyle(c.firstElementChild).opacity, +getComputedStyle(c).opacity, +(c.getBoundingClientRect().width / c.offsetWidth).toFixed(2)]; };
+      const r = [at(PM_OUT * 0.35), at(PM_OUT * 0.7)]; for (const a of as) a.finish(); return r; })())`));
+    ok('popup grow: on the way home the content is gone a third of the way in, while the box is still over half its size; the box itself stays until it has landed', out[0][0] === 0 && out[0][1] === 1 && out[0][2] > 0.5 && out[1][1] === 1, JSON.stringify(out));
+    await settle();
     await click(A[0], A[1]); await sleep(110);
-    const hit = await E(`(() => { const g = document.querySelector('.pm-ghost'); if (!g) return 'no copy'; const r = g.getBoundingClientRect(), e = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height, 60) / 2); return e && e.closest('.pm-ghost') ? 'the copy' : e && e.closest('#modal > .mcard') ? 'the card' : e ? e.tagName : 'nothing'; })()`);
+    const hit = await E(`(() => { const g = document.querySelector('.pm-shell'); if (!g) return 'no box'; const r = g.getBoundingClientRect(), e = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height, 60) / 2); return e && e.closest('.pm-shell') ? 'the box' : e && e.closest('#modal > .mcard') ? 'the card' : e ? e.tagName : 'nothing'; })()`);
     await p.key('Escape', 'Escape', 27); await sleep(60); const mid = await state(); s = await settle();
-    ok('popup morph: while it grows a press over the cell\'s copy reaches the card, and Escape closes it from there', hit === 'the card' && !mid.open && !s.open && clean(s) && s.vis === 'hidden', hit + ' ' + JSON.stringify(s));
+    ok('popup morph: while it grows a press on its box reaches the card, and Escape closes it from there', hit === 'the card' && !mid.open && !s.open && clean(s) && s.vis === 'hidden', hit + ' ' + JSON.stringify(s));
     await click(A[0], A[1]); await settle(); x = await closeBtn(); await click(x[0], x[1]); await sleep(90);
     await click(B[0], B[1]); await sleep(60); const midB = await state(); s = await settle();
     ok('popup morph: another cell clicked while the popup closes: it opens from that cell', s.open && s.src === B[2] && midB.src === B[2] && clean(s) && s.tf === 'none' && s.kid === '1', midB.src + ' ' + JSON.stringify(s));

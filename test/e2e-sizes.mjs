@@ -29,12 +29,14 @@ const tgW = c => E(`document.querySelector('#view .dcat[data-cat="${c}"] .tg').g
 async function dragCorner(cid, dx, dy, alt) {
   await click(`#view .tile[data-cid="${cid}"]`);
   const c = await p.center(`#view .tile[data-cid="${cid}"] .corner`);
+  const insp0 = await E(`document.querySelector('.insp').classList.contains('open')`);
   const m = alt ? 1 : 0;
   await mouse('mouseMoved', c.x, c.y, 0, m); await mouse('mousePressed', c.x, c.y, 1, m);
   for (let i = 1; i <= 10; i++) { await mouse('mouseMoved', c.x + dx * i / 10, c.y + dy * i / 10, 1, m); await p.sleep(16); }
   await p.sleep(120);
-  const seen = await E(`({ pill: document.querySelector('.lpill').textContent, lines: [...document.querySelectorAll('.sguide.on')].length })`);
+  const seen = await E(`({ pill: document.querySelector('.lpill').textContent, lines: [...document.querySelectorAll('.sguide.on')].length, insp: document.querySelector('.insp').classList.contains('open') })`);
   await mouse('mouseReleased', c.x + dx, c.y + dy, 0, m); await p.sleep(700);
+  seen.insp0 = insp0; seen.insp1 = await E(`document.querySelector('.insp').classList.contains('open')`);
   return seen;
 }
 
@@ -171,6 +173,53 @@ const one = await box('a0');
 let seen = await dragCorner('a0', Math.round((aw + g) * 0.13), 0);
 ok('the corner snaps to a share (46% becomes 50%)', (await look('a0')).f === 0.5, JSON.stringify(await look('a0')) + ' ' + seen.pill);
 ok('the size shows while dragging, as a % and rows', /^50% x 1 rows/.test(seen.pill), seen.pill);
+// (11-10, his "the menu should also hide when resizing a cell")
+ok('the tile\'s settings are out before, away while its corner is held, and back when it is let go', seen.insp0 === true && seen.insp === false && seen.insp1 === true, JSON.stringify([seen.insp0, seen.insp, seen.insp1]));
+// (and Storage, pinned out: away too while a corner is held, back after; his 11-11 "it should hide storage too,
+// obviously since move hides it". A tile clear of both drawers: Storage on the left, the settings on the other side)
+{
+  const pin0 = await E('DR.L.pinned'), snap0 = await E('snapOf()');
+  await E(`(() => { DR.L.pinned = true; syncDrawers(); return 1; })()`); await p.sleep(450);
+  const q = await J(`(() => { const sr = document.querySelector('.storage').getBoundingClientRect(), lo = sr.right + 12, hi = innerWidth - 330; for (const t of document.querySelectorAll('#view .tile')) { const r = t.getBoundingClientRect(); if (sr.left < innerWidth / 2 && r.left > lo && r.right < hi && r.top > 60 && r.bottom < innerHeight - 20) return { cid: t.dataset.cid, x: r.left + r.width / 2, y: r.top + r.height / 2 }; } return null; })()`);
+  if (!q) ok('a tile clear of Storage and of the settings, for the corner held with Storage out', false, JSON.stringify(await J(`[innerWidth, document.querySelector('.storage').getBoundingClientRect().right, [...document.querySelectorAll('#view .tile')].map(t => Math.round(t.getBoundingClientRect().left) + '-' + Math.round(t.getBoundingClientRect().right))]`)));
+  else {
+    await p.click(q.x, q.y); await p.sleep(450);
+    const c = await p.center(`#view .tile[data-cid="${q.cid}"] .corner`);
+    const both = () => J(`[document.querySelector('.storage').classList.contains('open'), document.querySelector('.insp').classList.contains('open')]`);
+    const b0 = await both();
+    await mouse('mouseMoved', c.x, c.y, 0); await mouse('mousePressed', c.x, c.y, 1);
+    for (let i = 1; i <= 6; i++) { await mouse('mouseMoved', c.x + 4 * i, c.y, 1); await p.sleep(16); }
+    await p.sleep(150); const b1 = await both();
+    await mouse('mouseReleased', c.x + 24, c.y, 0); await p.sleep(700); const b2 = await both();
+    ok('Storage pinned out and the tile\'s settings: both away while its corner is held, both back when it is let go', JSON.stringify([b0, b1, b2]) === '[[true,true],[false,false],[true,true]]', JSON.stringify([b0, b1, b2]));
+    await E('(() => { while (snapOf() !== ' + JSON.stringify(snap0) + ' && undoStack.length) undo(); return 1; })()'); await p.sleep(300);   // (the size it got: back, the checks after this count on the layout)
+  }
+  await E(`(() => { DR.L.pinned = ${pin0 ? 'true' : 'false'}; DR.L.hover = false; syncDrawers(); return 1; })()`); await p.sleep(450);
+}
+// (11-11, his "all cells move to adapt the window but only when I'm done dragging": the view was fitted only when the
+// corner was let go. It is fitted while the corner is held; letting go moves nothing more; Undo goes back to the size
+// the view had before, Redo to the one it was let go at)
+{
+  const now = () => J(`(() => { const t = document.querySelector('#view .tile[data-cid="a0"]'), r = t.getBoundingClientRect(); return { fs: parseFloat(document.documentElement.style.fontSize), fits: sectionsEl.scrollHeight <= sectionsEl.clientHeight, h: +(t.dataset.h || 1), box: [Math.round(r.top), Math.round(r.bottom), Math.round(r.right)] }; })()`);
+  const snap0 = await E('snapOf()');
+  await click(`#view .tile[data-cid="a0"]`);
+  const c = await p.center(`#view .tile[data-cid="a0"] .corner`), was = await now();
+  await mouse('mouseMoved', c.x, c.y, 0); await mouse('mousePressed', c.x, c.y, 1);
+  for (let i = 1; i <= 12; i++) { await mouse('mouseMoved', c.x, c.y + 20 * i, 1); await p.sleep(16); }
+  await p.sleep(200);
+  const held = await now();
+  await mouse('mouseReleased', c.x, c.y + 240, 0); await p.sleep(800);
+  const after = await now();
+  ok('a corner pulled down 240 px: the tile is taller, and the view is fitted while it is held (nothing under the window, the text no larger than before)', held.h > was.h && held.fits && held.fs <= was.fs + 1e-6, JSON.stringify([was, held]));
+  ok('letting it go moves nothing: the same text size, the tile where it was while held', Math.abs(after.fs - held.fs) < 1e-6 && after.fits && JSON.stringify(after.box) === JSON.stringify(held.box) && after.h === held.h, JSON.stringify([held, after]));
+  await E('undo()'); await p.sleep(700);
+  const un = await now();
+  ok('Undo: the view as it was, at the very size it had before the corner was held', await E('snapOf()') === snap0 && Math.abs(un.fs - was.fs) < 1e-6 && JSON.stringify(un.box) === JSON.stringify(was.box), JSON.stringify([was, un]));
+  await E('redo()'); await p.sleep(700);
+  const re = await now();
+  ok('Redo: the size and the place it was let go at', Math.abs(re.fs - after.fs) < 1e-6 && JSON.stringify(re.box) === JSON.stringify(after.box), JSON.stringify([after, re]));
+  await E('undo()'); await p.sleep(700);
+}
 const s0 = await box('a0');
 seen = await dragCorner('a0', 37, 23, true);
 const s1 = await box('a0');

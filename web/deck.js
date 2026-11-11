@@ -1135,7 +1135,10 @@ let undoSeq = 0;   // (counts every step: the stack's length stops changing at i
 // another size or with the tiles placed another way: the stress test at seeds 7112 and 7113. So, as in 2.4.4: the size
 // a step had goes back when the view, the text size asked for and the room are as they were when the step was taken)
 const fitOf = new Map(); let fitPin = null, fitOkNow = true;
-const fitNow = () => ({ fs: parseFloat(document.documentElement.style.fontSize) || 0, ok: fitOkNow, w: sectionsEl.clientWidth, h: sectionsEl.clientHeight, screen: S.screen, target: cssScale() });
+// (fitWas: a handle let go after the view was fitted while it was held, see liveFit: the step back keeps the size the
+// view had before it was held, not the one on screen now)
+let fitWas = null;
+const fitNow = () => fitWas || ({ fs: parseFloat(document.documentElement.style.fontSize) || 0, ok: fitOkNow, w: sectionsEl.clientWidth, h: sectionsEl.clientHeight, screen: S.screen, target: cssScale() });
 function fitKeep(st, s) { st.push(s); fitOf.set(s, fitNow()); if (fitOf.size > 400) fitOf.delete(fitOf.keys().next().value); }
 function pushUndo(before) { fitKeep(undoStack, atStep(before, stepMeta.get(before))); undoSeq++; if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
 function snap() { pushUndo(snapOf()); }
@@ -1539,17 +1542,17 @@ function popNow(m) {
 }
 const popStop = m => { for (const k of ['_grow', '_dimIn', '_zout', '_dimOut', '_fade']) if (m[k]) { const a = m[k]; m[k] = null; a.cancel(); } };
 const popDimIn = (m, bg, bf) => { m._dimIn = m.animate([{ opacity: 1, backgroundColor: bg, backdropFilter: bf }, { opacity: 1 }], { duration: 280, easing: POP_DIM_EASE }); };
-// ---- the morph (11-09, his pick after the mocks: "instead of fading from or into black fade from or into the cell
-// preview"): a popup's card IS what was clicked, grown. Its box goes from that thing's exact box and corners to the
-// card's own, and back: the card is scaled to cover the box and clipped to it, a shell behind it carries the border
-// and the shadow. A copy of the clicked cell rides on top, scaled with the box's width: it fades into the popup's
-// content on the way up, and the content fades back into it on the way home, where it lands on the cell itself, so
-// the box is never empty. A button has no picture worth growing: its popup's content comes in early instead. The dim
-// comes and goes with the card. Every morph starts from where the box and each fade are that frame (a close while it
-// opens, a reopen on its way home). A card with a panel beside it (.mwrap) and a popup with nothing to come from keep
-// the plain motion (growPlain, shrinkPlain, popBack without a morph) ----
-const PM_IN = 380, PM_OUT = 280, PM_N = 24, PM_SRC = '.dc, .tile, .row, .bcell, .gx-row, .card, button, .ib', PM_CELL = '.dc, .tile, .row, .bcell, .gx-row';
-// where a morph is when it is turned around (0: the source's box, 1: the card's): the eased progress of the card's own
+// ---- the grow (11-10, his "it should have a fade into black and from black", after the 11-09 morph drew the clicked
+// cell's picture, blown up to three times its size, over the popup's content): a popup's card grows out of what was
+// clicked, as a plain box. Its box goes from that thing's exact box and corners to the card's own, and back: the card
+// is scaled to cover the box and clipped to it, a shell behind it carries the ground, the border and the shadow. The
+// box is empty on the way: the content comes in once it is most of the way out, and on the way home the content goes
+// first, then the box lands on what was clicked and fades off it. The dim comes and goes with the card. Every flight
+// starts from where the box and the content are that frame (a close while it opens, a reopen on its way home). A card
+// with a panel beside it (.mwrap) and a popup with nothing to come from keep the plain motion (growPlain, shrinkPlain,
+// popBack without a flight) ----
+const PM_IN = 380, PM_OUT = 280, PM_N = 24, PM_SRC = '.dc, .tile, .row, .bcell, .gx-row, .card, button, .ib', PM_HOME = 'cubic-bezier(0.4, 0, 0.2, 1)';
+// where a flight is when it is turned around (0: the source's box, 1: the card's): the eased progress of the card's own
 // flight, which is what is drawn (a clock kept here would run a frame or two ahead of the screen)
 const pmAt = pm => { const p = pm.a.effect ? pm.a.effect.getComputedTiming().progress : null; return pm.ta + (pm.tb - pm.ta) * (p == null ? 1 : p); };
 const pmRad = el => { const v = parseFloat(getComputedStyle(el).borderTopLeftRadius); return isFinite(v) ? v : 0; };
@@ -1563,107 +1566,44 @@ function pmFrame(g, R, rs, t) {
   return { l, t: tp, w, h, r, tf: 'translate(' + (x - g.L).toFixed(2) + 'px, ' + (tp - g.T).toFixed(2) + 'px) scale(' + s.toFixed(4) + ')',
     clip: 'inset(0px ' + side.toFixed(2) + 'px ' + bot.toFixed(2) + 'px ' + side.toFixed(2) + 'px round ' + (r / s).toFixed(2) + 'px)' };
 }
-// a cell's picture: a copy of it as it is drawn this frame (every element's computed style written onto its copy, so it
-// looks the same outside its view, and each graph's pixels drawn over), in a box of its own that the morph moves. Null:
-// not a cell (a button, a table's row: it has no box of its own outside its table) or it can't be copied
-// (what it writes: on the cell itself every property; on an element inside it only what differs from a bare element of
-// its kind or from its parent, the rest comes out the same by itself: about a quarter of the time of writing them all)
-let pmNames = null, pmHold = null;
-const pmBare = new Map();
-function pmBareOf(el) {
-  const key = el.namespaceURI + ' ' + el.localName; let v = pmBare.get(key);
-  if (!v) {
-    if (!pmHold) { pmHold = document.createElement('i'); pmHold.style.display = 'none'; pmHold.setAttribute('aria-hidden', 'true'); document.documentElement.appendChild(pmHold); }
-    const e = pmHold.appendChild(document.createElementNS(el.namespaceURI, el.localName)), cs = getComputedStyle(e);
-    v = pmNames.map(n => cs.getPropertyValue(n)); e.remove(); pmBare.set(key, v);
-  }
-  return v;
-}
-function pmCopy(src) {
-  if (!src.matches(PM_CELL) || src.tagName === 'TR' || !src.offsetWidth) return null;
-  try {
-    const g = src.cloneNode(true), a = [src, ...src.querySelectorAll('*')], b = [g, ...g.querySelectorAll('*')];
-    if (a.length !== b.length || a.length > 300) return null;
-    if (!pmNames) pmNames = [...getComputedStyle(document.documentElement)];
-    const at = new Map(), vals = [], n = pmNames.length;
-    for (let i = 0; i < a.length; i++) {
-      const cs = getComputedStyle(a[i]), el = b[i], v = new Array(n), up = i ? vals[at.get(a[i].parentNode)] : null, bare = up ? pmBareOf(a[i]) : null, odd = [];
-      let css = '';
-      for (let j = 0; j < n; j++) {
-        const x = v[j] = cs.getPropertyValue(pmNames[j]);
-        if (up && x === bare[j] && x === up[j]) continue;
-        if (x.indexOf(';') >= 0) odd.push(j); else css += pmNames[j] + ':' + x + ';';
-      }
-      at.set(a[i], i); vals.push(v);
-      el.style.cssText = css + 'transition:none;animation:none;pointer-events:none';   // (a picture: it holds still, and a click goes through it to the card)
-      for (const j of odd) el.style.setProperty(pmNames[j], v[j]);
-      for (const k of ['id', 'class', 'data-cid', 'title', 'tabindex']) el.removeAttribute(k);
-      if (a[i].tagName === 'CANVAS' && a[i].width && a[i].height) { const x = el.getContext('2d'); if (x) x.drawImage(a[i], 0, 0); }
-    }
-    g.style.position = 'absolute'; g.style.left = g.style.top = '0'; g.style.margin = '0'; g.style.transform = 'none'; g.style.transformOrigin = '0 0';
-    const box = document.createElement('i'); box.className = 'pm-ghost'; box.setAttribute('aria-hidden', 'true'); box._w = src.offsetWidth;
-    box.style.cssText = 'position:absolute;box-sizing:border-box;pointer-events:none;overflow:hidden;z-index:9;display:block';
-    box.appendChild(g);
-    return box;
-  }
-  catch (e) { return null; }
-}
-// ends a morph's own pieces (popStop has the card's flight and the dim); keep: its picture stays, for the next morph
-function pmStop(m, keep) {
-  const pm = m._pm; if (!pm) return null; m._pm = null;
+// ends a flight's own pieces (popStop has the card's flight and the dim)
+function pmStop(m) {
+  const pm = m._pm; if (!pm) return; m._pm = null;
   for (const a of pm.anims) a.cancel(); pm.shell.remove();
-  if (pm.ghost && !keep) pm.ghost.remove();
-  return keep ? pm.ghost : null;
 }
-// one morph from ta to tb (open: up to 1, close: down to 0). from: the content's, the box's and the picture's opacity
-// now; ghost: the clicked cell's picture (null: none)
-function pmRun(m, card, R, rs, ta, tb, dur, from, ghost) {
+// one flight from ta to tb (open: up to 1, close: down to 0). from: the content's and the box's opacity now
+function pmRun(m, card, R, rs, ta, tb, dur, from) {
   const c = getComputedStyle(card), g = { L: card.offsetLeft, T: card.offsetTop, W: card.offsetWidth, H: card.offsetHeight, r: parseFloat(c.borderTopLeftRadius) || 14 };
-  const ks = [], ss = [], gs = [];
+  const ks = [], ss = [];
   for (let i = 0; i <= PM_N; i++) {
     const f = pmFrame(g, R, rs, ta + (tb - ta) * i / PM_N);
     ks.push({ offset: i / PM_N, transform: f.tf, clipPath: f.clip, transformOrigin: '0 0', boxShadow: 'none' });
     ss.push({ offset: i / PM_N, left: f.l + 'px', top: f.t + 'px', width: f.w + 'px', height: f.h + 'px', borderRadius: f.r + 'px' });
-    if (ghost) gs.push({ offset: i / PM_N, transform: 'scale(' + (f.w / ghost._w).toFixed(4) + ')' });
   }
   const shell = document.createElement('i'); shell.className = 'pm-shell'; shell.setAttribute('aria-hidden', 'true');
   shell.style.cssText = 'position:absolute;box-sizing:border-box;pointer-events:none;display:block;background:' + c.backgroundColor + ';border:1px solid ' + c.borderTopColor + ';box-shadow:' + c.boxShadow;
   m.insertBefore(shell, m.firstChild);
-  const open = tb > ta, o = { duration: dur, easing: POP_EASE_IN, fill: 'forwards' }, lin = { duration: dur, easing: 'linear', fill: 'forwards' };
+  // (on the way home the box starts slowly: the content is gone before it has shrunk far)
+  const open = tb > ta, o = { duration: dur, easing: open ? POP_EASE_IN : PM_HOME, fill: 'forwards' }, lin = { duration: dur, easing: 'linear', fill: 'forwards' };
   const a = card.animate(ks, o), anims = [shell.animate(ss, o)];
-  let bo, ko;
-  if (ghost) {
-    if (ghost.parentNode !== m) m.appendChild(ghost);
-    anims.push(ghost.animate(ss, o), ghost.firstChild.animate(gs, o));
-    // the picture: out between 12 and 62 % of the way up (the content is under it by then); in between 25 and 72 % of the
-    // way home, whole from there until it has landed
-    anims.push(ghost.animate(open ? [{ opacity: from.gh }, { opacity: from.gh, offset: 0.12 }, { opacity: 0, offset: 0.62 }, { opacity: 0 }]
-                                  : [{ opacity: from.gh }, { opacity: from.gh, offset: 0.25 }, { opacity: 1, offset: 0.72 }, { opacity: 1 }], lin));
-    // the box (the card's ground, its border and shadow): there at once on the way up (the picture covers it), gone over
-    // the last fifth of the way home (the picture is the cell again by then). The content: in under the picture over the
-    // first 45 %, and on the way home it stays until the picture is half in
-    bo = open ? [{ opacity: from.box }, { opacity: 1, offset: 0.1 }, { opacity: 1 }] : [{ opacity: from.box }, { opacity: from.box, offset: 0.8 }, { opacity: 0 }];
-    ko = open ? [{ opacity: from.kid }, { opacity: 1, offset: 0.45 }, { opacity: 1 }] : [{ opacity: from.kid }, { opacity: from.kid, offset: 0.45 }, { opacity: 0, offset: 0.85 }, { opacity: 0 }];
-  }
-  else {
-    // no picture (a button): the box in over the first tenth and out over the last half of the way home; the content
-    // in early (from 5 to 45 %) and out over the first half of the way home
-    bo = open ? [{ opacity: from.box }, { opacity: 1, offset: 0.1 }, { opacity: 1 }] : [{ opacity: from.box }, { opacity: from.box, offset: 0.5 }, { opacity: 0 }];
-    ko = open ? [{ opacity: from.kid }, { opacity: from.kid, offset: 0.05 }, { opacity: 1, offset: 0.45 }, { opacity: 1 }] : [{ opacity: from.kid }, { opacity: 0, offset: 0.5 }, { opacity: 0 }];
-  }
+  // the box (the card's ground, its border and shadow): in over the first tenth, and off over the last quarter of the
+  // way home, when it is on what was clicked again. The content: nothing until the box is most of the way out (30 % of
+  // the time), all there at 85 %; on the way home it is gone within the first 30 %
+  const bo = open ? [{ opacity: from.box }, { opacity: 1, offset: 0.1 }, { opacity: 1 }] : [{ opacity: from.box }, { opacity: from.box, offset: 0.75 }, { opacity: 0 }];
+  const ko = open ? [{ opacity: from.kid }, { opacity: from.kid, offset: 0.3 }, { opacity: 1, offset: 0.85 }, { opacity: 1 }] : [{ opacity: from.kid }, { opacity: 0, offset: 0.3 }, { opacity: 0 }];
   anims.push(card.animate(bo, lin), shell.animate(bo, lin));
   for (const k of card.children) anims.push(k.animate(ko, lin));
-  m._pm = { anims, shell, ghost: ghost || null, a, ta, tb, R, rs };
+  m._pm = { anims, shell, a, ta, tb, R, rs };
   return a;
 }
-// where a morph under way is: for the next one to start from (its picture stays)
+// where a flight under way is: for the next one to start from
 function pmTake(m, card) {
   const pm = m._pm; if (!pm) return null;
-  const st = { t: pmAt(pm), R: pm.R, rs: pm.rs, from: { kid: pmOp(card.firstElementChild) || 0, box: pmOp(card), gh: pmOp(pm.ghost) } };
-  st.ghost = pmStop(m, true);
+  const st = { t: pmAt(pm), R: pm.R, rs: pm.rs, from: { kid: pmOp(card.firstElementChild) || 0, box: pmOp(card) } };
+  pmStop(m);
   return st;
 }
-// open all the way: the morph's pieces go (the card as the page draws it, its own shadow where the shell's was)
+// open all the way: the flight's pieces go (the card as the page draws it, its own shadow where the shell's was)
 const pmLanded = (m, a) => { a.onfinish = () => { if (m._grow !== a) return; a.cancel(); m._grow = null; pmStop(m); }; };
 function growPlain(m, card) {
   const src = lastPress.el.closest('.tile, .row, .bcell, .gx-row, .card, button, .ib') || lastPress.el, br = src.getBoundingClientRect();
@@ -1680,12 +1620,12 @@ function growFrom(m) {
   const src = lastPress.el.closest(PM_SRC) || lastPress.el, br = src.getBoundingClientRect();
   if (!(br.width > 0 && br.height > 0) || !card.offsetWidth) return growPlain(m, card);
   m._src = src; m._srcKey = src.dataset.cid ? '[data-cid="' + CSS.escape(src.dataset.cid) + '"]' : src.id ? '#' + CSS.escape(src.id) : null; m._srcR = pmRad(src);
-  pmLanded(m, m._grow = pmRun(m, card, br, m._srcR, 0, 1, PM_IN, { kid: 0, box: 0, gh: 1 }, pmCopy(src)));
+  pmLanded(m, m._grow = pmRun(m, card, br, m._srcR, 0, 1, PM_IN, { kid: 0, box: 0 }));
   popDimIn(m, 'rgba(0, 0, 0, 0)', 'blur(0px)');
 }
-// opened again on its way home: back out from where it got to, dim and all (st: where its morph was, null: a plain flight)
+// opened again on its way home: back out from where it got to, dim and all (st: where its flight was, null: a plain one)
 function popBack(m, now, st) {
-  if (st) pmLanded(m, m._grow = pmRun(m, now.card, st.R, st.rs, st.t, 1, Math.max(160, PM_IN * (1 - st.t)), st.from, st.ghost));
+  if (st) pmLanded(m, m._grow = pmRun(m, now.card, st.R, st.rs, st.t, 1, Math.max(160, PM_IN * (1 - st.t)), st.from));
   else m._grow = now.card.animate([{ transform: now.tf, opacity: now.op }, { transform: 'none', opacity: 1 }], { duration: POP_IN, easing: POP_EASE_IN });
   popDimIn(m, now.bg, now.bf);
 }
@@ -1693,9 +1633,9 @@ function popBack(m, now, st) {
 function shrinkHome(m, busy) {
   const card = popCard(m), el = card && !card.classList.contains('mwrap') && !busy && motionOn() ? popSrc(m) : null;
   if (!el) {
-    // nothing to go home to (what opened it is gone, or another popup is taking over): the plain way out. From a morph
+    // nothing to go home to (what opened it is gone, or another popup is taking over): the plain way out. From a flight
     // still on its way up, the box holds where it is and the whole popup fades (the plain flight would take the
-    // morph's transform for one around the card's centre, and jump)
+    // flight's transform for one around the card's centre, and jump)
     if (m._pm && m._grow) {
       m._grow.pause(); for (const x of m._pm.anims) x.pause();
       const d = m._dimOut = m.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 150, easing: 'ease-in', fill: 'forwards' });
@@ -1705,13 +1645,13 @@ function shrinkHome(m, busy) {
     pmStop(m); return shrinkPlain(m, busy);
   }
   const now = popNow(m), r = el.getBoundingClientRect();
-  // (from a morph still on its way up: where it is, its picture kept; from the open card: a new picture of the cell)
-  const st = pmTake(m, card) || { t: 1, from: { kid: 1, box: 1, gh: 0 }, ghost: pmCopy(el) };
+  // (from a flight still on its way up: where it is; from the open card: all of it)
+  const st = pmTake(m, card) || { t: 1, from: { kid: 1, box: 1 } };
   popStop(m);
   m.classList.add('zout'); m.inert = true;   // (drawn while it goes home; nothing on it takes a click or a key meanwhile)
   const dur = Math.max(140, PM_OUT * st.t);
   m._dimOut = m.animate([{ backgroundColor: now.bg, backdropFilter: now.bf }, { backgroundColor: 'rgba(0, 0, 0, 0)', backdropFilter: 'blur(0px)' }], { duration: dur, easing: POP_EASE_IN, fill: 'forwards' });
-  const a = m._zout = pmRun(m, card, r, pmRad(el), st.t, 0, dur, st.from, st.ghost);
+  const a = m._zout = pmRun(m, card, r, pmRad(el), st.t, 0, dur, st.from);
   a.onfinish = () => { if (m._zout !== a) return; m.style.transition = 'none'; m.classList.remove('zout'); m.inert = false; void m.offsetWidth; m.style.transition = ''; popStop(m); pmStop(m); };
 }
 function shrinkPlain(m, busy) {
@@ -1770,7 +1710,7 @@ const modalObs = new MutationObserver(rs => {
       // another cell while this one's popup closes: that is a new popup, from the new cell)
       const press = lastPress && performance.now() - lastPress.t <= 700 && lastPress.el.isConnected && !m.contains(lastPress.el) ? lastPress.el.closest(PM_SRC) || lastPress.el : null;
       const back = m._zout && motionOn() && !(press && press !== m._src) ? popNow(m) : null;
-      const st = back ? pmTake(m, back.card) : null;   // (where its morph was, its picture kept)
+      const st = back ? pmTake(m, back.card) : null;   // (where its flight was)
       popStop(m); m.classList.remove('zout'); m.inert = false; m._openAt = performance.now();
       if (back) popBack(m, back, st); else growFrom(m);
     }
@@ -3139,14 +3079,16 @@ const fitView = v => { if (!v) return v; const o = Object.assign({}, v); delete 
 // one under the other in any order, and Automatic Grid decides its tables per key)
 const fitKey = target => hashKey(JSON.stringify([S.screen, target, !!EXT.ready, sectionsEl.clientWidth, sectionsEl.clientHeight, S.L.cats.map(c => [c.id, S.screen === 'grid' ? cellsOf(c).length : cellsOf(c), c.collapsed]),
   fitView(viewOf(S.screen)), S.L.cells, Object.keys(S.L.cells).filter(id => isMissing(S.L.cells[id]))]));
-function autofit() {
+// (preview: while a handle is held, liveFit. The view on screen is not the layout kept, so nothing is read from or
+// written to what is remembered by layout: the size that fit, the pin of an undo, "fits nowhere", the tiles' places)
+function autofit(preview) {
   if (document.hidden) drawnHidden = true;   // (measured in the tray: again when the window shows)
   const root = document.documentElement, v = $('view');
   if (!S.L.cats.length || v.classList.contains('empty') || v.classList.contains('setup')) { root.style.fontSize = '13px'; fitRatio = 1; layoutPass(); return; }
   fitNoEven = true;   // (fitted as All fit: see fillEven)
   const target = cssScale(), key = fitKey(target), floor = Math.max(9, target * 0.6);
   // (Automatic Grid: a size per table count)
-  const ag = S.screen === 'grid' && !isCustom('grid'), nOn = ag && v.querySelectorAll('.gtable').length > 1 ? 2 : 1, mkey = ag ? key + '/' + nOn : key, memo = fitMemo[mkey];
+  const ag = S.screen === 'grid' && !isCustom('grid'), nOn = ag && v.querySelectorAll('.gtable').length > 1 ? 2 : 1, mkey = ag ? key + '/' + nOn : key, memo = preview ? undefined : fitMemo[mkey];
   app.classList.toggle('fitting', S.edit);   // edit mode fits like the normal view: empty categories (hidden there) don't count
   const at = f => { root.style.fontSize = f + 'px'; return fits(); };
   // the largest size that fits between lo (fits) and hi (doesn't), to 0.2 px
@@ -3158,15 +3100,47 @@ function autofit() {
   // read at the size the view had before (the step an undo goes back from, say) they could turn down the very size it
   // fit at, and undo or redo then fitted another size than the one it went back to, 11-08 stress test)
   // (an undo or redo: the size this step had, when the window and the view are as they were then)
-  const pin = fitPin; fitPin = null;
+  const pin = preview ? null : fitPin; if (!preview) fitPin = null;
   const pinned = !!pin && pin.fs > 0 && pin.screen === S.screen && Math.abs(pin.target - target) < 0.001 && pin.w === sectionsEl.clientWidth && pin.h === sectionsEl.clientHeight;
   let memoOk = false, fb = 'walk'; if (memo && !pinned) { exactUnits = true; memoOk = at(memo); exactUnits = false; }
+  // (a handle held: a few tries only. Each one lays the whole page out again at another text size, about 13 ms on his
+  // PC, and the search below takes seven or eight: a tenth of a second at every step of a corner. From the size on
+  // screen, steered as the search below is, by how much of the window the view fills, a hair under it (0.08 px of text:
+  // the size it points at just misses about as often as it fits, and a miss is another try), so it lands within a
+  // tenth of a pixel of text of where that search would. The tiles' heights are read at each size tried, so the one
+  // kept needs no pass after it. It is kept only when it settled: a size that fits with the next one up a miss or no
+  // step away. The smallest size a miss: nothing fits, as the search below says in edit mode. Four tries without
+  // either, tiles that flow into other rows between two sizes: the search below, so the size a handle is let go at
+  // is never one a fresh fit would not give; the review 11-11, a tile let go at half the size that fit, remembered)
+  let fast = 0, fastNone = false;
+  if (preview) {
+    const avail = sectionsEl.clientHeight - 20, H = () => Math.max(1, v.offsetHeight), aim = f => f * avail / H() - 0.08;
+    let f = Math.min(target, Math.max(floor, parseFloat(root.style.fontSize) || target)), good = 0, bad = Infinity;
+    exactUnits = true;
+    for (let i = 0; i < 4; i++) {
+      if (at(f)) {
+        good = f;
+        const up = Math.min(target, bad - 0.05, aim(f));
+        if (up - f < 0.08) { fast = f; break; }
+        f = up;
+      } else {
+        bad = f;
+        if (f <= floor + 1e-6) { fastNone = !good; break; }
+        if (good && bad - good < 0.1) { fast = good; break; }
+        const down = Math.max(floor, Math.min(f - 0.08, aim(f)));
+        f = good && down <= good + 0.02 ? (good + bad) / 2 : down;   // (under what fits already: half way to this miss)
+      }
+    }
+    exactUnits = false;
+  }
   if (pinned) { lo = pin.fs; ok = pin.ok; fb = 'pin'; root.style.fontSize = lo + 'px'; }
+  else if (fast) { lo = fast; fb = 'fast'; }
+  else if (fastNone) { lo = target; ok = false; fb = 'fastnone'; }
   else if (memoOk) { lo = memo; fb = 'memo'; }
   else if (memo !== target && at(target)) { lo = target; fb = 'target'; }
   // (fit nowhere last time, at this key: the smallest size once, then scrolling at the full size, 11-06; it walked
   // about 20 sizes again on every view switch and resize)
-  else if (noFit.has(mkey) && !at(floor)) { lo = target; ok = false; fb = 'nofit'; }
+  else if (!preview && noFit.has(mkey) && !at(floor)) { lo = target; ok = false; fb = 'nofit'; }
   // edit mode, redrawn on every change: far too much to ever fit (3 windows tall) scrolls at once, no more tries
   else if (S.edit && sectionsEl.scrollHeight > sectionsEl.clientHeight * 3) { lo = target; ok = false; fb = 'edit3x:' + sectionsEl.scrollHeight + '/' + sectionsEl.clientHeight; }
   else {
@@ -3206,16 +3180,16 @@ function autofit() {
     exactUnits = false;
   }
   fitOkNow = ok;
-  if (window.__fitLog) __fitLog.push({ k: mkey, memo: memo || 0, memoOk, fb, lo: +lo.toFixed(3), ok, still });   // (the stress test reads how each fit went)
+  if (window.__fitLog && !preview) __fitLog.push({ k: mkey, memo: memo || 0, memoOk, fb, lo: +lo.toFixed(3), ok, still });   // (the stress test reads how each fit went)
   lastFit[S.screen] = lo / target;
-  if (ok) noFit.delete(mkey);
+  if (ok && !preview) noFit.delete(mkey);
   // (a step's size put back is remembered like any fit, as in 2.4.4: a second draw of the same view, which comes
   // without the pin, has to land on it again. Left out for a few hours on 11-10, that draw fitted afresh and an undo
   // came back a size off: 14.949 before a click, 16.12 after its undo, the stress test at seed 7113)
-  rememberFit(mkey, lo);
+  if (!preview) rememberFit(mkey, lo);
   app.classList.remove('fitting'); fitNoEven = false; layoutPass();
   if (v.querySelector('.lrow[data-fill]') && sectionsEl.scrollHeight > sectionsEl.clientHeight) { fitNoEven = true; layoutPass(); }   // (even rows don't fit: as All fit)
-  growPass(); markSlots(); rememberPacks();
+  growPass(); markSlots(); if (!preview) rememberPacks();
   const sbw = sectionsEl.offsetWidth - sectionsEl.clientWidth;   // (read before the captions are measured: it lays the page out with the Fill rows' growth, see capRefit)
   capRefit();
   document.querySelector('.panes').style.setProperty('--sbw', sbw + 'px');   // the right tab sits left of the scrollbar
@@ -3223,7 +3197,7 @@ function autofit() {
   // Automatic Grid, decided from one table: one that had to go under the size two can have (or that doesn't fit at all)
   // gives two, fitted again. Two on screen with nothing decided for this window: left undecided, the next draw starts
   // from one (refit after a resize or the banner)
-  if (ag && !gridForce && !gridN[key] && nOn === 1) {
+  if (!preview && ag && !gridForce && !gridN[key] && nOn === 1) {
     const ks = Object.keys(gridN); if (ks.length > 200) delete gridN[ks[0]];
     gridN[key] = (!ok && gridLim() >= floor) || lo < gridLim() - 0.05 ? 2 : 1;   // (one that fits nowhere: two only if they sit side by side at the smallest size)
     if (gridN[key] === 2) { const en = entrance; enterNext = en !== null; slideDir = en || 0; gridForce = 2; try { buildView(); updateView(true, true); autofit(); } finally { gridForce = 0; } }   // (an entrance still to play plays on the two)
@@ -3619,7 +3593,10 @@ function endDrag(cancel) {
   if (viewLater) { viewLater = false; setTimeout(() => renderView(false), 0); }
   dropmark.style.display = 'none'; app.classList.remove('dragging');
   if (d.ghost) { if (d.kind === 'cell' || d.kind === 'cat') flipFrom = { kind: d.kind, id: d.data, r: d.ghost.getBoundingClientRect(), t: performance.now() }; d.ghost.remove(); }
-  syncDrawers();
+  // (a cell let go on a place: its settings come out once, in the mutate below, after the selection has moved to it.
+  // Synced here first they came out for the cell selected before, on that one's side, and then swept across the view
+  // to the dropped cell's side instead of coming in from their own edge: the review, 11-10)
+  if (!(d.started && !cancel && d.kind === 'cell' && d.target && catOf(d.data))) syncDrawers();
   $('newcat').classList.remove('over');
   for (const el of document.querySelectorAll('#view .dragging')) el.classList.remove('dragging');
   for (const el of document.querySelectorAll('#view .dcat')) el.style.opacity = '';
@@ -3646,9 +3623,10 @@ function endDrag(cancel) {
       const at = t.before ? to.cells.indexOf(t.before) : -1;
       to.cells.splice(at >= 0 ? at : to.cells.length, 0, d.data);
       if (t.nl && t.before && to.cells.includes(t.before)) { setLook('cell', t.before, 'nl', '', 'tiles'); setLook('cell', d.data, 'nl', true, 'tiles'); }   // (at the start of a New row: the row starts with it, 11-08 audit)
-      // the selection follows the cell, but a drag doesn't open its settings (a click does): another cell's go away
-      if (sel !== d.data) { DR.R.key = d.data; DR.R.byPick = false; }
-      sel = d.data; selCat = null;
+      // the selection follows the cell and its settings come out again (11-10, his "after a successful drag, you simply
+      // open the menu again and then close when dragging": before, a drag never opened them, so after the drag of a
+      // cell that wasn't the selected one they stayed away, through every later drag)
+      sel = d.data; selCat = null; DR.R.byPick = true; DR.R.pickT = Date.now();
     });
     if (undoSeq === n0) renderView(false);   // (let go where it was: nothing changed, but the selection moved to it)
   }
@@ -4008,40 +3986,94 @@ function guides(lines) {
     else { const a = l.from != null ? l.from : vr.left, b = l.to != null ? l.to : vr.right; Object.assign(d.style, { left: a + 'px', top: Math.round(l.y) + 'px', width: (b - a) + 'px', height: '1px' }); }
   });
 }
-// dragging the corner: its top-left stays, only its category is placed again until it is let go. Its width snaps to 25,
-// 33, 50, 67, 75 and 100% of its row and to the edges of the other tiles, never under the minimum; its height to quarter
-// rows and to the bottom of the columns beside it; Alt: any size
-function startCorner(tile) {
-  const G = tileGeo(tile); if (!G) return false;
-  const xs = [], ys = [], kids = tileKids(G.tg), pos = G.tg._L ? G.tg._L.pos : [], tgL = G.tg.getBoundingClientRect().left;
-  const after = new Set(kids.slice(G.j + 1));
+// while a handle is held: the view fitted again after each step of what it shows, as it will be when it is let go, so
+// nothing moves at the release (his 11-11 "all cells move to adapt the window but only when I'm done dragging": the
+// view was fitted only then, and until then a taller tile pushed the rows under it off the window). The graphs are
+// drawn again at the new size. rs.fit: the size found, which endHandle hands to the fit that follows the release
+function liveFit() {
+  autofit(true); updateView(true, true);
+  rs.fit = fitNow();
+}
+// the corner's geometry read again after such a fit: the tile's box, its category's places, the other tiles' edges and
+// the columns' ends are where the new text size put them. What it started from stays (its own size, in places of the
+// row as it is now)
+function cornerGeo(R) {
+  const G = tileGeo(R.tile); if (!G) return;
+  const c = G.k / R.k;
+  Object.assign(R, { tg: G.tg, j: G.j, k: G.k, g: G.g, fs: G.fs, tw: G.tw, p: G.p, at: G.at, min: G.min, wmin: G.wmin, r: G.r });
+  // (more or fewer tiles to a row now, an Auto tile's height counts in how many: its widths in the new places. Only a
+  // share is so many places more or fewer; an Auto tile and one sized in places are what they were. All of them scaled,
+  // an Auto tile pulled taller was let go a third wide and set by hand; the review 11-11. The width on screen: as the
+  // tile is drawn now)
+  if (Math.abs(c - 1) > 1e-9) { if (R.s.f) { R.s = Object.assign({}, R.s, { w: r4(R.s.f * G.k) }); R.w0 = r4(R.w0 * c); } R.w = R.aw = r4(G.s.w); }
+  cornerEdges(R);
+  const a0 = R.at(R.w0, R.h0); R.sx = a0.x; R.sy = a0.y;
+  R.TH0 = R.at(R.w, R.h).TH;   // (the column's end was read with the size on screen)
+}
+// the edges a corner snaps to (the other tiles', not the ones after it in its category: they move with it), the box the
+// guide lines are drawn in, the left edge of a tile drawn wider than placed, where its column and the ones beside end
+function cornerEdges(R) {
+  const xs = [], ys = [], kids = tileKids(R.tg), pos = R.tg._L ? R.tg._L.pos : [], tgL = R.tg.getBoundingClientRect().left;
+  const after = new Set(kids.slice(R.j + 1));
   // (a row drawn wider, see fillRows, goes back to its placing once a size in it changes: its tiles' edges as placed)
-  const placed = q => [tgL + q.x * G.p, tgL + q.x * G.p + pxW(G, q.w)];
-  for (const t of document.querySelectorAll('#view .tile')) if (t !== tile && !after.has(t)) {
+  const placed = q => [tgL + q.x * R.p, tgL + q.x * R.p + pxW(R, q.w)];
+  for (const t of document.querySelectorAll('#view .tile')) if (t !== R.tile && !after.has(t)) {
     const r = t.getBoundingClientRect(); if (!r.width) continue;
-    const q = t.parentElement === G.tg ? pos[kids.indexOf(t)] : null;
+    const q = t.parentElement === R.tg ? pos[kids.indexOf(t)] : null;
     xs.push(...(q && q.dw != null ? placed(q) : [r.left, r.right])); ys.push(r.top, r.bottom);
   }
-  xs.push(G.tg.getBoundingClientRect().right);
+  xs.push(R.tg.getBoundingClientRect().right);
   guideBox = sectionsEl.getBoundingClientRect();
   // (this one drawn wider: it goes from where it is placed to its right edge as drawn, so the corner stays under the
   // pointer)
-  const pd = pos[G.j];
-  if (pd && pd.dw != null) { const r = G.r, left = placed(pd)[0]; G.r = { left, top: r.top, right: r.right, bottom: r.bottom, width: r.right - left, height: r.height }; }
+  const pd = pos[R.j];
+  if (pd && pd.dw != null) { const r = R.r, left = placed(pd)[0]; R.r = { left, top: r.top, right: r.right, bottom: r.bottom, width: r.right - left, height: r.height }; }
+  R.xs = xs; R.ys = ys; R.ends = colEnds(R.tile.closest('.dcat'));
+  return pd;
+}
+// dragging the corner: its top-left stays, and the view is fitted again at each size it takes (liveFit). Its width snaps
+// to 25, 33, 50, 67, 75 and 100% of its row and to the edges of the other tiles, never under the minimum; its height to
+// quarter rows and to the bottom of the columns beside it; Alt: any size
+function startCorner(tile) {
+  const G = tileGeo(tile); if (!G) return false;
+  G.tile = tile;
+  const pd = cornerEdges(G);
   const w0 = pd && pd.dw != null ? Math.min(G.k, Math.max(G.wmin, r4((G.r.width + G.g) / G.p))) : Math.min(pd ? pd.w : G.s.w, G.k), a0 = G.at(w0, G.s.h);   // (held to the minimum: from what it is drawn at)
-  Object.assign(rs, G, { kind: 'corner', tile, cid: tile.dataset.cid, w0, h0: G.s.h, w: G.s.w, h: G.s.h, th0: a0.th, TH0: a0.TH, sx: a0.x, sy: a0.y, xs, ys, ends: colEnds(tile.closest('.dcat')) });
+  // (gx, gy: where the pointer took it, from its right and bottom edges; aw, ah: the size last drawn)
+  Object.assign(rs, G, { kind: 'corner', tile, cid: tile.dataset.cid, w0, h0: G.s.h, w: G.s.w, h: G.s.h, aw: r4(G.s.w), ah: r4(G.s.h), th0: a0.th, TH0: a0.TH, sx: a0.x, sy: a0.y,
+    gx: rs.x0 - (G.r.left + pxW(G, w0)), gy: rs.y0 - (G.r.top + a0.th) });
   return true;
 }
 function moveCorner(ev) {
-  const R = rs, maxW = R.k, thr = 7, lines = [], seen = new Map(), at0 = R.at;
-  R.at = (w, h) => { const key = w + '|' + h; if (!seen.has(key)) seen.set(key, at0(w, h)); return seen.get(key); };   // each size placed once per move
-  try { moveCorner0(ev, R, maxW, thr, lines); } finally { R.at = at0; }
+  // (a size that changed: the view is fitted again, and where the pointer is in it now may be another size, a taller
+  // tile makes everything smaller; a few rounds settle it, the last one draws the lines where things are)
+  // (the view drawn again under it, new readings from the host: the tile held is no longer the one on screen, and a
+  // geometry read from it now is all zeros; let go of, as Escape; the review 11-11)
+  if (!rs.tile.isConnected) { endHandle(true); return; }
+  for (let i = 0; ; i++) {
+    const R = rs, maxW = R.k, thr = 7, lines = [], seen = new Map(), at0 = R.at;
+    R.at = (w, h) => { const key = w + '|' + h; if (!seen.has(key)) seen.set(key, at0(w, h)); return seen.get(key); };   // each size placed once per move
+    try { moveCorner0(ev, R, maxW, thr, lines); } finally { R.at = at0; }
+    if (!R.fitNext) break;
+    R.fitNext = false;
+    // (the side whose size did not change in this step keeps its place under the pointer through the fit: its grab
+    // point follows where the fit put its edge, how far the pointer is past that edge stays. Left alone, the fit read
+    // as the pointer having gone along that side too, it moves the tile's top and makes the rows shorter: a tile
+    // pulled wider got taller with it, an Auto tile fitted four to a row became a third set by hand; the review 11-11)
+    const ex = ev.clientX - R.gx - R.r.right, ey = ev.clientY - R.gy - R.r.bottom, cw = R.cw, ch = R.ch;
+    liveFit(); cornerGeo(R);
+    if (!cw) R.gx = ev.clientX - R.r.right - ex;
+    if (!ch) R.gy = ev.clientY - R.r.bottom - ey;
+    if (i >= 3) break;
+  }
 }
 function moveCorner0(ev, R, maxW, thr, lines) {
   R.last = { clientX: ev.clientX, clientY: ev.clientY };
   // a side the pointer hasn't moved along keeps its size as it is (a wide tile in a one-per-row category stays wide)
   const dx = ev.clientX - R.x0, dy = ev.clientY - R.y0, mx = Math.abs(dx) >= 3, my = Math.abs(dy) >= 3;
-  let w = mx ? Math.min(maxW, Math.max(R.wmin, R.w0 + dx / R.p)) : R.s.w, level = false;
+  // (by where the pointer is from the tile's left and top as they are now: the view may have been fitted since it was
+  // taken, see moveCorner; with no fit since, the same as its first size plus how far the pointer went)
+  let w = mx ? Math.min(maxW, Math.max(R.wmin, (ev.clientX - R.gx - R.r.left + R.g) / R.p)) : R.s.w, level = false;
   // the snap nearest to where the pointer is wins: one of the shares, another tile's edge, (height) a quarter row, a
   // column beside it ending level, which wins a near tie
   const best = cs => cs.reduce((a, c) => c && (!a || c[0] < a[0]) ? c : a, null);
@@ -4053,7 +4085,7 @@ function moveCorner0(ev, R, maxW, thr, lines) {
   }
   if (w >= maxW - PE && R.s.w > maxW) w = R.s.w;   // (a wide tile held to the row's width keeps its own)
   const th = hh => R.at(w, hh).th, col = hh => R.ends.own + R.at(w, hh).TH - R.TH0;
-  let h = my ? solveSize(th, R.th0 + dy, R.h0) : R.h0;
+  let h = my ? solveSize(th, ev.clientY - R.gy - R.r.top, R.h0) : R.h0;
   if (!ev.altKey && my) {
     const bottom = R.r.top + th(h), hq = Math.min(2, Math.max(0.25, Math.round(h * 4) / 4)), cs = [[Math.abs(R.r.top + th(hq) - bottom), hq]];
     const ny = nearest(R.ys, bottom, thr), hy = ny === null ? null : solveSize(th, ny - R.r.top);
@@ -4080,8 +4112,7 @@ function moveCorner0(ev, R, maxW, thr, lines) {
   }
   R.w = r4(w); R.h = r4(h);
   setTileSz(R.tile, R.w, R.h, R.k, R.s.auto && Math.abs(R.w - R.s.w) <= 1e-4);
-  packTg(R.tg, R.k); tileFit(R.tg, R.tw, R.k, R.g, R.fs);
-  if (R.tg.closest('.lrow.grow')) growPass();   // a Fill row shares its spare room again
+  if (R.w !== R.aw || R.h !== R.ah) { R.cw = R.w !== R.aw; R.ch = R.h !== R.ah; R.aw = R.w; R.ah = R.h; R.fitNext = true; }   // (drawn by the fit that follows: moveCorner; cw, ch: which side changed)
   guides(lines);
   if (sel === R.cid) for (const [k, v] of [['f', Math.round(R.w / R.k * 1000) / 10], ['h', R.h]]) { const b = document.querySelector('#insp input[data-sz="' + k + '"]'); if (b) b.value = v; }
   pill(pctTxt(R.w / R.k) + ' x ' + fmtSz(R.h) + ' rows' + (level ? ', level with the column beside it' : '') + (full ? ', as far as it goes in its place' : ''), ev.clientX + 14, ev.clientY + 10);
@@ -4182,7 +4213,7 @@ function fitRow(id) {
 }
 function startHandle(ev, el) {
   const v = stored(S.screen);
-  rs = { el, x0: ev.clientX, y0: ev.clientY, moved: false, pid: ev.pointerId };
+  rs = { el, x0: ev.clientX, y0: ev.clientY, moved: false, pid: ev.pointerId, fit0: fitNow() };   // (fit0: the size the view has now, for the step back and for a way out that changes nothing)
   if (el.classList.contains('corner')) { if (!startCorner(el.closest('.tile'))) { rs = null; return; } }
   else {
     const rowEl = el.closest('.lrow'), ri = +rowEl.dataset.r, row = v && v.rows && v.rows[ri];
@@ -4200,7 +4231,7 @@ function startHandle(ev, el) {
 function moveHandle(ev) {
   if (!rs) return;
   if (!rs.moved && Math.hypot(ev.clientX - rs.x0, ev.clientY - rs.y0) < 3) return;
-  rs.moved = true;
+  if (!rs.moved) { rs.moved = true; syncDrawers(); }   // (the settings go while it is held: drawerOpen; every way out of endHandle draws them again)
   if (rs.kind === 'split') {
     const k = rs.k, pair = rs.base[k] + rs.base[k + 1], lo = rs.mins[k], hi = pair - rs.mins[k + 1];
     const a = hi < lo || (!rs.fixed && Math.abs(ev.clientX - rs.x0) < rs.unit / 2) ? rs.base[k] : Math.max(lo, Math.min(hi, Math.round(rs.fbase[k] + (ev.clientX - rs.x0) / rs.unit))), b = pair - a;   // (a row that follows its content: under half a twelfth is a wiggle, it stays so, review 11-08)   // (each side at its narrowest at least, 11-08 audit 0202)
@@ -4211,14 +4242,14 @@ function moveHandle(ev) {
       rs.lastA = a;
       if (a === rs.base[k] && !rs.fixed) { if (rs.auto0 !== undefined) rs.rowEl.dataset.auto = rs.auto0; if (rs.cols0) rs.rowEl.style.setProperty('--cols', rs.cols0); else rs.rowEl.style.removeProperty('--cols'); }
       else { delete rs.rowEl.dataset.auto; rs.rowEl.dataset.w = rs.w.join(','); rs.rowEl.style.setProperty('--cols', colTracks(rs.w.map(w => ({ w })))); }
-      layoutPass(); growPass();
+      liveFit();
     }
     pill(pctTxt(a / rs.T) + ' | ' + pctTxt(b / rs.T), ev.clientX, ev.clientY - 36);   // (in %, as the settings, 11-06)
   } else if (rs.kind === 'rowh') {
     const dy = ev.clientY - rs.y0;
     rs.h = dy > 18 ? 1 : dy < -18 ? 0 : rs.h0;
     const rowEl = document.querySelector('#view .lrow[data-r="' + rs.ri + '"]');
-    if (rowEl && rs.lastH !== rs.h) { rs.lastH = rs.h; if (rs.h) rowEl.dataset.fill = '1'; else delete rowEl.dataset.fill; layoutPass(); growPass(); }
+    if (rowEl && rs.lastH !== rs.h) { rs.lastH = rs.h; if (rs.h) rowEl.dataset.fill = '1'; else delete rowEl.dataset.fill; liveFit(); }
     pill(heightTxt(rs.h), ev.clientX, ev.clientY - 36);
   } else moveCorner(ev);
 }
@@ -4230,14 +4261,22 @@ function endHandle(cancel) {
   lpill.classList.remove('on'); h.el.classList.remove('on'); guides();
   justDragged = true; setTimeout(() => { justDragged = false; }, 0);
   if (!h.moved) return;
-  if (cancel) { flipNext = true; renderView(false); renderInsp(); return; }   // (Escape: it glides back from the preview, 11-08)
+  // (the view was fitted while it was held, liveFit: a way out that changes nothing puts back the very size it had
+  // before; a change keeps that size in its step back, and the fit that follows takes the size found while it was
+  // held, so nothing moves as it is let go)
+  const asWas = () => { fitPin = h.fit ? h.fit0 : null; flipNext = true; renderView(false); renderInsp(); fitPin = null; };
+  if (cancel) { asWas(); return; }   // (Escape: it glides back from the preview, 11-08)
   const before = snapOf();
-  if (h.kind === 'split' && !h.fixed && h.w.every((w, i) => w === h.base[i])) { flipNext = true; renderView(false); renderInsp(); return; }   // (a content row left where it was: no step, 11-06; it glides back, 11-08)
-  if (h.kind === 'split') mutate(() => { const row = stored(S.screen).rows[h.ri]; row.cols.forEach((c, i) => { c.w = h.w[i]; }); });
-  else if (h.kind === 'rowh') mutate(() => { const row = stored(S.screen).rows[h.ri]; rowFill(S.screen, row, !!h.h); });
-  else if (h.s.f && Math.abs(h.w - h.s.w) <= 1e-4) mutate(() => setShare(h.cid, h.s.f, h.h, snapAt(h), h.s.fx));   // (a height alone: its share and "set by hand" as they were, 11-06)
-  else mutate(() => setSize(h.cid, h.w, h.h, snapAt(h), h.s.f || Math.abs(h.w - h.s.w) > 1e-4 ? h.k : undefined));   // (its width as it was: a normal tile stays one, 2.2)
-  if (snapOf() === before) { flipNext = true; renderView(false); renderInsp(); }   // back where it started: draw it as it was (gliding, 11-08)
+  if (h.kind === 'split' && !h.fixed && h.w.every((w, i) => w === h.base[i])) { asWas(); return; }   // (a content row left where it was: no step, 11-06; it glides back, 11-08)
+  if (h.fit) { fitWas = h.fit0; fitPin = h.fit; }
+  try {
+    if (h.kind === 'split') mutate(() => { const row = stored(S.screen).rows[h.ri]; row.cols.forEach((c, i) => { c.w = h.w[i]; }); });
+    else if (h.kind === 'rowh') mutate(() => { const row = stored(S.screen).rows[h.ri]; rowFill(S.screen, row, !!h.h); });
+    else if (h.s.f && Math.abs(h.w - h.s.w) <= 1e-4) mutate(() => setShare(h.cid, h.s.f, h.h, snapAt(h), h.s.fx));   // (a height alone: its share and "set by hand" as they were, 11-06)
+    else mutate(() => setSize(h.cid, h.w, h.h, snapAt(h), h.s.f || Math.abs(h.w - h.s.w) > 1e-4 ? h.k : undefined));   // (its width as it was: a normal tile stays one, 2.2)
+  } finally { fitWas = null; fitPin = null; }
+  if (snapOf() === before) asWas();   // back where it started: draw it as it was (gliding, 11-08)
+  else if (h.fit && fitOkNow && sectionsEl.scrollHeight > sectionsEl.clientHeight) refit();   // (the size found while it was held is a hair too large for the view as kept: fitted again)
 }
 const rsOwn = ev => !rs || rs.pid == null || ev.pointerId === rs.pid;   // (only the pointer that started it)
 document.addEventListener('pointermove', ev => { if (rsOwn(ev)) moveHandle(ev); });
@@ -4456,6 +4495,10 @@ for (const k of ['L', 'R']) Object.assign(DR[k], { pinned: false, hover: false, 
 function drawerOpen(k) {
   const d = DR[k]; if (!S.edit) return false;
   if (drag && drag.started) return d.hover;
+  // (a handle held and moved, a tile's corner, a column's line or a row's: both drawers are away as in a drag, so what
+  // is being sized is never under one, and back when it is let go; his 11-10 "the menu should also hide when resizing
+  // a cell", and 11-11 "it should hide storage too, obviously since move hides it": I had left Storage out)
+  if (rs && rs.moved) return d.hover;
   if (k === 'R' && dragPt) return true;   // (a fan curve point held: the drawer stays under it)
   const a = document.activeElement, typing = !!a && d.el.contains(a) && a.matches('input:not([type=checkbox]), select, textarea');
   if (d.hover || d.pinned || typing || (dselOpen && d.el.contains(dselOpen.b))) return true;   // (a list of its open)
@@ -4465,7 +4508,9 @@ function drawerOpen(k) {
 // window cut in half down the middle; half or more of the cell (or the category) on the left, they open on the right,
 // and the other way round. Before, a cell on the right half opened them on the left only if they would have covered it
 function selOnRight() {
-  const el = sel ? document.querySelector('#view .dc[data-cid="' + sel + '"]') : selCat ? document.querySelector('#view .dcat[data-cat="' + selCat + '"]') : null;
+  let el = sel ? document.querySelector('#view .dc[data-cid="' + sel + '"]') : selCat ? document.querySelector('#view .dcat[data-cat="' + selCat + '"]') : null;
+  // (a cell with no box, dropped on a folded category: by its category, so the settings don't open over it, 11-10)
+  if (sel && (!el || !el.getClientRects().length)) { const c = catOf(sel); el = (c && document.querySelector('#view .dcat[data-cat="' + c.id + '"]')) || el; }
   if (!el) return false;
   const r = el.getBoundingClientRect(), mid = innerWidth / 2;
   const onLeft = r.width > 0 ? Math.max(0, Math.min(r.right, mid) - r.left) / r.width : r.left < mid ? 1 : 0;
@@ -4580,6 +4625,10 @@ sectionsEl.addEventListener('pointerdown', ev => {
     const a = document.activeElement;
     if (a && a._typed && a.matches && a.matches('#insp input[data-sz], #insp input[data-csz], #insp input[data-cw], #lName')) { blurInsp(); ev.preventDefault(); return; }
     blurInsp();
+    // (a Ctrl+arrow still to land, its 350 ms not over: it lands first, as a typed size does, and its change redraws,
+    // so this press starts nothing. Held back until the handle was let go, it took the size found while the handle
+    // was held and the handle's step back kept a size its view never had; the review 11-11)
+    if (nudge) { flushNudge(); ev.preventDefault(); return; }
     startHandle(ev, hd); ev.preventDefault(); return;
   }
   const g = ev.target.closest('.dch .grip');
@@ -6578,6 +6627,10 @@ const NOTES = [
     'A cell\'s popup grows out of the cell you clicked.',
     'Look: the accent box folds away on Mono, and the palette list shows each palette\'s colours.',
     'Undo no longer brings the view back smaller with an empty band under it.']],
+  ['2.4.6', '2.4.6', ['A cell\'s popup opens as a plain box that grows out of the cell, and its content fades in after.',
+    'Edit mode: a cell\'s settings open again after you drag it.',
+    'Edit mode: Storage and the settings move out of the way while you size a cell, a column or a row.',
+    'Edit mode: the view keeps fitting the window while you size a cell, so nothing moves when you let go.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
