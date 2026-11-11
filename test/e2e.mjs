@@ -91,6 +91,36 @@ await p.drag({ x: a.x - a.w / 4, y: a.y }, { x: a.x + a.w / 4, y: a.y }); await 
 ok('not editing: a drag across a cell opens no popup', await E('!$("modal").classList.contains("open")'));
 await p.click(a.x, a.y); await p.sleep(500);
 ok('not editing: a click on it still opens its popup', await E('$("modal").classList.contains("open")'));
+// (11-11, his "i can't drag the window when a pop up is open": the popup's dim lies over the title bar. A press on it
+// there, the buttons and tabs aside, asks the host to move the window and how that ended: moved, the popup stays; let
+// go where it was, a click, the popup closes as his 11-04 bug asked. Over a title bar button and anywhere else on the
+// dim the press closes the popup at once, as before)
+{
+  const open = async () => { if (!(await E('$("modal").classList.contains("open")'))) { const q = await at(`#view .dc[data-cid="${moving}"]`); await p.click(q.x, q.y); await p.sleep(600); } };
+  const hold = () => E(`(() => { window.__drags = []; const w = window.chrome.webview; if (!window.__pm0) window.__pm0 = w.postMessage.bind(w); w.postMessage = m => { if (m && m.t === 'drag') window.__drags.push(m.end ? 'end' : 'plain'); else window.__pm0(m); }; return 1; })()`);
+  const press = async (x, y) => { await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }); await p.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 }); await p.sleep(500); };
+  const seen = () => E('JSON.stringify([window.__drags, $("modal").classList.contains("open")])');
+  await hold();
+  const tb = JSON.parse(await E(`JSON.stringify((() => { const r = $('title').getBoundingClientRect(), b = [...document.querySelectorAll('#titlebar button')].map(x => x.getBoundingClientRect()).filter(q => q.width > 0)[0]; return { tx: r.left + Math.min(r.width, 60) / 2, ty: r.top + r.height / 2, bx: b.left + b.width / 2, by: b.top + b.height / 2, top: document.elementFromPoint(r.left + 10, r.top + r.height / 2).id }; })())`));
+  await press(tb.tx, tb.ty);
+  const st1 = await seen();
+  ok('a popup open: a press on the dim over the title bar asks the host to move the window and how it ended; the popup is still there', tb.top === 'modal' && st1 === '[["end"],true]', tb.top + ' ' + st1);
+  await E('(onHost({ t: "dragEnd", moved: true }), 1)'); await p.sleep(400);
+  ok('the window moved: the popup stays', await E('$("modal").classList.contains("open")'));
+  await press(tb.tx, tb.ty);
+  await E('(onHost({ t: "dragEnd", moved: false }), 1)'); await p.sleep(500);
+  ok('let go where it was, a click: the popup closes', await E('!$("modal").classList.contains("open")'));
+  await open(); await hold();
+  await press(tb.bx, tb.by);
+  const st2 = await seen();
+  ok('a press on the dim over a title bar button closes the popup at once, as anywhere else on the dim (no window move asked)', st2 === '[[],false]', st2);
+  // (and with the host: a test copy moves no window, so its answer is "let go where it was")
+  await E(`(() => { window.chrome.webview.postMessage = window.__pm0; return 1; })()`);
+  await open();
+  await press(tb.tx, tb.ty); await p.sleep(400);
+  ok('the host\'s own answer to that press in a test copy (no window moves there): a click, the popup closes', await E('!$("modal").classList.contains("open")'));
+  await open();
+}
 await E('(() => { closeDetail(); setEdit(true); return 1; })()'); await p.sleep(400);
 await storage(true);
 a = await p.centerOf('[...document.querySelectorAll("#vspace .vrow.r")][5]');

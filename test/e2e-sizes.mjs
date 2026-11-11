@@ -157,7 +157,7 @@ ok('undo brings the size back', (await look('a0')).h === 1.5, JSON.stringify(awa
 
 // ---- quick sizes: the shares and the heights in rows ----
 await click('#view .tile[data-cid="a0"]');
-ok('quick sizes: Auto 25 33 50 67 75 100% and 0.5 0.75 1 1.5 2 (11-06: Auto and 0.75 added)', await E(`[...document.querySelectorAll('#insp .seg.qs[data-lay="cf"] button')].map(b => b.textContent).join(' ') === 'Auto 25% 33% 50% 67% 75% 100%' && [...document.querySelectorAll('#insp .seg.qs[data-lay="ch"] button')].map(b => b.textContent).join(' ') === '0.5 0.75 1 1.5 2' && document.querySelector('#insp .seg[data-lay="cf"] button.on').dataset.v === '50'`));
+ok('quick sizes: Auto 25 33 50 67 75 100% and 0.5 0.75 1 1.5 2 3 (11-06: Auto and 0.75 added; 11-11: 3)', await E(`[...document.querySelectorAll('#insp .seg.qs[data-lay="cf"] button')].map(b => b.textContent).join(' ') === 'Auto 25% 33% 50% 67% 75% 100%' && [...document.querySelectorAll('#insp .seg.qs[data-lay="ch"] button')].map(b => b.textContent).join(' ') === '0.5 0.75 1 1.5 2 3' && document.querySelector('#insp .seg[data-lay="cf"] button.on').dataset.v === '50'`));
 await click('#insp .seg[data-lay="cf"] button[data-v="25"]'); await click('#insp .seg[data-lay="ch"] button[data-v="0.5"]');
 ok('one click each: 25% by 0.5 rows, its buttons on', JSON.stringify(await look('a0')) === '{"f":0.25,"h":0.5,"fx":true}' && await E(`document.querySelector('#insp .seg[data-lay="ch"] button.on').dataset.v === '0.5' && document.querySelector('#insp .seg[data-lay="cf"] button.on').dataset.v === '25'`), JSON.stringify(await look('a0')));
 await click('#insp .seg[data-lay="ch"] button[data-v="1"]');
@@ -220,6 +220,17 @@ ok('the tile\'s settings are out before, away while its corner is held, and back
   ok('Redo: the size and the place it was let go at', Math.abs(re.fs - after.fs) < 1e-6 && JSON.stringify(re.box) === JSON.stringify(after.box), JSON.stringify([after, re]));
   await E('undo()'); await p.sleep(700);
 }
+// (11-11: a tile is up to 3 rows tall, 2 before: the layout he picked for his dashboard has two)
+{
+  const snap0 = await E('snapOf()');
+  await E(`(sizeInput('a0', 'h', 3), 1)`); await p.sleep(600);
+  const z3 = await J(`cellSize('a0')`), b3 = await box('a0');
+  await E(`(sizeInput('a0', 'h', 5), 1)`); await p.sleep(600);
+  const z5 = await J(`cellSize('a0')`);
+  const chips = await J(`[...document.querySelectorAll('#insp [data-lay="ch"] button')].map(b => b.textContent.trim())`);
+  ok('a height of 3 rows is kept and drawn about 3 tiles tall, 5 becomes 3, and 3 is among the heights offered', z3.h === 3 && z5.h === 3 && b3.h > one.h * 2.6 && chips.includes('3'), JSON.stringify([z3, z5, Math.round(b3.h), Math.round(one.h), chips]));
+  await E('(() => { while (snapOf() !== ' + JSON.stringify(snap0) + ' && undoStack.length) undo(); return 1; })()'); await p.sleep(500);
+}
 const s0 = await box('a0');
 seen = await dragCorner('a0', 37, 23, true);
 const s1 = await box('a0');
@@ -241,6 +252,52 @@ ok('its width stays (a drag up or down only)', (await look('b0')).f === 0.5, JSO
 await E('undo()'); await p.sleep(500);
 cb = await colBottoms();
 ok('undo: the column back where it was', cb[1] < cb[0] - 50, JSON.stringify(cb));
+
+// (11-11, his recording: the big cell's corner let go a few px under a whole row took the TOP of the next row of the
+// category beside it, 2.06 rows, and the row under it was two half rows a gap apart that read as one. A bottom edge
+// snaps to the other tiles' bottoms only: let go 2 px past the top of Left's second row, Right's first tile is one row)
+{
+  const snap0 = await E('snapOf()');
+  const t2 = await E(`Math.min(...tileKids(document.querySelector('#view .dcat[data-cat="a"] .tg')).map(t => t.getBoundingClientRect().top).filter(t => t > document.querySelector('#view .tile[data-cid="a0"]').getBoundingClientRect().bottom))`);
+  const b0 = await box('b0');
+  seen = await dragCorner('b0', 0, Math.round(t2 - b0.b + 2));
+  const lk = await look('b0'), b1 = await box('b0');
+  ok('a corner let go 2 px past the top of the next row beside it: a whole row as it was, not a gap taller', lk.h === undefined && near(b1.h, b0.h, 1), JSON.stringify([lk, Math.round(t2 - b0.b), b0.h, b1.h]) + ' ' + seen.pill);
+  await E('(() => { while (snapOf() !== ' + JSON.stringify(snap0) + ' && undoStack.length) undo(); return 1; })()'); await p.sleep(500);
+}
+// (11-11: where a column ends does not rise all the way with a tile's height, so it can be level with the one beside it
+// at two heights; the corner held at one of them jumped to the other, his big cell from 2 rows to 0.97. The height
+// is looked for around where the pointer is)
+ok('a height looked for between two limits is the one there, not another where the same holds further off', await E(`(() => { const f = h => h < 1.5 ? 3 - h : h; return solveSize(f, 2) < 1.5 && Math.abs(solveSize(f, 2, undefined, 1.75, 2.25) - 2) < 1e-3; })()`));
+// (11-11, his "wdym?" and the same recording: a cell held at the end of a full row. The white line showed there, where
+// nothing more fits, and the cell let go landed at the start of the next row, or flew back to the place it had. The
+// line is where it lands; where that is its own place there is no line, and nothing changes)
+{
+  await E('(clearSel(), syncDrawers(), 1)'); await p.sleep(500);
+  const snap0 = await E('snapOf()'), rowsNow = async () => { const o = []; for (const c of ['a0', 'a1', 'a2', 'a3', 'a4', 'a5']) { const r = await box(c); o.push([c, Math.round(r.t), Math.round(r.l)]); } return o; };
+  const pre = await rowsNow();
+  ok('Left is two full rows of three', pre[0][1] === pre[2][1] && pre[3][1] === pre[5][1] && pre[3][1] > pre[0][1], JSON.stringify(pre));
+  const hold = async (cid, x, y) => {
+    const a = await box(cid), ax = a.l + a.w / 2, ay = a.t + a.h / 2;
+    await mouse('mouseMoved', ax, ay); await mouse('mousePressed', ax, ay, 1);
+    for (let i = 1; i <= 12; i++) { await mouse('mouseMoved', ax + (x - ax) * i / 12, ay + (y - ay) * i / 12, 1); await p.sleep(16); }
+    await p.sleep(200);
+    const m = await J(`(() => { const r = dropmark.getBoundingClientRect(); return { on: getComputedStyle(dropmark).display !== 'none', x: Math.round(r.left), t: Math.round(r.top), tall: r.height > r.width, target: !!(drag && drag.target) }; })()`);
+    await mouse('mouseReleased', x, y, 0); await p.sleep(800); return m;
+  };
+  const a2 = await box('a2'), a3 = await box('a3');
+  const m1 = await hold('a5', a2.r - 12, a2.t + a2.h / 2), a5 = await box('a5');
+  ok('the last tile held at the end of the full row above: the line is at the start of the second row, where it lands, not at the end of the full row', m1.on && m1.tall && Math.abs(m1.x - a3.l) < 12 && Math.abs(m1.t - a3.t) < 4, JSON.stringify([m1, Math.round(a3.l), Math.round(a3.t), Math.round(a2.r)]));
+  ok('let go: it is where the line was, first in the second row', near(a5.l, a3.l, 1) && near(a5.t, a3.t, 1), JSON.stringify([a5, a3]));
+  await E('(() => { while (snapOf() !== ' + JSON.stringify(snap0) + ' && undoStack.length) undo(); return 1; })()'); await p.sleep(600);
+  await E('(clearSel(), syncDrawers(), 1)'); await p.sleep(500);
+  const u0 = await E('undoStack.length'), a2b = await box('a2');
+  const m2 = await hold('a3', a2b.r - 12, a2b.t + a2b.h / 2), post = await rowsNow();
+  ok('the first tile of the second row held there: it could only land where it is, so no line', !m2.on, JSON.stringify(m2));
+  ok('let go: nothing moved, no Undo step, and it is the selected one (as a cell let go where it was)', JSON.stringify(post) === JSON.stringify(pre) && await E('undoStack.length') === u0 && await E('sel') === 'a3', JSON.stringify([post, pre, u0, await E('sel')]));
+  await E('(() => { while (snapOf() !== ' + JSON.stringify(snap0) + ' && undoStack.length) undo(); return 1; })()'); await p.sleep(500);
+  await E('(clearSel(), syncDrawers(), 1)'); await p.sleep(400);
+}
 
 // ---- a category: all its tiles at once, and Fit the row ----
 await click('#view .dcat[data-cat="b"] .cn');

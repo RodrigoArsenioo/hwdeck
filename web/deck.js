@@ -83,14 +83,15 @@ EXT.kinds['12v'] = {
   desc: () => 'The GPU\'s 12V-2x6 power connector, by its pins: the value is the most loaded one. A pin is rated 9.5 A, and a healthy connector at a 600 W limit peaks near 9.1 A. A pin carrying 1.5x its share of the load, from 15 A up, is the early sign of a bad contact: the cell turns yellow and the warning history keeps it.',
   detail(box, cid, r, e, full) {
     if (full || !box.querySelector('.mpinwrap')) box.innerHTML = '<div class="msec">the pins</div><div class="mpinwrap"></div>';
-    const a = pinVals(0), w = pinVals(1);
+    // (each pin's voltage between its amps and its watts, where HWiNFO shares it: 11-11, his pick in the HWiNFO session)
+    const a = pinVals(0), w = pinVals(1), u = feed.c12keys && feed.c12keys[2] ? pinVals(2) : null;
     let h = '';
     for (let i = 0; i < a.length; i++) {
       const v = a[i];
       h += '<div class="mpin"><span class="lbl">pin ' + (i + 1) + '</span><span class="trk"><span style="width:' + (v == null ? 0 : Math.min(100, v / 9.5 * 100)) + '%;background:' +
-        ({ r: COLORS.red, y: COLORS.yellow }[pinLvl(v, cid)] || pinCol(cid, e)) + '"></span></span><span class="num">' + (v == null ? '--' : v.toFixed(2)) + ' A</span><span class="num">' + (w[i] == null ? '--' : w[i].toFixed(1)) + ' W</span></div>';
+        ({ r: COLORS.red, y: COLORS.yellow }[pinLvl(v, cid)] || pinCol(cid, e)) + '"></span></span><span class="num">' + (v == null ? '--' : v.toFixed(2)) + ' A</span>' + (u ? '<span class="num">' + (u[i] == null ? '--' : u[i].toFixed(2)) + ' V</span>' : '') + '<span class="num">' + (w[i] == null ? '--' : w[i].toFixed(1)) + ' W</span></div>';
     }
-    const el = box.querySelector('.mpinwrap'); if (el._h !== h) { el.innerHTML = h; el._h = h; }
+    const el = box.querySelector('.mpinwrap'); el.classList.toggle('v', !!u); if (el._h !== h) { el.innerHTML = h; el._h = h; }
   }
 };
 const $ = id => document.getElementById(id);
@@ -522,7 +523,7 @@ const lineAt = (st, k) => { let a = k, b = k; while (a > 0 && isBeside(st[a])) a
 function linePos(st, k) { const L = stackLines(st); let i = 0; for (let li = 0; li < L.length; li++) { if (k < i + L[li].length) return { li, n: L.length, j: k - i, m: L[li].length }; i += L[li].length; } return { li: 0, n: 1, j: 0, m: 1 }; }
 const stackTxt = (st, k) => { const q = linePos(st, k); return (q.n > 1 ? ', stacked ' + (q.li + 1) + ' of ' + q.n : '') + (q.m > 1 ? ', beside ' + (q.j + 1) + ' of ' + q.m : ''); };
 const clone = x => JSON.parse(JSON.stringify(x));
-// a tile's size in Tiles: w and h in tiles (a normal tile is 1 x 1), each 0.25 to 2 (quarter steps and thirds, 2.1). The sizes that have a name keep it
+// a tile's size in Tiles: w and h in tiles (a normal tile is 1 x 1), w 0.25 to 2, h 0.25 to H_MAX (quarter steps and thirds, 2.1). The sizes that have a name keep it
 // (wide 2 x 1, tall 1 x 2, big 2 x 2), so an older HW Deck still draws those; it draws any other size as a normal tile
 const SZ = { wide: [2, 1], tall: [1, 2], big: [2, 2] };
 // 2.2 (his ask 11-04: "the pixel measurement in the app is goofy ... the scalling .25 or 1/3 ... is a bit redundant, so
@@ -531,7 +532,9 @@ const SZ = { wide: [2, 1], tall: [1, 2], big: [2, 2] };
 // places (Auto). No tile is drawn narrower than TILE_MIN (rem): where a row is too narrow for that, its tiles take fewer
 // a line, in even lines (his pick: 200 px at his text size). Tiles per row went: a category with it set gets its tiles as
 // shares of its row, as it drew them (cleanViews). PCTS: the widths a drag snaps to, RQ: the heights to pick from
-const TILE_MIN = 11.6, PCTS = [25, 100 / 3, 50, 200 / 3, 75, 100], RQ = [0.5, 0.75, 1, 1.5, 2];
+// (H_MAX: a tile is up to 3 rows tall since 11-11, 2 before: his dashboard's two big tiles, three rows beside two
+// small ones and a row of two, the layout he picked. An older HW Deck draws a taller one 2 rows tall)
+const TILE_MIN = 11.6, PCTS = [25, 100 / 3, 50, 200 / 3, 75, 100], H_MAX = 3, RQ = [0.5, 0.75, 1, 1.5, 2, 3];
 const SPIN_UD = '<span class="ud" aria-hidden="true"><b data-step="1"><svg viewBox="0 0 10 6"><path d="M1.5 5L5 1.5 8.5 5"/></svg></b><b data-step="-1"><svg viewBox="0 0 10 6"><path d="M1.5 1L5 4.5 8.5 1"/></svg></b></span>';   // (Settings' up and down arrows, its number boxes' and the edit panel's: built early, the panel can draw before Settings' code runs)
 const fNum = x => { if (typeof x !== 'number' || !isFinite(x) || x <= 0) return null; const f = Math.min(1, Math.max(0.05, x)), q = PCTS.find(p => Math.abs(p / 100 - f) < 0.0015); return Math.round((q ? q / 100 : f) * 1e4) / 1e4; };
 const pctTxt = f => Math.round(f * 100) + '%';
@@ -540,17 +543,17 @@ const pctTxt = f => Math.round(f * 100) + '%';
 const SNAPQ = 0.002;
 // (where a tile's pitch is known, a third of a pixel at that pitch: a 1 px step on a big tile is kept; a size read from a
 // file only loses float noise, it was snapped when it was made)
-const szNum = (x, tol = SNAPQ) => { if (typeof x !== 'number' || !isFinite(x)) return 1; const v = Math.round(x * 1e4) / 1e4, q = Math.round(v * 4) / 4, t = Math.round(v * 3) / 3; return Math.min(2, Math.max(0.25, Math.abs(v - q) < tol ? q : Math.abs(v - t) < tol ? t : v)); };
+const szNum = (x, tol = SNAPQ, max = 2) => { if (typeof x !== 'number' || !isFinite(x)) return 1; const v = Math.round(x * 1e4) / 1e4, q = Math.round(v * 4) / 4, t = Math.round(v * 3) / 3; return Math.min(max, Math.max(0.25, Math.abs(v - q) < tol ? q : Math.abs(v - t) < tol ? t : v)); };
 const snapAt = G => G && G.p > 0 ? Math.min(SNAPQ, 0.33 / G.p) : SNAPQ;
 const isSz = k => typeof k === 'string' && Object.prototype.hasOwnProperty.call(SZ, k);
 function sizeLook(w, h, tol, tolH) {
-  w = szNum(w, tol); h = szNum(h, tolH === undefined ? tol : tolH);
+  w = szNum(w, tol); h = szNum(h, tolH === undefined ? tol : tolH, H_MAX);
   for (const k of Object.keys(SZ)) if (SZ[k][0] === w && SZ[k][1] === h) return { size: k };
   return w === 1 && h === 1 ? {} : { w, h };
 }
 const cleanSize = x => {
   const f = fNum(x.f);
-  if (f) { const e = { f }, h = typeof x.h === 'number' ? szNum(x.h, 1.5e-4) : 1; if (h !== 1) e.h = h; if (x.fx === true) e.fx = true; return e; }   // (2.2: a share of its row; fx: set by hand)
+  if (f) { const e = { f }, h = typeof x.h === 'number' ? szNum(x.h, 1.5e-4, H_MAX) : 1; if (h !== 1) e.h = h; if (x.fx === true) e.fx = true; return e; }   // (2.2: a share of its row; fx: set by hand)
   return typeof x.w === 'number' || typeof x.h === 'number' ? sizeLook(x.w, x.h, 1.5e-4) : isSz(x.size) ? { size: x.size } : {};
 };
 // ids and catIds map what the file calls a cell or a category to what it is called here; anything that points at
@@ -1191,7 +1194,7 @@ function cellKeys() {
     if (c.key) set.add(c.key); if (c.curve && c.curve.src) set.add(c.curve.src);
     const mp = c.key && memPair(BYKEY.get(c.key)); if (mp) set.add(mp.key);   // (its "% of" caption)
     const lr = c.key && BYKEY.get(c.key), fp = gfKind(lr) === 'low' && fpsOf(lr); if (fp) set.add(fp.key);   // (a 1% low's "% of the fps": the live fps, 11-06)
-    if (c.key === CONN && feed.c12keys) for (const k of feed.c12keys[0].concat(feed.c12keys[1])) set.add(k);   // its pins
+    if (c.key === CONN && feed.c12keys) for (const k of [].concat(...feed.c12keys)) if (k) set.add(k);   // its pins (their voltages too, where shared)
   }
   if (EXT.keys) for (const k of EXT.keys()) set.add(k);
   if (modalCid && TCELL[modalCid]) set.add(TCELL[modalCid].key);   // (a popup with no cell: its reading too, while it is open)
@@ -3540,7 +3543,7 @@ function hitTest(x, y) {
     const hdr = catEl.classList.contains('cont') ? document.querySelector('#view .dcat[data-cat="' + catId + '"]:not(.cont)') || catEl : catEl;
     const rr = vrect(hdr.querySelector('.dch, .ghdr')); showMark(rr.x, rr.y + rr.h, rr.w, 3); return;
   }
-  const cells = [...document.querySelectorAll('#view .dcat[data-cat="' + catId + '"] .dc')].filter(el => !(drag.kind === 'cell' && el.dataset.cid === drag.data));
+  const drawn = [...document.querySelectorAll('#view .dcat[data-cat="' + catId + '"] .dc')], cells = drawn.filter(el => !(drag.kind === 'cell' && el.dataset.cid === drag.data));
   if (!cells.length) {
     drag.target = { cat: catId, before: null };
     const g = catEl.querySelector('.dgrid') || catEl.querySelector('.ghdr'); const rr = vrect(g);
@@ -3561,24 +3564,52 @@ function hitTest(x, y) {
   const nl = S.screen === 'tiles' && !ma && !!before && before === mk.dataset.cid && !!cellLook(before, 'tiles').nl;
   // (tiles: packing puts a tile in the first spot it fits, which can be a hole higher up: the place that puts it
   // beside the mark, 11-08 audit: it went elsewhere and moved a tile not touched)
-  if (!vertical && !nl && best.el.classList.contains('tile')) before = packedBefore(catEl, cells, mk, ma, before);
+  let off = null;
+  if (!vertical && !nl && best.el.classList.contains('tile')) { const pb = packedBefore(catEl, cells, mk, ma, before); before = pb.before; if (pb.off) off = pb; }
+  // (no place puts it beside the mark: the row there is full. The line showed there all the same, and the cell let go
+  // landed somewhere else, or flew back to the place it had; his recording 11-11, the right end of a full row. The
+  // line goes where it lands: before or after the tile it ends beside, under the one above it on a row of its own.
+  // Where it lands is the place it has: nothing to drop on, no line)
   // (before the lead, drawn first: it lands after the lead, so the mark goes there)
-  if (before && before === lead) { before = front; const le = cells.find(el => el.dataset.cid === lead); if (le) { mk = le; ma = true; } }
+  let led = false;
+  if (before && before === lead) { before = front; led = true; const le = cells.find(el => el.dataset.cid === lead); if (le) { mk = le; ma = true; } }
+  if (off) {
+    // (the place it has: let go there it is selected, as a cell let go where it was is; only the line is left out)
+    const ix = drag.kind === 'cell' ? drawn.findIndex(el => el.dataset.cid === drag.data) : -1;
+    drag.target = { cat: catId, before };
+    if (ix >= 0 && ((drawn[ix + 1] && drawn[ix + 1].dataset.cid) || null) === before) return;
+    if (!led) {
+      const be = before ? cells.find(el => el.dataset.cid === before) : null;
+      if (off.to && (off.under || off.over)) { const rr = vrect(off.to); showMark(rr.x, off.under ? rr.y + rr.h + 3 : rr.y - 6, rr.w, 3); }
+      else if (off.to) markAt(off.to, off.after);
+      else if (be) markAt(be, false);
+      else { const rr = vrect(catEl.querySelector('.dgrid') || catEl); showMark(rr.x + 2, rr.y + rr.h - 3, Math.max(rr.w - 4, 40), 3); }
+      return;
+    }
+  }
   drag.target = { cat: catId, before, nl: nl || undefined };
   markAt(mk, ma);
 }
 // the "before" a tile dropped beside mk (after it: ma) needs for packing to put it there: the one asked first, else the
-// nearest that does (the tiles as drawn; the dropped one at its own size, a reading 1 x 1)
+// nearest that does (the tiles as drawn; the dropped one at its own size, a reading 1 x 1). No place puts it there (the
+// row beside the mark is full): off, the place asked, and the tile it ends beside when dropped at it (to: before it,
+// after: on its right; on a row of its own, under: below it, over: above it; none: nothing touches it)
 function packedBefore(catEl, cells, mk, ma, def) {
-  const tg = catEl.querySelector('.tg'); if (!tg) return def;
+  const tg = catEl.querySelector('.tg'); if (!tg) return { before: def };
   const k = +tg.style.getPropertyValue('--k') || 1, vis = cells.map(el => el.dataset.cid), m = vis.indexOf(mk.dataset.cid), src = drag && drag.kind === 'cell' ? document.querySelector('#view .tile[data-cid="' + drag.data + '"]') : null;
-  if (m < 0) return def;
+  if (m < 0) return { before: def };
   const sz = cells.map(el => szOf(el, k)), me = src ? Object.assign(szOf(src, k), { nl: false }) : { w: 1, h: 1, nl: false, f: 0, fx: false, auto: true };
-  const okAt = i => { const s = sz.slice(); s.splice(i, 0, me); const { pos } = packTiles(s, k), z = pos[i], q = pos[m + (m >= i ? 1 : 0)]; return Math.abs(z.y - q.y) < 1e-6 && Math.abs(ma ? z.x - (q.x + q.w) : z.x + z.w - q.x) < 1e-6; };
-  const d0 = def ? vis.indexOf(def) : vis.length; if (d0 < 0 || okAt(d0)) return def;
+  const lay = i => { const s = sz.slice(); s.splice(i, 0, me); return packTiles(s, k).pos; }, eq = (a, b) => Math.abs(a - b) < 1e-6;
+  const okAt = i => { const pos = lay(i), z = pos[i], q = pos[m + (m >= i ? 1 : 0)]; return eq(z.y, q.y) && eq(ma ? z.x : z.x + z.w, ma ? q.x + q.w : q.x); };
+  const d0 = def ? vis.indexOf(def) : vis.length; if (d0 < 0 || okAt(d0)) return { before: def };
   let best = null;
   for (let i = 0; i <= vis.length; i++) if (okAt(i) && (best === null || Math.abs(i - d0) < Math.abs(best - d0))) best = i;
-  return best === null ? def : vis[best] || null;
+  if (best !== null) return { before: vis[best] || null };
+  const pos = lay(d0), z = pos[d0], find = f => { for (let j = 0; j < pos.length; j++) if (j !== d0 && f(pos[j])) return cells[j - (j > d0 ? 1 : 0)]; return null; };
+  const right = find(q => eq(q.y, z.y) && eq(q.x, z.x + z.w)), left = right ? null : find(q => eq(q.y, z.y) && eq(q.x + q.w, z.x));
+  const side = right || left, span = q => q.x < z.x + z.w - PE && q.x + q.w > z.x + PE;
+  const above = side ? null : find(q => eq(q.y + q.h, z.y) && span(q)), below = side || above ? null : find(q => eq(q.y, z.y + z.h) && span(q));
+  return { before: def, off: true, to: side || above || below, after: !!left, under: !!above, over: !!below };
 }
 // the drop mark before or after a cell, as the cells sit: side by side (tiles, band cells) or one under another
 function markAt(el, after) {
@@ -3651,7 +3682,7 @@ function setLook(kind, id, key, val, vn) {
 function setShare(id, f, h, tol, fx) {   // (fx: false for a height alone on a width not set by hand)
   const v = vset('tiles'), m = v.cell || (v.cell = {}), e = m[id] || (m[id] = {});
   delete e.size; delete e.w; delete e.h;
-  e.f = fNum(f); if (fx === false) delete e.fx; else e.fx = true; const hh = szNum(h, tol === undefined ? SNAPQ : tol); if (hh !== 1) e.h = hh;   // (fx: set by hand, drawn as set; his 11-06 "if set to 25% they should SHOW at 25%")
+  e.f = fNum(f); if (fx === false) delete e.fx; else e.fx = true; const hh = szNum(h, tol === undefined ? SNAPQ : tol, H_MAX); if (hh !== 1) e.h = hh;   // (fx: set by hand, drawn as set; his 11-06 "if set to 25% they should SHOW at 25%")
 }
 // k given: w in places of k (a drag, Ctrl+arrows), kept as its share of the row; else in tiles (1 x 1: a normal tile
 // again, its category places it)
@@ -3939,11 +3970,10 @@ function tileGeo(tile) {
 }
 const tileEl = cid => document.querySelector('#view .tile[data-cid="' + CSS.escape(cid) + '"]');
 const pxW = (G, w) => Math.min(w, G.k) * G.p - G.g;
-// the height (0.25 to 2) at which f (rising with it) comes closest to the target (cur: the size it has, kept when it is
-// already within half a pixel)
-function solveSize(f, target, cur) {
+// the height (0.25 to H_MAX) at which f (rising with it) comes closest to the target (cur: the size it has, kept when it is
+// already within half a pixel; lo, hi: looked for between these only, for an f that is not rising all the way)
+function solveSize(f, target, cur, lo = 0.25, hi = H_MAX) {
   if (cur !== undefined && Math.abs(f(cur) - target) <= 0.5) return cur;
-  let lo = 0.25, hi = 2;
   if (f(lo) >= target) return lo;
   if (f(hi) <= target) return hi;
   for (let i = 0; i < 14; i++) { const m = (lo + hi) / 2; if (f(m) < target) lo = m; else hi = m; }   // (to 0.0001 of a tile)
@@ -4020,7 +4050,11 @@ function cornerEdges(R) {
   for (const t of document.querySelectorAll('#view .tile')) if (t !== R.tile && !after.has(t)) {
     const r = t.getBoundingClientRect(); if (!r.width) continue;
     const q = t.parentElement === R.tg ? pos[kids.indexOf(t)] : null;
-    xs.push(...(q && q.dw != null ? placed(q) : [r.left, r.right])); ys.push(r.top, r.bottom);
+    // (its right edge to the others' right edges, its bottom to their bottoms: an edge of the other kind is one gap
+    // off. His recording 11-11: the big cell's corner let go 6 to 16 px under the 2-row line took the TOP of the next
+    // row of the category beside it, 2.06 rows, and the row under it was two half rows a gap apart that read as one:
+    // a cell dropped in one half pushed a cell out into the other)
+    xs.push((q && q.dw != null ? placed(q) : [r.left, r.right])[1]); ys.push(r.bottom);
   }
   xs.push(R.tg.getBoundingClientRect().right);
   guideBox = sectionsEl.getBoundingClientRect();
@@ -4032,8 +4066,8 @@ function cornerEdges(R) {
   return pd;
 }
 // dragging the corner: its top-left stays, and the view is fitted again at each size it takes (liveFit). Its width snaps
-// to 25, 33, 50, 67, 75 and 100% of its row and to the edges of the other tiles, never under the minimum; its height to
-// quarter rows and to the bottom of the columns beside it; Alt: any size
+// to 25, 33, 50, 67, 75 and 100% of its row and to the right edges of the other tiles, never under the minimum; its
+// height to quarter rows, to the other tiles' bottoms and to the bottom of the columns beside it; Alt: any size
 function startCorner(tile) {
   const G = tileGeo(tile); if (!G) return false;
   G.tile = tile;
@@ -4087,13 +4121,16 @@ function moveCorner0(ev, R, maxW, thr, lines) {
   const th = hh => R.at(w, hh).th, col = hh => R.ends.own + R.at(w, hh).TH - R.TH0;
   let h = my ? solveSize(th, ev.clientY - R.gy - R.r.top, R.h0) : R.h0;
   if (!ev.altKey && my) {
-    const bottom = R.r.top + th(h), hq = Math.min(2, Math.max(0.25, Math.round(h * 4) / 4)), cs = [[Math.abs(R.r.top + th(hq) - bottom), hq]];
+    const bottom = R.r.top + th(h), hq = Math.min(H_MAX, Math.max(0.25, Math.round(h * 4) / 4)), cs = [[Math.abs(R.r.top + th(hq) - bottom), hq]];
     const ny = nearest(R.ys, bottom, thr), hy = ny === null ? null : solveSize(th, ny - R.r.top);
     if (hy !== null && Math.abs(R.r.top + th(hy) - ny) < 0.6) cs.push([Math.abs(ny - bottom), hy, { y: ny }]);
     // level with a column beside it, when this tile sets where its column ends
     const E = R.ends;
-    if (E.own !== null && E.cols.length && col(Math.min(2, h + 0.05)) - col(Math.max(0.25, h - 0.05)) > 0.5) {
-      const c = nearest(E.cols, col(h), thr), hc = c === null ? null : solveSize(col, c);
+    if (E.own !== null && E.cols.length && col(Math.min(H_MAX, h + 0.05)) - col(Math.max(0.25, h - 0.05)) > 0.5) {
+      // (looked for a quarter row around where the pointer is: where a column ends does not rise all the way with this
+      // tile's height, tiles move into the room it leaves, so the columns can be level at two heights. His layout
+      // 11-11: the big cell at 2 rows and at 0.97; held exactly at 2, level already, it jumped to 0.97)
+      const c = nearest(E.cols, col(h), thr), hc = c === null ? null : solveSize(col, c, undefined, Math.max(0.25, h - 0.25), Math.min(H_MAX, h + 0.25));
       if (hc !== null && Math.abs(col(hc) - c) < 0.6) { const rr = E.row ? E.row.getBoundingClientRect() : null; cs.push([Math.abs(c - col(h)) - 3, hc, { y: c, from: rr ? rr.left : null, to: rr ? rr.right : null }, true]); }
     }
     const c = best(cs);
@@ -4176,7 +4213,7 @@ function nudgeSize(cid, dx, dy, quarter) {
   const us = PCTS.map(p => p / 100 * G.k), next = (v, d) => d > 0 ? (us.find(u => u > v + 1e-3) || G.k) : ([...us].reverse().find(u => u < v - 1e-3) || G.wmin);
   // (only the side the arrow moves changes)
   const w = !dx ? z.w : r4(Math.min(G.k, Math.max(G.wmin, quarter ? next(w0, dx) : w0 + dx * G.k / 100)));
-  const h = !dy ? z.h : lim(quarter ? q(z.h, dy) : solveSize(hh => G.at(w0, hh).th, G.at(w0, z.h).th + dy, z.h), 2);
+  const h = !dy ? z.h : lim(quarter ? q(z.h, dy) : solveSize(hh => G.at(w0, hh).th, G.at(w0, z.h).th + dy, z.h), H_MAX);
   const wd = !!dx || !!(nudge && nudge.cid === cid && nudge.wd);   // (the width stepped at all: else its share and "set by hand" stay as they were, 11-06)
   nudge = { cid, w, h, k: G.k, tol: quarter ? SNAPQ : snapAt(G), wk: !!G.s.f || !!dx || !!(nudge && nudge.cid === cid && nudge.wk), wd };   // (wk: its width set: kept as a share)
   // (its neighbours glide to where the new size puts them, from where they are seen, as with the size buttons; a held
@@ -4203,13 +4240,13 @@ function fitRow(id) {
   if (!G || !E.cols.length) { toast('Nothing beside it to line up with'); return; }
   const short = tg.classList.contains('shorts'), target = Math.max(...E.cols), base = tiles.map(x => szOf(x, G.k)), nat = tiles.map(x => natOf(x, short));
   const row = tg.closest('.lrow'), gr = row && row.classList.contains('grow') && !short ? parseFloat(row.style.getPropertyValue('--gr')) || 0 : 0;
-  const hs = f => base.map(s => r4(Math.min(2, Math.max(0.25, s.h * f))));
+  const hs = f => base.map(s => r4(Math.min(H_MAX, Math.max(0.25, s.h * f))));
   const TH = f => { const h = hs(f), L = placeTiles(floorSz(base.map((s, i) => Object.assign({}, s, { h: h[i] })), G.k, G.tw, G.g, G.fs, short), nat, G.k, G.g / G.fs, !short && fillEven(row)); return L.TH * G.fs + L.H * gr; };
   const TH1 = TH(1), end = f => E.own + TH(f) - TH1;
   let lo = 0.125, hi = 8;
   for (let i = 0; i < 24; i++) { const m = Math.sqrt(lo * hi); if (end(m) < target) lo = m; else hi = m; }
   const f = Math.abs(end(lo) - target) < Math.abs(end(hi) - target) ? lo : hi, miss = Math.round(Math.abs(end(f) - target)), h = hs(f);
-  mutate(() => tiles.forEach((t, i) => base[i].f ? setShare(t.dataset.cid, base[i].f, h[i], undefined, base[i].fx) : setSize(t.dataset.cid, base[i].w, h[i])), miss > 1 ? 'As close as it gets: ' + miss + ' px off. A tile stays 0.25 to 2 rows tall' : 'Its column now ends level with the tallest beside it');
+  mutate(() => tiles.forEach((t, i) => base[i].f ? setShare(t.dataset.cid, base[i].f, h[i], undefined, base[i].fx) : setSize(t.dataset.cid, base[i].w, h[i])), miss > 1 ? 'As close as it gets: ' + miss + ' px off. A tile stays 0.25 to ' + H_MAX + ' rows tall' : 'Its column now ends level with the tallest beside it');
 }
 function startHandle(ev, el) {
   const v = stored(S.screen);
@@ -6631,6 +6668,11 @@ const NOTES = [
     'Edit mode: a cell\'s settings open again after you drag it.',
     'Edit mode: Storage and the settings move out of the way while you size a cell, a column or a row.',
     'Edit mode: the view keeps fitting the window while you size a cell, so nothing moves when you let go.']],
+  ['2.4.7', '2.4.7', ['The window can be moved by its title bar while a popup is open.',
+    'A cell can be up to 3 rows tall.',
+    'The 12V-2x6 connector\'s popup shows each pin\'s voltage, on cards that report it.',
+    'Readings no longer show "not available now" for a moment when HWiNFO rebuilds its list.',
+    'Edit mode: the line of a dragged cell shows where it will land, and a cell sized by its corner keeps to whole rows.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
@@ -7958,7 +8000,7 @@ function szStep(i, d) {
   if (i.disabled) return;
   const t = parseFloat(i.value); let n = null;
   if (i.dataset.sz === 'f') { if (!isFinite(t)) return; const off = sel ? cfOff(sel) : () => false, ok = PCTS.filter(x => !off(x)), x = d > 0 ? ok.find(x => x > t + 0.5) : [...ok].reverse().find(x => x < t - 0.5); if (x != null) n = Math.round(x * 10) / 10; }
-  else if (i.dataset.sz === 'h') { const cur = isFinite(t) ? t : 1, x = Math.min(2, Math.max(0.25, (d > 0 ? Math.floor(cur * 4 + PE) + 1 : Math.ceil(cur * 4 - PE) - 1) / 4)); if (Math.abs(x - cur) > 1e-9) n = x; }
+  else if (i.dataset.sz === 'h') { const cur = isFinite(t) ? t : 1, x = Math.min(H_MAX, Math.max(0.25, (d > 0 ? Math.floor(cur * 4 + PE) + 1 : Math.ceil(cur * 4 - PE) - 1) / 4)); if (Math.abs(x - cur) > 1e-9) n = x; }
   else if (i.dataset.cw) { const cur = isFinite(t) ? Math.round(t * 12 / 100) : 12, w = Math.max(+i.dataset.lo || 1, Math.min(+i.dataset.hi || 12, cur + d)); if (w !== cur) n = Math.round(w * 10000 / 12) / 100; }
   if (n == null) return;
   i.value = n; i.dispatchEvent(new Event('change', { bubbles: true }));
@@ -9416,6 +9458,29 @@ document.addEventListener('mousemove', e => { if (host && !drag) document.body.s
 document.addEventListener('mousedown', e => { if (!host || e.button !== 0) return; const z = zoneAt(e); if (z) { e.preventDefault(); e.stopPropagation(); send({ t: 'win', a: 'resize:' + z }); } }, true);
 // an older WebView2 can't make the title bar a caption: then the page asks the host to drag the window
 $('titlebar').addEventListener('mousedown', e => { if (host && !feed.nonClient && e.button === 0 && !e.target.closest('button, nav')) send({ t: 'drag' }); });
+// (a popup open: its dim lies over the title bar too, so a press there closed the popup and never took the window; his
+// 11-11 "i can't drag the window when a pop up is open". A press on the dim over the title bar, its buttons and the
+// view's tabs aside, takes the window as the title bar does. The host says how it ended (dragEnd): the window moved,
+// the popup stays; let go where it was, a click, the popup closes as a press anywhere else on the dim closes it, his
+// 11-04 "a press on the title bar ... the press alone closes it" (the release never reaches the page, the window's
+// move takes it). Before the popups' own mousedown: this one is on the way down)
+let dimDrag = null;   // (the popup whose dim over the title bar is held)
+document.addEventListener('mousedown', e => {
+  if (!host || e.button !== 0 || !e.isTrusted || !(e.target.matches && e.target.matches('.modal.open'))) return;
+  if (zoneAt(e)) return;   // (the window's edge: a resize, the listener above has it; taken here too, the popup closed when the resize ended, the review 11-11)
+  const r = $('titlebar').getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+  if (document.elementsFromPoint(e.clientX, e.clientY).some(x => x.closest && x.closest('#titlebar button, #titlebar nav'))) return;
+  e.preventDefault(); e.stopPropagation();
+  dimDrag = e.target;
+  send({ t: 'drag', end: 1 });
+}, true);
+// (the press that closes a popup, sent to it as its own dim would get it)
+function dimDragEnd(moved) {
+  const m = dimDrag; dimDrag = null;
+  if (moved || !m || !m.isConnected || !m.classList.contains('open')) return;
+  m.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, buttons: 1, clientX: Math.round(innerWidth / 2), clientY: Math.round(innerHeight / 2) }));   // (in the middle: a press at the window's edge is a resize)
+}
 
 // ---------- the host ----------
 const agoTxt = s => {
@@ -9511,7 +9576,7 @@ function onHost(m) {
     setCatalog(m);
     if (ynFixAll()) saveState();   // (old Yes/No lines that could never warn, now that the readings are known)
     feed.bnIn = Array.isArray(m.bneck) ? m.bneck : [null, null, 0];
-    feed.c12keys = Array.isArray(m.c12) && m.c12.length === 2 ? m.c12 : null;
+    feed.c12keys = Array.isArray(m.c12) && m.c12.length >= 2 ? m.c12 : null;
     feed.zero = new Set(Array.isArray(m.zero) ? m.zero : []);   // (HWiNFO readings only ever at 0: hidden from Storage by default)
     lastSub = ''; subscribe();
     // the same readings with new names (a rename in HWiNFO): no rebuild under someone typing in a field
@@ -9588,6 +9653,7 @@ function onHost(m) {
   else if (m.t === 'alertsBin') wbRender(m.log);
   else if (m.t === 'lastGame') { feed.lg = m.s || null; if (feed.lgWait) { feed.lgWait = 0; if (feed.got) updateView(true, true); } }   // (the last game session, for the Game cells while no game runs; one that just ended is drawn at once)
   else if (m.t === 'games') { if (gmodal.classList.contains('open')) renderGames(m.log, $('glist').querySelector('.gx-sess') ? gxOpen() : undefined); }   // (an edit: what was open stays open; one after a close isn't kept)
+  else if (m.t === 'dragEnd') dimDragEnd(!!m.moved);
   else if (m.t === 'toast') {
     // (a move that moved nothing, or failed: its undo step goes, if nothing came after it)
     if (m.moved === 0 && pkStep && undoStack[undoStack.length - 1] === pkStep) { undoStack.pop(); syncUndo(); }

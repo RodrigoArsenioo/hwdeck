@@ -1107,6 +1107,7 @@ select.dsel-n { display: none; }
 .tile .xb .xpins { margin-bottom: 0.3rem; }
 .gt .xpins { height: 0.9rem; width: 9rem; }
 .mpin { display: grid; grid-template-columns: 46px 1fr 70px 70px; gap: 12px; align-items: center; padding: 4px 0; font-size: 12.5px; }
+.mpinwrap.v .mpin { grid-template-columns: 46px 1fr 70px 70px 70px; }   /* (each pin's voltage too, 11-11) */
 .mpin .lbl { color: #7a7a7a; }
 .mpin .trk { height: 9px; background: var(--g22, #222222); border-radius: 5px; overflow: hidden; display: block; }
 .mpin .trk span { display: block; height: 100%; border-radius: 5px; }

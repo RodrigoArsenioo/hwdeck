@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.7 (2026-11-11)
+
+- The window can be moved by its title bar while a popup is open: press and drag there and the popup stays open. A click there still closes the popup, as a click anywhere beside it does. Before, the window could not be moved until the popup was closed.
+- A cell can be up to 3 rows tall, 2 before: by its corner, the arrow keys, the height box and its buttons.
+- The 12V-2x6 connector's popup shows each pin's voltage between its current and its power, on cards that report it.
+- Readings no longer show "not available now" for a moment when HWiNFO rebuilds its list of readings. HWiNFO reports a shorter list for an instant while it does; HW Deck now takes a shorter list only once it is still there a second later. The log has a line whenever the list of readings changes.
+- Edit mode:
+  - The line that shows where a dragged cell will go is drawn where the cell lands. Beside a full row it used to mark a place the cell could not take, and the cell landed somewhere else or went back. Where a cell can only stay in its own place, no line is shown.
+  - A cell sized by its corner lines up its bottom edge with other cells' bottom edges, and its right edge with their right edges. It could catch the top of the next row beside it and end a little taller than whole rows, which left the row under it split in two.
+  - A cell held at the height where its column ends level with the one beside it stays there. It could jump to another, much smaller height at which the columns are level too.
+
 ## 2.4.6 (2026-11-11)
 
 - A cell's popup opens as a plain box: it grows out of the cell you clicked, and its content fades in once the box is out. Closing, the content fades first and the box goes back into the cell. The 2.4.5 motion drew an enlarged copy of the cell over the popup on the way.

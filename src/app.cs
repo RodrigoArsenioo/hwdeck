@@ -32,7 +32,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 static class AppInfo
 {
-    public const string Version = "2.4.6";
+    public const string Version = "2.4.7";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;
@@ -109,6 +109,7 @@ abstract class Source
     public double[] Values = new double[0], Min = new double[0], Max = new double[0], Avg = new double[0];
     public int Version;                     // bumps whenever the catalog (which readings, their names) changes
     public string PmProc;                   // the process HWiNFO's PresentMon sensor follows right now (null: none)
+    public Action<string> Note = delegate { };   // (for the app's log: a catalog that changed, see HwSource)
     public abstract void Poll();
     public static long Unix() { return DateTimeOffset.UtcNow.ToUnixTimeSeconds(); }
     protected void Size(int n)
@@ -125,6 +126,7 @@ class HwSource : Source
     const uint SIG = 0x53695748;            // "HWiS"
     byte[] sbuf = new byte[0], rbuf = new byte[0];
     ulong idHash; long namesAt;
+    bool shortHeld;   // (the last poll found fewer readings than the catalog has and kept what it had: see Poll)
     static readonly Encoding Ansi = Encoding.GetEncoding(1252);
     static double Fin(double v) { return double.IsInfinity(v) ? double.NaN : v; }
 
@@ -135,14 +137,28 @@ class HwSource : Source
             using (var mmf = MemoryMappedFile.OpenExisting("Global\\HWiNFO_SENS_SM2", MemoryMappedFileRights.Read))
             using (var acc = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read))
             {
-                if (acc.ReadUInt32(0) != SIG) { Status = "missing"; return; }   // "DEAD" once HWiNFO shuts it
+                if (acc.ReadUInt32(0) != SIG) { Status = "missing"; shortHeld = false; return; }   // "DEAD" once HWiNFO shuts it
                 long poll = acc.ReadInt64(12);
                 uint sOfs = acc.ReadUInt32(20), sSize = acc.ReadUInt32(24), sCount = acc.ReadUInt32(28);
                 uint rOfs = acc.ReadUInt32(32), rSize = acc.ReadUInt32(36), rCount = acc.ReadUInt32(40);
-                if (sSize < 264 || rSize < 316 || sSize > 8192 || rSize > 8192 || sCount > 100000 || rCount > 200000) { Status = "missing"; return; }
+                if (sSize < 264 || rSize < 316 || sSize > 8192 || rSize > 8192 || sCount > 100000 || rCount > 200000) { Status = "missing"; shortHeld = false; return; }
                 long sLen = (long)sSize * sCount, rLen = (long)rSize * rCount;
                 // a header that promises more than the mapping holds is a half-written or foreign block, not readings
-                if (sOfs + sLen > acc.Capacity || rOfs + rLen > acc.Capacity) { Status = "missing"; return; }
+                if (sOfs + sLen > acc.Capacity || rOfs + rLen > acc.Capacity) { Status = "missing"; shortHeld = false; return; }
+                // (HWiNFO fills its reading list again in place now and then, and for a few ms its header counts
+                // fewer readings than there are: 232, 177, 232 inside 50 ms, seen 11-11. A poll that landed there
+                // made a catalog of the short list, and the cells of the readings missing from it said "not available
+                // now" for a second. So a count that went down is not taken by the poll that first finds it: that poll
+                // keeps what the last one read, and the next takes whatever is there. One poll, never more: a list
+                // that truly got shorter is a second late, and nothing stays held (the review 11-11: held until a
+                // count came twice, a list coming back in steps kept the old one). A list that grew is taken at once)
+                if (Readings.Count > 0 && rCount < Readings.Count && !shortHeld)
+                {
+                    shortHeld = true;
+                    Note("catalog: HWiNFO counted " + rCount + " readings for a moment (" + Readings.Count + " before): kept as it was, the next poll decides");
+                    return;
+                }
+                shortHeld = false;
                 if (sbuf.Length != sLen) sbuf = new byte[sLen];
                 if (rbuf.Length != rLen) rbuf = new byte[rLen];
                 acc.ReadArray(sOfs, sbuf, 0, (int)sLen);
@@ -181,7 +197,7 @@ class HwSource : Source
                 Status = Age > Math.Max(15, 3 * Math.Min(period, 600000) / 1000) ? "stale" : "ok";
             }
         }
-        catch (Exception) { Status = "missing"; }
+        catch (Exception) { Status = "missing"; shortHeld = false; }
     }
 
     static ulong Fnv(ulong h, uint v) { for (int k = 0; k < 4; k++) { h ^= (v >> (k * 8)) & 0xff; h *= 1099511628211UL; } return h; }
@@ -232,7 +248,13 @@ class HwSource : Source
             if (!seen.Add(key)) key += "~" + i;   // two readings with one id would share a history; keep them apart
             reads.Add(new Reading { Key = key, Label = label, Orig = orig, Unit = unit, Sensor = known ? si : -1, Type = (int)BitConverter.ToUInt32(rbuf, o) });
         }
-        if (!Same(sens, reads)) { Sensors = sens; Readings = reads; Version++; }
+        if (!Same(sens, reads))
+        {
+            // (one line in the log per catalog that changed, the first one at the start too: how often HWiNFO's list changes)
+            int was = Readings.Count, wasS = Sensors.Count;
+            Sensors = sens; Readings = reads; Version++;
+            Note("catalog: " + reads.Count + " readings in " + sens.Count + " sensors" + (was > 0 ? " (" + was + " in " + wasS + " before)" : ""));
+        }
     }
 
     bool Same(List<Sensor> s, List<Reading> r)
@@ -307,7 +329,7 @@ class FakeSource : Source
             }
         // tests (HWDECK_FAKEPINS=1): a 12V-2x6 connector's six pins on the GPU, from made-up currents and powers there
         if (Environment.GetEnvironmentVariable("HWDECK_FAKEPINS") == "1")
-            foreach (var spec in new[] { new[] { "4", "Current" }, new[] { "5", "Power" } })
+            foreach (var spec in new[] { new[] { "4", "Current" }, new[] { "5", "Power" }, new[] { "2", "Voltage" } })
             {
                 int k = 0;
                 for (int i = 0; i < count && k < 6; i++)
@@ -621,9 +643,11 @@ static class Display
 class Connector
 {
     public const string Key = "hwdeck.0/12v";
-    static readonly Regex PinA = new Regex(@"^GPU 12VHPWR Pin(\d+) Current$"), PinW = new Regex(@"^GPU 12VHPWR Pin(\d+) Power$");
+    static readonly Regex PinA = new Regex(@"^GPU 12VHPWR Pin(\d+) Current$"), PinW = new Regex(@"^GPU 12VHPWR Pin(\d+) Power$"), PinV = new Regex(@"^GPU 12VHPWR Pin(\d+) Voltage$");
     int[] a = new int[0], w = new int[0];
-    public object[] Keys = new object[0];       // for the page: the pins' current keys, then their power keys
+    // for the page: the pins' current keys, then their power keys; and, where HWiNFO shares each pin's voltage (11-11:
+    // his card does), a third list, the voltage key of each pin of the first list, null for a pin without one
+    public object[] Keys = new object[0];
     public double Worst = double.NaN, Share;    // the most loaded pin (A); its load against the average
     public int Hot = -1;                        // which pin that is (from 0)
     public bool Lopsided;                       // a pin over 1.5x its share, at 15 A or more in all
@@ -631,15 +655,17 @@ class Connector
     public bool Has { get { return a.Length >= 2; } }
     public void Find(Source src)
     {
-        var ma = new SortedDictionary<int, int>(); var mw = new SortedDictionary<int, int>();
+        var ma = new SortedDictionary<int, int>(); var mw = new SortedDictionary<int, int>(); var mv = new Dictionary<int, int>();
         for (int i = 0; i < src.Readings.Count; i++)
         {
             var r = src.Readings[i]; Match m;
             if ((m = PinA.Match(r.Label)).Success || (!string.IsNullOrEmpty(r.Orig) && (m = PinA.Match(r.Orig)).Success)) { int k = int.Parse(m.Groups[1].Value); if (!ma.ContainsKey(k)) ma[k] = i; }
             else if ((m = PinW.Match(r.Label)).Success || (!string.IsNullOrEmpty(r.Orig) && (m = PinW.Match(r.Orig)).Success)) { int k = int.Parse(m.Groups[1].Value); if (!mw.ContainsKey(k)) mw[k] = i; }
+            else if ((m = PinV.Match(r.Label)).Success || (!string.IsNullOrEmpty(r.Orig) && (m = PinV.Match(r.Orig)).Success)) { int k = int.Parse(m.Groups[1].Value); if (!mv.ContainsKey(k)) mv[k] = i; }
         }
         a = ma.Values.ToArray(); w = mw.Values.ToArray();
-        Keys = new object[] { a.Select(i => (object)src.Readings[i].Key).ToList(), w.Select(i => (object)src.Readings[i].Key).ToList() };
+        var ka = a.Select(i => (object)src.Readings[i].Key).ToList(); var kw = w.Select(i => (object)src.Readings[i].Key).ToList();
+        Keys = mv.Count == 0 ? new object[] { ka, kw } : new object[] { ka, kw, ma.Keys.Select(k => mv.ContainsKey(k) ? (object)src.Readings[mv[k]].Key : null).ToList() };
     }
     public void Poll(Source src)
     {
@@ -3418,6 +3444,7 @@ partial class DeckForm : Form
         if (fake && Ver(Environment.GetEnvironmentVariable("HWDECK_RUNVER")) != null) AppInfo.Run = Environment.GetEnvironmentVariable("HWDECK_RUNVER");
         if (NoFocus) focusAtStart = GetForegroundWindow();
         src = new DeckSource(fake ? (Source)new FakeSource(fakeN) : new HwSource());
+        src.Inner.Note = s => Log(s);
         alerts.Conn = src.Conn;
         hist = new History(dataDir);
         games = new Games(dataDir, Log);
@@ -3816,7 +3843,7 @@ partial class DeckForm : Form
                 case "updCheck": updAsked = true; if (!updBusy) { updNext = 0; MaybeCheckUpdate(Source.Unix()); } break;   // (one under way: its answer is this one)
                 case "openRelease": OpenRelease(); break;
                 case "updateNow": UpdateNow(); break;
-                case "drag": Win("drag"); break;
+                case "drag": Win("drag", m.ContainsKey("end")); break;
                 case "export": Export(m["data"], m["name"] as string); break;
                 case "import": Import(Convert.ToInt32(m["slot"])); break;
                 case "win": Win(m["a"] as string); break;
@@ -5168,7 +5195,7 @@ partial class DeckForm : Form
     }
 
     int lastDrag; Point lastDragAt; bool dragArmed;
-    void Win(string a)
+    void Win(string a, bool tell = false)
     {
         // (a copy that never takes the focus, a test's, goes down and comes back without being activated even for a moment)
         if (a == "min") { if (NoFocus) ShowWindow(Handle, 7 /*SW_SHOWMINNOACTIVE*/); else KeepFocus(() => WindowState = FormWindowState.Minimized); }
@@ -5189,7 +5216,7 @@ partial class DeckForm : Form
         }
         else if (a == "max") { KeepFocus(() => WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized); SaveWin(true); }
         else if (a == "close") HideToTray();
-        else if ((a == "drag" || a != null && a.StartsWith("resize:")) && NoFocus) { }   // (only a real mouse moves a window: in a test's copy they'd activate it)
+        else if ((a == "drag" || a != null && a.StartsWith("resize:")) && NoFocus) { if (a == "drag" && tell) DragEnd(false); }   // (only a real mouse moves a window: in a test's copy they'd activate it; a press there is a click)
         else if (a == "drag")
         {
             // a second press on the title bar within the double-click time: maximize or restore, as a caption does;
@@ -5197,8 +5224,16 @@ partial class DeckForm : Form
             int now = Environment.TickCount; var at = Cursor.Position;
             bool dbl = dragArmed && now - lastDrag < SystemInformation.DoubleClickTime && Math.Abs(at.X - lastDragAt.X) <= SystemInformation.DoubleClickSize.Width && Math.Abs(at.Y - lastDragAt.Y) <= SystemInformation.DoubleClickSize.Height;
             dragArmed = !dbl; lastDrag = now; lastDragAt = at;
-            if (dbl) Win("max");
-            else if (ButtonDown()) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, 2, 0); }   // (a tap's mousedown comes after the finger is up: no move loop with nothing held)
+            if (dbl) { Win("max"); if (tell) DragEnd(true); }
+            else if (ButtonDown())   // (a tap's mousedown comes after the finger is up: no move loop with nothing held)
+            {
+                // (tell: the page asked how it ends, a popup's dim over the title bar was pressed: moved, the popup
+                // stays; let go where it was, the page closes the popup as a click on its dim does. 11-11)
+                var was = Bounds; var st = WindowState;
+                ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, 2, 0);
+                if (tell) DragEnd(Bounds != was || WindowState != st);
+            }
+            else if (tell) DragEnd(false);
         }
         else if (a != null && a.StartsWith("resize:") && WindowState != FormWindowState.Maximized)
         {
@@ -5207,6 +5242,7 @@ partial class DeckForm : Form
             if (map.TryGetValue(a.Substring(7), out ht) && ButtonDown()) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, ht, 0); }
         }
     }
+    void DragEnd(bool moved) { var r = Msg("dragEnd"); r["moved"] = moved; Post(r); }   // (how a drag the page asked about ended: see Win)
     static bool ButtonDown() { return (Control.MouseButtons & (MouseButtons.Left | MouseButtons.Right)) != 0; }   // (either: swapped buttons)
 
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }

@@ -93,6 +93,9 @@ ok('the uneven pins logged once', (after.match(/YELLOW +12V-2x6 connector pins:/
 }
 await ev(`openDetail("${cid}")`); await p.sleep(1200);
 ok('its popup: the six pins, amps and watts', await until('document.querySelectorAll("#mextra .mpin").length === 6 && /A/.test(document.querySelector("#mextra .mpin .num").textContent)', 3000));
+// (11-11: each pin's voltage between its amps and its watts, where HWiNFO shares it: a third list of keys, one per pin)
+ok('with the pins\' voltages shared: a third list of keys, and the popup rows read amps, volts, watts', await ev(`(() => { const k = feed.c12keys; if (!k || k.length < 3) return 'no voltages in this copy'; const n = document.querySelector('#mextra .mpin').querySelectorAll('.num'); return k[2].length === k[0].length && n.length === 3 && / A$/.test(n[0].textContent) && / V$/.test(n[1].textContent) && / W$/.test(n[2].textContent) && document.querySelector('#mextra .mpinwrap').classList.contains('v'); })()`) === true,
+  await ev(`JSON.stringify([feed.c12keys && feed.c12keys[2], [...document.querySelector('#mextra .mpin').querySelectorAll('.num')].map(x => x.textContent)])`));
 await ev('closeDetail()');
 await ev(`showScreen("grid")`); await p.sleep(1500);
 ok('Grid: the pins in its row', await ev(`!!document.querySelector('#view .dc[data-cid="${cid}"] .xpins')`));
