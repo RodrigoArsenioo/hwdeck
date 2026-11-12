@@ -26,7 +26,7 @@ const ts = () => ev('nowTs');
 const frames = (fps, jitter = 0, swing = 0, stable = false) => host({ t: 'fakeFrames', fps, jitter, swing, stable });
 const CAPPED = () => frames(240, 0.2), UNCAPPED = () => frames(280, 0.15, 0.1);
 
-ok('catalog arrives, HWiNFO\'s 300 and two of its own (the bottleneck, the game time)', await until('READ.length === 302 && feed.got'), await ev('READ.length'));
+ok('catalog arrives, HWiNFO\'s 300 and four of its own (the bottleneck, the game time, the internet\'s two)', await until('READ.length === 304 && feed.got'), await ev('READ.length'));
 ok('the bottleneck is a reading of the "HW Deck" sensor, right after HWiNFO\'s', await ev('(() => { const r = BYKEY.get(BNECK); return !!r && SENS[r.s].name === "HW Deck" && r.label === "Bottleneck" && r.idx === 300; })()'));
 ok('the status dot counts only HWiNFO\'s readings', /Demo data: 300 made-up/.test(await ev('$("dot").title')), await ev('$("dot").title'));
 const gpuKey = await ev('(READ.find(r => r.label === "GPU Core Load" && /^dGPU/.test(SENS[r.s].name)) || {}).key');
@@ -127,10 +127,10 @@ await p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); awa
 for (const [r, n] of [['6h', 360], ['12h', 720], ['24h', 1440], ['7d', 1008]]) ok(r + ': the same from the host\'s history (' + n + ' columns)', await rangeOk(r, n), await ev('$("mextra").querySelector(".mstats").textContent'));
 c = await p.center('#mrng button[data-r="15m"]'); await p.click(c.x, c.y); await p.sleep(400);
 ok('back to 15 min: the seconds again', await ev(LIT + '($("mextra").querySelector(".bnp canvas.bnc")) > 40 && !/game time/.test($("mextra").querySelector(".mstats").textContent)'));
-ok('its title says the call', await ev('$("mval").textContent.trim() === "FPS capped" && /most common answer of the last 5 seconds/.test($("mdesc").textContent)'), await ev('$("mval").textContent'));
+ok('its title says the call', await ev('$("mval").textContent.trim() === "FPS capped" && /^What.s limiting your fps while a game runs. GPU bound/.test($("mdesc").textContent) && $("mdesc").textContent.length < 500'), await ev('$("mval").textContent'));
 const desc = await ev('$("mdesc").textContent');
 ok('it says which readings it goes by, found by their names', /It reads GPU Core Load \(dGPU\), Max CPU\/Thread Usage \(CPU[^)]*\)/.test(desc), desc.split('. ').slice(-2).join('. '));
-ok('and that a cap is seen from the rhythm of the game\'s frames, without them only one at the refresh rate (2.1)', /FPS capped: the GPU has time to spare and the frames come at a steady rhythm/.test(desc) && /Without it, or in a Vulkan or OpenGL game, only a cap at the screen's refresh rate shows/.test(desc) && /It isn't counting the game's frames now \(Accurate game fps\), so only a cap at the screen's refresh rate shows\.$/.test(desc), desc);
+ok('and that a cap is seen from the rhythm of the game\'s frames, without them only one at the refresh rate (2.1)', /FPS capped: the GPU has time to spare and the frames come at a steady rhythm/.test(desc) && /It isn't counting the game's frames now \(Accurate game fps\), so only a cap at the screen's refresh rate shows\.$/.test(desc), desc);
 ok('with the frames counted, it says it goes by their pace', await ev('(() => { const s = feed.fpsState; feed.fpsState = "on"; const d = bnFrom(); feed.fpsState = s; return / and the pace of the game.s frames\\.$/.test(d); })()'));
 await ev('closeDetail()');
 

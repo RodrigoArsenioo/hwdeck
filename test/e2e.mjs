@@ -20,10 +20,10 @@ const click = async sel => { const c = await p.center(sel); if (!c) throw new Er
 const storage = async on => { await E(`(() => { DR.L.pinned = ${on}; DR.L.hover = false; if (!${on}) { DR.R.hover = false; DR.R.byPick = false; } syncDrawers(); })()`); await p.sleep(260); };
 
 // ---- first run ----
-ok('catalog arrives', await until('READ.length === 302 && feed.got'), await E('READ.length'));   // 300 made up and HW Deck's own bottleneck and game time
+ok('catalog arrives', await until('READ.length === 304 && feed.got'), await E('READ.length'));   // 300 made up and HW Deck's own bottleneck and game time
 ok('first run is empty, edit mode on', await E('S.L.cats.length === 0 && S.edit && !!document.querySelector("#view.empty")'));
 ok('5 empty slots', await E('S.slots.every(s => !s)'));
-ok('no extras in HW Deck itself: no extras.js, its own title, its readings have no kind', await E(`!EXT.loaded && !document.querySelector('script[src="extras.js"]') && document.title === "HW Deck" && READ.every(r => r.kind === null)`));
+ok('no extras in HW Deck itself: no extras.js, its own title, its readings have no kind (but its own Download now, 2.4.8)', await E(`!EXT.loaded && !document.querySelector('script[src="extras.js"]') && document.title === "HW Deck" && READ.every(r => r.kind === null || (r.key === NETD && r.kind === "net"))`));
 ok('the status is only a dot (its tooltip says demo data)', (await E('$("dot").title')).includes('Demo data') && !(await E('!!document.getElementById("stat")')), await E('$("dot").title'));
 ok('Storage draws only the rows in sight', await E('document.querySelectorAll("#vspace .vrow").length < 50 && rows.length > 300'), await E('[document.querySelectorAll("#vspace .vrow").length, rows.length]'));
 ok('the type filters wrap instead of hiding (Other is visible)', await E('(() => { const b = [...document.querySelectorAll(".chip")].pop(), r = b.getBoundingClientRect(), s = document.querySelector(".storage").getBoundingClientRect(); return r.right <= s.right && b.textContent.startsWith("Other"); })()'));

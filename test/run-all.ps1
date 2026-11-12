@@ -1,4 +1,4 @@
-# Runs every check on made-up data: the end-to-end test, a clean restart, the restart test, the scale test, the
+﻿# Runs every check on made-up data: the end-to-end test, a clean restart, the restart test, the scale test, the
 # release checks (a prepared data folder), an unreadable working view, a restart that has to wait, sleep and the
 # end of a Windows session, a held history file, the 12V-2x6 connector, the bottleneck with a made-up game, the game sessions popup and report,
 # a build with extras, the layouts, tile sizes, lines on both sides, a game session's numbers, the tile looks, and a window
@@ -144,6 +144,12 @@ $p = Start-Deck 'data-12v' 9233 300
 Remove-Item Env:HWDECK_FAKEPINS
 Run '12V-2x6 connector' test/e2e-12v.mjs 9233 test/data-12v
 Quit-Deck $p 9233
+
+# the internet (port 9242, 2.4.8): its readings, the cell, its popup, the speed test's switch and Test every, a made-up test, the Starter
+if (Test-Path "$d\test\data-net") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-net" }
+$p = Start-Deck 'data-net' 9242 300
+Run 'internet' test/e2e-net.mjs 9242 test/data-net
+Quit-Deck $p 9242
 
 # the bottleneck with a made-up game (port 9236): the test quits the app itself, to check the saved history
 if (Test-Path "$d\test\data-bn") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-bn" }

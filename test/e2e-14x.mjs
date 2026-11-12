@@ -22,7 +22,7 @@ const until = async (expr, ms = 8000) => { const t0 = Date.now(); while (Date.no
 const text = f => existsSync(f) ? readFileSync(f, 'utf8') : '';
 const host = m => E(`send(${JSON.stringify(m)})`);
 
-ok('catalog arrives', await until('READ.length === 302 && feed.got'));
+ok('catalog arrives', await until('READ.length === 304 && feed.got'));
 await host({ t: 'fakeGame', game: null });
 const ramKey = await E('(READ.find(r => r.label === "Physical Memory Used") || {}).key');
 const availKey = await E('(READ.find(r => r.label === "Physical Memory Available") || {}).key');

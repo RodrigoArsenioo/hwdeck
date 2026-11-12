@@ -6,7 +6,7 @@
 (() => {
   'use strict';
   const RELEASES = 'https://github.com/RodrigoArsenioo/hwdeck/releases/latest';
-  const VERSION = '2.4.7';
+  const VERSION = '2.4.8';
   const T0 = Math.floor(Date.now() / 1000);
   const nowS = () => Math.floor(Date.now() / 1000);
   const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
@@ -121,6 +121,21 @@
   const vram = t => { const c = core(t); return c.g ? 9400 + 900 * smooth(30, t, 60) : 1900 + 300 * smooth(30, t, 90); };
   const ram = t => { const c = core(t); return c.g ? 23800 + 900 * smooth(31, t, 70) : 15200 + 700 * smooth(31, t, 120); };
   const io = (seed, t) => { const b = smooth(seed, t, 9); return b > 0.8 ? (b - 0.8) * 5 * (300 + 2400 * hash(seed, Math.floor(t / 9))) : 0.4 * hash(seed + 1, t); };
+  // (the internet's speed test in the demo: on, with made-up results; Test now plays a made-up test of about 15 s)
+  const NOW0 = Math.floor(Date.now() / 1000);
+  const NET = { on: true, every: 8, link: 'Ethernet, connected at 1 Gbit/s', last: { d: 938, u: 412, ping: 9, at: NOW0 - 4 * 3600 - 23 * 60 }, run: null,
+    tests: [[NOW0 - 4 * 3600 - 23 * 60, '938 down, 412 up, 9 ms, Frankfurt'], [NOW0 - 12 * 3600 - 23 * 60, '941 down, 409 up, 8 ms, Frankfurt'], [NOW0 - 20 * 3600 - 23 * 60 + 1800, '936 down, 411 up, 9 ms, Frankfurt'], [NOW0 - 20 * 3600 - 23 * 60, 'skipped, game running']] };
+  function netState() {
+    const o = { on: NET.on, link: NET.link, every: NET.every, tests: NET.tests.slice(0, 12) };
+    if (NET.last) o.last = NET.last;
+    if (NET.on && NET.every > 0) o.next = (NET.last ? NET.last.at : NOW0) + NET.every * 3600;
+    if (NET.run) {
+      const T = (Date.now() - NET.run.t0) / 1000, p = T < 1 ? 'ping' : T < 8.5 ? 'down' : 'up';
+      if (T >= 16) { const d = 905 + Math.round(Math.random() * 30), u = 398 + Math.round(Math.random() * 18); NET.last = { d, u, ping: 8, at: NET.run.at }; NET.tests.unshift([NET.run.at, d + ' down, ' + u + ' up, 8 ms, Frankfurt']); NET.run = null; return netState(); }
+      o.run = { p, pct: Math.min(100, T / 16 * 100), left: Math.max(1, Math.ceil(16 - T)), d: T >= 2 ? Math.min(1, (T - 1) / 1.5) * 912 : null, u: T >= 9.5 ? Math.min(1, (T - 8.5) / 1.5) * 401 : null, ping: T >= 0.6 ? 8 : null, at: NET.run.at, all: 16, pe: (p === 'ping' ? 1 : p === 'down' ? 8.5 : 16) / 16 * 100, pl: p === 'ping' ? 1 : 7.5 };
+    }
+    return o;
+  }
   const R = [];   // [sensor, type, label, unit, value(t)]
   const add = (s, type, label, unit, f) => R.push({ s, type, label, unit, f });
   // CPU
@@ -177,10 +192,17 @@
   // HW Deck's own: the bottleneck, 1 gpu, 2 cpu, 3 capped (none: no game), and how long the game has run (minutes)
   add(9, 8, 'Bottleneck', '', t => core(t).call);
   add(9, 8, 'Game time', 'min', t => { const m = core(t).g ? sessAt(t) : null; return m ? (t - m.start - m.gap) / 60 : null; });   // (its breaks aren't play)
+  // the internet (2.4.8): a quiet line with a few bursts, and the made-up speed test's traffic while one runs
+  const netNow = (t, up) => { const T = NET.run ? t - NET.run.t0 / 1000 : -1;   // (by t: the graphs' past seconds and minutes too)
+    if (T >= 1 && T < 8.5 && !up) return Math.min(1, (T - 1) / 1.2) * (880 + 40 * smooth(91, t, 3));
+    if (T >= 8.5 && T < 16 && up) return Math.min(1, (T - 8.5) / 1.2) * (395 + 20 * smooth(92, t, 3));
+    const b = up ? 0.35 + 0.25 * smooth(93, t, 40) : 2.2 + 1.6 * smooth(94, t, 60); const burst = smooth(95, t, 25) > 0.85 ? (up ? 3 : 45) * (smooth(95, t, 25) - 0.85) / 0.15 : 0; return Math.max(0.05, b + burst); };
+  add(9, 8, 'Download now', 'Mbit/s', t => netNow(t, false));
+  add(9, 8, 'Upload now', 'Mbit/s', t => netNow(t, true));
   const per = {};
   R.forEach(r => {
     const sk = SENSORS[r.s][0];
-    if (sk === 'hwdeck.0') r.key = r.label === 'Game time' ? 'hwdeck.0/gtime' : 'hwdeck.0/bneck';
+    if (sk === 'hwdeck.0') r.key = r.label === 'Game time' ? 'hwdeck.0/gtime' : r.label === 'Download now' ? 'hwdeck.0/netdown' : r.label === 'Upload now' ? 'hwdeck.0/netup' : 'hwdeck.0/bneck';
     else { const j = per[r.s + ':' + r.type] = (per[r.s + ':' + r.type] || 0); per[r.s + ':' + r.type]++; r.key = sk + '/' + ((r.type << 24) | j).toString(16).padStart(8, '0'); }
   });
   const K = {}; for (const r of R) K[SENSORS[r.s][0] + '|' + r.label] = r.key;
@@ -201,6 +223,7 @@
       { id: 'fans', name: 'Fans', collapsed: false, cells: ['f1', 'f2', 'f3', 'f4', 'f5', 'f6'] },
       { id: 'game', name: 'Game', collapsed: false, cells: ['p1', 'p2', 'p3', 'p4'] },
       { id: 'storage', name: 'Storage', collapsed: false, cells: ['s1', 's2'] },
+      { id: 'net', name: 'Network', collapsed: false, cells: ['n1'] },
       { id: 'memory', name: 'Memory', collapsed: false, cells: ['m1', 'm2', 'm3'] },
       { id: 'board', name: 'Board', collapsed: false, cells: ['b1', 'b2', 'b3'] }],
     cells: {
@@ -217,9 +240,10 @@
       p4: cell(8, 'Frame Time', 'Frame time'),
       s1: cell(3, 'Drive Temperature', 'Samsung 990 PRO', yr(65, 70)), s2: cell(4, 'Drive Temperature', 'WD SN850X', yr(65, 70)),
       m1: cell(5, 'SPD Hub Temperature', 'DIMM 1'), m2: cell(6, 'SPD Hub Temperature', 'DIMM 2'), m3: cell(7, 'Physical Memory Used', 'RAM used'),
-      b1: cell(2, 'Motherboard', 'Motherboard'), b2: cell(2, 'Chipset', 'Chipset'), b3: cell(2, 'VRM MOS', 'VRM')
+      b1: cell(2, 'Motherboard', 'Motherboard'), b2: cell(2, 'Chipset', 'Chipset'), b3: cell(2, 'VRM MOS', 'VRM'),
+      n1: { key: 'hwdeck.0/netdown', match: 'HW Deck|Download now', u: 'Mbit/s', name: 'Internet', graph: true }
     },
-    views: { overview: { rows: [{ cols: [{ stack: ['gpu'] }, { stack: ['cpu'] }] }, { cols: [{ stack: ['fans'] }, { stack: ['game', 'storage'] }, { stack: ['memory', 'board'] }] }] } }
+    views: { overview: { rows: [{ cols: [{ stack: ['gpu'] }, { stack: ['cpu'] }] }, { cols: [{ stack: ['fans', 'net'] }, { stack: ['game', 'storage'] }, { stack: ['memory', 'board'] }] }] } }
   };
   const DEMO_STATE = { v: 1, L: DEMO, active: 0, edit: false, screen: 'overview', pins: [false, false], clock: true, gameCalm: false, starter: true };   // (no game is really in front in a browser: Full stays Full; Starter waits in Saves, no note about it)
 
@@ -351,6 +375,7 @@
     }
     const m = { t: 'tick', ver: 1, status: 'ok', age: 0, ts: t, i, v, mn, mx, av, game: c.g ? c.g.name : null, front: !!c.g, gameSince: mg ? mg.start : 0, gameGap: mg ? mg.gap : 0, pm: !!c.g, bnl: c.call || (c.gpu >= 95 ? 1 : c.thr >= 80 ? 2 : 3), rec: load('rec') || [] };
     if (sess && c.g) { m.gs = {}; for (const k in sess.pm) { const a = sess.pm[k]; m.gs[k] = [a[0], Math.round(a[1] / a[2] * 100) / 100, a[3]]; } }
+    m.net = netState();
     post(m);
     // (the sessions popup open: the game in progress every 5 s, and at its start or end at once, then the log, as the app)
     if (liveOn && (t % 5 === 0 || !!c.g !== liveWas)) { post({ t: 'gameNow', s: liveLine(t) }); if (!!c.g !== liveWas) post({ t: 'games', log: gamesLog() }); }
@@ -369,7 +394,7 @@
         post({ t: 'state', state: st, slots, fake: true, dataDir: 'Nothing is saved in the demo (only in this tab)', version: VERSION, pc: 'GAMING-PC', nonClient: false, ext: false, brand: 'HW Deck', updatable: false });
         post(settingsMsg());
         post({ t: 'winMax', max: true });   // (a tab has no edges to resize: no band at them that swallows a press, 11-06)
-        post({ t: 'catalog', ver: 1, sensors: SENSORS, readings: R.map(r => [r.s, r.type, r.key, r.label, r.unit, null]), bneck: [key(1, 'GPU Core Load'), key(0, 'Max CPU/Thread Usage'), 0], c12: null });
+        post({ t: 'catalog', ver: 1, sensors: SENSORS, readings: R.map(r => [r.s, r.type, r.key, r.label, r.unit, r.key === 'hwdeck.0/netdown' ? 'net' : null]), bneck: [key(1, 'GPU Core Load'), key(0, 'Max CPU/Thread Usage'), 0], c12: null });
         clearInterval(timer); setTimeout(() => { tick(); timer = setInterval(tick, 1000); }, 1000 - Date.now() % 1000);
         tick();
         break;
@@ -440,6 +465,8 @@
       }
       case 'autostart': case 'keepSharing': case 'gameFps': toast(IN_APP); post(settingsMsg()); break;
       case 'updates': case 'openData': case 'restartHwinfo': toast(IN_APP); break;
+      case 'netTest': NET.on = !!m.on; break;   // (the speed test's switch: in the tab only)
+      case 'net': if (m.do === 'test' && NET.on && !NET.run) NET.run = { t0: Date.now(), at: Math.floor(Date.now() / 1000) }; else if (m.every != null) NET.every = +m.every; break;   // (a made-up test, nothing is sent)
       default: break;   // win, drag: there is no window to move here
     }
   }

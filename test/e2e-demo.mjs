@@ -34,7 +34,7 @@ try {
   const errs = await p.errors();
 
   ok('the demo opens: readings arrive from demo.js, the page runs as in the app', await until('feed.got && READ.length > 40 && feed.fake === true', 10000), await E('READ.length').catch(() => 'none'));
-  ok('on the demo layout, in view mode, on Overview', await E('S.L.cats.map(c => c.name).join() === "GPU,CPU,Fans,Game,Storage,Memory,Board" && !S.edit && S.screen === "overview" && document.querySelectorAll("#view .dc").length >= 25'),
+  ok('on the demo layout, in view mode, on Overview', await E('S.L.cats.map(c => c.name).join() === "GPU,CPU,Fans,Game,Storage,Network,Memory,Board" && !S.edit && S.screen === "overview" && document.querySelectorAll("#view .dc").length >= 25'),
     await E('S.L.cats.map(c => c.name).join() + " " + S.edit + " " + S.screen'));
   ok('real-looking names, the HW Deck bottleneck among them', await E('["CPU (Tctl/Tdie)", "GPU Hot Spot Temperature", "Drive Temperature", "Framerate (1% low)", "Bottleneck"].every(l => READ.some(r => r.label === l)) && SENS.some(s => /RTX 4080/.test(s.name))'));
   const v0 = await E('BYKEY.get(S.L.cells.g4.key).v'); await sleep(2500);
@@ -150,6 +150,23 @@ try {
     ok('popup morph: and it opens clean after', s.open && clean(s) && s.tf === 'none' && s.kid === '1', JSON.stringify(s));
     await closeAll();
     await E(`(() => { if (window.__prev) showPrev = window.__prev; return 1; })()`);
+  }
+  // (2.4.8) the internet: its cell under Fans in Overview, its speed test on with made-up results, Test now plays a
+  // made-up test of about 15 s (nothing is sent: the check above covers every request)
+  {
+    await E(`(() => { showScreen('overview'); return 1; })()`); await sleep(1500);
+    const cid = await E(`Object.keys(S.L.cells).find(id => S.L.cells[id].key === NETD) || ''`);
+    ok('internet: the demo has the Internet cell, in Overview, download and upload', !!cid && await E(`(() => { const e = document.querySelector('#view .dc[data-cid="${cid}"]'); return !!e && (e.innerText.match(/Mbit.s/g) || []).length >= 2; })()`), cid);
+    await E(`(() => { openDetail(${JSON.stringify(cid)}); return 1; })()`); await sleep(1500);
+    const P = () => E(`JSON.stringify((() => { const x = document.querySelector('#mextra .xn-st'), b = x && x.querySelector('[data-net]'); return { st: !!x, btn: b && b.textContent.trim(), boxes: x ? [...x.querySelectorAll('.xn-box3 b')].map(e => e.textContent) : [], rows: [...document.querySelectorAll('#mextra .xn-tests .wrow')].map(e => [...e.children].map(c => c.textContent.trim()).join('|')) }; })())`).then(JSON.parse);
+    let q = await P();
+    ok('internet: its popup shows the speed test on, made-up results and the list', q.st && q.btn === 'Test now' && q.boxes[0] === '9ms' && q.boxes[1] === '938Mbit/s' && q.rows.length >= 3, JSON.stringify(q));
+    await E(`(() => { document.querySelector('#mextra [data-net="test"]').click(); return 1; })()`);
+    await sleep(3000); q = await P();
+    ok('internet: Test now plays a made-up test', q.btn === 'Testing' && /running/.test(q.rows[0] || ''), JSON.stringify(q));
+    await sleep(14500); q = await P();
+    ok('internet: and ends with a new result on top', q.btn === 'Test now' && /^today \d\d:\d\d\|Frankfurt\|8ms\|\d+Mbit\/s\|\d+Mbit\/s$/.test(q.rows[0] || ''), JSON.stringify(q));
+    await E(`(() => { document.querySelectorAll('.modal.open').forEach(m => m.classList.remove('open')); return 1; })()`); await sleep(900);
   }
   ok('nothing fetched from anywhere but its own server', urls.length > 0 && urls.every(u => u.startsWith(URL0) || u.startsWith('data:') || u.startsWith('blob:')), urls.filter(u => !u.startsWith(URL0)).join(' '));
   ok('no page errors', errs.length === 0, errs.join(' | '));

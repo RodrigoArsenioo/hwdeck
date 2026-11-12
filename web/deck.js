@@ -94,6 +94,165 @@ EXT.kinds['12v'] = {
     const el = box.querySelector('.mpinwrap'); el.classList.toggle('v', !!u); if (el._h !== h) { el.innerHTML = h; el._h = h; }
   }
 };
+// ---------- the internet (2.4.8): its cell (download now big, upload now under it, the graph of download) and its
+// popup: the adapter and its link, and the speed test when it is on in Settings: Test now, the last test's download,
+// upload and ping, when the next one runs, Test every (the same setting as in Settings), the list of tests. Off:
+// nothing of it. The host measures (Net in app.cs); the tick's "net" carries it ----------
+const NETD = 'hwdeck.0/netdown', NETU = 'hwdeck.0/netup';
+const NET_I = '<svg viewBox="0 0 24 24"><path d="M8 5v14M4.5 15.5L8 19l3.5-3.5M16 19V5M12.5 8.5L16 5l3.5 3.5"/></svg>';
+const GAUGE_I = '<svg viewBox="0 0 24 24"><path d="M4 17a8 8 0 1 1 16 0"/><path d="M12 17l4-5"/></svg>';
+const NET_EVERY = [['4', '4h'], ['8', '8h'], ['12', '12h'], ['24', '24h'], ['0', 'Off']];
+const NET_DN = '<svg viewBox="0 0 24 24" aria-label="download"><path d="M12 5v14M6.5 13.5L12 19l5.5-5.5"/></svg>', NET_UP = '<svg viewBox="0 0 24 24" aria-label="upload"><path d="M12 19V5M6.5 10.5L12 5l5.5 5.5"/></svg>';
+const nf1 = v => v == null || !isFinite(v) ? '--' : v < 100 ? (+v).toFixed(1) : String(Math.round(v));   // (one decimal under 100, whole above)
+const p2n = n => String(n).padStart(2, '0'), nHm = at => { const d = new Date(at * 1000); return p2n(d.getHours()) + ':' + p2n(d.getMinutes()); };
+const nDay = at => { const d = new Date(at * 1000), t = new Date(), y = new Date(t.getTime() - 86400000);
+  return (d.toDateString() === t.toDateString() ? 'today ' : d.toDateString() === y.toDateString() ? 'yesterday ' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' ') + nHm(at); };
+const netSeg = (cur, attr) => '<span class="seg seg3">' + NET_EVERY.map(([v, t]) => '<button ' + attr + '="' + v + '" class="' + (String(cur) === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span>';
+// a test's row in the list: the time, where, the ping, download and upload ("810 down, 403 up, 3 ms, Lisbon"; the
+// ping and the place may be missing), or the words across
+const netRow = x => { const m = /^(\d+) down, (\d+) up(?:, ([\d.]+) ms)?(?:, (.+))?$/.exec(x[1] || '');
+  return '<span class="wname">' + nDay(x[0]) + '</span>' + (m ? '<span class="xn-at">' + (m[4] ? esc(m[4]) : '--') + '</span><span class="xn-p">' + (m[3] ? m[3] + '<small>ms</small>' : '--') + '</span><span class="xn-n">' + NET_DN + m[1] + '<small>Mbit/s</small></span><span class="xn-n">' + NET_UP + m[2] + '<small>Mbit/s</small></span>' : '<span class="xn-w">' + esc(x[1]) + '</span>'); };
+// the speed test's moving parts (his pick 11-12): the boxes' numbers and graphs, on a clock of 30 steps a second that runs
+// only while something moves. Full: download and upload count to each reading over the second to the next one, then ease
+// into their end (600 ms); their graph gets a point each step. Minimal and Off: the numbers just change, a point a reading
+const NT = { p: {}, d: {}, u: {}, was: null, endT: 0, pend: 0, top: 1000 };
+const nbJobs = new Set(); let nbClk = 0;
+const nbRun = f => { nbJobs.add(f); if (!nbClk) nbClk = setInterval(() => { const now = performance.now(); for (const j of [...nbJobs]) if (j(now) === false) nbJobs.delete(j); if (!nbJobs.size) { clearInterval(nbClk); nbClk = 0; } }, 1000 / 30); };
+const nbEase = p => 1 - Math.pow(1 - p, 3);
+function nbShow(k) { const s = NT[k]; if (!s.el) return; setText(s.el, s.shown == null ? '--' : String(Math.round(s.shown))); if (s.unit) s.unit.style.display = s.shown == null ? 'none' : ''; }
+function nbJob(k) {
+  return now => {
+    const s = NT[k]; if (!s.el || !s.el.isConnected) { s.run = false; return false; }
+    if (s.to == null) s.shown = null; else { const q = Math.min(1, (now - s.t0) / s.dur); s.shown = q >= 1 ? s.to : s.from + (s.to - s.from) * (s.lin ? q : nbEase(q)); }
+    nbShow(k); nbGraph(k, now);
+    const more = s.to != null && (now - s.t0 < s.dur || s.live); if (!more) s.run = false;
+    return more;
+  };
+}
+// a reading for box k: live (counts to it in a straight line over 1 s), its end (eases into it in 600 ms), or one that
+// just shows; null: "--" and its unit hidden
+function nbTo(k, v, mode) {
+  const s = NT[k];
+  if (v == null) { s.to = null; s.shown = null; s.live = false; nbShow(k); nbGraph(k, performance.now()); return; }
+  if (mode === 'show' || !motionOn()) { s.to = s.from = s.shown = v; s.t0 = 0; s.dur = 1; nbShow(k); nbGraph(k, performance.now()); return; }
+  if (s.to === v && mode !== 'live') return;
+  s.from = s.shown == null ? 0 : s.shown; s.to = v; s.t0 = performance.now(); s.dur = mode === 'live' ? 1000 : 600; s.lin = mode === 'live';
+  if (!s.run) { s.run = true; nbRun(nbJob(k)); }   // (one job a box: the running one takes the new target)
+}
+// the rate in its box, drawn as the tiles' graphs are: a 1.4 px line, the fill under it fading down, a dot at its tip
+// while its step runs (grey once it is over); across: the step's length, up: the link's speed (or the top it reached)
+function nbGraph(k, now) {
+  const s = NT[k]; if (k === 'p' || !s.cv) return;
+  if (s.live && s.shown != null) { if (!s.gt0) s.gt0 = now; if (s.pts.length < 600) s.pts.push([Math.min(1, (now - s.gt0) / ((s.len || 4) * 1000)), s.shown]); }
+  const cv = s.cv, dpr = window.devicePixelRatio || 1, w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+  if (!w || !h) return; if (cv.width !== w) cv.width = w; if (cv.height !== h) cv.height = h;
+  const x = cv.getContext('2d'); x.clearRect(0, 0, w, h);
+  const P = s.pts; if (P.length < 2) return;
+  let top = NT.top || 1000; for (const q of P) if (q[1] > top) top = q[1];
+  const col = s.live ? '#7c7c7c' : '#5a5a5a', pad = 4 * dpr, X = v => 1 + v * (w - 2 - pad), Y = v => h - 1.5 * dpr - Math.min(1, v / top) * (h - 1.5 * dpr - pad);
+  x.beginPath(); P.forEach((q, i) => i ? x.lineTo(X(q[0]), Y(q[1])) : x.moveTo(X(q[0]), Y(q[1])));
+  x.strokeStyle = col; x.globalAlpha = 0.9; x.lineWidth = 1.4 * dpr; x.lineJoin = 'round'; x.lineCap = 'round'; x.stroke();
+  x.lineTo(X(P[P.length - 1][0]), h); x.lineTo(X(P[0][0]), h); x.closePath();
+  const gr = x.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, col + '2e'); gr.addColorStop(1, col + '00'); x.globalAlpha = 1; x.fillStyle = gr; x.fill();
+  if (s.live) { const t = P[P.length - 1]; x.fillStyle = col + '38'; x.beginPath(); x.arc(X(t[0]), Y(t[1]), 4.2 * dpr, 0, 7); x.fill(); x.fillStyle = col; x.beginPath(); x.arc(X(t[0]), Y(t[1]), 1.9 * dpr, 0, 7); x.fill(); }
+}
+// the bar under the boxes (its fill scaled, not resized): aimed 1.25 s ahead at the test's speed, up to the end of the
+// step, again at every reading so it never stops between them (Minimal: the 600 ms glide to where it is; Off: steps)
+function nbAim(el, frac, perS, cap) {
+  if (!el) return;
+  if (!motionOn()) { nbBar(el, Math.min(cap, frac), motionMode() === 'off' ? 0 : 600); return; }
+  const to = Math.min(cap, frac + perS * 1.25), ms = perS > 0 ? (to - frac) / perS * 1000 : 0;
+  el.style.transition = ms > 30 ? 'transform ' + Math.round(ms) + 'ms linear' : 'transform 300ms var(--e-move)';
+  el.style.transform = 'scaleX(' + (ms > 30 ? to : Math.min(cap, frac)).toFixed(4) + ')';
+}
+const nbBar = (el, frac, ms) => { if (!el) return; el.style.transition = ms ? 'transform ' + ms + 'ms var(--e-move)' : 'none'; el.style.transform = 'scaleX(' + Math.max(0, Math.min(1, frac)).toFixed(4) + ')'; };
+EXT.kinds.net = {
+  icon: () => NET_I,
+  eval(out, r) {
+    const R = feed.net && feed.net.run, d = r.v, ur = BYKEY.get(NETU), u = ur ? ur.v : null;
+    out.v = d; out.col = 'white';
+    if (d == null || !isFinite(d)) return false;
+    out.txt = nf1(d); out.utxt = 'Mbit/s';
+    // (the arrows before the numbers were tried and taken back, his 11-12 "the new cell looks ugly revert to the previous")
+    const sub = R ? 'speed test, ' + R.left + ' s left' : 'upload ' + nf1(u) + ' Mbit/s', short = R ? sub : 'upload ' + nf1(u);
+    out.sub = sub; out.tsub = sub; out.tsubS = short; out.subS = { of: sub, s: short };
+    return true;
+  },
+  desc: () => '<span class="xn-d"></span>',
+  detail(box) {
+    const N = feed.net || {}, L = N.last, R = N.run;
+    const dsc = document.querySelector('#mdesc .xn-d'); if (dsc) setText(dsc, N.link || '');
+    if (!N.on) { if (box._h !== '') { box.innerHTML = ''; box._h = ''; } NT.was = null; return; }
+    // the frame, made once per opening (his pick 11-12, "graph in the box"): its parts change in place, so they can move
+    if (!box.querySelector('.xn-st')) {
+      box._h = 'xn';
+      const bx = (k, lbl, unit) => '<div data-k="' + k + '"><em>' + lbl + '</em><b><span class="xn-v">--</span><small>' + unit + '</small></b>' + (k !== 'p' ? '<canvas class="xn-cv"></canvas>' : '') + '</div>';
+      box.innerHTML = '<div class="xn-st"><div class="msec">speed test<button class="btn" data-net="test">' + GAUGE_I + '<span class="xn-bt">Test now</span></button></div>' +
+        '<div class="xn-box3">' + bx('p', 'ping', 'ms') + bx('d', 'download', 'Mbit/s') + bx('u', 'upload', 'Mbit/s') + '</div>' +   // (ping first, as the test runs: his 11-12)
+        '<div class="xn-fold shut xn-pw"><div><div class="xn-bar"><i></i></div></div></div>' +
+        '<div class="xn-bl"><span class="xn-l"></span><span class="xn-r"></span></div>' +
+        '<div class="setrow"><div>Test every</div><span class="xn-seg"></span></div></div>' +
+        '<div class="xn-tw"><div class="msec">tests</div><div class="xn-tests"></div></div>';
+      for (const k of ['p', 'd', 'u']) { const el = box.querySelector('[data-k="' + k + '"]'); Object.assign(NT[k], { el: el.querySelector('.xn-v'), unit: el.querySelector('b small'), cv: el.querySelector('canvas'), pts: [], live: false, gt0: 0, to: null, shown: null, len: 4 }); }
+      NT.was = undefined;
+    }
+    const m = /(\d+(?:\.\d+)?) (G|M)bit\/s/.exec(N.link || ''); NT.top = m ? +m[1] * (m[2] === 'G' ? 1000 : 1) : 1000;
+    // Test now: "Testing" and the boxes cleared at the click, not at the next second (NT.pend, 4 s at most)
+    const pend = !R && NT.pend && performance.now() - NT.pend < 4000; if (R) NT.pend = 0;
+    const live = R || (pend ? { p: 'ping' } : null), first = NT.was === undefined, started = !!live && !NT.was && !first, ended = !live && !!NT.was;
+    NT.was = live ? Object.assign({}, live) : null;
+    const btn = box.querySelector('[data-net="test"]'); btn.disabled = !!live; setText(box.querySelector('.xn-bt'), live ? 'Testing' : 'Test now');
+    const seg = box.querySelector('.xn-seg'), sh = netSeg(N.every, 'data-net-every'); if (seg._h !== sh) { seg.innerHTML = sh; seg._h = sh; }
+    // the boxes: ping shows once known; download and upload count to each reading while their step runs, and ease into
+    // their end when it is over
+    if (started) for (const k of ['p', 'd', 'u']) { NT[k].pts = []; NT[k].gt0 = 0; NT[k].live = false; nbTo(k, null); }
+    if (R) {
+      if (R.ping != null && NT.p.to == null) nbTo('p', R.ping, 'show');
+      if (R.p === 'down' && R.d != null) { NT.d.live = true; NT.d.len = R.pl || 4; nbTo('d', R.d, first ? 'show' : 'live'); }
+      else if (R.p === 'up') {
+        if (NT.d.live) { NT.d.live = false; nbTo('d', R.d, 'end'); } else if (NT.d.to == null && R.d != null) nbTo('d', R.d, 'show');
+        if (R.u != null) { NT.u.live = true; NT.u.len = R.pl || 4; nbTo('u', R.u, first ? 'show' : 'live'); }
+      }
+    } else if (!pend) {
+      NT.d.live = NT.u.live = false;
+      nbTo('d', L ? L.d : null, ended ? 'end' : 'show'); nbTo('u', L ? L.u : null, ended ? 'end' : 'show'); nbTo('p', L ? L.ping : null, 'show');
+    }
+    // the bar: aimed ahead at the test's own speed at every reading, so it moves steadily; full and folded away at the end
+    const pw = box.querySelector('.xn-pw'), bar = box.querySelector('.xn-bar i');
+    if (R) {
+      pw.classList.remove('shut'); clearTimeout(NT.endT); NT.endT = 0;
+      if (started || first) { nbBar(bar, R.pct / 100, 0); void bar.offsetWidth; }
+      nbAim(bar, R.pct / 100, R.all ? 1 / R.all : 0, R.pe != null ? R.pe / 100 : 1);
+    } else if (pend) { pw.classList.remove('shut'); if (started) nbBar(bar, 0, 0); }
+    else if (ended) { nbBar(bar, 1, 300); clearTimeout(NT.endT); NT.endT = setTimeout(() => { pw.classList.add('shut'); NT.endT = 0; }, 450); }
+    else if (!NT.endT) pw.classList.add('shut');
+    // the line under: what it tests and the seconds left, or the last test and the next
+    const l = box.querySelector('.xn-l'), r = box.querySelector('.xn-r');
+    const lh = live ? '<em>testing</em> ' + ({ ping: 'ping', down: 'download', up: 'upload' })[live.p] : L ? '<em>last</em> ' + nDay(L.at) : 'no test yet';
+    const rh = R ? R.left + ' s left' : pend ? '' : !+N.every ? 'only by the button' : N.next ? '<em>next</em> ' + nHm(N.next) : '';
+    if (l._h !== lh) { l.innerHTML = lh; l._h = lh; } if (r._h !== rh) { r.innerHTML = rh; r._h = rh; }
+    box.querySelector('.xn-st > .xn-bl').classList.toggle('xn-run', !!live);
+    // the tests: rows kept by their time; a new one folds open on top, the running one turns into its result (a fade)
+    // (the list in columns, his 11-12 "an allocated space for up for down and for region, so it reads easy", in the
+    // test's order: the time, where, the ping, download and upload with their arrows; a skipped or failed test reads across)
+    const list = box.querySelector('.xn-tests'), rows = (R ? [[R.at, 'running', 1]] : []).concat((N.tests || []).filter(x => !R || x[0] !== R.at));
+    box.querySelector('.xn-tw').style.display = rows.length ? '' : 'none';
+    const fill = !list.children.length, slide = motionMode() !== 'off', keyOf = x => String(x[0]) + (String(x[1]).startsWith('skipped') ? 's' : '');
+    let prev = null;
+    for (const x of rows) {
+      const key = keyOf(x); let f = list.querySelector(':scope > [data-at="' + key + '"]');
+      if (!f) {
+        f = document.createElement('div'); f.className = 'xn-fold' + (fill || !slide ? '' : ' shut'); f.dataset.at = key; f.innerHTML = '<div><div class="wrow xn-row"></div></div>';
+        if (!fill && slide) requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove('shut')));
+      }
+      if (prev ? prev.nextSibling !== f : list.firstChild !== f) { if (prev) prev.after(f); else list.prepend(f); }
+      const w = f.querySelector('.wrow'), h = netRow(x); w.classList.toggle('now', !!x[2]);
+      if (w._h !== h) { const had = w._h != null; w.innerHTML = h; w._h = h; if (had && motionOn()) { w.classList.remove('xn-swap'); void w.offsetWidth; w.classList.add('xn-swap'); } }
+      prev = f;
+    }
+    const keys = new Set(rows.map(keyOf)); for (const f of [...list.children]) if (!keys.has(f.dataset.at)) f.remove();
+  }
+};
 const $ = id => document.getElementById(id);
 const app = $('app'), sectionsEl = $('sections'), dropmark = $('dropmark');
 const esc = s => String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -386,7 +545,7 @@ const inGB = r => !!r && r.unit === 'MB';
 const gbK = r => inGB(r) ? 1 / 1024 : 1;
 const fmtV = (v, dec, r) => isYN(r) ? (v == null || !isFinite(v) ? '--' : v >= 0.5 ? 'Yes' : 'No') : fmt(v == null ? v : v * gbK(r), dec);
 const unitOf = r => !r || r.unit === 'Yes/No' ? '' : inGB(r) ? 'GB' : r.unit;
-function valTxt(r) { if (!r || r.v == null) return '--'; if (r.key === BNECK) return BN[r.v] ? BN[r.v][0] + ' ' + BN[r.v][1] : '--'; return isYN(r) ? fmtV(r.v, 0, r) : fmtV(r.v, decFor(r), r) + (r.unit ? ' ' + unitOf(r) : ''); }
+function valTxt(r) { if (!r || r.v == null) return '--'; if (r.key === BNECK) return BN[r.v] ? BN[r.v][0] + ' ' + BN[r.v][1] : '--'; if (r.unit === 'Mbit/s' && isFinite(r.v)) return nf1(r.v) + ' Mbit/s'; return isYN(r) ? fmtV(r.v, 0, r) : fmtV(r.v, decFor(r), r) + (r.unit ? ' ' + unitOf(r) : ''); }
 // a memory reading's partner: the same sensor's "... Memory Available" (used + available = what there is), for the
 // "34% of 64 GB" caption; worked out once per catalog
 let memPairs = null, memPairsOf = null;
@@ -1035,6 +1194,7 @@ function partOf(c) {
   if (c.pred) return 'fan';   // (a fan's speed from its curve)
   const k = c.key || '';
   if (k === CONN) return 'gpu';
+  if (k === NETD || k === NETU) return null;   // (the internet: no part of its own)
   if (k.startsWith('hwdeck.')) return 'game';
   const r = BYKEY.get(k); if (!r) return null;
   const s = SENS[r.s] ? SENS[r.s].name : '', l = r.label || '';
@@ -1195,6 +1355,7 @@ function cellKeys() {
     const mp = c.key && memPair(BYKEY.get(c.key)); if (mp) set.add(mp.key);   // (its "% of" caption)
     const lr = c.key && BYKEY.get(c.key), fp = gfKind(lr) === 'low' && fpsOf(lr); if (fp) set.add(fp.key);   // (a 1% low's "% of the fps": the live fps, 11-06)
     if (c.key === CONN && feed.c12keys) for (const k of [].concat(...feed.c12keys)) if (k) set.add(k);   // its pins (their voltages too, where shared)
+    if (c.key === NETD) set.add(NETU);   // (the internet: its upload line)
   }
   if (EXT.keys) for (const k of EXT.keys()) set.add(k);
   if (modalCid && TCELL[modalCid]) set.add(TCELL[modalCid].key);   // (a popup with no cell: its reading too, while it is open)
@@ -1381,7 +1542,7 @@ function evalCell0(cid, c, peek, quick) {
   else if (out.lvl === 1 && !out.offCurve) out.sub = (g.dir === 'below' ? 'under yellow ' : 'over yellow ') + fl(g.y, g.dir === 'below');
   else if (out.curve) {
     const d = Math.round(out.curve.dev);
-    out.sub = Math.abs(out.curve.dev) <= c.curve.tol ? 'on curve, expects ' + fmt(out.curve.exp, 0) : Math.abs(d) + '% ' + (d < 0 ? 'under' : 'over') + ' its curve';
+    out.sub = Math.abs(out.curve.dev) <= c.curve.tol ? 'on curve, expects ' + fmt(out.curve.exp, 0) : Math.abs(d) + '% ' + (d < 0 ? 'under' : 'over') + ' the curve';
     if (/^on curve, /.test(out.sub)) out.subS = { of: out.sub, s: 'on curve' };
   } else if (c.pred) {
     const src = BYKEY.get(c.curve.src);
@@ -3402,6 +3563,7 @@ function renderChips() {
 function newCell(key) {
   const r = BYKEY.get(key), c = { key, match: r ? matchOf(r) : undefined, u: r ? r.unit : undefined, graph: true };
   if (key === CONN) c.gates = Object.assign({}, CONN_LINES);   // a connector is only worth a cell with its lines
+  if (key === NETD) c.name = 'Internet';   // (2.4.8)
   return c;
 }
 function addKeys(keys, catId, index, newCatName, nlFrom) {   // (nlFrom: the New row tile it goes in front of, which hands it its New row, 11-08)
@@ -5788,6 +5950,10 @@ function openDetail(cid, rng) {   // (rng: the range it opens on, 15 min unless 
   const c = cellAt(cid); if (!c) return;
   hidePrev(true);
   modalCid = cid; paintMc(); modal.classList.add('open'); lastBig = null; openedAt = performance.now();
+  // (the pointer's layer over the graph kept the last popup's size and place: under a popup without that graph, the
+  // Bottleneck's, it reached past the end and the popup scrolled with everything in sight, his video 11-12. Made again
+  // at the next point at a graph)
+  { const mh = document.getElementById('mhover'); if (mh) { mh._box = null; mh.style.width = mh.style.height = '0px'; } }
   const fa = document.activeElement; mOpener = fa && fa !== document.body && !modal.contains(fa) ? fa : null; modal.querySelector('.mcard').focus({ preventScroll: true });   // (into it, and back on close, 11-06)
   const mv = $('mval'); if (mv._n) mv._n._ot = undefined; mv._gm = undefined;
   setRange(rng || '15m', true);
@@ -5816,15 +5982,15 @@ function refreshModal(full, light) {   // (light: a window moved, 11-08)
   if (flip && motionMode() !== 'off') for (const el of [mv, mgraph]) el.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: motionOn() ? 320 : 200, easing: SUM_E });   // (live to past: the view's flip fade, 11-08)
   const g = c.gates, gk = gbK(r), det = gbDet(gateLines(g), gk);
   if (full) {
-    let d = c.pred ? 'Predicted from ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ' through its curve, as there is no fan sensor.'
+    let d = c.pred ? 'Predicted from ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ' through the fan curve, as there is no fan sensor.'
       : r ? '<span title="' + esc(r.key) + '">' + esc(SENS[r.s].name) + ', ' + esc(r.label) + '.</span>' : isPause(c) ? 'Not available right now.' : sensorHere(c) ? (neverHere(c) ? 'HWiNFO has never shared this reading on this PC.' : 'HWiNFO hasn\'t shared this reading for 7 days.') : 'This reading is not on this PC.';
     if (gatesOn(g)) d += ' Lines: yellow ' + lnTxt(det.y, dec, r, det.below) + (det.r !== undefined ? ', red ' + lnTxt(det.r, dec, r, det.below) : '') + (unit && !isYN(r) ? ' ' + esc(unit) : '') + (g.dir === 'below' ? ', bad when below' : '') + (det.y2 !== undefined || det.r2 !== undefined ? ', and on the other side ' + [det.y2 !== undefined ? 'yellow ' + lnTxt(det.y2, dec, r, !det.below) : '', det.r2 !== undefined ? 'red ' + lnTxt(det.r2, dec, r, !det.below) : ''].filter(Boolean).join(', ') + (g.dir === 'below' ? ', bad when above' : ', bad when below') : '') + (g.hold ? ', after ' + fmtL(g.hold, 1) + ' s' : '') + '.';
     if (c.curve && !c.pred) d += ' Follows a fan curve driven by ' + esc(BYKEY.get(c.curve.src) ? BYKEY.get(c.curve.src).label : 'a missing reading') + ', within ' + fmtL(c.curve.tol, 1) + '%' + (c.curve.warn === false ? ', but it doesn\'t warn when off it' : '') + '.';
-    if (e.strip) d = 'What\'s limiting your fps, checked every second while a game runs. GPU bound: the GPU is almost fully busy (95% or more), normal for a game without an fps limit. ' +
-      'FPS capped: the GPU has time to spare and the frames come at a steady rhythm, so an fps limit, vsync or Reflex is holding them. ' +
-      'CPU bound: the GPU has time to spare and the rhythm keeps changing, so the game is waiting on the CPU, even when no single core shows as busy. ' +
-      'Spotting a cap needs Accurate game fps (Settings). Without it, or in a Vulkan or OpenGL game, only a cap at the screen\'s refresh rate shows. ' +
-      'The cell shows the most common answer of the last 5 seconds. In the 1 h view and longer, the graph shows the main answer of each minute (10 minutes in the 7 day view, an hour from 30 days on); point at one for its split. ' + bnFrom();
+    // (shorter, 2.4.8: his 11-12 "isn't this the only cell with WAYY too much information": what each answer means and
+    // what it reads, nothing more)
+    if (e.strip) d = 'What\'s limiting your fps while a game runs. GPU bound: the GPU is almost fully busy. ' +
+      'FPS capped: the GPU has time to spare and the frames come at a steady rhythm, from an fps limit, vsync or Reflex. ' +
+      'CPU bound: the GPU has time to spare and the rhythm keeps changing. ' + bnFrom();
     if (xk && xk.desc) d = xk.desc(modalCid, r);
     $('mdesc').innerHTML = d;
   }
@@ -5864,7 +6030,7 @@ function refreshModal(full, light) {   // (light: a window moved, 11-08)
   if (light) return;
   const extra = $('mextra');
   if (c.curve) {
-    if (full || !extra.querySelector('#mcurve')) extra.innerHTML = '<div class="msec">' + (c.pred ? 'its curve' : 'fan curve') + '</div><canvas id="mcurve"></canvas>';
+    if (full || !extra.querySelector('#mcurve')) extra.innerHTML = '<div class="msec">fan curve</div><canvas id="mcurve"></canvas>'   // (his 11-12: "its curve" was bad naming);
     drawCurveChart(extra.querySelector('#mcurve'), c, e);
   } else if (xk && xk.detail) xDetail(xk, r, e, full);
   else if (full) extra.innerHTML = '';
@@ -5911,7 +6077,9 @@ function bnPanel(box, e, full) {
   box.querySelector('.bnp').classList.toggle('loading', !B);
   if (B) {   // (drawn again only when a column or its size changed)
     const lv = B.cols.map(v => v ? 3 - v.indexOf(Math.max(v[0], v[1], v[2])) : null), k = lv.join() + '|' + cvDims(cv).join('x') + '|' + solidOf(S.look) + '|' + (cellTint(modalCid) || '');   // (a new look draws it again, 11-09)
-    const p = bigRev(); if (cv._h !== k || p < 1) { drawLevels(cv, lv, p, cellTint(modalCid) || '#c9c9c9'); cv._h = p < 1 ? null : k; }   // (drawing in as the other charts do, 11-08)
+    // (all at once with a short fade, not drawn in from the left as the other charts: its games sit at the right end of
+    // the long ranges, and the graph stood empty for a third of a second at each pick, his recording 11-12)
+    if (cv._h !== k) { drawLevels(cv, lv, 1, cellTint(modalCid) || '#c9c9c9'); if (cv._r !== undefined && cv._r !== bigRange && motionOn()) cv.animate([{ opacity: 0.25 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' }); cv._r = bigRange; cv._h = k; }
   }
   const sum = B && bnSum(B);
   const lg = !B ? '<span>loading...</span>' : sum.tot ? bnLegend(sum) + (B.step > 1 ? '<span><em>game time</em>' + (sum.secs < 59.5 ? Math.round(sum.secs) + 's' : durTxt(sum.secs)) + '</span>' : '') : B.old ? '<span>The split per minute is kept from HW Deck 1.3.0 on: nothing here yet</span>' : '<span>no game in ' + bnSpan(bigRange) + '</span>';
@@ -6042,7 +6210,9 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
     ctx.textAlign = 'center'; ctx.fillText(lab(at((Wn.a + Wn.b) / 2)), padL + plotW / 2, h - padB + 8 * dpr);
     ctx.textAlign = 'right'; ctx.fillText(Wn.b > 0.999 ? 'now' : lab(at(Wn.b)), w - padR, h - padB + 8 * dpr);
   }
-  yCaption(ctx, dpr, yn ? '' : unit || '', padL - 54 * dpr);   // (as near its scale's numbers as before the plot was centred)
+  // (as near its scale's numbers as before the plot was centred; a long unit, "Mbit/s", further left, clear of the top
+  // number: it went over "1,000", 11-12)
+  { ctx.font = (10 * dpr) + 'px Segoe UI'; const uw = yn || !unit ? 0 : ctx.measureText(unit).width; yCaption(ctx, dpr, yn ? '' : unit || '', uw > 24 * dpr ? Math.max(4 * dpr, padL - 40 * dpr - uw) : padL - 54 * dpr); }
   const yGy = det.y !== undefined ? Y(det.y) : null, rGy = det.r !== undefined ? Y(det.r) : null;
   const gateClose = yGy !== null && rGy !== null && Math.abs(yGy - rGy) < 15 * dpr;
   for (const g of [['y', '#e6c84a'], ['r', '#e5484d'], ['y2', '#e6c84a'], ['r2', '#e5484d']]) {
@@ -6533,6 +6703,10 @@ function starterLayout() {
     dk.add(key); dn.add(name); add(c, r, name);
   }
   cat('Drives', c, 4);
+  // the internet (2.4.8): download now, beside the drives
+  c = [];
+  add(c, own(NETD), 'Internet');
+  cat('Network', c, 4.5);
   // the game: its fps (HW Deck's own count when it is on), its 1% low, what limits it, how long it has run
   c = [];
   add(c, own('hwdeck.0/fps') || find([/^Framerate( Presented)?( \(avg\))?$/], null, live), 'FPS');
@@ -6673,6 +6847,9 @@ const NOTES = [
     'The 12V-2x6 connector\'s popup shows each pin\'s voltage, on cards that report it.',
     'Readings no longer show "not available now" for a moment when HWiNFO rebuilds its list.',
     'Edit mode: the line of a dragged cell shows where it will land, and a cell sized by its corner keeps to whole rows.']],
+  ['2.4.8', '2.4.8', ['Internet: what this PC downloads and uploads right now, two readings under HW Deck, and the Internet cell.',
+    'A speed test, off until you turn it on in Settings: download, upload and ping, on Test now in the Internet cell and every few hours.',
+    'The Starter adds the Internet cell, in its own category.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
@@ -9101,6 +9278,10 @@ function renderSettings0() {
     '<div class="setrow"><div>Accurate game fps<small>HWiNFO\'s fps can be another app\'s: a browser, Discord, a game\'s launcher. With this on, ' + esc(feed.brand || 'HW Deck') + ' counts the game\'s own frames in DirectX games.</small>' + fpsNote() + '</div>' +
       '<button class="tog2' + (feed.fps ? ' on' : '') + '" id="sFps" aria-pressed="' + feed.fps + '" title="Accurate game fps"' + (feed.fake || feed.fpsBusy || feed.fpsWait ? ' disabled' : '') + '></button></div>' +
     '<div class="setrow"><div>Same game again<small>A game started again within this many minutes of closing goes on with its session. The break shows in its chart but doesn\'t count as play. 0: always a new session.</small></div><span class="setdays">' + spinBox('id="sGameMerge" data-min="0" data-max="240" data-idle="600" maxlength="3"', Number.isFinite(feed.gameMerge) ? feed.gameMerge : 30, '30') + '<i>min</i></span></div>') +
+    setSec('Internet',
+    '<div class="setrow"><div>Speed test<small>Measures download, upload and ping with Cloudflare\'s speed test, or the nearest LibreSpeed server when Cloudflare refuses. A test takes about 10 seconds and uses up to 0.4 GB.</small></div>' +
+      '<button class="tog2' + (feed.net && feed.net.on ? ' on' : '') + '" id="sNet" aria-pressed="' + !!(feed.net && feed.net.on) + '" title="Speed test"' + (feed.net ? '' : ' disabled') + '></button></div>' +
+    (feed.net && feed.net.on ? '<div class="setrow"><div>Test every<small>' + (!+feed.net.every ? 'Only when you press Test now in the Internet cell.' : 'Skipped while a game runs, and tried again 30 minutes later.') + '</small></div>' + netSeg(feed.net.every, 'data-net-every') + '</div>' : '')) +
     setSec('Data',
     keepRow('sGameDays', 'gameDays', 'Keep sessions', 'Older sessions, games and your own, go to the bin. Its icon in Sessions brings them back.') +
     keepRow('sWarnDays', 'warnDays', 'Keep warnings', 'Older warnings go to the bin. Its icon in Warning history brings them back.') +
@@ -9116,6 +9297,14 @@ function renderSettings0() {
 $('setBtn').onclick = () => { lkPick = null; keepPend.gameDays = keepPend.warnDays = false; feed.setSig = null; renderSettings(); setmodal.classList.add('open'); send({ t: 'getSettings' });
   // (an update waiting: its row in sight, what the dot on the gear was about; else from the top, 11-06)
   if (feed.latest && $('sGet')) $('sGet').scrollIntoView({ block: 'nearest' }); else setmodal.querySelector('.mcard').scrollTop = 0; };   // (the host's answer: Start with Windows and the task as they are now)
+document.addEventListener('click', e => {   // (the internet's Test now and Test every, in its popup and in Settings, 2.4.8)
+  const b = e.target.closest && e.target.closest('[data-net], [data-net-every]'); if (!b || b.disabled || !feed.net) return;
+  if (b.dataset.net === 'test') { send({ t: 'net', do: 'test' }); NT.pend = performance.now(); if (modalCid != null) refreshModal(false); return; }   // ("Testing" and the boxes cleared at once)
+  const v = b.dataset.netEvery; if (v == null || String(feed.net.every) === v) return;
+  feed.net.every = +v; send({ t: 'net', every: v });
+  for (const x of b.parentElement.children) x.classList.toggle('on', x === b);
+  if (setmodal.classList.contains('open')) renderSettings();
+});
 function syncUpd() { const d = $('setDot'); d.classList.toggle('on', !!feed.latest); $('setBtn').title = feed.latest ? 'Settings: HW Deck ' + feed.latest + ' is out' : 'Settings'; }
 $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sAuto')) { feed.autostart = !feed.autostart; send({ t: 'autostart', on: feed.autostart }); renderSettings(); }
@@ -9126,6 +9315,7 @@ $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sKeep') && !feed.fake && !feed.keepBusy && !feed.keepWait) { feed.keep = !feed.keep; feed.keepWait = true; send({ t: 'keepSharing', on: feed.keep }); renderSettings(); }
   if (e.target.closest('#sFps') && !feed.fake && !feed.fpsBusy && !feed.fpsWait) { feed.fps = !feed.fps; feed.fpsWait = true; send({ t: 'gameFps', on: feed.fps }); renderSettings(); }
   if (e.target.closest('#sData')) send({ t: 'openData' });
+  if (e.target.closest('#sNet') && feed.net) { feed.net.on = !feed.net.on; send({ t: 'netTest', on: feed.net.on }); renderSettings(); }
   if (e.target.closest('#sUpdNow') && !feed.updBusy) { feed.updBusy = true; send({ t: 'updCheck' }); renderSettings(); clearTimeout(feed.updT); feed.updT = setTimeout(() => { if (feed.updBusy) { feed.updBusy = false; if (setmodal.classList.contains('open')) renderSettings(); } }, 40000); }   // (his 11-07: a check on demand; no answer in 40 s, it lets go)
   if (e.target.closest('#sUpd')) { feed.updates = !feed.updates; if (!feed.updates) feed.latest = null; send({ t: 'updates', on: feed.updates }); syncUpd(); renderSettings(); }
   if (e.target.closest('#sGet')) send({ t: feed.canUpdate ? 'updateNow' : 'openRelease' });
@@ -9616,6 +9806,7 @@ function onHost(m) {
     feed.gs = m.gs && typeof m.gs === 'object' ? m.gs : null;   // this game session's min, average, max of the game's own readings
     feed.sf = Array.isArray(m.sf) ? m.sf : null;   // this game session's average fps and 1% low so far
     feed.bnl = m.bnl;   // the bottleneck's call this second, game or not
+    if (m.net) { const was = feed.net; feed.net = m.net; if (was && (was.on !== m.net.on || was.every !== m.net.every) && setmodal.classList.contains('open')) renderSettings(); }   // (the internet, 2.4.8: a change in the popup shows in Settings)
     feed.bnb = +m.bnb || 0;   // (a game in front whose frames aren't counted: 1 only vsync caps show, 2 none)
     if (lastTick && m.ts - lastTick > 2) resetSeen();   // seconds we didn't see (hidden): holds and episodes start again
     // as the log: HWiNFO not sharing for 10 s ends every hold and episode (its Mark); a shorter stall's seconds don't

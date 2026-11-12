@@ -1108,6 +1108,42 @@ select.dsel-n { display: none; }
 .gt .xpins { height: 0.9rem; width: 9rem; }
 .mpin { display: grid; grid-template-columns: 46px 1fr 70px 70px; gap: 12px; align-items: center; padding: 4px 0; font-size: 12.5px; }
 .mpinwrap.v .mpin { grid-template-columns: 46px 1fr 70px 70px 70px; }   /* (each pin's voltage too, 11-11) */
+/* the internet's speed test in its popup (2.4.8): the Sessions summary's boxes, the stats line's look, the warning
+   history's rows */
+.xn-st .msec .btn { order: 2; text-transform: none; letter-spacing: 0; font-weight: 400; display: inline-flex; align-items: center; gap: 6px; }
+.xn-st .msec .btn svg { width: 15px; height: 15px; }
+.xn-box3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.xn-box3 > div { display: grid; gap: 5px; min-width: 0; background: var(--g17, #171717); border: 1px solid var(--g1f, #1f1f1f); border-radius: 10px; padding: 12px 14px; }
+.xn-box3 em { font-style: normal; font-size: 11px; color: #6f6f6f; }
+.xn-box3 b { font-size: 15px; font-weight: 600; color: #e8e8e8; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.xn-box3 b small { font-size: 12px; font-weight: 400; color: #8a8a8a; margin-left: 4px; }
+.xn-bl { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 10px; font-size: 13px; color: #a8a8a8; font-variant-numeric: tabular-nums; }
+.xn-bl em { font-style: normal; color: #737373; margin-right: 1px; font-size: 12px; }
+.xn-bl.xn-run { margin-top: 8px; }
+.xn-bar { position: relative; height: 3px; border-radius: 2px; background: var(--g22, #222222); margin-top: 14px; overflow: hidden; }
+.xn-bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; border-radius: 2px; background: #dcdcdc; transform-origin: 0 50%; transform: scaleX(0); }   /* (moved by nbAim, 2.4.8) */
+/* the speed test as he picked it (11-12): folds (grid rows 0fr to 1fr), the rate drawn in its box, a result fading in */
+.xn-fold { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 300ms var(--e-move); }
+.xn-fold.shut { grid-template-rows: 0fr; }
+.xn-fold > div { min-height: 0; overflow: hidden; }
+:root[data-motion="off"] .xn-fold { transition: none; }
+.xn-box3 > div { position: relative; }
+.xn-cv { position: absolute; right: 12px; top: 12px; bottom: 12px; width: 44%; pointer-events: none; }
+.xn-tests .xn-fold > div > .wrow { border-bottom: 1px solid var(--g1e, #1e1e1e); } .xn-tests .xn-fold:last-child > div > .wrow { border-bottom: 0; }
+.xn-tests .xn-swap > * { animation: xnFade 300ms var(--e-move) backwards; }
+@keyframes xnFade { from { opacity: 0; } }
+:root:is([data-motion="minimal"], [data-motion="off"]) .xn-tests .xn-swap > * { animation: none; }
+:root[data-motion="off"] .xn-bar i { transition: none; }
+.xn-st .setrow { padding: 4px 0 2px; border-bottom: 0; margin-top: 12px; }
+.xn-tests .wrow .wname { color: #d0d0d0; }
+.xn-tests .xn-row { display: grid; grid-template-columns: 1fr 112px 56px 112px 112px; gap: 10px; }
+.xn-row :is(.xn-n, .xn-p) small { font-size: 12px; color: #6f6f6f; margin-left: 4px; }   /* (his 11-12 "put the Mbit/s on the logs next to the numbers") */
+.xn-row .xn-n { display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; color: #a8a8a8; font-variant-numeric: tabular-nums; }
+.xn-row .xn-n svg { width: 13px; height: 13px; flex: none; stroke: #6f6f6f; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.xn-row .xn-at { color: #8a8a8a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xn-row .xn-p { text-align: right; color: #a8a8a8; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.xn-row .xn-w { grid-column: 2 / 6; text-align: right; color: #8a8a8a; }
+.xn-row.now .xn-w { color: #d0d0d0; }
 .mpin .lbl { color: #7a7a7a; }
 .mpin .trk { height: 9px; background: var(--g22, #222222); border-radius: 5px; overflow: hidden; display: block; }
 .mpin .trk span { display: block; height: 100%; border-radius: 5px; }
@@ -1486,5 +1522,5 @@ select.dsel-n { display: none; }
 :root[data-pops="view"] #gcz, :root[data-pops="view"] #gmodal .gx-s5 { background: var(--tile); border-color: var(--tile-line); border-radius: var(--card-r); }
 :root[data-pops="view"] #gmodal .gx-s5 > div { border-color: var(--tile-line); }
 :root[data-pops="view"] .setbox { background: var(--tile); border-color: var(--tile-line); border-radius: var(--card-r); }
-:root[data-pops="view"] :is(#gmodal, #wmodal) .gx-day { background: transparent; border-bottom: 1px solid var(--tile-line); --dayc: var(--tile-solid); }   /* (View, his option 3: a line under the day; solid only while stuck on top, 11-09) */
-:root[data-pops="view"] :is(#gmodal, #wmodal) .gx-day.stuck { background: var(--tile-solid); border-bottom-color: transparent; }
+:root[data-pops="view"] :is(#gmodal, #wmodal) .gx-day { background: transparent; border-bottom: 1px solid var(--tile-line); --dayc: var(--bg); }   /* (View, his option 3: a line under the day; solid only while stuck on top, 11-09) */
+:root[data-pops="view"] :is(#gmodal, #wmodal) .gx-day.stuck { background: var(--bg); border-bottom-color: transparent; box-shadow: -48px 0 0 var(--bg), 48px 0 0 var(--bg); }   /* (stuck on top: the popup's own colour from edge to edge, not a lighter box short of its sides, his 11-12 "the week days bg around it looks very very odd") */

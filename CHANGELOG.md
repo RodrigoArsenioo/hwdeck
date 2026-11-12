@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.4.8 (2026-11-12)
+
+- Internet: what this PC downloads and uploads right now, in Mbit/s, as two readings under HW Deck in Storage ("Download now", "Upload now"). They come from Windows' own counters for the network adapter the internet goes through, so reading them sends nothing.
+- The Internet cell: download now as its value, upload now under it, the graph of download. Its popup names the adapter and its link speed.
+- A speed test, off until you turn it on in Settings (a new section, Internet). It measures download, upload and ping with Cloudflare's speed test, or with the nearest LibreSpeed server when Cloudflare refuses. A test takes about 10 seconds and uses up to 0.4 GB. It runs on Test now in the Internet cell's popup and every 4, 8, 12 or 24 hours, or only on Test now. A timed test is skipped while a game runs or while the PC is already using the line, and tried again 30 minutes later. The popup shows the last result, when the next test runs and the list of tests. Nothing is sent to a test server while the switch is off.
+- While a test runs, download and upload count up live and draw their speed as a small graph inside their box, and the bar under them fills steadily. When the test ends, its row in the list turns into the result.
+- The list of tests reads in columns: when, the city of the test server, ping, download and upload, the order the test runs in. The last result's three numbers follow the same order.
+- The Starter adds the Internet cell in its own category, Network.
+- The Bottleneck popup's text is shorter, and its graph shows a new range at once instead of drawing in from the left (with the games at the right end of a long range, it stood empty for a moment).
+- A predicted fan's popup calls its curve "fan curve", as a measured fan's does.
+- A popup without a graph of its own, such as Bottleneck's, could scroll a little with everything in sight after you had pointed at another popup's graph. It no longer does.
+- A long unit over a popup graph's scale, such as Mbit/s, sits clear of the scale's top number.
+
 ## 2.4.7 (2026-11-11)
 
 - The window can be moved by its title bar while a popup is open: press and drag there and the popup stays open. A click there still closes the popup, as a click anywhere beside it does. Before, the window could not be moved until the popup was closed.

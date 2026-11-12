@@ -32,7 +32,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 static class AppInfo
 {
-    public const string Version = "2.4.7";
+    public const string Version = "2.4.8";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;
@@ -415,7 +415,7 @@ class DeckSource : Source
     public const string GameTimeKey = "hwdeck.0/gtime";
     public Func<double> GameMin;                                // how long the game session has run, in minutes (NaN: no game)
     public readonly List<Extra> Extras = new List<Extra>();     // a build's own readings (see Extra), after HW Deck's
-    int innerVersion = -1, extraVersion = -1, connAt = -1, framesAt = -1, gtAt = -1; bool framesOn;
+    int innerVersion = -1, extraVersion = -1, connAt = -1, framesAt = -1, gtAt = -1, netAt = -1; bool framesOn;
     int[] extraAt = new int[0];                                 // where each extra's readings start
     public DeckSource(Source inner) { Inner = inner; }
     public override void Poll()
@@ -429,7 +429,7 @@ class DeckSource : Source
         {
             innerVersion = Inner.Version; extraVersion = ev; framesOn = fo;
             Sensors = new List<Sensor>(Inner.Sensors); Readings = new List<Reading>(Inner.Readings);
-            extraAt = new int[Extras.Count]; connAt = -1; framesAt = -1; gtAt = -1;
+            extraAt = new int[Extras.Count]; connAt = -1; framesAt = -1; gtAt = -1; netAt = -1;
             Conn.Find(Inner);
             // nothing from HWiNFO yet, nothing of its own either: the page's setup steps go by an empty catalog
             if (Readings.Count > 0)
@@ -446,6 +446,10 @@ class DeckSource : Source
                     Readings.Add(new Reading { Key = Frames.LowKey, Label = "Game framerate (1% low)", Unit = "FPS", Sensor = Sensors.Count - 1, Type = 8 });
                     Readings.Add(new Reading { Key = Frames.FtKey, Label = "Game frame time", Unit = "ms", Sensor = Sensors.Count - 1, Type = 8 });
                 }
+                // (the internet: download and upload now, Net, 2.4.8)
+                netAt = Readings.Count;
+                Readings.Add(new Reading { Key = Net.DownKey, Label = "Download now", Unit = "Mbit/s", Kind = "net", Sensor = Sensors.Count - 1, Type = 8 });
+                Readings.Add(new Reading { Key = Net.UpKey, Label = "Upload now", Unit = "Mbit/s", Sensor = Sensors.Count - 1, Type = 8 });
                 for (int j = 0; j < Extras.Count; j++)
                 {
                     var x = Extras[j];
@@ -470,6 +474,7 @@ class DeckSource : Source
     void CopyFrames()
     {
         if (gtAt >= 0 && gtAt < Values.Length) Values[gtAt] = GameMin != null ? GameMin() : double.NaN;
+        if (netAt >= 0 && netAt + 1 < Values.Length) { Values[netAt] = Net.Down; Values[netAt + 1] = Net.Up; }
         if (framesAt < 0 || framesAt + 2 >= Values.Length) return;
         Values[framesAt] = Frames.Fps; Values[framesAt + 1] = Frames.Low; Values[framesAt + 2] = Frames.Ft;
     }
@@ -491,6 +496,7 @@ class DeckSource : Source
     public int BlindNote;
     public void Second(bool game, bool pmGame = false, bool front = false)
     {
+        try { Net.Tick(); } catch (Exception ex) { Net.Failed(ex); }   // (the internet's rate this second, and its speed test when one is due; never the rest of the second, the review 11-12)
         foreach (var x in Extras) x.Second();   // first: the bottleneck may go by a build's own measurements
         if (Frames != null) Frames.Second();   // (and by this second's pace of the game's frames)
         var fs = Inner as FakeSource;
@@ -640,6 +646,466 @@ static class Display
 // Power): its most loaded pin as a reading of HW Deck's own (a pin is rated 9.5 A; a healthy connector at a 600 W limit
 // peaks near 9.1 A a pin), and whether one pin carries 1.5x its share of the load, the early sign of a bad contact
 // (judged from 15 A up: at idle a spread means nothing). Its cell draws the pins (kind "12v" in deck.js)
+// ---------- the internet (2.4.8; first in his dashboard 11-12, his picks for HW Deck in its mock): what the PC
+// downloads and uploads this second, from Windows' own counters of the adapter the internet goes through (reading them
+// sends nothing: always on), two readings under "HW Deck"; and a speed test of the line, OFF until it is turned on in
+// Settings (nothing contacts a test server before that): Cloudflare's speed test (speed.cloudflare.com, the addresses
+// its own page uses; its nearest site), or the nearest LibreSpeed public server when Cloudflare refuses (see Site). On
+// "Test now" in the Internet cell's popup, and by itself every 8 h (or 4, 12, 24 h, or only by the button), skipped
+// while a game runs or the PC already moves more than 5 Mbit/s, tried again 30 min later. A test takes about 10 s and
+// at most 0.4 GB. A --fake copy plays a made-up test and sends nothing. Kept in net.json: how often, the last result,
+// the list of tests ----------
+static class Net
+{
+    public static Action<string> Log = delegate { };
+    public static Action<string> Toast = delegate { };
+    public static Func<bool> Gaming = () => false;
+    public static Func<bool> Blocked = () => false;
+    static long failLogged;
+    public static void Failed(Exception ex) { long now = Source.Unix(); if (now - failLogged >= 60) { failLogged = now; Log("internet: " + ex.Message); } nic = null; Down = Up = double.NaN; }   // (logged once a minute)   // (a build's copy that must never test by itself, a test copy of it)
+    public static bool On;            // the speed test's switch (settings.json "netTest", off unless turned on)
+    public static bool Fake;          // a --fake copy: made-up tests, nothing sent
+    public static string File_;       // net.json
+    public const string DownKey = "hwdeck.0/netdown", UpKey = "hwdeck.0/netup";
+    static readonly object gate = new object();
+
+    // ---- live: the adapter's byte counters, read once a second ----
+    public static double Down = double.NaN, Up = double.NaN;   // Mbit/s, this second
+    public static string Link = "";                            // "Ethernet, 1 Gbit/s link"
+    [DllImport("iphlpapi.dll")] static extern int GetBestInterface(uint dest, out uint index);
+    static System.Net.NetworkInformation.NetworkInterface nic; static long pickedAt, inB = -1, outB = -1; static readonly Stopwatch clock = Stopwatch.StartNew(); static double lastAt, wokeAt;
+    static void Pick()
+    {
+        string was = nic == null ? null : nic.Id;
+        nic = null; Link = "";
+        try
+        {
+            uint idx;
+            if (GetBestInterface(BitConverter.ToUInt32(new byte[] { 1, 1, 1, 1 }, 0), out idx) != 0) return;   // (no route out: no internet)
+            foreach (var n in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                try { var p = n.GetIPProperties().GetIPv4Properties(); if (p == null || p.Index != idx) continue; } catch { continue; }
+                nic = n;
+                double sp = 0; try { sp = n.Speed; } catch { }   // bits a second
+                Link = n.Name + (sp > 0 ? ", connected at " + (sp >= 1e9 ? (sp / 1e9).ToString(sp % 1e9 == 0 ? "0" : "0.#", System.Globalization.CultureInfo.InvariantCulture) + " Gbit/s" : (sp / 1e6).ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " Mbit/s") : "");   // (his 11-12 "wdym 1 Gbit/s link": the cable's or the Wi-Fi's own speed)
+                break;
+            }
+        }
+        catch { nic = null; Link = ""; }
+        // (the counters start over only for another adapter: they did every 30 s, and the rate read "--" for a second,
+        // the review 11-12)
+        if (nic == null || nic.Id != was) inB = outB = -1;
+    }
+    static void Live()
+    {
+        if (Fake) { lock (gate) if (running) return; }   // (a made-up test: its own traffic shows, as a real test's does on the counters)
+        long now = Source.Unix();
+        if (nic == null || now - pickedAt >= 30) { pickedAt = now; var was = nic == null ? null : nic.Id; Pick(); if (nic != null && nic.Id != was && was != null) Log("internet: now through " + Link); }
+        if (nic == null) { Down = Up = double.NaN; return; }
+        long i, o;
+        try { var s = nic.GetIPStatistics(); i = s.BytesReceived; o = s.BytesSent; }
+        catch { nic = null; Down = Up = double.NaN; return; }
+        double t = clock.Elapsed.TotalSeconds, dt = t - lastAt; lastAt = t;
+        if (inB < 0 || dt <= 0.2 || dt > 5) { inB = i; outB = o; Down = Up = double.NaN; if (dt > 5) wokeAt = t; return; }   // (over 5 s since the last: a sleep in between, its average is no rate)
+        Func<long, long, double> rate = (a, b) => { long d = a - b; if (d < 0) { if (b < 4294967296L) d += 4294967296L; else return double.NaN; } return d * 8 / 1e6 / dt; };   // (a 32-bit counter that went round, else a reset)
+        Down = rate(i, inB); Up = rate(o, outB); inB = i; outB = o;
+    }
+
+    // ---- the speed test ----
+    public static double PingS = 1, DownS = 4, UpS = 4;   // (at most: a phase ends sooner when its requests are done)
+    public static int Every = 8;                     // hours; 0 = only by the button
+    static double lastD = double.NaN, lastU = double.NaN, lastPing = double.NaN; static long lastAt_;   // the last test that ran
+    static long baseAt;                              // the count starts here: the last test, or when it was first set up
+    static long retryAt;                             // skipped: not before this
+    static bool skipNoted;                           // that skip is in the list already
+    static readonly List<object[]> tests = new List<object[]>();   // [unix, words], newest first
+    static bool running; static string phase = ""; static double runFrom, phaseFrom, phaseAt, extraS, runD = double.NaN, runU = double.NaN, runPing = double.NaN; static long runAt;   // (extraS: seconds spent on a site that refused, so the bar keeps going on)
+    public static bool Running { get { lock (gate) return running; } }
+
+    public static void SetOn(bool on)
+    {
+        lock (gate) { if (On == on) return; On = on; if (on && lastAt_ == 0) baseAt = Source.Unix() - Every * 3600L + 120; retryAt = 0; skipNoted = false; }
+        Log("internet: speed test " + (on ? "on" : "off"));
+    }
+    public static void Load()
+    {
+        lock (gate)
+        {
+            baseAt = Source.Unix() - Every * 3600L + 120;   // (never tested: the first one 2 minutes after the start)
+            try
+            {
+                if (File_ == null || !File.Exists(File_)) return;
+                var d = (Dictionary<string, object>)new JavaScriptSerializer().DeserializeObject(File.ReadAllText(File_));
+                Func<string, double> N = k => d.ContainsKey(k) && d[k] != null ? Convert.ToDouble(d[k], System.Globalization.CultureInfo.InvariantCulture) : double.NaN;
+                if (d.ContainsKey("every")) Every = Convert.ToInt32(d["every"]);
+                lastD = N("d"); lastU = N("u"); lastPing = N("ping"); lastAt_ = double.IsNaN(N("at")) ? 0 : (long)N("at");
+                if (!double.IsNaN(N("base"))) baseAt = (long)N("base");
+                if (d.ContainsKey("tests") && d["tests"] is object[]) foreach (var x in (object[])d["tests"]) { var a = x as object[]; if (a != null && a.Length == 2) tests.Add(new object[] { Convert.ToInt64(a[0]), Convert.ToString(a[1]) }); }
+            }
+            catch (Exception ex) { Log("internet: net.json not read: " + ex.Message); }
+        }
+    }
+    static readonly object saveGate = new object();
+    static void Save() { lock (saveGate) Save0(); }   // (the test's thread and the page's both save: one at a time, the newest state last, the review 11-12)
+    static void Save0()
+    {
+        if (File_ == null) return;
+        Dictionary<string, object> d;
+        lock (gate) d = new Dictionary<string, object> { { "every", Every }, { "d", Num(lastD) }, { "u", Num(lastU) }, { "ping", Num(lastPing) }, { "at", lastAt_ }, { "base", baseAt }, { "tests", tests.Take(40).ToList() } };
+        try { var tmp = File_ + ".tmp"; File.WriteAllText(tmp, new JavaScriptSerializer().Serialize(d)); if (File.Exists(File_)) File.Replace(tmp, File_, null); else File.Move(tmp, File_); }
+        catch (Exception ex) { Log("internet: net.json not saved: " + ex.Message); }
+    }
+    static object Num(double v) { return double.IsNaN(v) ? null : (object)Math.Round(v, 1); }
+    static void Add(long at, string words) { lock (gate) { tests.Insert(0, new object[] { at, words }); if (tests.Count > 40) tests.RemoveRange(40, tests.Count - 40); } }
+
+    // once a second (the reading's Second): the live rate, and a test when one is due
+    public static void Tick()
+    {
+        Live();
+        if (!On || Fake || Blocked()) return;
+        long now = Source.Unix(); bool start = false, save = false;
+        lock (gate)
+        {
+            if (running || Every <= 0 || now < Math.Max(baseAt + Every * 3600L, retryAt)) return;
+            // (not in the app's first two minutes, nor the first two after a sleep, nor with the rate not known: at a sign-in
+            // or a wake the network may not be up yet, and Windows' own updates may be using the line; the review 11-12)
+            double up = clock.Elapsed.TotalSeconds; if (up < 120 || up - wokeAt < 120 || double.IsNaN(Down)) return;
+            string why = Gaming() ? "skipped, game running" : (Down > 5 || Up > 5) ? "skipped, the line was busy" : null;
+            if (why != null)
+            {
+                retryAt = now + 1800;
+                if (!skipNoted) { skipNoted = true; tests.Insert(0, new object[] { now, why }); save = true; Log("internet: speed test " + why.Replace("skipped, ", "skipped: ") + ", again in 30 min"); }
+            }
+            else start = true;
+        }
+        if (save) Save();
+        if (start) Start("on its own");
+    }
+
+    // the page: "Test now", or how often
+    public static void Act(string what, string every)
+    {
+        if (what == "test") { if (!On) return; if (!Start("Test now")) Toast("A speed test is running"); return; }
+        int h;
+        if (every != null && int.TryParse(every, out h) && (h == 0 || h == 4 || h == 8 || h == 12 || h == 24))
+        {
+            lock (gate) { Every = h; retryAt = 0; skipNoted = false; }
+            Save(); Log("internet: speed test every " + (h == 0 ? "(only by the button)" : h + " h"));
+        }
+    }
+    static bool Start(string why)
+    {
+        lock (gate) { if (running) return false; running = true; phase = "ping"; runFrom = phaseFrom = clock.Elapsed.TotalSeconds; phaseAt = 0; extraS = 0; runD = runU = runPing = double.NaN; runAt = Source.Unix(); }
+        Log("internet: speed test (" + why + ")");
+        new System.Threading.Thread(Fake ? (System.Threading.ThreadStart)RunFake : Run) { IsBackground = true, Name = "speed test" }.Start();
+        return true;
+    }
+
+    // ---- where a test goes. Cloudflare's speed test first: its Lisbon site, 3 ms away, the truest figure for his line.
+    // It limits how much one address takes in a while (429 or 403, 11-12: after three tests in three minutes it
+    // refused for over half an hour); then, and for an hour after, the nearest of LibreSpeed's public test servers (the
+    // list its own command line client uses: Amsterdam, Frankfurt, London, 30 to 40 ms away, so a little lower on a
+    // fast line). The test's row in the list names that server. (11-12, his "now it didnt work, can u test properly":
+    // with Cloudflare refusing, every test failed) ----
+    class Site
+    {
+        public string Name = "", Base = "", Ping = "", Up = "";   // Base + a path = the address
+        public Func<long, string> Down;                           // the path for size bytes
+        public bool Cf;                                           // Cloudflare: its ping is in its Server-Timing header
+        public long UpChunk = 25000000;                           // bytes per upload request (LibreSpeed's take 4 MB at most)
+        public string Url(string path) { return Base.TrimEnd('/') + "/" + path.TrimStart('/'); }
+    }
+    static readonly Site Cf = new Site { Name = "Cloudflare", Base = "https://speed.cloudflare.com", Cf = true, Ping = "__down?bytes=0", Up = "__up", Down = b => "__down?bytes=" + b };
+    static Site libre; static long libreAt, cfRefusedAt;
+    class WaitException : Exception { public WaitException() : base("429") { } }   // (the site refused: too much from this address)
+    static readonly byte[] junk = MakeJunk();
+    static byte[] MakeJunk() { var b = new byte[64 * 1024]; new Random(7).NextBytes(b); return b; }
+    static HttpWebRequest Req(string url, string method, int ms = 8000)
+    {
+        var r = (HttpWebRequest)WebRequest.Create(url);
+        r.Method = method; r.UserAgent = "HWDashboard"; r.Timeout = ms; r.ReadWriteTimeout = ms; r.KeepAlive = true; r.Proxy = null;
+        r.AutomaticDecompression = DecompressionMethods.None;
+        var sp = r.ServicePoint; if (sp.ConnectionLimit < 16) sp.ConnectionLimit = 16; sp.Expect100Continue = false; sp.UseNagleAlgorithm = false;
+        return r;
+    }
+    static bool Refused(WebException ex) { var hr = ex.Response as HttpWebResponse; return hr != null && ((int)hr.StatusCode == 429 || (int)hr.StatusCode == 403); }
+    // the nearest LibreSpeed server: the one that answers a second small request soonest (all at once, 3 s at most);
+    // picked again after a day
+    static Site Libre()
+    {
+        if (libre != null && Source.Unix() - libreAt < 86400) return libre;
+        string json;
+        using (var rs = Req("https://librespeed.org/backend-servers/servers.php", "GET").GetResponse()) using (var rd = new StreamReader(rs.GetResponseStream())) json = rd.ReadToEnd();
+        var sites = new List<Site>();
+        foreach (var o in (object[])new JavaScriptSerializer().DeserializeObject(json))
+        {
+            var s = o as Dictionary<string, object>; if (s == null) continue;
+            Func<string, string> F = k => s.ContainsKey(k) && s[k] != null ? Convert.ToString(s[k]) : "";
+            string b = F("server"), dl = F("dlURL"), name = F("name");
+            if (!b.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || dl == "" || F("ulURL") == "" || F("pingURL") == "") continue;
+            int cut = name.IndexOfAny(new[] { ',', '(' });
+            sites.Add(new Site { Name = (cut > 0 ? name.Substring(0, cut) : name).Trim(), Base = b, Ping = F("pingURL"), Up = F("ulURL"), Down = n => dl + "?ckSize=" + Math.Max(1, n / 1048576), UpChunk = 4000000 });
+        }
+        var ms = new double[sites.Count]; var ths = new List<System.Threading.Thread>();
+        for (int i = 0; i < sites.Count; i++)
+        {
+            int k = i; ms[k] = double.MaxValue;
+            var th = new System.Threading.Thread(() => { try { var url = sites[k].Url(sites[k].Ping); for (int n = 0; n < 2; n++) { var sw = Stopwatch.StartNew(); using (var rs = Req(url, "GET", 2500).GetResponse()) using (var st = rs.GetResponseStream()) st.CopyTo(System.IO.Stream.Null); if (n == 1) ms[k] = sw.Elapsed.TotalMilliseconds; } } catch { } }) { IsBackground = true };
+            ths.Add(th); th.Start();
+        }
+        var until = Stopwatch.StartNew(); foreach (var th in ths) th.Join(Math.Max(0, 6000 - (int)until.ElapsedMilliseconds));
+        int best = -1; for (int i = 0; i < sites.Count; i++) if (ms[i] < double.MaxValue && (best < 0 || ms[i] < ms[best])) best = i;
+        if (best < 0) throw new Exception("no LibreSpeed server answered");
+        libre = sites[best]; libreAt = Source.Unix();
+        Log("internet: LibreSpeed's nearest server: " + sites[best].Name + " (" + sites[best].Base + "), " + ms[best].ToString("0") + " ms to answer");
+        return libre;
+    }
+
+    static void RunFake()
+    {
+        var rnd = new Random(); double d = 905 + rnd.Next(30), u = 400 + rnd.Next(20), ping = 8 + rnd.Next(3);
+        Action<string, double, double> step = (p, secs, to) =>
+        {
+            lock (gate) { phase = p; phaseFrom = clock.Elapsed.TotalSeconds; phaseAt = p == "ping" ? 0 : p == "down" ? PingS : PingS + DownS; }
+            for (double t = 0; t < secs; t += 0.25)
+            {
+                System.Threading.Thread.Sleep(250);
+                double k = Math.Min(1, (t + 0.25) / 1.2), v = to * k * k * (3 - 2 * k);
+                lock (gate) { if (p == "down") { Down = v; runD = v; } else if (p == "up") { Up = v; runU = v; } }
+            }
+        };
+        step("ping", PingS, 0); lock (gate) runPing = ping;
+        step("down", DownS, d); lock (gate) runD = d;
+        step("up", UpS, u);
+        long at;
+        lock (gate) { at = runAt; running = false; phase = ""; baseAt = at; retryAt = 0; skipNoted = false; lastD = d; lastU = u; lastPing = ping; lastAt_ = at; }
+        Add(at, Row(d, u, ping, "made up"));
+        Log("internet: speed test (made up) " + Math.Round(d) + " down, " + Math.Round(u) + " up");
+        Save();
+    }
+    static void Run()
+    {
+        double d = double.NaN, u = double.NaN, ping = double.NaN; string fail = null; Site site = null; var tw = Stopwatch.StartNew(); string times = "", downRates = "";
+        string before = (double.IsNaN(Down) ? "--" : Down.ToString("0.0", ic)) + " down, " + (double.IsNaN(Up) ? "--" : Up.ToString("0.0", ic)) + " up Mbit/s"; cfColo = "";
+        try
+        {
+            ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;   // TLS 1.2
+            bool cfOk; lock (gate) cfOk = Source.Unix() - cfRefusedAt >= 3600;
+            // (is Cloudflare taking large downloads from this address now? Asked first, with the start of one: it
+            // refuses at once (429 / 403) or starts sending, and the request is dropped at its first bytes. So the test
+            // runs on one site from its start, and its bar and seconds left never go back, 11-12)
+            if (cfOk)
+            {
+                var pr = Req(Cf.Url(Cf.Down(25000000)), "GET", 4000); WebResponse prs = null;
+                try { prs = pr.GetResponse(); }
+                catch (WebException ex) { if (Refused(ex)) { cfOk = false; lock (gate) cfRefusedAt = Source.Unix(); Log("internet: Cloudflare refuses large downloads from this address for now, the test on LibreSpeed's nearest server (for an hour)"); } }
+                finally { try { pr.Abort(); } catch { } if (prs != null) try { prs.Close(); } catch { } }   // (dropped first: a close alone would read the rest)
+            }
+            for (int attempt = 0; ; attempt++)
+            {
+                site = cfOk && attempt == 0 ? Cf : Libre();
+                bool haveDown = !double.IsNaN(d);   // (refused at the upload: its download stays, the test keeps to 0.4 GB, the review 11-12)
+                lock (gate) { extraS = clock.Elapsed.TotalSeconds - runFrom - (haveDown ? PingS + DownS : 0); if (!haveDown) { phase = "ping"; phaseFrom = clock.Elapsed.TotalSeconds; phaseAt = 0; runD = runU = runPing = double.NaN; } }
+                try
+                {
+                    var t = Stopwatch.StartNew();
+                    if (!haveDown)
+                    {
+                        ping = Ping(site); lock (gate) runPing = ping;
+                        times = "ping " + t.Elapsed.TotalSeconds.ToString("0.0", ic) + " s"; t.Restart();
+                        lock (gate) { phase = "down"; phaseFrom = clock.Elapsed.TotalSeconds; phaseAt = PingS; }
+                        d = Measure(site, true, site.Cf ? 3 : 6, DownS, 25000000, 250000000);
+                        lock (gate) downRates = lastRates;
+                        times += ", down " + t.Elapsed.TotalSeconds.ToString("0.0", ic) + " s"; t.Restart();
+                    }
+                    lock (gate) { runD = d; phase = "up"; phaseFrom = clock.Elapsed.TotalSeconds; phaseAt = PingS + DownS; }
+                    u = Measure(site, false, 6, UpS, site.UpChunk, 150000000);   // (six on both: Cloudflare's three gave 236 to 383 Mbit/s up on a line LibreSpeed's six read at 430 to 460, 11-12)
+                    times += ", up " + t.Elapsed.TotalSeconds.ToString("0.0", ic) + " s";
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    bool refused = ex is WaitException || (ex is WebException && Refused((WebException)ex));
+                    if (!(refused && site.Cf)) throw;
+                    lock (gate) cfRefusedAt = Source.Unix();
+                    Log("internet: Cloudflare refused (too many tests from this address for now), on LibreSpeed's nearest server for an hour");
+                }
+            }
+        }
+        catch (Exception ex) { fail = ex is WaitException || (ex is WebException && Refused((WebException)ex)) ? "wait" : ex is WebException && ((WebException)ex).Response == null ? "no answer" : ex.Message; }
+        long at; bool ok = fail == null && !double.IsNaN(d) && !double.IsNaN(u);
+        // (its place looked up and its row in BEFORE the test counts as over: the lookup can take seconds, and meanwhile the
+        // popup lost its running row and Test now could start another test, the review 11-12)
+        string place = ok ? (site.Cf ? CfCity() : site.Name) : null;
+        lock (gate) at = runAt;
+        Add(at, ok ? Row(d, u, ping, place) : fail == "wait" ? "failed, the test site said to wait" : "failed, no answer");
+        lock (gate)
+        {
+            running = false; phase = ""; baseAt = at; retryAt = 0; skipNoted = false;
+            if (ok) { lastD = d; lastU = u; lastPing = ping; lastAt_ = at; }
+        }
+        if (ok)
+        {
+            Log("internet: speed test " + d.ToString("0.0", ic) + " down, " + u.ToString("0.0", ic) + " up, ping " + (double.IsNaN(ping) ? "--" : ping.ToString("0.0", ic)) + " ms, " + (site.Cf ? "Cloudflare " + place + (cfColo != "" ? " (" + cfColo + ")" : "") : site.Name) + " (" + times + ", " + tw.Elapsed.TotalSeconds.ToString("0.0", ic) + " s in all; per second: " + downRates + ", " + lastRates + "; the line before: " + before + ")");
+        }
+        else
+        {
+            Log("internet: speed test failed after " + tw.Elapsed.TotalSeconds.ToString("0.0", ic) + " s" + (site != null ? " on " + site.Name : "") + ": " + (fail == "wait" ? "the site refused (429 / 403)" : fail ?? "no data came"));
+        }
+        Save();
+    }
+    static readonly System.Globalization.CultureInfo ic = System.Globalization.CultureInfo.InvariantCulture;
+    // a test's row: "810 down, 403 up, 3 ms, Lisbon"; the ping and the place left out when not known
+    static string Row(double d, double u, double ping, string place)
+    {
+        return Math.Round(d).ToString("0", ic) + " down, " + Math.Round(u).ToString("0", ic) + " up" + (double.IsNaN(ping) || ping <= 0 ? "" : ", " + Math.Max(1, Math.Round(ping)).ToString("0", ic) + " ms") + (string.IsNullOrEmpty(place) ? "" : ", " + place);
+    }
+    static string lastRates = "";   // (the log: each second's rate of the last part measured)
+    // Cloudflare's site by the code at the end of its CF-RAY header ("...-LIS"), named from its own list of sites
+    // (speed.cloudflare.com/locations, read once a run; the code itself when it isn't there). His line goes to Lisbon,
+    // sometimes Bordeaux over IPv6 (11-12): the row says which
+    static string cfColo = ""; static Dictionary<string, string> cfCities;
+    static string CfCity()
+    {
+        if (cfColo == "") return "";
+        if (cfCities == null)
+        {
+            var m = new Dictionary<string, string>();
+            try
+            {
+                var r = Req(Cf.Base + "/locations", "GET", 4000); r.Referer = Cf.Base + "/";
+                string json; using (var rs = r.GetResponse()) using (var rd = new StreamReader(rs.GetResponseStream())) json = rd.ReadToEnd();
+                foreach (var o in (object[])new JavaScriptSerializer().DeserializeObject(json)) { var d = o as Dictionary<string, object>; if (d != null && d.ContainsKey("iata") && d.ContainsKey("city")) m[Convert.ToString(d["iata"])] = Convert.ToString(d["city"]); }
+            }
+            catch { }
+            if (m.Count > 0) cfCities = m;
+            else return Known(cfColo);
+        }
+        string c; return cfCities.TryGetValue(cfColo, out c) && !string.IsNullOrEmpty(c) ? c : Known(cfColo);
+    }
+    // a few of Cloudflare's sites by their code, for when its own list can't be read (his line: Lisbon, sometimes
+    // Bordeaux); another code: no place rather than a code
+    static string Known(string code)
+    {
+        switch (code) { case "LIS": return "Lisbon"; case "OPO": return "Porto"; case "BOD": return "Bordeaux"; case "MAD": return "Madrid"; case "BCN": return "Barcelona"; case "CDG": return "Paris"; case "MRS": return "Marseille"; case "LHR": return "London"; case "AMS": return "Amsterdam"; case "FRA": return "Frankfurt"; default: return ""; }
+    }
+    // the ping: small requests on one connection, the quickest after the first (that one opens it). Cloudflare: the
+    // round trip its own server measured on the connection (Server-Timing "cfL4 ... min_rtt", microseconds: 3.3 ms to
+    // Lisbon, as a plain ping says); a request's own time is no ping there, its worker takes 20 to 60 ms to answer
+    // (44 and 70 ms in his first tests, 11-12). Elsewhere: the request less any time the server says it took
+    static double Ping(Site site)
+    {
+        var pw = Stopwatch.StartNew(); double best = double.MaxValue, rtt = double.MaxValue; var fl = System.Globalization.NumberStyles.Float;
+        for (int k = 0; k < 8 && (k < 3 || pw.Elapsed.TotalSeconds < PingS); k++)
+        {
+            var sw = Stopwatch.StartNew(); double srv = 0;
+            using (var rs = (HttpWebResponse)Req(site.Url(site.Ping), "GET").GetResponse())
+            {
+                var st = rs.Headers["Server-Timing"] ?? "";
+                var ray = rs.Headers["CF-RAY"] ?? ""; int dash = ray.LastIndexOf('-'); if (site.Cf && dash > 0 && dash < ray.Length - 1) cfColo = ray.Substring(dash + 1).Trim().ToUpperInvariant();
+                var mr = System.Text.RegularExpressions.Regex.Match(st, @"min_rtt=(\d+)"); double us;
+                if (mr.Success && double.TryParse(mr.Groups[1].Value, fl, ic, out us) && us > 0) rtt = Math.Min(rtt, us / 1000);
+                foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(st, @"dur=([0-9.]+)")) { double v; if (double.TryParse(m.Groups[1].Value, fl, ic, out v)) srv += v; }
+                using (var s = rs.GetResponseStream()) s.CopyTo(System.IO.Stream.Null);
+            }
+            double ms = sw.Elapsed.TotalMilliseconds - srv;
+            if (k > 0 && ms > 0) best = Math.Min(best, ms);
+        }
+        if (site.Cf && rtt < double.MaxValue) return rtt;
+        return best < double.MaxValue ? best : double.NaN;
+    }
+    // conns connections at once, each one request of size bytes after another until budget bytes are asked for in all,
+    // for secs at most: the rate over each second while all of them still run (sampled every 250 ms, after the first
+    // half second: the connections ramping up), the middle one of those, in Mbit/s. A line too fast for a whole second
+    // of that: the bytes over the time they took. The live figure for the popup while it runs: the last second's. A
+    // refusal (429 / 403) before a quarter of a request came: WaitException
+    static double Measure(Site site, bool down, int conns, double secs, long size, long budget)
+    {
+        long total = 0, asked = 0; int active = conns, refused = 0; var t0 = Stopwatch.StartNew(); var stop = new System.Threading.ManualResetEvent(false); var reqs = new List<HttpWebRequest>();
+        var workers = new List<System.Threading.Thread>();
+        for (int c = 0; c < conns; c++)
+        {
+            var th = new System.Threading.Thread(() =>
+            {
+                var buf = new byte[64 * 1024]; HttpWebRequest r = null;
+                try
+                {
+                    while (!stop.WaitOne(0) && System.Threading.Interlocked.Add(ref asked, size) <= budget)
+                    {
+                        if (down)
+                        {
+                            r = Req(site.Url(site.Down(size)), "GET"); lock (reqs) reqs.Add(r);
+                            using (var rs = r.GetResponse()) using (var s = rs.GetResponseStream())
+                                for (int n; !stop.WaitOne(0) && (n = s.Read(buf, 0, buf.Length)) > 0;) System.Threading.Interlocked.Add(ref total, n);
+                        }
+                        else
+                        {
+                            r = Req(site.Url(site.Up), "POST"); r.ContentType = "application/octet-stream"; r.AllowWriteStreamBuffering = false; r.SendChunked = false;
+                            r.ContentLength = size; lock (reqs) reqs.Add(r);
+                            using (var s = r.GetRequestStream())
+                                for (long left = size; left > 0 && !stop.WaitOne(0);) { int n = (int)Math.Min(junk.Length, left); s.Write(junk, 0, n); left -= n; System.Threading.Interlocked.Add(ref total, n); }
+                            if (!stop.WaitOne(0)) using (r.GetResponse()) { }
+                        }
+                        lock (reqs) reqs.Remove(r); r = null;
+                    }
+                }
+                catch (WebException ex) { if (Refused(ex)) System.Threading.Interlocked.Exchange(ref refused, 1); }
+                catch { }
+                finally { if (r != null) lock (reqs) reqs.Remove(r); System.Threading.Interlocked.Decrement(ref active); }
+            }) { IsBackground = true, Name = "speed test " + (down ? "down" : "up") };
+            workers.Add(th); th.Start();
+        }
+        var at = new List<double>(); var bytes = new List<long>(); var all = new List<bool>();
+        double prevT = 0; long prevB = 0, firstB = -1; double firstT = 0, lastFullT = 0; long lastFullB = 0;
+        while (t0.Elapsed.TotalSeconds < secs && System.Threading.Thread.VolatileRead(ref active) > 0 && System.Threading.Thread.VolatileRead(ref refused) == 0)
+        {
+            System.Threading.Thread.Sleep(250);
+            double t = t0.Elapsed.TotalSeconds; long b = System.Threading.Interlocked.Read(ref total); bool full = System.Threading.Thread.VolatileRead(ref active) == conns;
+            at.Add(t); bytes.Add(b); all.Add(full);
+            if (t >= 0.5 && firstB < 0) { firstB = b; firstT = t; }
+            if (full) { lastFullT = t; lastFullB = b; }
+            if (t - prevT >= 1) { double now = (b - prevB) * 8 / 1e6 / (t - prevT); lock (gate) { if (down) runD = now; else runU = now; } prevT = t; prevB = b; }
+        }
+        stop.Set();
+        lock (reqs) foreach (var r in reqs.ToList()) { try { r.Abort(); } catch { } }
+        foreach (var th in workers) th.Join(3000);
+        if (refused != 0 && System.Threading.Interlocked.Read(ref total) < size / 4) throw new WaitException();
+        var rates = new List<double>();
+        for (int i = 0; i < at.Count; i++)
+        {
+            if (at[i] < 0.5 || !all[i]) continue;
+            for (int j = i + 1; j < at.Count && all[j]; j++)
+                if (at[j] - at[i] >= 0.99) { rates.Add((bytes[j] - bytes[i]) * 8 / 1e6 / (at[j] - at[i])); break; }
+        }
+        lock (gate) lastRates = (down ? "down " : "up ") + string.Join(" ", rates.Select(r => r.ToString("0", ic)));
+        if (rates.Count >= 2) { rates.Sort(); return rates[Math.Max(0, (int)Math.Ceiling(0.9 * rates.Count) - 1)]; }   // (the 90th percentile, as Cloudflare's own test; the middle one read low on a 2 s test, his 810, 11-12)
+        if (firstB >= 0 && lastFullT > firstT && lastFullB > firstB) return (lastFullB - firstB) * 8 / 1e6 / (lastFullT - firstT);
+        long tb = System.Threading.Interlocked.Read(ref total); double te = t0.Elapsed.TotalSeconds;
+        if (tb <= 0) throw new Exception("no data came");
+        return tb * 8 / 1e6 / te;
+    }
+
+    // for the page, every second (x.live "net")
+    public static Dictionary<string, object> State()
+    {
+        lock (gate)
+        {
+            var o = new Dictionary<string, object> { { "on", On }, { "link", Link }, { "every", Every }, { "tests", tests.Take(12).ToList() } };
+            if (!double.IsNaN(lastD)) o["last"] = new Dictionary<string, object> { { "d", Math.Round(lastD) }, { "u", Math.Round(lastU) }, { "ping", Num(lastPing) }, { "at", lastAt_ } };
+            if (Every > 0 && On && !Fake && !Blocked()) o["next"] = Math.Max(baseAt + Every * 3600L, retryAt);
+            if (running)
+            {
+                double ph = phase == "ping" ? PingS : phase == "down" ? DownS : UpS, el = extraS + phaseAt + Math.Min(ph, clock.Elapsed.TotalSeconds - phaseFrom), all = extraS + PingS + DownS + UpS;
+                o["run"] = new Dictionary<string, object> { { "p", phase }, { "pct", Math.Round(Math.Min(100, el / all * 100), 1) }, { "left", Math.Max(1, (int)Math.Ceiling(all - el)) },
+                    { "d", Num(runD) }, { "u", Num(runU) }, { "ping", Num(runPing) }, { "at", runAt },
+                    // (for the popup's bar to move steadily: the planned seconds, where this step ends, its length)
+                    { "all", Math.Round(all, 2) }, { "pe", Math.Round(Math.Min(100, (extraS + phaseAt + ph) / all * 100), 2) }, { "pl", ph } };
+            }
+            return o;
+        }
+    }
+}
+
 class Connector
 {
     public const string Key = "hwdeck.0/12v";
@@ -1034,7 +1500,7 @@ class History
     readonly int[] minAt = new int[MinLen], tenAt = new int[TenLen], hourAt = new int[HourLen];
     Track[] byIndex = new Track[0];
     bool[] own = new bool[0];   // (by index: HW Deck's own fps, frame time and game time, which need no HWiNFO)
-    static readonly HashSet<string> OwnKeys = new HashSet<string> { Frames.FpsKey, Frames.LowKey, Frames.FtKey, DeckSource.GameTimeKey };
+    static readonly HashSet<string> OwnKeys = new HashSet<string> { Frames.FpsKey, Frames.LowKey, Frames.FtKey, DeckSource.GameTimeKey, Net.DownKey, Net.UpKey };
     int version = -1, curMin = -1, curTen = -1, curHour = -1;
     readonly string path;
     public History(string dir)
@@ -3445,6 +3911,8 @@ partial class DeckForm : Form
         if (NoFocus) focusAtStart = GetForegroundWindow();
         src = new DeckSource(fake ? (Source)new FakeSource(fakeN) : new HwSource());
         src.Inner.Note = s => Log(s);
+        Net.Log = s => Log(s); Net.Fake = fake; Net.File_ = P("net.json"); Net.Load();
+        Net.Toast = why => { try { BeginInvoke((Action)(() => { var r = Msg("toast"); r["text"] = why; Post(r); })); } catch { } };
         alerts.Conn = src.Conn;
         hist = new History(dataDir);
         games = new Games(dataDir, Log);
@@ -3452,6 +3920,8 @@ partial class DeckForm : Form
         if (fake && Environment.GetEnvironmentVariable("HWDECK_NOGAMES") == "1") games.Pretend(null, false);
         runName = custom ? Brand.Name + " (" + Path.GetFileName(data) + " " + ((uint)data.ToLowerInvariant().Aggregate(2166136261u, (h, ch) => (h ^ ch) * 16777619u)).ToString("x8") + ")" : Brand.Name;
         settings = ReadSettings();
+        Net.On = settings.ContainsKey("netTest") && true.Equals(settings["netTest"]);   // (the speed test's switch, off unless turned on, 2.4.8)
+        Net.Gaming = () => games != null && games.Game != null && Source.Unix() - games.Seen <= 6;
         games.MergeWithin = MergeMins() * 60;
         // (the start's passes over settings.json, the update notes seen and the sessions' re-estimate, run on the file as it
         // is: held by another program, they wait for RetrySettings, 11-07 audit; the oldest version's notesSeen went over
@@ -3838,6 +4308,8 @@ partial class DeckForm : Form
                 case "keepSharing": SetKeepSharing(true.Equals(m["on"])); break;
                 case "getSettings": SendSettings(); break;
                 case "gameFps": SetGameFps(true.Equals(m["on"])); break;
+                case "netTest": settings["netTest"] = true.Equals(m["on"]); SaveSettings(); Net.SetOn(true.Equals(m["on"])); break;   // (the speed test's switch, 2.4.8)
+                case "net": Net.Act(m.ContainsKey("do") ? m["do"] as string : null, m.ContainsKey("every") && m["every"] != null ? Convert.ToString(m["every"], System.Globalization.CultureInfo.InvariantCulture) : null); break;   // (Test now, Test every)
                 case "openData": Process.Start("explorer.exe", "\"" + dataDir + "\""); break;
                 case "updates": settings["updates"] = true.Equals(m["on"]); updNext = 0; SaveSettings(); SendSettings(); break;
                 case "updCheck": updAsked = true; if (!updBusy) { updNext = 0; MaybeCheckUpdate(Source.Unix()); } break;   // (one under way: its answer is this one)
@@ -4786,6 +5258,7 @@ partial class DeckForm : Form
         tk["game"] = games.Game; tk["front"] = gameFront; tk["gameSince"] = games.Since;   // plain reads of fields the game poll sets
         tk["pm"] = pmOk || !second && lastPm; lastPm = (bool)tk["pm"];
         char bl = src.Bneck.Live; tk["bnl"] = bl == 'g' ? (object)1 : bl == 'c' ? (object)2 : bl == 'f' ? (object)3 : null;   // the call with no game too
+        tk["net"] = Net.State();   // (the internet cell's popup and Settings: the speed test, 2.4.8)
         tk["bnb"] = src.BlindNote;   // (a game in front whose frames aren't counted: 1 only vsync caps can be seen, 2 none)
         if (src.Conn.Has) tk["c12"] = new object[] { src.Conn.Lopsided, src.Conn.Hot, Math.Round(src.Conn.Share, 1) };
         var gs = games.SessionPm(); if (gs != null) tk["gs"] = gs;

@@ -29,7 +29,7 @@ Windows 10 and 11, 64-bit.
 ## Good to know
 
 - The free HWiNFO stops sharing after 12 hours. Turn on **Keep HWiNFO sharing** in Settings and HW Deck restarts it for you.
-- No account, no tracking. It only asks GitHub for updates.
+- No account, no tracking. It only contacts GitHub for updates, and Cloudflare for the speed test once you turn it on (LibreSpeed when Cloudflare refuses).
 - Your data is in `%APPDATA%\HW Deck`.
 - Not made by or affiliated with HWiNFO.
 

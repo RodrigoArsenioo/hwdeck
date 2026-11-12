@@ -17,7 +17,7 @@ const untilFile = async (f, re, ms = 20000) => { const t0 = Date.now(); while (D
 const text = f => existsSync(f) ? readFileSync(f, 'utf8') : '';
 const prep = JSON.parse(readFileSync(join(data, 'prep.json'), 'utf8').replace(/^﻿/, ''));
 
-ok('catalog arrives', await until('READ.length === 302 && feed.got'));
+ok('catalog arrives', await until('READ.length === 304 && feed.got'));
 
 // ---- the host ----
 ok('a fan curve is checked from the start, before the page ever saves', await untilFile(join(data, 'alerts.log'), /YELLOW\s+Rear fan fan curve: /), text(join(data, 'alerts.log')).split('\n').slice(-3).join(' | '));
@@ -223,7 +223,7 @@ const keepBan = keep => E(`(() => { feed.fake = false; feed.keep = ${keep}; onHo
 const kb0 = await keepBan(false), kb1 = await keepBan(true);
 ok('the 12-hour banner points to Keep HWiNFO sharing while it is off, and not once it is on', /after 12 hours[^]*Keep HWiNFO sharing in Settings/.test(kb0) && !/Keep HWiNFO sharing/.test(kb1), kb0 + ' | ' + kb1);
 await E(`send({ t: 'ready' })`);
-ok('the real feed comes back', await until('READ.length === 302 && feed.fake', 6000));
+ok('the real feed comes back', await until('READ.length === 304 && feed.fake', 6000));
 
 // ---- Keep HWiNFO sharing (Settings): off by default, a click asks the host, and the host's answer is what shows ----
 await E(`(() => { window.__sent = []; chrome.webview.postMessage = m => { __sent.push(JSON.parse(JSON.stringify(m))); __pm(m); }; $('setBtn').click(); return 1; })()`);

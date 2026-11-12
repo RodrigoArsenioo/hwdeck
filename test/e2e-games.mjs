@@ -21,7 +21,7 @@ const host = m => ev(`send(${JSON.stringify(m)})`);
 const click = async sel => { const c = await p.center(sel); if (!c) throw new Error('nothing at ' + sel); await p.click(c.x, c.y); await p.sleep(400); };
 const T = sel => ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? e.textContent : null; })()`);
 
-ok('catalog arrives', await until('READ.length === 302 && feed.got'));
+ok('catalog arrives', await until('READ.length === 304 && feed.got'));
 await host({ t: 'fakeGame', game: null });   // whatever runs on this PC: from here on the test says what plays
 const cpuKey = 'f0000501.0/01000000';
 await host({ t: 'fakePin', key: cpuKey, v: 40 });   // under its lines until the made-up session below
