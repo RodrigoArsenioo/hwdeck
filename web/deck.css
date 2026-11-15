@@ -1598,7 +1598,7 @@ select.dsel-n { display: none; }
 :root[data-pops="view"] #gcz, :root[data-pops="view"] #gmodal .gx-s5 { background: var(--tile); border-color: var(--tile-line); border-radius: var(--card-r); }
 :root[data-pops="view"] #gmodal .gx-s5 > div { border-color: var(--tile-line); }
 :root[data-pops="view"] .setbox { background: var(--tile); border-color: var(--tile-line); border-radius: var(--card-r); }
-:root[data-pops="view"] :is(#gmodal, #wmodal) .gx-day { background: transparent; border-bottom: 1px solid var(--tile-line); --dayc: var(--bg); }   /* (View, his option 3: a line under the day; solid only while stuck on top, 11-09) */
+:root[data-pops="view"] :is(#gmodal, #wmodal) .gx-day { background: transparent; --dayc: var(--bg); }   /* (View: solid only while stuck on top, 11-09. No line under the day since 11-15: it lay on the first card's edge and stuck out past its round corners, his "look at that line, it's a bug"; the cards have their own edges) */
 :root[data-pops="view"] :is(#gmodal, #wmodal) .gx-day.stuck { background: var(--bg); border-bottom-color: transparent; box-shadow: -48px 0 0 var(--bg), 48px 0 0 var(--bg); }   /* (stuck on top: the popup's own colour from edge to edge, not a lighter box short of its sides, his 11-12 "the week days bg around it looks very very odd") */
 /* the Headset popup's base station screen (11-13, from HW Dashboard's Headset screen popup) */
 .hsx .hs-pv { position: relative; display: block; max-width: 480px; margin: 10px auto 12px; border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px var(--g2c, #2c2c2c); line-height: 0; background: #000; }

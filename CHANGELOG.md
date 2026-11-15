@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.1 (2026-11-15)
+
+- Sessions and Warning history: with Popups on View, a day's heading drew a line over the top edge of its first session, past the session's rounded corners. The line is gone; the heading still gets its background while it stays on top as the list scrolls.
+
 ## 2.5.0 (2026-11-15)
 
 - SteelSeries Arctis Nova Pro Wireless: with its base station connected, HW Deck reads the headset's battery and the spare battery's, as two readings under HW Deck in Storage ("Headset battery", "Spare headset battery"). They are listed only once the base station is found, so nothing changes for anyone without one. SteelSeries GG is not needed.

@@ -7892,6 +7892,7 @@ const NOTES = [
     'Ready-made headset themes and pages, themes of your own to save, export and import, and an editor for its icons.',
     'Overview fits the window at any size, without scrolling.',
     'One slider style everywhere, and lists fade out as they close.']],
+  ['2.5.1', '2.5.1', ['Sessions and Warning history: with Popups on View, a day\'s heading no longer draws a line over the edge of its first session.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
