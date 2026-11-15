@@ -316,7 +316,8 @@ ok('Overview: every card ends at what it holds (its rows keep their own height)'
 ok('Overview: the rows of a card are all one height', await E(`(() => { const hs = [...document.querySelectorAll('#view .card:not(.band) .dgrid > .row')].map(r => r.offsetHeight); return hs.length > 2 && Math.max(...hs) - Math.min(...hs) <= 2; })()`));
 ok('a hidden title is hidden outside edit mode (it keeps its height, so the next card lines up)', await E(`getComputedStyle(document.querySelector('${cat('gpu')} .ch')).visibility === 'hidden'`));
 await p.shot(join(out, 'layout-overview.png'));
-await p.cmd('Emulation.setDeviceMetricsOverride', { width: 640, height: 900, deviceScaleFactor: 1, mobile: false }); await p.sleep(900);
+// (420, not 640: since 11-13 Overview goes down to 7 px before it scrolls, and at 640 its three cards fit side by side)
+await p.cmd('Emulation.setDeviceMetricsOverride', { width: 420, height: 900, deviceScaleFactor: 1, mobile: false }); await p.sleep(900);
 await E('window.dispatchEvent(new Event("resize"))'); await p.sleep(700);
 ok('a narrow window folds a row that doesn\'t fit (and keeps the arrangement)', await E('document.querySelector("#view .lrow").classList.contains("fold")') && (await rows('overview'))[0].cols.length === 3);
 await p.cmd('Emulation.setDeviceMetricsOverride', VIEWPORT); await p.sleep(600);

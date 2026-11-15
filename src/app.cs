@@ -21,6 +21,7 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using HwHeadset;   // (the headset, at the end of this file)
 
 [assembly: System.Reflection.AssemblyTitle("HW Deck")]
 [assembly: System.Reflection.AssemblyProduct("HW Deck")]
@@ -32,7 +33,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 static class AppInfo
 {
-    public const string Version = "2.4.8";
+    public const string Version = "2.5.0";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;
@@ -415,7 +416,7 @@ class DeckSource : Source
     public const string GameTimeKey = "hwdeck.0/gtime";
     public Func<double> GameMin;                                // how long the game session has run, in minutes (NaN: no game)
     public readonly List<Extra> Extras = new List<Extra>();     // a build's own readings (see Extra), after HW Deck's
-    int innerVersion = -1, extraVersion = -1, connAt = -1, framesAt = -1, gtAt = -1, netAt = -1; bool framesOn;
+    int innerVersion = -1, extraVersion = -1, connAt = -1, framesAt = -1, gtAt = -1, netAt = -1, hsAt = -1, msAt = -1; bool framesOn, hsOn, msOn;
     int[] extraAt = new int[0];                                 // where each extra's readings start
     public DeckSource(Source inner) { Inner = inner; }
     public override void Poll()
@@ -424,10 +425,10 @@ class DeckSource : Source
         foreach (var x in Extras) x.Poll();
         Status = Inner.Status; Age = Inner.Age; PmProc = Inner.PmProc;
         int ev = Extras.Count; foreach (var x in Extras) ev = ev * 31 + x.Version;
-        bool fo = Frames != null && Frames.On;
-        if (Inner.Version != innerVersion || ev != extraVersion || fo != framesOn)
+        bool fo = Frames != null && Frames.On, ho = Batt.HeadSeen, mo = Batt.MouseSeen;
+        if (Inner.Version != innerVersion || ev != extraVersion || fo != framesOn || ho != hsOn || mo != msOn)
         {
-            innerVersion = Inner.Version; extraVersion = ev; framesOn = fo;
+            innerVersion = Inner.Version; extraVersion = ev; framesOn = fo; hsOn = ho; msOn = mo; hsAt = -1; msAt = -1;
             Sensors = new List<Sensor>(Inner.Sensors); Readings = new List<Reading>(Inner.Readings);
             extraAt = new int[Extras.Count]; connAt = -1; framesAt = -1; gtAt = -1; netAt = -1;
             Conn.Find(Inner);
@@ -450,6 +451,14 @@ class DeckSource : Source
                 netAt = Readings.Count;
                 Readings.Add(new Reading { Key = Net.DownKey, Label = "Download now", Unit = "Mbit/s", Kind = "net", Sensor = Sensors.Count - 1, Type = 8 });
                 Readings.Add(new Reading { Key = Net.UpKey, Label = "Upload now", Unit = "Mbit/s", Sensor = Sensors.Count - 1, Type = 8 });
+                // (the headset and the mouse, once found: their batteries; the headset's is the Headset cell, 11-13)
+                if (ho)
+                {
+                    hsAt = Readings.Count;
+                    Readings.Add(new Reading { Key = Batt.HeadKey, Label = "Headset battery", Unit = "%", Kind = "headset", Sensor = Sensors.Count - 1, Type = 8 });
+                    Readings.Add(new Reading { Key = Batt.SpareKey, Label = "Spare headset battery", Unit = "%", Sensor = Sensors.Count - 1, Type = 8 });
+                }
+                if (mo) { msAt = Readings.Count; Readings.Add(new Reading { Key = Batt.MouseKey, Label = "Mouse battery", Unit = "%", Sensor = Sensors.Count - 1, Type = 8 }); }
                 for (int j = 0; j < Extras.Count; j++)
                 {
                     var x = Extras[j];
@@ -475,6 +484,8 @@ class DeckSource : Source
     {
         if (gtAt >= 0 && gtAt < Values.Length) Values[gtAt] = GameMin != null ? GameMin() : double.NaN;
         if (netAt >= 0 && netAt + 1 < Values.Length) { Values[netAt] = Net.Down; Values[netAt + 1] = Net.Up; }
+        if (hsAt >= 0 && hsAt + 1 < Values.Length) { Values[hsAt] = Batt.HeadValue(); Values[hsAt + 1] = Batt.SpareValue(); }
+        if (msAt >= 0 && msAt < Values.Length) Values[msAt] = Batt.MousePct < 0 ? double.NaN : Batt.MousePct;
         if (framesAt < 0 || framesAt + 2 >= Values.Length) return;
         Values[framesAt] = Frames.Fps; Values[framesAt + 1] = Frames.Low; Values[framesAt + 2] = Frames.Ft;
     }
@@ -3811,6 +3822,7 @@ partial class DeckForm : Form
     readonly Timer timer;
     readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
     readonly bool fake, customData;
+    bool hsFeedSaid;   // (the headset page's readings failed once: said once)
     bool exiting, startHidden, pageReady, force, wasShowing, paused, nonClient = true, wvFailed, restoreMax;
     long notOkSince;
     bool restarting;   // a HWiNFO restart under way
@@ -3912,6 +3924,11 @@ partial class DeckForm : Form
         src = new DeckSource(fake ? (Source)new FakeSource(fakeN) : new HwSource());
         src.Inner.Note = s => Log(s);
         Net.Log = s => Log(s); Net.Fake = fake; Net.File_ = P("net.json"); Net.Load();
+        // (the headset, 11-13: its screen's switch and pages, the mouse's last reading; read by HW Deck itself)
+        Batt.Log = s => Log(s); Batt.ScreenFile = P("hs-screen.txt"); Batt.StateFile = P("batt.txt");
+        HsPage.File_ = P("hs-layout.json"); HsPage.Log = s => Log(s);
+        HsPage.Gaming = () => games != null && games.Game != null;   // (a headset page's Shows: while gaming or not)
+
         Net.Toast = why => { try { BeginInvoke((Action)(() => { var r = Msg("toast"); r["text"] = why; Post(r); })); } catch { } };
         alerts.Conn = src.Conn;
         hist = new History(dataDir);
@@ -4028,12 +4045,18 @@ partial class DeckForm : Form
         timer.Start();   // history, warnings and games run from the start, page or not
         if (Environment.GetEnvironmentVariable("HWDECK_TRACE") == "1") UiTrace.Start(this, Path.Combine(dataDir, "trace.log"));
         ExtStart();
+        // (the headset, after a build's own start, which may block it: never in a test copy (--data, --fake), unless
+        // HWDECK_BATT=1 for its own check; a --fake copy with HWDECK_FAKEHS=1 makes one up)
+        HsPage.Load();   // (after the build's start: it may turn the mouse on, which the default page goes by)
+        bool hsCheck = Environment.GetEnvironmentVariable("HWDECK_BATT") == "1" || Environment.GetEnvironmentVariable("HWDASH_BATT") == "1";
+        if (((!fake && !customData) && !Batt.Blocked()) || hsCheck) Batt.Start();
+        else if (fake && Environment.GetEnvironmentVariable("HWDECK_FAKEHS") == "1") Batt.FakeHeadset();
         Log("start " + AppInfo.Run + " (pid " + Process.GetCurrentProcess().Id + (fake ? ", fake " + fakeN : "") + ", data " + dataDir + ")");
     }
 
     long savedAt;
     bool ended;
-    void SaveAll() { try { ExtStop(); } catch { } Try(() => { if (src.Frames != null) src.Frames.Stop(); }); if (settingsRetry) SaveSettings(); SaveData(); EndMark(); }   // (a trace left running stays until Windows restarts)
+    void SaveAll() { try { ExtStop(); } catch { } try { Batt.Stop(); } catch { } Try(() => { if (src.Frames != null) src.Frames.Stop(); }); if (settingsRetry) SaveSettings(); SaveData(); EndMark(); }   // (a trace left running stays until Windows restarts)
     bool FpsWanted { get { return !settings.ContainsKey("gameFps") || true.Equals(settings["gameFps"]); } }   // (on unless turned off, 11-09)
 
     // ---- extras: a build may add readings (Extra), cell kinds (web\extras.js) and messages of its own ("x.*" both
@@ -4042,6 +4065,7 @@ partial class DeckForm : Form
     partial void ExtMessage(string t, Dictionary<string, object> m);    // a message from the page whose type starts "x."
     partial void ExtSecond(long now);                                   // once a second, after the history sample
     partial void ExtStop();                                             // quitting or the session ending: save what it keeps
+    partial void ExtFeedHidden(ref bool on);                            // the window hidden: on = the page still gets each second (a build that draws elsewhere from them)
     void SaveData()
     {
         long ago = Source.Unix() - savedAt;
@@ -4308,6 +4332,14 @@ partial class DeckForm : Form
                 case "keepSharing": SetKeepSharing(true.Equals(m["on"])); break;
                 case "getSettings": SendSettings(); break;
                 case "gameFps": SetGameFps(true.Equals(m["on"])); break;
+                case "hs.get": case "hs.set": case "hs.play":   // (the Headset cell's popup, 11-13: the base's page, his changes, an animation)
+                    { var hr = HsPage.Message(t.Substring(3), m); if (t == "hs.set") Batt.Redraw(); if (hr != null) { var hv = Msg("hsv"); foreach (var kv in hr) hv[kv.Key] = kv.Value; Post(hv); } break; }
+                case "hs.power": if (!fake && !customData) Batt.SetScreen(true.Equals(m["on"])); break;
+                case "hs.screen": { var sm = m.ContainsKey("m") ? m["m"] as string : null; if (!fake && !customData) Batt.SetScreen(sm, true); else if (fake) Batt.SetScreen(sm, false); break; }   // (the Headset tab's Screen: Off, Original, Custom, his 11-14 pick; a --fake copy has no base station: kept in memory only)
+                case "hs.refresh": if (!fake && !customData) Batt.Refresh(); break;   // (his 11-14 "add a refresh button to unbug in case it happens")
+                case "hs.export": HsExport(m); break;   // (a headset theme to a file, for another PC; 11-14)
+                case "hs.import": HsImport(m); break;
+                case "hs.bright": { object bv; int bi; if (m.TryGetValue("v", out bv) && bv != null && int.TryParse(Convert.ToString(bv, System.Globalization.CultureInfo.InvariantCulture), out bi)) Batt.SetBright(bi, !fake && !customData); break; }   // (the base's brightness slider: sent when let go)   // (HW Deck on the base's screen, or the base's own)
                 case "netTest": settings["netTest"] = true.Equals(m["on"]); SaveSettings(); Net.SetOn(true.Equals(m["on"])); break;   // (the speed test's switch, 2.4.8)
                 case "net": Net.Act(m.ContainsKey("do") ? m["do"] as string : null, m.ContainsKey("every") && m["every"] != null ? Convert.ToString(m["every"], System.Globalization.CultureInfo.InvariantCulture) : null); break;   // (Test now, Test every)
                 case "openData": Process.Start("explorer.exe", "\"" + dataDir + "\""); break;
@@ -5143,6 +5175,8 @@ partial class DeckForm : Form
             PaceLog();
             if (paceFs != null && Source.Unix() - paceAt > 10) ClosePace();   // (no line for 10 s: the game is gone)
             hist.Sample(src, Bottleneck.ShareKeys, src.Bneck.Shares);
+            Batt.Feed(src.Inner, games.Game != null && now - games.Seen <= 6);   // (the headset page's temperatures; a game keeps it lit)
+            try { HsPage.Feed(src); } catch (Exception ex) { if (!hsFeedSaid) { hsFeedSaid = true; Log("headset page: its readings failed: " + ex.Message); } }
             ExtSecond(now);
             if (pageReady && now % 10 == 0 && src.Inner.Readings.Count > 0)
             {
@@ -5227,7 +5261,9 @@ partial class DeckForm : Form
         }
         if (wasShowing && !showing) hiddenAt = now;
         wasShowing = showing;
-        if (!showing || !(second || force)) return;
+        bool feedHidden = false;
+        if (pageReady && !showing) ExtFeedHidden(ref feedHidden);   // (a build whose page draws something else from the seconds, the dashboard's small screen)
+        if (!(showing || feedHidden) || !(second || force)) return;
         force = false;
         if (src.Version != sentVersion)
         {
@@ -5258,7 +5294,8 @@ partial class DeckForm : Form
         tk["game"] = games.Game; tk["front"] = gameFront; tk["gameSince"] = games.Since;   // plain reads of fields the game poll sets
         tk["pm"] = pmOk || !second && lastPm; lastPm = (bool)tk["pm"];
         char bl = src.Bneck.Live; tk["bnl"] = bl == 'g' ? (object)1 : bl == 'c' ? (object)2 : bl == 'f' ? (object)3 : null;   // the call with no game too
-        tk["net"] = Net.State();   // (the internet cell's popup and Settings: the speed test, 2.4.8)
+        tk["net"] = Net.State();
+        if (Batt.HeadSeen) tk["hs"] = Batt.Card();   // (the Headset cell and its popup, 11-13)   // (the internet cell's popup and Settings: the speed test, 2.4.8)
         tk["bnb"] = src.BlindNote;   // (a game in front whose frames aren't counted: 1 only vsync caps can be seen, 2 none)
         if (src.Conn.Has) tk["c12"] = new object[] { src.Conn.Lopsided, src.Conn.Hot, Math.Round(src.Conn.Share, 1) };
         var gs = games.SessionPm(); if (gs != null) tk["gs"] = gs;
@@ -5651,6 +5688,45 @@ partial class DeckForm : Form
             Post(r);
         }
     }
+    // ---- a headset theme to or from a file (11-14, plan T5: "for your friend"). The mouse never goes in it (its pieces
+    // and its icon are left out). A test copy (--fake) may give the file's path instead of the dialog ----
+    void HsExport(Dictionary<string, object> m)
+    {
+        var th = m.ContainsKey("theme") ? m["theme"] as Dictionary<string, object> : null; if (th == null) return;
+        th.Remove("from"); th.Remove("name");
+        object po; if (th.TryGetValue("pages", out po) && po is System.Collections.IEnumerable)
+            foreach (var pg in (System.Collections.IEnumerable)po) { var pd = pg as Dictionary<string, object>; object qo; if (pd != null && pd.TryGetValue("pieces", out qo) && qo is System.Collections.IEnumerable) { var keep = new List<object>(); foreach (var q in (System.Collections.IEnumerable)qo) { var qd = q as Dictionary<string, object>; if (qd != null && !"mouse".Equals(qd.ContainsKey("src") ? qd["src"] : null)) { if ("mouse".Equals(qd.ContainsKey("src2") ? qd["src2"] : null)) qd["src2"] = null; keep.Add(q); } } pd["pieces"] = keep; } }
+        var ic = th.ContainsKey("icons") ? th["icons"] as Dictionary<string, object> : null; if (ic != null) ic.Remove("mouse");
+        object nmo; string name = m.TryGetValue("name", out nmo) ? nmo as string : null; if (string.IsNullOrWhiteSpace(name)) name = "Headset theme";
+        string text = json.Serialize(new Dictionary<string, object> { { "hwdeck_headset", 1 }, { "name", name }, { "theme", th } });
+        object pth; string path = fake && m.TryGetValue("path", out pth) ? pth as string : null;
+        if (path == null)
+            using (var d = new SaveFileDialog { Filter = "HW Deck headset theme (*.json)|*.json", FileName = Regex.Replace(name, @"[\\/:*?""<>|]", "") + ".headset.json" })
+            {
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                path = d.FileName;
+            }
+        var r = Msg("toast");
+        try { File.WriteAllText(path, text, new UTF8Encoding(false)); r["text"] = "Exported to " + Path.GetFileName(path); }
+        catch (Exception ex) { Log("headset theme export failed: " + ex.Message); r["text"] = "Couldn't export: " + ex.Message; }
+        Post(r);
+    }
+    void HsImport(Dictionary<string, object> m)
+    {
+        object pth; string path = fake && m.TryGetValue("path", out pth) ? pth as string : null;
+        if (path == null)
+            using (var d = new OpenFileDialog { Filter = "HW Deck headset theme (*.json)|*.json|All files|*.*" })
+            {
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                path = d.FileName;
+            }
+        Dictionary<string, object> o = null;
+        try { if (new FileInfo(path).Length < 2000000) o = json.DeserializeObject(File.ReadAllText(path)) as Dictionary<string, object>; } catch { }
+        object tho, nmi; var th = o != null && o.ContainsKey("hwdeck_headset") && o.TryGetValue("theme", out tho) ? tho as Dictionary<string, object> : null;
+        if (th == null) { var t = Msg("toast"); t["text"] = "Not a headset theme"; Post(t); return; }
+        var r = Msg("hsimp"); r["name"] = (o.TryGetValue("name", out nmi) ? nmi as string : null) ?? "Imported"; r["theme"] = th;   // (checked by the host when it is set, like every change)
+        Post(r);
+    }
     void Import(int slot)
     {
         using (var d = new OpenFileDialog { Filter = "HW Deck layout (*.json)|*.json|All files|*.*" })
@@ -5734,6 +5810,14 @@ partial class DeckForm : Form
     // calls SetWindowPos without SWP_NOACTIVATE and so brings HW Deck to the front (at its start, or behind a game when
     // a monitor's scale changes)
     Size minTrack;
+    // the monitors on or off (GUID_CONSOLE_DISPLAY_STATE): the headset base goes dark while they are off (his 11-13 burn in)
+    static readonly Guid DisplayState = new Guid("6FE69556-704A-47A0-8F24-C28D936FDA47");
+    [DllImport("user32.dll")] static extern IntPtr RegisterPowerSettingNotification(IntPtr h, ref Guid g, int flags);
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        try { var g = DisplayState; RegisterPowerSettingNotification(Handle, ref g, 0); } catch { }   // (Windows sends the state now, then each change)
+    }
     protected override void WndProc(ref Message m)
     {
         // Alt+F4, the taskbar's Close window: to the tray here, before WinForms notes the close as the user's (it keeps
@@ -5757,6 +5841,8 @@ partial class DeckForm : Form
             // going to sleep: open episodes end here, not after the wake with the whole sleep in them
             if (pbt == 4 /*PBT_APMSUSPEND*/ && !asleep) { asleep = true; sleptAt = Environment.TickCount; alerts.Mark("PC going to sleep"); WriteAlerts(); Try(SaveData); }   // (a power cut while asleep loses nothing)
             else if (pbt == 0x12 /*PBT_APMRESUMEAUTOMATIC*/ || pbt == 7 /*PBT_APMRESUMESUSPEND*/) asleep = false;
+            else if (pbt == 0x8013 /*PBT_POWERSETTINGCHANGE*/ && m.LParam != IntPtr.Zero && (Guid)Marshal.PtrToStructure(m.LParam, typeof(Guid)) == DisplayState)
+                Batt.DisplaysOff = Marshal.ReadInt32(m.LParam, 20) == 0;   // (POWERBROADCAST_SETTING: the guid, its length, then 0 off, 1 on, 2 dimmed)
         }
         else if (m.Msg == 0x11 /*WM_QUERYENDSESSION*/) ending = true;
         // minimized: the next tick that finds it on screen says so (shown), even after a minimize too short for any
@@ -6930,3 +7016,4139 @@ static class Program
         try { File.AppendAllText(Path.Combine(dir, "app.log"), AppInfo.Stamp() + "  unhandled: " + ex + "\r\n"); } catch { }
     }
 }
+
+// ==== headset begin ====
+// ==== the headset (11-13, moved from HW Dashboard into HW Deck: his friend has the same headset) ====
+// A SteelSeries Arctis Nova Pro Wireless base station (USB 1038:12E0) and a Logitech LIGHTSPEED mouse (046D:C54D), read
+// by HW Deck itself with no SteelSeries or Logitech software: the batteries as HW Deck's own readings (in its list only
+// once the device was found), and the base station's small OLED screen showing a page built in the Headset cell's
+// popup (off until switched on there). Batt: the devices; HsPage: the saved pages and the popup's messages; Hs, Cv,
+// Fnt, Geo, Ico and the HsAnim classes: the renderer and the start up / shut down animations. Its own namespace: its
+// usings (threads, Windows' power and session events) stay out of the rest of this file.
+namespace HwHeadset
+{
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Web.Script.Serialization;
+using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
+
+// The headset base station's page and its start / shut down animations (11-12). The page is his own, built in the
+// Headset screen popup: a grid of pieces (the clock, or a reading as a number, bar, ring, knob or graph), drawn with our
+// own pixel fonts (no GDI+ text: his "42 46 48" bug, digits run together, can't come back). Made in the "Headset base
+// screen redesign" session (hwdeck\local\hs-redesign-1112: pix.cs, class G of designs.cs, layout.cs, anim.cs and the
+// eight anim-<key>.cs, checked there by check2.cs and anim-run.cs) and copied here as they are, St renamed HsSt
+// (app.cs has its own) and a reading's unit taken from the dashboard. x-hspage.cs keeps his page and asks Hs.Draw;
+// x-batt.cs plays the animations.
+
+// pix.cs: shared drawing for the headset screen mock designs (hs-redesign-1112). Pure pixels, no GDI+ text: our own
+// pixel fonts, so every character is its own bitmap with at least one empty column before the next.
+
+// the page's 126 x 62 box on the 128 x 64 screen, moved by the burn-in shift (Dx, Dy)
+class Cv
+{
+    public const int W = 126, H = 62;
+    public readonly bool[,] Px = new bool[128, 64];
+    public readonly int Ox, Oy;
+    public int Tone;        // 0 solid, 1 half (every other pixel: looks dimmer on the OLED)
+    public int Outside; public static int Spill;   // pixels a design asked for outside its box (the check counts them)
+    public Cv(int dx, int dy) { Ox = dx; Oy = dy; }
+    public int Cx0 = 0, Cy0 = 0, Cx1 = W - 1, Cy1 = H - 1, Clipped;   // a piece's own box: pixels past it are counted, not drawn
+    public void ClipTo(int x, int y, int w, int h) { Cx0 = x; Cy0 = y; Cx1 = x + w - 1; Cy1 = y + h - 1; }
+    public void NoClip() { Cx0 = 0; Cy0 = 0; Cx1 = W - 1; Cy1 = H - 1; }
+
+    public void Set(int x, int y)
+    {
+        if (x < 0 || y < 0 || x >= W || y >= H) { Outside++; Spill++; return; }
+        if (x < Cx0 || y < Cy0 || x > Cx1 || y > Cy1) { Clipped++; return; }
+        if (Tone == 1 && ((x + y) & 1) != 0) return;
+        Px[x + Ox, y + Oy] = true;
+    }
+    public void Off(int x, int y) { if (x >= 0 && y >= 0 && x < W && y < H) Px[x + Ox, y + Oy] = false; }
+    // a box turned over, lit for dark (a piece past its yellow or red level, 11-13)
+    public void Invert(int x, int y, int w, int h)
+    {
+        for (int a = Math.Max(0, x); a < Math.Min(W, x + w); a++) for (int b = Math.Max(0, y); b < Math.Min(H, y + h); b++) Px[a + Ox, b + Oy] = !Px[a + Ox, b + Oy];
+    }
+    public void Block(int x, int y, int w, int h) { for (int a = 0; a < w; a++) for (int b = 0; b < h; b++) Set(x + a, y + b); }
+    public void HLine(int x0, int x1, int y) { for (int x = x0; x <= x1; x++) Set(x, y); }
+    public void VLine(int x, int y0, int y1) { for (int y = y0; y <= y1; y++) Set(x, y); }
+    public void Rect(int x, int y, int w, int h) { HLine(x, x + w - 1, y); HLine(x, x + w - 1, y + h - 1); VLine(x, y + 1, y + h - 2); VLine(x + w - 1, y + 1, y + h - 2); }
+    public void HDots(int x0, int x1, int y, int step) { for (int x = x0; x <= x1; x += step) Set(x, y); }
+    public void VDots(int x, int y0, int y1, int step) { for (int y = y0; y <= y1; y += step) Set(x, y); }
+    public void Bmp(int x, int y, string[] rows) { for (int r = 0; r < rows.Length; r++) for (int c = 0; c < rows[r].Length; c++) if (rows[r][c] == 'X') Set(x + c, y + r); }
+
+    public void Line(int x0, int y0, int x1, int y1, int t)
+    {
+        int dx = Math.Abs(x1 - x0), sx = x0 < x1 ? 1 : -1, dy = -Math.Abs(y1 - y0), sy = y0 < y1 ? 1 : -1, err = dx + dy;
+        while (true)
+        {
+            Block(x0, y0, t, t);
+            if (x0 == x1 && y0 == y1) break;
+            int e2 = 2 * err;
+            if (e2 >= dy) { err += dy; x0 += sx; }
+            if (e2 <= dx) { err += dx; y0 += sy; }
+        }
+    }
+
+    // angles in degrees, 0 = straight up, clockwise
+    public static double Ang(double dx, double dy) { double a = Math.Atan2(dx, -dy) * 180 / Math.PI; return a < 0 ? a + 360 : a; }
+    static bool In(double a, double a0, double a1)
+    {
+        double span = a1 - a0; if (span >= 360) return true; if (span < 0) return false;
+        double s = ((a - a0) % 360 + 360) % 360; return s <= span;
+    }
+    // a thin ring (midpoint circle, one pixel) between two angles; centre on a pixel
+    public void Ring(int cx, int cy, int r, double a0, double a1)
+    {
+        int x = r, y = 0, err = 1 - r;
+        var pts = new List<int[]>();
+        while (x >= y)
+        {
+            pts.Add(new[] { x, y }); pts.Add(new[] { y, x }); pts.Add(new[] { -y, x }); pts.Add(new[] { -x, y });
+            pts.Add(new[] { -x, -y }); pts.Add(new[] { -y, -x }); pts.Add(new[] { y, -x }); pts.Add(new[] { x, -y });
+            y++;
+            if (err < 0) err += 2 * y + 1; else { x--; err += 2 * (y - x) + 1; }
+        }
+        foreach (var p in pts) if (In(Ang(p[0], p[1]), a0, a1)) Set(cx + p[0], cy + p[1]);
+    }
+    // a thick ring: pixels whose distance from the centre is within t/2 of r
+    public void Band(double cx, double cy, double r, double t, double a0, double a1)
+    {
+        int R = (int)Math.Ceiling(r + t);
+        for (int x = (int)Math.Floor(cx - R); x <= cx + R; x++)
+            for (int y = (int)Math.Floor(cy - R); y <= cy + R; y++)
+            {
+                double dx = x - cx, dy = y - cy, d = Math.Sqrt(dx * dx + dy * dy);
+                if (d >= r - t + 0.5 && d < r + 0.5 && In(Ang(dx, dy), a0, a1)) Set(x, y);   // (r = the outer edge)
+            }
+    }
+    // dots along a ring, one every step degrees, starting at a0 (+ phase degrees)
+    public void RingDots(double cx, double cy, double r, double a0, double a1, double step, double phase, int size)
+    {
+        for (double a = a0 + phase; a <= a1 + 0.001; a += step)
+        {
+            double rad = a * Math.PI / 180;
+            int x = (int)Math.Round(cx + r * Math.Sin(rad) - (size - 1) / 2.0), y = (int)Math.Round(cy - r * Math.Cos(rad) - (size - 1) / 2.0);
+            Block(x, y, size, size);
+        }
+    }
+}
+
+// pixel fonts: each glyph its own bitmap ('X' lit), one empty column (times the scale) between glyphs
+class Fnt
+{
+    readonly Dictionary<char, string[]> g = new Dictionary<char, string[]>();
+    public readonly int H, Space;
+    Fnt(int h, int space) { H = h; Space = space; }
+    void Add(char c, params string[] rows) { g[c] = rows; }
+
+    public int CharW(char c) { string[] r; if (!g.TryGetValue(c, out r)) return Space; int w = 0; foreach (var s in r) w = Math.Max(w, s.Length); return w; }
+    public int Width(string s, int k = 1) { int w = 0; for (int i = 0; i < s.Length; i++) w += CharW(s[i]) * k + (i > 0 ? k : 0); return w; }
+    // k: scale; dots: each pixel drawn (k-1) x (k-1), a gap around it (an LED board look)
+    public int Draw(Cv c, int x, int y, string s, int k = 1, bool dots = false)
+    {
+        int x0 = x;
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (i > 0) x += k;
+            string[] rows;
+            if (g.TryGetValue(s[i], out rows))
+                for (int r = 0; r < rows.Length; r++)
+                    for (int col = 0; col < rows[r].Length; col++)
+                        if (rows[r][col] == 'X') { int b = dots ? k - 1 : k; c.Block(x + col * k, y + r * k, b, b); }
+            x += CharW(s[i]) * k;
+        }
+        return x - x0;
+    }
+    public int Right(Cv c, int right, int y, string s, int k = 1, bool dots = false) { int x = right - Width(s, k) + 1; Draw(c, x, y, s, k, dots); return x; }
+    public int Center(Cv c, int cx, int y, string s, int k = 1, bool dots = false) { int x = cx - Width(s, k) / 2; Draw(c, x, y, s, k, dots); return x; }
+
+    public static readonly Fnt Small = MakeSmall(), Tiny = MakeTiny();
+
+    static Fnt MakeSmall()   // 5 x 7
+    {
+        var f = new Fnt(7, 3);
+        f.Add('0', ".XXX.", "X...X", "X...X", "X...X", "X...X", "X...X", ".XXX.");
+        f.Add('1', ".X.", "XX.", ".X.", ".X.", ".X.", ".X.", "XXX");
+        f.Add('2', ".XXX.", "X...X", "....X", "...X.", "..X..", ".X...", "XXXXX");
+        f.Add('3', "XXXXX", "...X.", "..X..", "...X.", "....X", "X...X", ".XXX.");
+        f.Add('4', "...X.", "..XX.", ".X.X.", "X..X.", "XXXXX", "...X.", "...X.");
+        f.Add('5', "XXXXX", "X....", "XXXX.", "....X", "....X", "X...X", ".XXX.");
+        f.Add('6', "..XX.", ".X...", "X....", "XXXX.", "X...X", "X...X", ".XXX.");
+        f.Add('7', "XXXXX", "....X", "...X.", "..X..", ".X...", ".X...", ".X...");
+        f.Add('8', ".XXX.", "X...X", "X...X", ".XXX.", "X...X", "X...X", ".XXX.");
+        f.Add('9', ".XXX.", "X...X", "X...X", ".XXXX", "....X", "...X.", ".XX..");
+        f.Add('%', "XX...", "XX..X", "...X.", "..X..", ".X...", "X..XX", "...XX");
+        f.Add((char)176, ".X.", "X.X", ".X.");
+        f.Add(':', ".", "X", ".", ".", ".", "X", ".");
+        f.Add('-', "....", "....", "....", "XXXX");
+        f.Add('!', "X", "X", "X", "X", "X", ".", "X");
+        f.Add('.', ".", ".", ".", ".", ".", ".", "X");   // (decimals and his own label words, 11-13)
+        f.Add('/', "....X", "...X.", "...X.", "..X..", ".X...", ".X...", "X....");
+        f.Add('A', ".XXX.", "X...X", "X...X", "XXXXX", "X...X", "X...X", "X...X");
+        f.Add('B', "XXXX.", "X...X", "X...X", "XXXX.", "X...X", "X...X", "XXXX.");
+        f.Add('C', ".XXX.", "X...X", "X....", "X....", "X....", "X...X", ".XXX.");
+        f.Add('D', "XXXX.", "X...X", "X...X", "X...X", "X...X", "X...X", "XXXX.");
+        f.Add('E', "XXXXX", "X....", "X....", "XXXX.", "X....", "X....", "XXXXX");
+        f.Add('F', "XXXXX", "X....", "X....", "XXXX.", "X....", "X....", "X....");
+        f.Add('G', ".XXX.", "X...X", "X....", "X.XXX", "X...X", "X...X", ".XXXX");
+        f.Add('H', "X...X", "X...X", "X...X", "XXXXX", "X...X", "X...X", "X...X");
+        f.Add('I', "XXX", ".X.", ".X.", ".X.", ".X.", ".X.", "XXX");
+        f.Add('J', "..XXX", "...X.", "...X.", "...X.", "...X.", "X..X.", ".XX..");
+        f.Add('K', "X...X", "X..X.", "X.X..", "XX...", "X.X..", "X..X.", "X...X");
+        f.Add('L', "X....", "X....", "X....", "X....", "X....", "X....", "XXXXX");
+        f.Add('M', "X...X", "XX.XX", "X.X.X", "X.X.X", "X...X", "X...X", "X...X");
+        f.Add('N', "X...X", "X...X", "XX..X", "X.X.X", "X..XX", "X...X", "X...X");
+        f.Add('O', ".XXX.", "X...X", "X...X", "X...X", "X...X", "X...X", ".XXX.");
+        f.Add('P', "XXXX.", "X...X", "X...X", "XXXX.", "X....", "X....", "X....");
+        f.Add('Q', ".XXX.", "X...X", "X...X", "X...X", "X.X.X", "X..X.", ".XX.X");
+        f.Add('R', "XXXX.", "X...X", "X...X", "XXXX.", "X.X..", "X..X.", "X...X");
+        f.Add('S', ".XXXX", "X....", "X....", ".XXX.", "....X", "....X", "XXXX.");
+        f.Add('T', "XXXXX", "..X..", "..X..", "..X..", "..X..", "..X..", "..X..");
+        f.Add('U', "X...X", "X...X", "X...X", "X...X", "X...X", "X...X", ".XXX.");
+        f.Add('V', "X...X", "X...X", "X...X", "X...X", "X...X", ".X.X.", "..X..");
+        f.Add('W', "X...X", "X...X", "X...X", "X.X.X", "X.X.X", "X.X.X", ".X.X.");
+        f.Add('X', "X...X", "X...X", ".X.X.", "..X..", ".X.X.", "X...X", "X...X");
+        f.Add('Y', "X...X", "X...X", ".X.X.", "..X..", "..X..", "..X..", "..X..");
+        f.Add('Z', "XXXXX", "....X", "...X.", "..X..", ".X...", "X....", "XXXXX");
+        return f;
+    }
+
+    static Fnt MakeTiny()    // 3 x 5 (M, N, W wider)
+    {
+        var f = new Fnt(5, 2);
+        f.Add('0', "XXX", "X.X", "X.X", "X.X", "XXX");
+        f.Add('1', ".X", "XX", ".X", ".X", ".X");
+        f.Add('2', "XXX", "..X", "XXX", "X..", "XXX");
+        f.Add('3', "XXX", "..X", ".XX", "..X", "XXX");
+        f.Add('4', "X.X", "X.X", "XXX", "..X", "..X");
+        f.Add('5', "XXX", "X..", "XXX", "..X", "XXX");
+        f.Add('6', "XXX", "X..", "XXX", "X.X", "XXX");
+        f.Add('7', "XXX", "..X", "..X", ".X.", ".X.");
+        f.Add('8', "XXX", "X.X", "XXX", "X.X", "XXX");
+        f.Add('9', "XXX", "X.X", "XXX", "..X", "XXX");
+        f.Add('%', "X.X", "..X", ".X.", "X..", "X.X");
+        f.Add((char)176, "XX", "XX");
+        f.Add('-', "...", "...", "XXX");
+        f.Add('.', ".", ".", ".", ".", "X");   // (decimals and his own label words, 11-13; the letters it lacked)
+        f.Add(':', ".", "X", ".", "X", ".");
+        f.Add('!', "X", "X", "X", ".", "X");
+        f.Add('/', "..X", "..X", ".X.", "X..", "X..");
+        f.Add('J', "..X", "..X", "..X", "X.X", ".X.");
+        f.Add('Q', ".X.", "X.X", "X.X", "XX.", ".XX");
+        f.Add('X', "X.X", "X.X", ".X.", "X.X", "X.X");
+        f.Add('A', ".X.", "X.X", "XXX", "X.X", "X.X");
+        f.Add('B', "XX.", "X.X", "XX.", "X.X", "XX.");
+        f.Add('C', ".XX", "X..", "X..", "X..", ".XX");
+        f.Add('D', "XX.", "X.X", "X.X", "X.X", "XX.");
+        f.Add('E', "XXX", "X..", "XX.", "X..", "XXX");
+        f.Add('F', "XXX", "X..", "XX.", "X..", "X..");
+        f.Add('G', ".XX", "X..", "X.X", "X.X", ".XX");
+        f.Add('H', "X.X", "X.X", "XXX", "X.X", "X.X");
+        f.Add('I', "XXX", ".X.", ".X.", ".X.", "XXX");
+        f.Add('K', "X.X", "X.X", "XX.", "X.X", "X.X");
+        f.Add('L', "X..", "X..", "X..", "X..", "XXX");
+        f.Add('M', "X...X", "XX.XX", "X.X.X", "X...X", "X...X");
+        f.Add('N', "X..X", "XX.X", "X.XX", "X..X", "X..X");
+        f.Add('O', ".X.", "X.X", "X.X", "X.X", ".X.");
+        f.Add('P', "XX.", "X.X", "XX.", "X..", "X..");
+        f.Add('R', "XX.", "X.X", "XX.", "X.X", "X.X");
+        f.Add('S', ".XX", "X..", ".X.", "..X", "XX.");
+        f.Add('T', "XXX", ".X.", ".X.", ".X.", ".X.");
+        f.Add('U', "X.X", "X.X", "X.X", "X.X", "XXX");
+        f.Add('V', "X.X", "X.X", "X.X", "X.X", ".X.");
+        f.Add('W', "X...X", "X...X", "X.X.X", "X.X.X", ".X.X.");
+        f.Add('Y', "X.X", "X.X", ".X.", ".X.", ".X.");
+        f.Add('Z', "XXX", "..X", ".X.", "X..", "XXX");
+        return f;
+    }
+}
+
+// big digits from strokes on a 4 x 8 grid (cut corners), any size, t-pixel pen; fixed advance so numbers don't jump
+static class Seg
+{
+    // a b c d e f g: top, top right, bottom right, bottom, bottom left, top left, middle
+    static string Of(char ch)
+    {
+        switch (ch) { case '0': case 'O': return "abcdef"; case '1': return "bc"; case '2': return "abged"; case '3': return "abgcd"; case '4': return "fgbc"; case '5': return "afgcd";
+            case '6': return "afgedc"; case '7': return "abc"; case '8': return "abcdefg"; case '9': return "abcdfg"; case '-': return "g"; case 'F': return "aefg"; default: return ""; }
+    }
+    public static int CharW(char ch, int w, int t) { return ch == '.' ? t : w; }
+    public static int Width(string s, int w, int t) { int x = 0; for (int i = 0; i < s.Length; i++) x += CharW(s[i], w, t) + (i > 0 ? t + 1 : 0); return x; }
+    public static void Draw(Cv c, int x, int y, int w, int h, int t, string s)
+    {
+        for (int i = 0; i < s.Length; i++)
+        {
+            char ch = s[i];
+            if (ch == '.') c.Block(x, y + h - t, t, t);
+            else
+            {
+                string g = Of(ch); int hh = (h - t) / 2;
+                foreach (char k in g)
+                    switch (k)
+                    {
+                        case 'a': c.Block(x + 1, y, w - 2, t); break;
+                        case 'g': c.Block(x + 1, y + hh, w - 2, t); break;
+                        case 'd': c.Block(x + 1, y + h - t, w - 2, t); break;
+                        case 'f': c.Block(x, y + 1, t, hh); break;
+                        case 'b': c.Block(x + w - t, y + 1, t, hh); break;
+                        case 'e': c.Block(x, y + hh + t - 1, t, h - hh - t); break;
+                        case 'c': c.Block(x + w - t, y + hh + t - 1, t, h - hh - t); break;
+                    }
+            }
+            x += CharW(ch, w, t) + t + 1;
+        }
+    }
+}
+
+static class Geo
+{
+    static readonly Dictionary<char, int[][]> S = new Dictionary<char, int[][]>
+    {
+        { '0', new[] { new[] { 1,0, 3,0, 4,1, 4,7, 3,8, 1,8, 0,7, 0,1, 1,0 } } },
+        { '1', new[] { new[] { 0,1, 1,0, 1,8 } } },   // (one unit wide: no hole beside it, his "the 1 is a bit weird")
+        { '2', new[] { new[] { 0,1, 1,0, 3,0, 4,1, 4,3, 3,4, 1,4, 0,5, 0,8, 4,8 } } },
+        { '3', new[] { new[] { 0,1, 1,0, 3,0, 4,1, 4,3, 3,4, 4,5, 4,7, 3,8, 1,8, 0,7 }, new[] { 1,4, 3,4 } } },
+        { '4', new[] { new[] { 0,0, 0,4, 1,5, 4,5 }, new[] { 4,0, 4,8 } } },
+        { '5', new[] { new[] { 4,0, 0,0, 0,4, 3,4, 4,5, 4,7, 3,8, 1,8, 0,7 } } },
+        { '6', new[] { new[] { 4,1, 3,0, 1,0, 0,1, 0,7, 1,8, 3,8, 4,7, 4,5, 3,4, 0,4 } } },
+        { '7', new[] { new[] { 0,0, 4,0, 4,2, 2,5, 2,8 } } },
+        { '8', new[] { new[] { 1,0, 3,0, 4,1, 4,3, 3,4, 1,4, 0,3, 0,1, 1,0 }, new[] { 1,4, 0,5, 0,7, 1,8, 3,8, 4,7, 4,5, 3,4 } } },
+        { '9', new[] { new[] { 0,7, 1,8, 3,8, 4,7, 4,1, 3,0, 1,0, 0,1, 0,3, 1,4, 4,4 } } },
+        { 'O', new[] { new[] { 1,0, 3,0, 4,1, 4,7, 3,8, 1,8, 0,7, 0,1, 1,0 } } },
+        { 'F', new[] { new[] { 4,0, 0,0, 0,8 }, new[] { 0,4, 3,4 } } },
+        { '-', new[] { new[] { 1,4, 3,4 } } },
+        { '%', new[] { new[] { 0,1, 1,0, 2,1, 1,2, 0,1 }, new[] { 2,7, 3,6, 4,7, 3,8, 2,7 }, new[] { 4,0, 0,8 } } },   // (two small diamonds and the slash)
+    };
+    public static int Adv(int w, int t) { return w + t + 1; }
+    public static int CharW(char ch, int w, int t) { return ch == '.' ? t : ((ch == '1' ? 1 : 4) * (w - t) + 2) / 4 + t; }
+    public static int Width(string s, int w, int t) { int x = 0; for (int i = 0; i < s.Length; i++) x += CharW(s[i], w, t) + (i > 0 ? t + 1 : 0); return x; }
+    public static void Char(Cv c, int x, int y, int w, int h, int t, char ch)
+    {
+        if (ch == '.') { c.Block(x, y + h - t, t, t); return; }   // (a decimal point: one pen dot on the line, 11-13)
+        int[][] st; if (!S.TryGetValue(ch, out st)) return;
+        foreach (var p in st)
+            for (int k = 0; k + 3 < p.Length; k += 2)
+                c.Line(x + (p[k] * (w - t) + 2) / 4, y + (p[k + 1] * (h - t) + 4) / 8, x + (p[k + 2] * (w - t) + 2) / 4, y + (p[k + 3] * (h - t) + 4) / 8, t);
+    }
+    public static int Draw(Cv c, int x, int y, int w, int h, int t, string s)
+    {
+        int x0 = x;
+        for (int i = 0; i < s.Length; i++) { Char(c, x, y, w, h, t, s[i]); x += CharW(s[i], w, t) + t + 1; }
+        return Width(s, w, t);
+    }
+    public static int Right(Cv c, int right, int y, int w, int h, int t, string s) { int x = right - Width(s, w, t) + 1; Draw(c, x, y, w, h, t, s); return x; }
+}
+
+// small pictures
+static class Ico
+{
+    public static readonly string[] Headset = {
+        "..XXXXX..",
+        ".X.....X.",
+        "X.......X",
+        "X.......X",
+        "XX.....XX",
+        "XXX...XXX",
+        "XXX...XXX",
+        ".XX...XX.",
+    };
+    public static readonly string[] Mouse = {
+        ".XXXXX.",
+        "X..X..X",
+        "X..X..X",
+        "XXXXXXX",
+        "X.....X",
+        "X.....X",
+        "X.....X",
+        ".XXXXX.",
+    };
+    public static readonly string[] Speaker = {
+        "...X.....",
+        "..XX..X..",
+        "XXXX...X.",
+        "XXXX...X.",
+        "XXXX...X.",
+        "..XX..X..",
+        "...X.....",
+    };
+    public static readonly string[] Mute = {
+        "...X.....",
+        "..XX.....",
+        "XXXX.X.X.",
+        "XXXX..X..",
+        "XXXX.X.X.",
+        "..XX.....",
+        "...X.....",
+    };
+    public static readonly string[] Bolt = {
+        "...XX",
+        "..XX.",
+        ".XX..",
+        "XXXXX",
+        "..XX.",
+        ".XX..",
+        "XX...",
+    };
+    public static readonly string[] Zz = {
+        "XXX....",
+        "..X....",
+        ".X.XXX.",
+        "XXX..X.",
+        "....X..",
+        "...XXX.",
+    };
+    // a battery lying down: w x 7 with its tip, filled to pct in steps of 2 columns (empty: outline only)
+    public static void Battery(Cv c, int x, int y, int w, int pct)
+    {
+        c.Rect(x, y, w - 1, 7);
+        c.VLine(x + w - 1, y + 2, y + 4);
+        if (pct <= 0) return;
+        int inner = w - 5, f = Math.Max(1, (inner * Math.Min(100, pct) + 50) / 100);
+        c.Block(x + 2, y + 2, f, 3);
+    }
+    public static int BatteryW = 13;
+}
+
+// what every design reads the same way
+static class HsSt
+{
+    public static bool On(HsInfo i) { return i.Now.Second % 2 == 0; }                                   // blink phase
+    public static bool LowHead(HsInfo i) { return !i.HeadOff && i.Head >= 0 && i.Head <= 12 && !i.HeadCharging; }
+    public static bool LowMouse(HsInfo i) { return i.Mouse >= 0 && i.Mouse <= 15 && !i.MouseCharging; }
+    public static bool Swap(HsInfo i) { return LowHead(i) && !i.SpareOut && i.Spare >= 50; }
+    public static string Pct(int p) { return p < 0 ? "-" : p + "%"; }
+    public static string Num(int p) { return p < 0 ? "-" : p.ToString(); }
+    public static string Deg(double d) { return double.IsNaN(d) ? "-" : Math.Round(d).ToString("0"); }
+    public static int Segs(int p, int n) { return p <= 0 ? 0 : Math.Max(1, Math.Min(n, (p * n + 50) / 100)); }
+}
+
+static class G
+{
+    public static readonly string D = ((char)176).ToString();
+    public static void BmpK(Cv c, int x, int y, string[] rows, int k)
+    {
+        for (int r = 0; r < rows.Length; r++) for (int col = 0; col < rows[r].Length; col++) if (rows[r][col] == 'X') c.Block(x + col * k, y + r * k, k, k);
+    }
+    public static int W(string[] rows) { int w = 0; foreach (var r in rows) w = Math.Max(w, r.Length); return w; }
+    // asleep: a small "zZ", 7 x 7
+    public static void Zz(Cv c, int x, int y) { Fnt.Tiny.Draw(c, x, y + 2, "Z"); Fnt.Tiny.Draw(c, x + 4, y, "Z"); }
+    // the empty spare slot: a battery's outline, half lit
+    public static void Ghost(Cv c, int x, int y, int w) { int t = c.Tone; c.Tone = 1; Ico.Battery(c, x, y, w, 0); c.Tone = t; }
+}
+
+// layout.cs: the customizable headset page (round 2 mock, his 11-12: "make it customizable ... maybe add a clock, only
+// 2 rows, maybe 3 rows, maybe just 1 column or 3, maybe a different graphs"). A page is a grid of Rows x Cols; pieces go
+// in his order into the first free place their size fits (W columns x H rows). A piece is the clock or one reading
+// drawn in a style: number, bar, ring, knob or graph. Every piece picks the biggest text that fits its own box, and
+// nothing draws past its box (Cv counts it if it tries).
+
+class HsPiece
+{
+    public string Src = "cpu";          // clock, cpu, gpu, head, spare, mouse, vol, or one of his readings
+    public string Style = "number";     // number, bar, ring, knob, graph
+    public string Label = "icon";       // icon, name, off (no icon for this reading: its name)
+    public string At = "beside";        // number: the label beside the value or above it (his pick; never chosen for him, 11-13)
+    public string Name;                 // the name shown (capitals); null: the reading's short name
+    public string Src2;                 // graph: a second reading, dotted
+    public string Graph = "line";       // graph: line, smooth, steps, area, bars, dots
+    public int Over = 120;              // graph: seconds across its width
+    // his 11-13 "everything and anything the hw deck offers for editing": as a cell's own settings
+    public string Size = "auto";        // text: auto (the biggest that fits), s, m, l (the most it grows to)
+    public string Align = "auto";       // auto, left, middle, right
+    public int Dec;                     // decimals, 0 to 2
+    public bool Unit = true;            // the unit after the value
+    public double Warn = double.NaN, Crit = double.NaN;   // yellow and red levels: past yellow the piece turns over, past red it blinks so
+    public bool? Below;                 // the levels count downwards (null: a battery's do, the rest upwards)
+    public double Lo = double.NaN, Hi = double.NaN;       // graph: its own low and high (NaN: from what it shows)
+    public bool Seconds, Date = true;   // clock
+    public int W = 1, H = 1;            // size in grid cells
+    public int X = -1, Y = -1, Bx, By, Bw, Bh;   // where it landed (cells; box in pixels)
+    public int AtX = -1, AtY = -1;     // a fixed place in the grid (his rows, x-hspage.cs); -1: the first free one
+    public bool Shared;                 // another piece shares one of its rows (then a number's label and value sit together in the middle)
+    public int Harm;                    // the text height its row shares (0: its own), set by Hs.Harmony
+    public bool NoNum;                  // its number hidden (bar, ring, knob, graph; his 11-13 "a digit hider (keeping only bar)")
+    public string NameSz = "auto";      // (11-14) its name's size: auto, small, tiny
+    public string OffAs = "word", OffTxt, ChgAs = "blink";   // (11-14) a battery off / empty: its word, his own word (OffTxt), a dash or nothing; charging: the bolt blinking, steady or hidden
+    public int Dig = -1;                // (11-14) its own big digits (0 to 3); -1: the theme's
+    public bool Inv;                    // (11-14) turned over: lit box, dark text (a warning still blinks)
+    public HsPiece Copy() { return (HsPiece)MemberwiseClone(); }
+}
+
+class HsLayout
+{
+    public int Rows = 2, Cols = 2;
+    public bool Lines;                  // dotted lines between pieces
+    public int Gap = -1;                // px between pieces; -1: 5 with lines, 4 without (his 11-13)
+    public bool SolidLines, SolidBar;   // (v3) lines solid, not dotted; bars filled, not in blocks
+    public int Digits = 1;              // (v3) the theme's big digit design: 0 strokes, 1 pixels, 2 thick strokes, 3 segments
+    public Dictionary<string, string[]> Icons;   // (v3, 11-14) the theme's own icons by key; null: the built-in ones
+    public List<HsPiece> Pieces = new List<HsPiece>();
+    public int[,] Own; public int[] ColX, ColW, RowY, RowH;   // (set by Place)
+}
+
+static class Hs
+{
+    static readonly string DG = ((char)176).ToString();
+    public static readonly Dictionary<string, double> Extra = new Dictionary<string, double>();      // his other readings (mock: made up)
+    public static readonly Dictionary<string, double[]> Hist = new Dictionary<string, double[]>();   // one value a second, newest last
+    // his readings (HsPage.Feed): unit (degrees C shown as the degree sign), name in capitals, the top of a bar or ring
+    public static readonly Dictionary<string, string> Units = new Dictionary<string, string>(), Names = new Dictionary<string, string>();
+    public static readonly Dictionary<string, double> Maxes = new Dictionary<string, double>();
+
+    // ---- readings ----
+    class Src { public string Key, Name, Unit; public string[] Icon; public bool Batt; public double Max = 100, Span = 20; }
+    // (11-14, his "logo editor") the theme's own icons: head, spare (the battery's outline; its level still fills it),
+    // mouse, vol, mute, bolt, or any reading's key (CPU, GPU, ...: it then has an icon like the batteries)
+    public static Dictionary<string, string[]> Icons;
+    static string[] IconFor(string key, string[] dflt) { string[] r; return Icons != null && key != null && Icons.TryGetValue(key, out r) && r != null && r.Length > 0 ? r : dflt; }
+    static Src Info(string k) { var s = Info0(k); var ic = k == "spare" ? null : IconFor(k, null); if (ic != null) s.Icon = ic; return s; }
+    static Src Info0(string k)
+    {
+        switch (k)
+        {
+            case "cpu": return new Src { Key = k, Name = "CPU", Unit = DG };
+            case "gpu": return new Src { Key = k, Name = "GPU", Unit = DG };
+            case "head": return new Src { Key = k, Name = "HEADSET", Unit = "%", Icon = Ico.Headset, Batt = true };
+            case "spare": return new Src { Key = k, Name = "SPARE", Unit = "%", Batt = true };
+            case "mouse": return new Src { Key = k, Name = "MOUSE", Unit = "%", Icon = Ico.Mouse, Batt = true };
+            case "vol": return new Src { Key = k, Name = "VOLUME", Unit = "%", Icon = Ico.Speaker };
+            case "gpupow": return new Src { Key = k, Name = "GPU POWER", Unit = "W", Max = 450, Span = 60 };
+            case "cpuuse": return new Src { Key = k, Name = "CPU USE", Unit = "%" };
+            default: { string u, n; double mx; Units.TryGetValue(k, out u); Names.TryGetValue(k, out n); return new Src { Key = k, Name = n ?? k.ToUpperInvariant(), Unit = u ?? "", Max = Maxes.TryGetValue(k, out mx) ? mx : 100 }; }
+        }
+    }
+    class Val { public double V = double.NaN; public string T = "-", U = ""; public bool Chg, ChgSteady, Low, Sleep, Empty, Off; public double Frac { get { return double.IsNaN(V) ? 0 : V; } } }
+    static Val Get(HsInfo i, string k)
+    {
+        var v = new Val(); var s = Info(k);
+        switch (k)
+        {
+            case "cpu": v.V = i.Cpu; break;
+            case "gpu": v.V = i.Gpu; break;
+            case "head": if (i.HeadOff) { v.Off = true; v.T = "OFF"; return v; } v.V = i.Head; v.Chg = i.HeadCharging; break;   // (11-14 no hidden low flash: a piece warns by its own levels, his "no warning is set but it's blinking?")
+            case "spare": if (i.SpareOut) { v.Empty = true; v.T = "EMPTY"; return v; } v.V = i.Spare; v.Chg = i.SpareCharging; break;
+            case "mouse": v.V = i.Mouse; v.Chg = i.MouseCharging; v.Sleep = i.MouseAsleep; break;
+            case "vol": v.V = i.Volume; break;
+            default: double d; if (Extra.TryGetValue(k, out d)) v.V = d; break;
+        }
+        if (s.Batt || k == "vol") { if (v.V < 0) v.V = double.NaN; }
+        if (!double.IsNaN(v.V)) { v.T = Math.Round(v.V).ToString("0"); v.U = s.Unit; }
+        return v;
+    }
+    static double scLo = double.NaN, scHi = double.NaN;   // (the piece being drawn: his own low / high, 11-14)
+    static double Frac(Src s, Val v)
+    {
+        if (double.IsNaN(v.V)) return 0;
+        double lo = double.IsNaN(scLo) ? 0 : scLo, hi = double.IsNaN(scHi) ? s.Max : scHi; if (hi <= lo) hi = lo + 1;
+        return Math.Max(0, Math.Min(1, (v.V - lo) / (hi - lo)));
+    }
+    // a piece's value as it shows it: its decimals, its unit or none
+    static Val Get(HsInfo i, HsPiece p, string k)
+    {
+        var v = Get(i, k);
+        if (!double.IsNaN(v.V)) { v.T = v.V.ToString("F" + Math.Max(0, Math.Min(2, p.Dec)), CultureInfo.InvariantCulture); if (!p.Unit) v.U = ""; }
+        // (11-14 his "when it's empty, when its off, when its charging the blinking thunder, all this should be customizable")
+        if (v.Off || v.Empty) { if (p.OffAs == "dash") v.T = "-"; else if (p.OffAs == "blank") v.T = " "; else if (!string.IsNullOrEmpty(p.OffTxt)) v.T = p.OffTxt; }
+        if (v.Chg) { if (p.ChgAs == "none") v.Chg = false; else if (p.ChgAs == "steady") v.ChgSteady = true; }
+        return v;
+    }
+    static Val Get(HsInfo i, HsPiece p) { return Get(i, p, p.Src); }
+    // the tallest text a piece's size allows (auto: whatever fits)
+    static int Cap(HsPiece p) { return p.Size == "s" ? 7 : p.Size == "m" ? 18 : p.Size == "l" ? 30 : AutoCap; }
+    // past its levels: 0 no, 1 yellow, 2 red
+    public static int Level(HsInfo i, HsPiece p)
+    {
+        if (p.Src == "clock" || (double.IsNaN(p.Warn) && double.IsNaN(p.Crit))) return 0;
+        double v = Get(i, p.Src).V; if (double.IsNaN(v)) return 0;
+        bool down = p.Below ?? Info(p.Src).Batt;
+        Func<double, bool> past = t => !double.IsNaN(t) && (down ? v <= t : v >= t);
+        return past(p.Crit) ? 2 : past(p.Warn) ? 1 : 0;
+    }
+
+    // ---- number fonts: our big stroke digits at a few sizes, then the 5 x 7 and the 3 x 5 pixel fonts ----
+    // the big digits: the labels' own 5 x 7 pixel font scaled, Auto at most 3x (21 px) (his pick B 11-13, after "the big
+    // headset 62% the number is so big and weird and ugly"; 0 the old strokes, 2 thick strokes, 3 segments stay for a try)
+    public static int BigStyle = 1, AutoCap = 22;
+    class NF
+    {
+        public int K, W, H, T, St;  // K 0 big, 1 small, 2 tiny; St the big ones' design: 0 strokes, 1 pixels, 2 thick strokes, 3 segments
+        static readonly int[][] Sizes = { new[] { 23, 43, 3 }, new[] { 18, 34, 2 }, new[] { 16, 30, 2 }, new[] { 14, 26, 2 }, new[] { 12, 22, 2 }, new[] { 10, 18, 2 }, new[] { 8, 14, 2 } };
+        public static IEnumerable<NF> All(bool big)
+        {
+            if (big && BigStyle == 1) foreach (int k in new[] { 6, 5, 4, 3, 2 }) yield return new NF { K = 0, St = 1, W = 5 * k, H = 7 * k, T = k };
+            else if (big) foreach (var s in Sizes) yield return new NF { K = 0, St = BigStyle, W = s[0], H = s[1], T = BigStyle == 2 ? Math.Max(s[2], (s[1] + 4) / 8) : BigStyle == 3 ? Math.Max(2, s[1] / 9) : s[2] };
+            yield return new NF { K = 1 }; yield return new NF { K = 2 };
+        }
+        public int Ht { get { return K == 0 ? H : K == 1 ? 7 : 5; } }
+        Fnt F { get { return K == 1 ? Fnt.Small : Fnt.Tiny; } }
+        public int Gap { get { return K == 0 ? (St == 1 ? T : T + 1) : 1; } }   // (the pixel digits: their % as far as a digit, 11-13)
+        public int TextW(string s) { return K != 0 ? F.Width(s) : St == 1 ? Fnt.Small.Width(s, T) : St == 3 ? Seg.Width(s, W, T) : Geo.Width(s, W, T); }
+        public void Text(Cv c, int x, int y, string s)
+        {
+            if (K != 0) F.Draw(c, x, y, s);
+            else if (St == 1) Fnt.Small.Draw(c, x, y, s, T);
+            else if (St == 3) Seg.Draw(c, x, y, W, H, T, s);
+            else Geo.Draw(c, x, y, W, H, T, s);
+        }
+        int PW { get { return Math.Max(7, W * 2 / 3); } }
+        int PH { get { return Math.Max(10, H * 11 / 20); } }
+        int PT { get { return T >= 3 ? 2 : T; } }
+        int DS { get { return Math.Max(3, W / 4); } }
+        Fnt UF { get { return H >= 22 ? Fnt.Small : Fnt.Tiny; } }
+        int PK { get { return St == 1 ? Math.Max(1, T - 1) : H >= 34 ? 3 : 2; } }   // (the % beside big digits: the 5 x 7 font's, scaled; the stroke one read as an "x", 11-13; beside the pixel digits a step smaller than them)
+        public int UnitW(string u)
+        {
+            if (u == "") return 0;
+            if (K != 0) return F.Width(u);
+            if (u == "%") return H >= 14 ? Fnt.Small.Width("%", PK) : Geo.CharW('%', PW, PT);
+            if (u == DG) return DS;
+            return UF.Width(u);
+        }
+        public void Unit(Cv c, int x, int y, string u)
+        {
+            if (u == "") return;
+            if (K != 0) { F.Draw(c, x, y, u); return; }
+            if (u == "%") { if (H >= 14) Fnt.Small.Draw(c, x, y + H - 7 * PK, "%", PK); else Geo.Char(c, x, y + H - PH, PW, PH, PT, '%'); }
+            else if (u == DG) { c.Rect(x, y, DS, DS); if (T >= 3) c.Rect(x + 1, y + 1, DS - 2, DS - 2); }
+            else UF.Draw(c, x, y + H - UF.H, u);
+        }
+        public int ValueW(string s, string u) { return TextW(s) + (u == "" ? 0 : Gap + UnitW(u)); }
+        public void Value(Cv c, int x, int y, string s, string u) { Text(c, x, y, s); if (u != "") Unit(c, x + TextW(s) + Gap, y, u); }
+    }
+    static bool BigOk(string s) { foreach (char ch in s) if (!char.IsDigit(ch) && ch != 'O' && ch != 'F' && ch != '-' && ch != '.') return false; return true; }
+    static NF Fit(int maxW, int maxH, string s, string u)
+    {
+        NF last = null;
+        foreach (var f in NF.All(BigOk(s))) { last = f; if (f.Ht <= maxH && f.ValueW(s, u) <= maxW) return f; }
+        return last;
+    }
+
+    // ---- labels: an icon (headset, spare, mouse, volume) or the name ----
+    class Lab { public int Kind, W, H; public string[] Icon; public bool Batt, Mini; public string Word; public Fnt F; }
+    static Lab Label(HsPiece p, Src s, int bw, int bh)
+    {
+        var l = new Lab();
+        if (p.Label == "off") return l;
+        if (p.Label == "icon" && (s.Icon != null || s.Key == "spare"))
+        {
+            l.Kind = 1;
+            if (s.Key == "spare") { l.Batt = true; var sp = IconFor("spare", null); if (sp != null) { l.Icon = sp; l.W = G.W(sp); l.H = sp.Length; } else { l.W = 13; l.H = 7; } } else { l.Icon = s.Icon; l.W = G.W(s.Icon); l.H = s.Icon.Length; }
+            l.Mini = false;
+            return l;
+        }
+        l.Kind = 2; l.Word = p.Name ?? s.Name;
+        l.F = p.NameSz == "small" ? Fnt.Small : p.NameSz == "tiny" ? Fnt.Tiny : bh >= 9 && Fnt.Small.Width(l.Word) <= bw / 2 ? Fnt.Small : Fnt.Tiny;
+        l.W = l.F.Width(l.Word); l.H = l.F.H;
+        return l;
+    }
+    static void DrawLabel(Cv c, HsInfo i, Lab l, Src s, Val v, int x, int y)
+    {
+        if (l.Kind == 1)
+        {
+            if (l.Batt && l.Mini) { int t = c.Tone; if (v.Empty) c.Tone = 1; c.Rect(x, y, 10, 5); c.Set(x + 10, y + 2); c.Tone = t; if (!v.Empty && v.Frac > 0) c.HLine(x + 2, x + 2 + Math.Max(0, (int)Math.Round(5 * Math.Min(100, v.Frac) / 100)), y + 2); }
+            else if (l.Batt && l.Icon != null) Spare(c, l.Icon, x, y, v);
+            else if (l.Batt) { if (v.Empty) G.Ghost(c, x, y, 13); else Ico.Battery(c, x, y, 13, (int)v.Frac); }
+            else c.Bmp(x, y, s.Key == "vol" && i.Volume == 0 ? IconFor("mute", Ico.Mute) : l.Icon);
+        }
+        else if (l.Kind == 2) l.F.Draw(c, x, y, l.Word);
+    }
+    // his own spare battery outline: drawn as he made it (half lit when the slot is empty), its level filled in the
+    // same place as the built-in one's (2 in from the left and top, 3 short of the right, 2 short of the bottom)
+    static void Spare(Cv c, string[] rows, int x, int y, Val v)
+    {
+        int t = c.Tone; if (v.Empty) c.Tone = 1; c.Bmp(x, y, rows); c.Tone = t;
+        int w = G.W(rows), h = rows.Length, inner = w - 5, pct = (int)v.Frac;
+        if (v.Empty || pct <= 0 || inner < 1 || h < 5) return;
+        c.Block(x + 2, y + 2, Math.Max(1, (inner * Math.Min(100, pct) + 50) / 100), h - 4);
+    }
+    // a bolt while charging, "zZ" while asleep, beside the value (2x next to big numbers)
+    static int MarkW(Val v, int vh) { int k = vh >= 26 ? 2 : 1; return v.Chg ? G.W(IconFor("bolt", Ico.Bolt)) * k + 2 * k : v.Sleep ? 9 : 0; }
+    static void Mark(Cv c, Val v, int x, int y, int vh)
+    {
+        int k = vh >= 26 ? 2 : 1;
+        if (v.Chg) { var bo = IconFor("bolt", Ico.Bolt); G.BmpK(c, x, y + (vh - bo.Length * k) / 2, bo, k); }
+        else if (v.Sleep) G.Zz(c, x, y + (vh - 7) / 2);
+    }
+
+    // ---- the page ----
+    public static int Gap(HsLayout L) { return L.Gap >= 0 ? L.Gap : L.Lines ? 5 : 4; }
+    public static void Place(HsLayout L)
+    {
+        var own = new int[L.Rows, L.Cols];
+        for (int r = 0; r < L.Rows; r++) for (int c = 0; c < L.Cols; c++) own[r, c] = -1;
+        int g = Gap(L);
+        int[] cx = new int[L.Cols], cw = new int[L.Cols], ry = new int[L.Rows], rh = new int[L.Rows];
+        Split(Cv.W, L.Cols, g, cx, cw); Split(Cv.H, L.Rows, g, ry, rh);
+        for (int k = 0; k < L.Pieces.Count; k++)
+        {
+            var p = L.Pieces[k]; p.X = p.Y = -1;
+            int w = Math.Min(p.W, L.Cols), h = Math.Min(p.H, L.Rows);
+            if (p.AtX >= 0 && p.AtY >= 0)
+            {
+                bool fit = p.AtX + w <= L.Cols && p.AtY + h <= L.Rows;
+                for (int ya = 0; fit && ya < h; ya++) for (int xa = 0; xa < w; xa++) if (own[p.AtY + ya, p.AtX + xa] >= 0) fit = false;
+                if (fit)
+                {
+                    int rr = p.AtY, cc = p.AtX;
+                    for (int ya = 0; ya < h; ya++) for (int xa = 0; xa < w; xa++) own[rr + ya, cc + xa] = k;
+                    p.X = cc; p.Y = rr;
+                    p.Bx = cx[cc]; p.Bw = cx[cc + w - 1] + cw[cc + w - 1] - cx[cc];
+                    p.By = ry[rr]; p.Bh = ry[rr + h - 1] + rh[rr + h - 1] - ry[rr];
+                }
+                continue;
+            }
+            for (int r = 0; r + h <= L.Rows && p.X < 0; r++)
+                for (int c = 0; c + w <= L.Cols && p.X < 0; c++)
+                {
+                    bool free = true;
+                    for (int a = 0; a < h; a++) for (int b = 0; b < w; b++) if (own[r + a, c + b] >= 0) free = false;
+                    if (!free) continue;
+                    for (int a = 0; a < h; a++) for (int b = 0; b < w; b++) own[r + a, c + b] = k;
+                    p.X = c; p.Y = r;
+                    p.Bx = cx[c]; p.Bw = cx[c + w - 1] + cw[c + w - 1] - cx[c];
+                    p.By = ry[r]; p.Bh = ry[r + h - 1] + rh[r + h - 1] - ry[r];
+                }
+        }
+        L.Own = own; L.ColX = cx; L.ColW = cw; L.RowY = ry; L.RowH = rh;
+        foreach (var p in L.Pieces)
+        {
+            p.Shared = false;
+            foreach (var q in L.Pieces)
+                if (q != p && q.X >= 0 && p.X >= 0 && q.Y < p.Y + Math.Min(p.H, L.Rows) && p.Y < q.Y + Math.Min(q.H, L.Rows)) p.Shared = true;   // (any piece, not only a number: beside a bar or the clock too, his 11-13 "auto is broken in the mouse")
+        }
+    }
+    static void Split(int total, int n, int g, int[] at, int[] size)
+    {
+        int room = total - (n - 1) * g, b = room / n, extra = room - b * n, x = 0;
+        for (int k = 0; k < n; k++) { size[k] = b + (k < extra ? 1 : 0); at[k] = x; x += size[k] + g; }
+    }
+
+    public static Cv Draw(HsLayout L, HsInfo i)
+    {
+        BigStyle = L.Digits; solidBar = L.SolidBar; Icons = L.Icons;   // (the theme's look; every drawing runs under HsPage's lock)
+        Place(L);
+        Harmony(L, i);
+        var c = new Cv(i.Dx, i.Dy);
+        foreach (var p in L.Pieces)
+        {
+            if (p.X < 0) continue;
+            int lv = LvOf(i, p), x0 = p.Bx, y0 = p.By, w0 = p.Bw, h0 = p.Bh;
+            BigStyle = p.Dig >= 0 ? p.Dig : L.Digits;
+            // (a pixel of air on each side beside the lines, his 11-13 "pieces are too cramped"; past a level, two, and
+            // one above and below, inside the box turned over around it)
+            Inset(L, p, lv);
+            c.ClipTo(p.Bx, p.By, p.Bw, p.Bh);
+            Piece(c, i, p);
+            p.Bx = x0; p.By = y0; p.Bw = w0; p.Bh = h0;
+            if (lv == 1 || (lv == 2 && HsSt.On(i))) c.Invert(p.Bx, p.By, p.Bw, p.Bh);   // (yellow: turned over; red: blinking so)
+        }
+        BigStyle = L.Digits;
+        c.NoClip();
+        if (L.Lines && Gap(L) >= 3) Lines(c, L);   // (a dotted line needs a pixel of air on each side)
+        return c;
+    }
+
+    static void Inset(HsLayout L, HsPiece p, int lv)
+    {
+        int pad = lv > 0 ? 2 : L.Lines && p.Bw > 12 ? 1 : 0;
+        p.Bx += pad; p.Bw -= 2 * pad; if (lv > 0) { p.By += 1; p.Bh -= 2; }
+    }
+    // pieces side by side in one row drawn alike (numbers, or rings and knobs) share one text size: the smallest any of
+    // them needs for the widest value it shows (his 11-13: a 100% smaller than the 62% beside it, an icon above one
+    // number and beside the next, "this should not happen")
+    static int LvOf(HsInfo i, HsPiece p) { int lv = Level(i, p); return p.Inv && lv == 0 ? 1 : lv; }   // (turned over by his pick: drawn as a yellow level is)
+    public static void Harmony(HsLayout L, HsInfo i)
+    {
+        var groups = new Dictionary<string, List<HsPiece>>(); var mins = new Dictionary<string, int>();
+        foreach (var p in L.Pieces)
+        {
+            p.Harm = 0;
+            if (p.X < 0 || p.Src == "clock") continue;
+            bool dial = p.Style == "ring" || p.Style == "knob"; if (!dial && p.Style != "number") continue;
+            int x0 = p.Bx, y0 = p.By, w0 = p.Bw, h0 = p.Bh;
+            Inset(L, p, LvOf(i, p)); BigStyle = p.Dig >= 0 ? p.Dig : L.Digits;
+            string kind = dial ? "r" : "n";
+            int h = dial ? Ring(null, i, p, p.Style == "knob", true) : Number(null, i, p, true);
+            if (h < 0) { kind = "n"; h = Number(null, i, p, true); }   // (a ring too small for its number is drawn as a number: sized with the numbers beside it)
+            p.Bx = x0; p.By = y0; p.Bw = w0; p.Bh = h0;
+            if (h <= 0) continue;   // (an empty spare's ring: no number to size)
+            string key = kind + p.Y + "/" + Math.Min(p.H, L.Rows);
+            List<HsPiece> g; if (!groups.TryGetValue(key, out g)) { groups[key] = g = new List<HsPiece>(); mins[key] = h; }
+            g.Add(p); mins[key] = Math.Min(mins[key], h);
+        }
+        foreach (var kv in groups) if (kv.Value.Count >= 2) foreach (var p in kv.Value) p.Harm = mins[kv.Key];
+    }
+    // the widest value a piece shows: a percentage 100, else its digits as 0s (the widest digit). Drawn at that one's
+    // size, a number keeps its size as it changes (62 to 100, 9 to 10)
+    static string Widest(HsPiece p, Src s, Val v)
+    {
+        string dec = p.Dec > 0 ? "." + new string('0', Math.Min(2, p.Dec)) : "";
+        if (s.Unit == "%") return "100" + dec;
+        var b = new StringBuilder(); foreach (char ch in v.T) b.Append(char.IsDigit(ch) ? '0' : ch);
+        string w = b.ToString(); return w.IndexOf('0') >= 0 && BigOk(w) ? w : "00" + dec;
+    }
+
+    // dotted lines in the gaps between two different pieces
+    static void Lines(Cv c, HsLayout L)
+    {
+        int g = Gap(L), h = g / 2, st = L.SolidLines ? 1 : 2;   // (v3: solid lines, every pixel)
+        // (one line through a whole run, not one per unit with a break at each gap, his 11-13 "lines look bad"; their ends
+        // 2 px short, so where a row's line meets a column's they don't touch)
+        for (int k = 0; k + 1 < L.Cols; k++)
+            for (int r = 0; r < L.Rows; )
+            {
+                if (!(L.Own[r, k] != L.Own[r, k + 1] && (L.Own[r, k] >= 0 || L.Own[r, k + 1] >= 0))) { r++; continue; }
+                int r1 = r; while (r1 + 1 < L.Rows && L.Own[r1 + 1, k] != L.Own[r1 + 1, k + 1] && (L.Own[r1 + 1, k] >= 0 || L.Own[r1 + 1, k + 1] >= 0)) r1++;
+                int x = L.ColX[k + 1] - g + h, y0 = L.RowY[r] + 1, y1 = L.RowY[r1] + L.RowH[r1] - 2;   // (a pixel short: a one-unit row keeps a line, not two dots)
+                for (int y = y0; y <= y1; y += st) c.Set(x, y);
+                r = r1 + 1;
+            }
+        for (int r = 0; r + 1 < L.Rows; r++)
+            for (int k = 0; k < L.Cols; )
+            {
+                if (!(L.Own[r, k] != L.Own[r + 1, k] && (L.Own[r, k] >= 0 || L.Own[r + 1, k] >= 0))) { k++; continue; }
+                int k1 = k; while (k1 + 1 < L.Cols && L.Own[r, k1 + 1] != L.Own[r + 1, k1 + 1] && (L.Own[r, k1 + 1] >= 0 || L.Own[r + 1, k1 + 1] >= 0)) k1++;
+                int y = L.RowY[r + 1] - g + h, x0 = L.ColX[k] + 2, x1 = L.ColX[k1] + L.ColW[k1] - 3;
+                for (int x = x0; x <= x1; x += st) c.Set(x, y);
+                k = k1 + 1;
+            }
+    }
+
+    static void LabelOnly(Cv c, HsInfo i, HsPiece p)   // (v3: a dial too small with its number hidden: its label alone, in the middle)
+    {
+        if (p.Label == "off") return;
+        var s = Info(p.Src); var v = Get(i, p); var l = Label(p, s, p.Bw, p.Bh);
+        DrawLabel(c, i, l, s, v, p.Bx + (p.Bw - l.W) / 2, p.By + (p.Bh - l.H) / 2);
+    }
+    static void Piece(Cv c, HsInfo i, HsPiece p)
+    {
+        if (p.Src == "clock") { Clock(c, i, p); return; }
+        scLo = p.Lo; scHi = p.Hi;
+        switch (p.Style)
+        {
+            case "bar": Bar(c, i, p); break;
+            case "ring": Ring(c, i, p, false); break;
+            case "knob": Ring(c, i, p, true); break;
+            case "graph": Graph(c, i, p); break;
+            default: Number(c, i, p); break;
+        }
+        scLo = scHi = double.NaN;
+    }
+
+    // ---- number: the label beside the value, or above it when he picks that (never switched for him: his 11-13 "some
+    // have the icon on top of the number and some have them side by side. this should not happen"); the size the
+    // widest value it shows fits, at most its row's (measure: only that size) ----
+    static int Number(Cv c, HsInfo i, HsPiece p, bool measure = false)
+    {
+        int bx = p.Bx, by = p.By, bw = p.Bw, bh = p.Bh;
+        var s = Info(p.Src); var v = Get(i, p); bool on = HsSt.On(i);
+        var l = Label(p, s, bw, bh);
+        int cap = Cap(p); if (p.Harm > 0) cap = Math.Min(cap, p.Harm);
+        bool above = p.At == "above" && l.Kind > 0 && bh - (l.H + 2) >= 5;   // (a row too low for a label over a value: beside, the review 11-13)
+        // charging: its bolt takes the label's place every other second, as in a ring. No room is kept for it beside
+        // the value, so the number keeps its size (and its row's) while the spare charges in the base
+        // (asleep, a mouse: its zZ beside the value, steady; its room is kept for a mouse always, so falling asleep
+        // changes no size)
+        bool swap = v.Chg && l.Kind > 0;
+        int lw = !above && l.Kind > 0 ? l.W + 3 : 0, lh = above ? l.H + 2 : 0, room = bw - lw - Math.Max(s.Key == "mouse" ? 9 : 0, swap ? 0 : MarkW(v, 26));
+        var f = Fit(room, Math.Min(bh - lh, cap), Widest(p, s, v), v.U);
+        if (measure) return f.Ht;
+        if (f.ValueW(v.T, v.U) > room || (f.K == 0 && !BigOk(v.T))) f = Fit(room, Math.Min(bh - lh, f.Ht), v.T, v.U);   // (OFF, EMPTY: in letters)
+        int vw = f.ValueW(v.T, v.U), mw = swap ? 0 : MarkW(v, f.Ht);
+        bool markNow = swap && (v.ChgSteady || i.Now.Second % 2 == 0);   // (steady: the bolt stays)
+        bool dim = v.Low && !on;
+        if (above)
+        {
+            int gap = f.K == 0 ? 4 : 2, rw = vw + (mw > 0 ? gap + mw : 0);   // (the value and its mark)
+            int lx = p.Align == "middle" ? bx + (bw - l.W) / 2 : p.Align == "right" ? bx + bw - l.W : bx;
+            int vx = p.Align == "middle" ? bx + (bw - rw) / 2 : p.Align == "right" ? bx + bw - rw : bx;
+            if (markNow) Mark(c, v, lx + Math.Max(0, (l.W - (v.Chg ? G.W(IconFor("bolt", Ico.Bolt)) : 7)) / 2), by, l.H);
+            else if (!(dim && f.K != 0)) DrawLabel(c, i, l, s, v, lx, by);
+            int vy = by + lh + (bh - lh - f.Ht) / 2;
+            if (dim && f.K == 0) c.Tone = 1;
+            f.Value(c, vx, vy, v.T, v.U); c.Tone = 0;
+            if (!swap) Mark(c, v, vx + vw + gap, vy, f.Ht);
+        }
+        else
+        {
+            int group = lw + mw + vw;
+            bool middle = p.Align == "middle" || (p.Align == "auto" && (bh >= 20 || p.Shared));   // a big box, or a number beside another: label and value together in the middle; else (a list) the value on the right edge
+            int gx = p.Align == "left" ? bx : p.Align == "right" ? bx + bw - group : bx + (bw - group) / 2;
+            int vx = middle || p.Align != "auto" ? gx + lw + mw : bx + bw - vw;
+            int lx = middle || p.Align != "auto" ? gx : bx;
+            int vy = by + (bh - f.Ht) / 2;
+            if (markNow) Mark(c, v, lx + Math.Max(0, (l.W - (v.Chg ? G.W(IconFor("bolt", Ico.Bolt)) : 7)) / 2), by + (bh - l.H) / 2, l.H);
+            else if (!(dim && f.K != 0)) DrawLabel(c, i, l, s, v, lx, by + (bh - l.H) / 2);
+            if (!swap) Mark(c, v, vx - mw, vy, f.Ht);
+            if (dim && f.K == 0) c.Tone = 1;
+            f.Value(c, vx, vy, v.T, v.U); c.Tone = 0;
+        }
+        return f.Ht;
+    }
+
+    // ---- bar: label, bar, value on one line; label and value over the bar when the box is tall ----
+    static void Bar(Cv c, HsInfo i, HsPiece p)
+    {
+        int bx = p.Bx, by = p.By, bw = p.Bw, bh = p.Bh;
+        var s = Info(p.Src); var v = Get(i, p); bool on = HsSt.On(i);
+        var l = Label(p, s, bw, bh);
+        var vf = bh >= 7 && p.Size != "s" ? Fnt.Small : Fnt.Tiny;
+        string vt = v.T + v.U; int vw = vf.Width(vt), mw = v.Chg ? 7 : v.Sleep ? 9 : 0;
+        bool hideLab = v.Low && !on;
+        if (bh >= 16)
+        {
+            int ly = by + (bh - 7 - 3 - Math.Min(5, bh - 10)) / 2;
+            if (!hideLab) DrawLabel(c, i, l, s, v, bx, ly + (7 - l.H) / 2);
+            if (!p.NoNum) { vf.Draw(c, bx + bw - vw, ly, vt); Mark(c, v, bx + bw - vw - mw, ly, 7); }
+            int barH = Math.Min(5, bh - 10);
+            DrawBar(c, i, s, v, bx, bx + bw - 1, ly + 10 + barH / 2, barH);
+        }
+        else
+        {
+            int ly = by + (bh - l.H) / 2, vy = by + (bh - vf.H) / 2;
+            if (!hideLab) DrawLabel(c, i, l, s, v, bx, ly);
+            int lw = l.Kind == 1 ? 13 : l.Kind == 2 ? l.W : 0;
+            if (!p.NoNum) { vf.Draw(c, bx + bw - vw, vy, vt); Mark(c, v, bx + bw - vw - mw, vy, vf.H); }
+            int x0 = bx + (lw > 0 ? lw + 5 : 0), x1 = p.NoNum ? bx + bw - 1 : bx + bw - Math.Max(vw + mw, Fnt.Small.Width("100%")) - 6;   // (number hidden: the bar takes its room)
+            DrawBar(c, i, s, v, x0, x1, by + bh / 2, Math.Min(p.NoNum ? 5 : 3, bh));
+        }
+    }
+    static bool solidBar;   // (the theme's bar look, set by Draw)
+    static void DrawBar(Cv c, HsInfo i, Src s, Val v, int x0, int x1, int ym, int barH)
+    {
+        int len = x1 - x0 + 1; if (len < 8) return;
+        int top = ym - barH / 2;
+        if (solidBar)   // (v3: filled to its share, the rest a dotted line; asleep half lit as the blocks are)
+        {
+            int pc = v.Empty || v.Off || double.IsNaN(v.V) ? 0 : s.Batt ? (int)v.Frac : (int)Math.Round(Frac(s, v) * 100);
+            int fl = (int)Math.Round(len * Math.Max(0, Math.Min(100, pc)) / 100.0);
+            if (fl > 0) { c.Tone = v.Sleep ? 1 : 0; c.Block(x0, top, fl, barH); c.Tone = 0; }
+            for (int x = x0 + fl + 1; x <= x1; x += 2) c.Set(x, ym);
+            return;
+        }
+        // every reading the same bar (his 11-12 "the bar is different in the sound bar why?? should not be like that"): 8
+        // blocks, lit up to its share. A battery's blocks are its 8 steps; charging, the rest light in turn; asleep, half lit
+        int n = 8, gap = len >= 60 ? 2 : 1; while (n > 3 && (len + gap) / n - gap < 2) n--;   // (a short bar: fewer blocks, each 2 px at least, the review 11-12)
+        int sw = Math.Max(1, (len + gap) / n - gap);
+        int segs = v.Empty || v.Off || double.IsNaN(v.V) ? 0 : s.Batt ? HsSt.Segs((int)v.Frac, n) : HsSt.Segs((int)Math.Round(Frac(s, v) * 100), n);
+        if (v.Chg && !v.ChgSteady && segs < n) segs += i.Now.Second % (n + 1 - segs);   // (steady: no filling)
+        for (int k = 0; k < n; k++)
+        {
+            int x = x0 + k * (sw + gap);
+            if (k < segs) { c.Tone = v.Sleep ? 1 : 0; c.Block(x, top, sw, barH); c.Tone = 0; }
+            else c.Set(x + sw / 2, ym);
+        }
+    }
+
+    // ---- ring (a full circle) and knob (270 degrees, like the base's own knob): the number exactly in the middle ----
+    static int Ring(Cv c, HsInfo i, HsPiece p, bool knob, bool measure = false)
+    {
+        int bx = p.Bx, by = p.By, bw = p.Bw, bh = p.Bh;
+        var s = Info(p.Src); var v = Get(i, p); bool on = HsSt.On(i);
+        var l = Label(p, s, bw, bh);
+        int cap = Cap(p); if (p.Harm > 0) cap = Math.Min(cap, p.Harm);
+        if (l.Kind == 2 && l.F == Fnt.Small) { l.F = Fnt.Tiny; l.W = l.F.Width(l.Word); l.H = 5; }
+        if (l.Batt) { l.Mini = true; l.W = 11; l.H = 5; }
+        bool below = false;   // (inside, under the number, as the knob's: a ring and a knob side by side alike, 11-13)
+        int d = below ? Math.Min(bw, bh - l.H - 2) : Math.Min(bw, bh);
+        double r = Math.Floor((d - 2) / 2.0);
+        if (r < 11) { if (p.NoNum) { if (!measure) LabelOnly(c, i, p); return 0; } if (measure) return -1; Number(c, i, p); return 0; }   // (too small to read: as a number, his 11-12; its number hidden: its label alone, v3)
+        int band = r >= 11 ? 2 : 1;
+        double rb = r - 5, tb = r >= 18 ? 3 : 2;                                  // (the knob's own band)
+        double lim = knob ? rb - tb - 1 : r - band + 0.5 - 1;                     // pixel centres stay inside this (a pixel of air; the knob a little more)
+        // the middle: the number, and a slot under it for the label; while charging or asleep the slot shows the bolt or
+        // "zZ" every other second instead; an empty spare: its battery dotted, no number
+        bool labIn = !below && l.Kind > 0;
+        bool hasMark = v.Chg || v.Sleep, showMark = hasMark && (v.ChgSteady || i.Now.Second % 2 == 0);
+        var bolt = IconFor("bolt", Ico.Bolt); int mW = v.Chg ? G.W(bolt) : 7, mH = v.Chg ? bolt.Length : 7;
+        if (v.Empty) { l = new Lab { Kind = 1, Batt = true, Mini = true, W = 11, H = 5 }; labIn = true; below = false; }
+        int sw = labIn ? l.W : 0, sh = labIn ? l.H : 0;
+        if (hasMark) { sw = Math.Max(sw, mW); sh = Math.Max(sh, mH); }
+        string t = v.Empty || p.NoNum ? "" : v.T, tw = t == "" ? "" : Widest(p, s, v);   // (v3: number hidden, the dial alone)
+        // a dial, ring or knob: its number at the exact centre, its label under it (inside a ring; where a knob is
+        // open). 11-13: centred together with its label, a number sat higher or lower by its icon's height, and a knob,
+        // squeezed inside its track, lost its icon beside rings and pulled the row's digits down to the tiny ones
+        bool dial = t != ""; int slotY = 0, gap = 2; NF f;
+        if (dial)
+        {
+            f = DialFit(tw, cap, sw, sh, lim, knob, r, out slotY);   // (the size for the widest value it shows)
+            if (f == null && sw > 0) { sw = sh = 0; labIn = false; hasMark = showMark = false; f = DialFit(tw, cap, 0, 0, lim, knob, r, out slotY); }
+        }
+        else f = RingFit(tw, cap, sw, sh, lim, out gap);
+        if (f == null && t != "") { if (measure) return -1; Number(c, i, p); return 0; }   // (its number doesn't fit inside: as a number)
+        if (measure) return t == "" ? 0 : f.Ht;
+        if (dial) { int y2; var fa = DialFit(t, f.Ht, sw, sh, lim, knob, r, out y2); if (fa != null) { f = fa; slotY = y2; } }   // (the value itself: OFF in its letters)
+        int nw = t == "" || f == null ? 0 : f.TextW(t), nh = t == "" || f == null ? 0 : f.Ht;
+        int h = dial ? nh : nh + (sh > 0 ? (nh > 0 ? gap : 0) + sh : 0);
+        // the ring's centre is the number's centre, to the pixel (his "the text inside looks very offcentered")
+        int ww = nw > 0 ? nw : sw, nx = bx + (bw - ww) / 2;
+        if (p.Align == "left" || p.Align == "right") { double want = p.Align == "left" ? bx + r : bx + bw - 1 - r; nx = (int)Math.Round(want - (ww - 1) / 2.0); }   // (the ring at its box's left or right, 11-13)
+        double cx = nx + (ww - 1) / 2.0;
+        int areaH = below ? (int)(2 * r + 1) : bh;
+        int ty = by + (areaH - h) / 2;
+        double cy = ty + (h - 1) / 2.0;
+        if (knob && !dial) { cy = by + (bh - 1) / 2.0; ty = (int)Math.Floor(cy - (h - 1) / 2.0) - 1; }
+        double a = Frac(s, v);
+        if (knob)
+        {
+            double A = 270 * a;
+            c.RingDots(cx, cy, r - 0.5, 225, 495, 27, 0, 2);                    // a tick every 10%
+            c.RingDots(cx, cy, rb - (tb - 1) / 2.0, 225, 495, Math.Max(5, 360 / (rb * 1.2)), 0, 1);   // the track
+            if (A > 0) c.Band(cx, cy, rb, tb, 225, 225 + A);
+        }
+        else
+        {
+            double A = 360 * a, step = r >= 11 ? 15 : 30, mid = r - (band - 1) / 2.0;
+            double from = Math.Ceiling((A + 1) / step) * step + (v.Chg ? (i.Now.Second % 3) * step / 3 : 0);
+            c.RingDots(cx, cy, mid, from, 359.9, step, 0, 1);
+            if (A > 0 && !(v.Low && !on)) { if (v.Sleep) c.Band(cx, cy, r, 1, 0, A); else c.Band(cx, cy, r, band, 0, A); }
+        }
+        if (nw > 0) f.Text(c, nx, ty, t);
+        int sy = dial ? (int)Math.Floor(cy + 0.5) + slotY : ty + (nh > 0 ? nh + gap : 0);
+        if (showMark) { int mx = (int)Math.Floor(cx - (mW - 1) / 2.0 + 0.5), my = sy + (sh - mH) / 2; if (v.Chg) c.Bmp(mx, my, bolt); else G.Zz(c, mx, my); }
+        else if (labIn) DrawLabel(c, i, l, s, v, (int)Math.Floor(cx - (l.W - 1) / 2.0 + 0.5), sy + (sh - l.H) / 2);
+        if (below) DrawLabel(c, i, l, s, v, (int)Math.Round(cx - (l.W - 1) / 2.0), by + (int)(2 * r + 1) + 2);
+        return f == null ? 0 : f.Ht;
+    }
+    // a dial's middle: the number (t) at the centre, its slot (sw x sh, 0: none) 2 px under it (1 if that keeps the number's size), inside a ring, or where
+    // a knob is open at its bottom (no wider than the opening there, above its rim). The biggest number that leaves
+    // the slot its room; slotY: the slot's top, in rows under the centre
+    static NF DialFit(string t, int cap, int sw, int sh, double lim, bool knob, double r, out int slotY)
+    {
+        slotY = 0;
+        foreach (var cand in NF.All(BigOk(t)))
+        {
+            if (cand.Ht > cap) continue;
+            double xn = (cand.TextW(t) - 1) / 2.0, yn = (cand.Ht - 1) / 2.0;
+            if (Math.Sqrt(xn * xn + yn * yn) > lim) continue;
+            if (sh == 0) return cand;
+            for (int g = 2; g >= 1; g--)   // (a 1 px gap before a smaller number)
+            {
+                int y0 = Math.Max((cand.Ht + 1) / 2 + g, knob ? sw / 2 + 2 : 0); double xs = (sw - 1) / 2.0, yb = y0 + sh - 0.5;
+                if (knob ? yb <= r - 1 : Math.Sqrt(xs * xs + yb * yb) <= lim) { slotY = y0; return cand; }
+            }
+        }
+        return null;
+    }
+    // the biggest number (t, "" none) that fits inside with its slot under it; a 1 px gap before a smaller number
+    static NF RingFit(string t, int cap, int sw, int sh, double lim, out int gap)
+    {
+        gap = 2;
+        foreach (var cand in NF.All(BigOk(t))) { if (cand.Ht > cap) continue; for (int g = 2; g >= 1; g--) if (Fits(t == "" ? 0 : cand.TextW(t), t == "" ? 0 : cand.Ht, sw, sh, g, lim)) { gap = g; return cand; } }
+        return null;
+    }
+    // a number (nw x nh) and a slot under it (sw x sh), centred together: every corner pixel's centre within lim of the middle
+    static bool Fits(int nw, int nh, int sw, int sh, int gap, double lim)
+    {
+        int h = nh + (sh > 0 ? (nh > 0 ? gap : 0) + sh : 0);
+        double top = -(h - 1) / 2.0;
+        Func<double, double, double> D = (x, y) => Math.Sqrt(x * x + y * y);
+        if (nh > 0) { double xn = (nw - 1) / 2.0; if (D(xn, top) > lim || D(xn, top + nh - 1) > lim) return false; }
+        if (sh > 0) { double y0 = top + (nh > 0 ? nh + gap : 0), xs = (sw - 1) / 2.0; if (D(xs, y0) > lim || D(xs, y0 + sh - 1) > lim) return false; }
+        return true;
+    }
+
+    // ---- graph: the last minutes as a line, a smoothed line, steps, a filled area, bars or dots, the value on top; a
+    // second reading dotted; its low and high his own or from what it shows ----
+    static void Graph(Cv c, HsInfo i, HsPiece p)
+    {
+        int bx = p.Bx, by = p.By, bw = p.Bw, bh = p.Bh;
+        var s = Info(p.Src); var v = Get(i, p);
+        var F = p.Size == "s" ? Fnt.Tiny : p.Size == "l" ? (bh >= 14 ? Fnt.Small : Fnt.Tiny) : bh >= 26 ? Fnt.Small : Fnt.Tiny;
+        string t1 = ((p.Label == "off" ? "" : (p.Name ?? s.Name) + " ") + (p.NoNum ? "" : v.T + v.U)).Trim();   // (v3: number hidden, the name alone)
+        string t2 = null;
+        if (p.Src2 != null)
+        {
+            var s2 = Info(p.Src2); var v2 = Get(i, p, p.Src2);
+            t2 = ((p.Label == "off" ? "" : s2.Name + " ") + (p.NoNum ? "" : v2.T + v2.U)).Trim();
+            // (11-14 release checks: in a narrow place the two were drawn over each other: the names go first, then the second)
+            if (8 + F.Width(t1) + 10 + F.Width(t2) > bw && !p.NoNum) { t1 = (v.T + v.U).Trim(); t2 = (v2.T + v2.U).Trim(); }
+            if (8 + F.Width(t1) + 10 + F.Width(t2) > bw) t2 = null;
+        }
+        int x = bx;
+        if (p.Src2 != null) { c.HLine(x, x + 4, by + F.H / 2); x += 8; }
+        if (x + F.Width(t1) > bx + bw && !p.NoNum) t1 = (v.T + v.U).Trim();   // (alone and still too wide: its number, else nothing past its place)
+        if (x + F.Width(t1) > bx + bw) t1 = "";
+        F.Draw(c, x, by, t1);
+        if (t2 != null)
+        {
+            int x2 = bx + bw - F.Width(t2);
+            F.Draw(c, x2, by, t2);
+            for (int k = x2 - 8; k <= x2 - 3; k += 2) c.Set(k, by + F.H / 2);
+        }
+        int gy0 = by + F.H + 3, gy1 = by + bh - 1;
+        if (gy1 - gy0 < 4) return;
+        var a = Series(p.Src, p.Over, bw);
+        var b = p.Src2 != null ? Series(p.Src2, p.Over, bw) : null;
+        double lo = double.MaxValue, hi = double.MinValue;
+        foreach (var arr in new[] { a, b }) if (arr != null) foreach (double d in arr) if (!double.IsNaN(d)) { lo = Math.Min(lo, d); hi = Math.Max(hi, d); }
+        if (hi < lo) return;
+        double span = Math.Max(s.Span, (hi - lo) * 1.15), m = (hi + lo) / 2; lo = m - span / 2; hi = m + span / 2;
+        double flo = double.IsNaN(p.Lo) ? lo : p.Lo, fhi = double.IsNaN(p.Hi) ? hi : p.Hi;   // (his own low / high, 11-13)
+        if (!double.IsNaN(p.Lo) && double.IsNaN(p.Hi) && fhi <= flo) fhi = flo + span;
+        if (double.IsNaN(p.Lo) && !double.IsNaN(p.Hi) && fhi <= flo) flo = fhi - span;
+        if (fhi > flo) { lo = flo; hi = fhi; }
+        Func<double, int> Y = d => Math.Max(gy0, Math.Min(gy1, gy1 - (int)Math.Round((d - lo) / (hi - lo) * (gy1 - gy0))));
+        string kind = p.Graph;
+        if (kind == "smooth") a = Smooth(a, 3);
+        if (kind == "steps")
+        {
+            const int step = 4; int py = -1;   // (4 px a step: a value held, then a jump)
+            for (int k0 = 0; k0 < bw; k0 += step)
+            {
+                int k1 = Math.Min(bw - 1, k0 + step - 1); double sum = 0; int cnt = 0;
+                for (int k = k0; k <= k1; k++) if (!double.IsNaN(a[k])) { sum += a[k]; cnt++; }
+                if (cnt == 0) { py = -1; continue; }
+                int y = Y(sum / cnt);
+                if (py >= 0) c.VLine(bx + k0, Math.Min(py, y), Math.Max(py, y));
+                c.HLine(bx + k0, bx + k1, y); py = y;
+            }
+        }
+        else
+            for (int k = 0; k < bw; k++)
+            {
+                if (double.IsNaN(a[k])) continue;
+                int y = Y(a[k]);
+                if (kind == "bars") { if (k % 2 == 0) c.VLine(bx + k, y, gy1); }
+                else if (kind == "dots") c.Set(bx + k, y);
+                else
+                {
+                    if (k > 0 && !double.IsNaN(a[k - 1])) c.Line(bx + k - 1, Y(a[k - 1]), bx + k, y, 1); else c.Set(bx + k, y);
+                    if (kind == "area" && y < gy1) { c.Tone = 1; c.VLine(bx + k, y + 1, gy1); c.Tone = 0; }   // (under the line: every other pixel)
+                }
+            }
+        if (b != null) for (int k = 0; k < bw; k += 2) if (!double.IsNaN(b[k])) c.Set(bx + k, Y(b[k]));
+    }
+    // each column the mean of its neighbours within n (its gaps stay gaps)
+    static double[] Smooth(double[] a, int n)
+    {
+        var r = new double[a.Length];
+        for (int k = 0; k < a.Length; k++)
+        {
+            if (double.IsNaN(a[k])) { r[k] = double.NaN; continue; }
+            double sum = 0; int cnt = 0;
+            for (int j = Math.Max(0, k - n); j <= Math.Min(a.Length - 1, k + n); j++) if (!double.IsNaN(a[j])) { sum += a[j]; cnt++; }
+            r[k] = sum / cnt;
+        }
+        return r;
+    }
+    // n columns across the last `over` seconds, each the mean of its seconds (oldest first)
+    static double[] Series(string key, int over, int n)
+    {
+        var res = new double[n]; double[] h;
+        if (!Hist.TryGetValue(key, out h)) { for (int k = 0; k < n; k++) res[k] = double.NaN; return res; }
+        double per = over / (double)n;
+        for (int k = 0; k < n; k++)
+        {
+            double t0 = (n - k) * per, t1 = (n - k - 1) * per;   // seconds ago, from .. to
+            int i0 = h.Length - 1 - (int)Math.Floor(t1), i1 = h.Length - 1 - (int)Math.Ceiling(t0 - 1);
+            double sum = 0; int cnt = 0;
+            for (int j = Math.Max(0, Math.Min(i0, i1)); j <= Math.Min(h.Length - 1, Math.Max(i0, i1)); j++) if (!double.IsNaN(h[j])) { sum += h[j]; cnt++; }
+            res[k] = cnt > 0 ? sum / cnt : double.NaN;
+        }
+        return res;
+    }
+
+    // ---- clock: hours and minutes as big as the box allows, seconds small, the day under ----
+    static void Clock(Cv c, HsInfo i, HsPiece p)
+    {
+        int bx = p.Bx, by = p.By, bw = p.Bw, bh = p.Bh;
+        string hh = i.Now.ToString("HH", CultureInfo.InvariantCulture), mm = i.Now.ToString("mm", CultureInfo.InvariantCulture), ss = i.Now.ToString("ss", CultureInfo.InvariantCulture);
+        string date = p.Date ? i.Now.ToString("ddd d MMM", CultureInfo.InvariantCulture).ToUpperInvariant() : null;
+        var df = date != null && bh >= 44 ? Fnt.Small : Fnt.Tiny;
+        int dh = date != null ? df.H + 3 : 0;
+        int cap = Cap(p);
+        foreach (var f in NF.All(true))
+        {
+            if (f.Ht > cap && f.K != 2) continue;   // (his text size; the tiny font always, as the last resort)
+            int colon = f.K == 0 ? f.T : 1, cg = f.K == 0 ? f.T + 1 : 1;
+            int w = f.TextW(hh) + cg + colon + cg + f.TextW(mm);
+            var sf = f.K == 0 && f.H >= 22 ? Fnt.Small : Fnt.Tiny;
+            if (p.Seconds) w += (f.K == 0 ? f.T + 2 : 2) + sf.Width(ss);
+            if (f.Ht + dh > bh || w > bw) continue;
+            if (date != null && df.Width(date) > bw) { date = null; dh = 0; }
+            int x = p.Align == "left" ? bx : p.Align == "right" ? bx + bw - w : bx + (bw - w) / 2, y = by + (bh - f.Ht - dh) / 2;
+            f.Text(c, x, y, hh); x += f.TextW(hh) + cg;
+            if (f.K == 0) { c.Block(x, y + f.H * 3 / 10, colon, colon); c.Block(x, y + f.H * 7 / 10 - colon + 1, colon, colon); }
+            else (f.K == 1 ? Fnt.Small : Fnt.Tiny).Draw(c, x, y, ":");
+            x += colon + cg;
+            f.Text(c, x, y, mm); x += f.TextW(mm);
+            if (p.Seconds) sf.Draw(c, x + (f.K == 0 ? f.T + 2 : 2), y + f.Ht - sf.H, ss);
+            if (date != null) { int dw = df.Width(date); df.Draw(c, p.Align == "left" ? bx : p.Align == "right" ? bx + bw - dw : bx + (bw - dw) / 2, y + f.Ht + 3, date); }
+            return;
+        }
+    }
+}
+
+// anim.cs: start up / shut down animations for the headset base station's screen (128 x 64, one bit a pixel, OLED).
+// Time based: the player asks for the picture at t milliseconds, so it plays at whatever rate the base takes
+// (somewhere between 10 and 30 pictures a second; the real top rate is not measured yet).
+// Each animation is one class in its own file anim-<key>.cs, named Anim_<key>, everything it needs nested inside it.
+abstract class HsAnim
+{
+    public abstract string Key { get; }       // short id, lower case, as in its file name
+    public abstract string Name { get; }      // the picker's name under its card: one or two plain words ("Old TV")
+    public abstract int StartMs { get; }      // 600 to 1500
+    public abstract int StopMs { get; }       // 300 to 800
+    // from black to the page; Start(StartMs, page) must be exactly the page. page: [x, y], true = lit, 128 x 64.
+    public abstract bool[,] Start(double t, bool[,] page);
+    // from the page to black; Stop(StopMs, page) must be all black.
+    public abstract bool[,] Stop(double t, bool[,] page);
+}
+
+// anim-tv.cs: an old CRT television. Start: a dot in the middle grows into a thin line, the line opens into the page.
+// Stop: the page squeezes into a bright line, the line shrinks to a dot, the dot dies away to one pixel, then black.
+
+class Anim_tv : HsAnim
+{
+    public override string Key { get { return "tv"; } }
+    public override string Name { get { return "Old TV"; } }
+    public override int StartMs { get { return 1150; } }
+    public override int StopMs { get { return 650; } }
+
+    // start timeline (ms)
+    const double S_DOT = 110, S_BLOOM = 220, S_LINE = 520, S_END = 1150;
+    // stop timeline (ms)
+    const double P_SQUEEZE = 290, P_LINE = 430, P_DOT = 540, P_END = 650;
+
+    static readonly int[,] Bayer = {
+        { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
+
+    public override bool[,] Start(double t, bool[,] page)
+    {
+        if (t >= S_END) return (bool[,])page.Clone();
+        t = Math.Max(0, t);
+        var o = new bool[128, 64];
+        if (t < S_DOT) { Rect(o, 63, 31, 2, 2); return o; }
+        if (t < S_BLOOM) { Round(o); return o; }
+        if (t < S_LINE)
+        {
+            double k = EaseInOut((t - S_BLOOM) / (S_LINE - S_BLOOM));
+            Line(o, 4 + k * 124);
+            return o;
+        }
+        double u = (t - S_LINE) / (S_END - S_LINE);
+        double h = 2 + EaseInOut(u) * 62;
+        // the bright edges stay strong while it opens, then dissolve over the last stretch
+        double edge = 1 - Smooth((u - 0.72) / 0.28);
+        Band(o, page, h, edge);
+        return o;
+    }
+
+    public override bool[,] Stop(double t, bool[,] page)
+    {
+        var o = new bool[128, 64];
+        if (t >= P_END) return o;
+        t = Math.Max(0, t);
+        if (t < P_SQUEEZE)
+        {
+            double u = t / P_SQUEEZE;
+            double h = 64 - EaseInStrong(u) * 62;
+            double edge = Smooth(u / 0.3);
+            Band(o, page, h, edge);
+            return o;
+        }
+        if (t < P_LINE)
+        {
+            double k = EaseInOut((t - P_SQUEEZE) / (P_LINE - P_SQUEEZE));
+            Line(o, 128 - k * 126);
+            return o;
+        }
+        if (t < P_DOT) { Rect(o, 63, 31, 2, 2); return o; }
+        o[63, 31] = true;
+        return o;
+    }
+
+    // the page squeezed vertically into a centred band h rows tall; each band row ORs the page rows it covers,
+    // so a thin band glows bright like a collapsed picture. edge (0..1) lights the top and bottom rows of the band.
+    static void Band(bool[,] o, bool[,] page, double h, double edge)
+    {
+        int top = (int)Math.Round(32 - h / 2);
+        top = Math.Max(0, Math.Min(31, top));
+        int bot = 64 - top;              // exclusive, symmetric about the middle
+        int rows = bot - top;
+        for (int y = top; y < bot; y++)
+        {
+            int s0 = (int)Math.Floor((double)(y - top) * 64 / rows);
+            int s1 = (int)Math.Ceiling((double)(y - top + 1) * 64 / rows);
+            s1 = Math.Min(64, Math.Max(s0 + 1, s1));
+            for (int x = 0; x < 128; x++)
+            {
+                bool v = false;
+                for (int s = s0; s < s1 && !v; s++) v = page[x, s];
+                o[x, y] = v;
+            }
+        }
+        if (edge <= 0) return;
+        int lvl = (int)Math.Round(edge * 16);
+        for (int x = 0; x < 128; x++)
+        {
+            if (Bayer[x & 3, top & 3] < lvl) o[x, top] = true;
+            if (Bayer[x & 3, (bot - 1) & 3] < lvl) o[x, bot - 1] = true;
+        }
+    }
+
+    // a 2 row line centred on the screen, w pixels wide (kept even so it stays centred)
+    static void Line(bool[,] o, double w)
+    {
+        int half = Math.Max(1, Math.Min(64, (int)Math.Round(w / 2)));
+        Rect(o, 64 - half, 31, half * 2, 2);
+    }
+
+    // a small round 4 x 4 bloom around the centre dot
+    static void Round(bool[,] o)
+    {
+        Rect(o, 62, 31, 4, 2);
+        Rect(o, 63, 30, 2, 4);
+    }
+
+    static void Rect(bool[,] o, int x, int y, int w, int h)
+    {
+        for (int i = Math.Max(0, x); i < Math.Min(128, x + w); i++)
+            for (int j = Math.Max(0, y); j < Math.Min(64, y + h); j++)
+                o[i, j] = true;
+    }
+
+    static double Clamp01(double u) { return Math.Max(0, Math.Min(1, u)); }
+    static double Smooth(double u) { u = Clamp01(u); return u * u * (3 - 2 * u); }
+    static double EaseInOut(double u) { u = Clamp01(u); return u * u * u * (u * (u * 6 - 15) + 10); }
+    // starts gently, then accelerates into the line (the picture collapsing)
+    static double EaseInStrong(double u) { u = Clamp01(u); return 0.5 * (u * u * u) + 0.5 * Smooth(u); }
+}
+
+// anim-scan.cs: a scanline. Start: a short line opens at the top centre, then sweeps down with a dithered glow
+// trailing above it, laying the page down behind it. Stop: the line rises from the bottom, wiping the page away with
+// the glow trailing below it, and closes to a point at the top centre.
+
+class Anim_scan : HsAnim
+{
+    public override string Key { get { return "scan"; } }
+    public override string Name { get { return "Scan"; } }
+    public override int StartMs { get { return 1000; } }
+    public override int StopMs { get { return 600; } }
+
+    const int Trail = 7;        // rows of dithered glow behind the line
+    const double OpenMs = 160;  // start: the line opens from the centre
+    const double CloseMs = 170; // stop: the line closes to the centre
+
+    static readonly int[,] Bayer = {
+        { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
+
+    // glow density at distance d (1..Trail) behind the line, 0..1
+    static double Glow(int d)
+    {
+        double u = 1.0 - (double)d / (Trail + 1);
+        return u * u * 0.85;
+    }
+
+    static bool Dot(int x, int y, double density)
+    {
+        return (Bayer[y & 3, x & 3] + 0.5) / 16.0 < density;
+    }
+
+    static double InOut(double u) { u = Math.Max(0, Math.Min(1, u)); return 0.3 * u + 0.7 * (0.5 - 0.5 * Math.Cos(Math.PI * u)); }
+    static double Out(double u) { u = Math.Max(0, Math.Min(1, u)); return 1 - Math.Pow(1 - u, 3); }
+    static double In(double u) { u = Math.Max(0, Math.Min(1, u)); return u * u * u; }
+
+    // draws a horizontal line centred at x 64 with half width hw on row y
+    static void Line(bool[,] o, int y, double hw)
+    {
+        if (y < 0 || y > 63) return;
+        int a = (int)Math.Round(64 - hw), b = (int)Math.Round(64 + hw);
+        for (int x = Math.Max(0, a); x < Math.Min(128, b); x++) o[x, y] = true;
+    }
+
+    public override bool[,] Start(double t, bool[,] page)
+    {
+        var o = new bool[128, 64];
+        t = Math.Max(0, t);
+        if (t >= StartMs) return (bool[,])page.Clone();
+        if (t < OpenMs)
+        {
+            Line(o, 0, 64 * Out(t / OpenMs));
+            return o;
+        }
+        // line row goes from 0 to 64 + Trail (fully off the bottom, trail included)
+        double k = InOut((t - OpenMs) / (StartMs - OpenMs));
+        int ly = (int)Math.Round(k * (64 + Trail));
+        for (int y = 0; y < 64; y++)
+        {
+            if (y >= ly) continue;
+            int d = ly - y;
+            double g = d <= Trail ? Glow(d) : 0;
+            for (int x = 0; x < 128; x++)
+                o[x, y] = page[x, y] || (g > 0 && Dot(x, y, g));
+        }
+        Line(o, ly, 64);
+        return o;
+    }
+
+    public override bool[,] Stop(double t, bool[,] page)
+    {
+        var o = new bool[128, 64];
+        t = Math.Max(0, t);
+        if (t >= StopMs) return o;
+        double sweepMs = StopMs - CloseMs;
+        int ly; double fade = 1, hw = 64;
+        if (t < sweepMs)
+        {
+            ly = 63 - (int)Math.Round(InOut(t / sweepMs) * 63);
+        }
+        else
+        {
+            ly = 0;
+            double c = (t - sweepMs) / CloseMs;
+            hw = 64 * (1 - In(c));
+            fade = 1 - Out(c);
+        }
+        for (int y = 0; y < 64; y++)
+        {
+            if (y < ly) { for (int x = 0; x < 128; x++) o[x, y] = page[x, y]; continue; }
+            int d = y - ly;
+            if (d < 1 || d > Trail) continue;
+            double g = Glow(d) * fade;
+            for (int x = 0; x < 128; x++) o[x, y] = Dot(x, y, g);
+        }
+        Line(o, ly, hw);
+        return o;
+    }
+}
+
+// anim-fade.cs: a real fade on a one-bit screen. The page's lit pixels come and go in the order of an 8 x 8 Bayer
+// threshold, so the share of lit pixels (what the eye reads as brightness) rises and falls smoothly.
+
+class Anim_fade : HsAnim
+{
+    public override string Key { get { return "fade"; } }
+    public override string Name { get { return "Fade"; } }
+    public override int StartMs { get { return 1100; } }
+    public override int StopMs { get { return 550; } }
+
+    // classic 8 x 8 ordered dither matrix, values 0..63
+    static readonly int[,] Bayer = MakeBayer();
+
+    static int[,] MakeBayer()
+    {
+        int[] r = {
+             0, 32,  8, 40,  2, 34, 10, 42,
+            48, 16, 56, 24, 50, 18, 58, 26,
+            12, 44,  4, 36, 14, 46,  6, 38,
+            60, 28, 52, 20, 62, 30, 54, 22,
+             3, 35, 11, 43,  1, 33,  9, 41,
+            51, 19, 59, 27, 49, 17, 57, 25,
+            15, 47,  7, 39, 13, 45,  5, 37,
+            63, 31, 55, 23, 61, 29, 53, 21 };
+        var m = new int[8, 8];
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 8; x++)
+                m[x, y] = r[y * 8 + x];
+        return m;
+    }
+
+    // from black: the page first glows up as a soft dithered haze around its shapes, then the haze
+    // gathers into the sharp page while the brightness keeps rising
+    public override bool[,] Start(double t, bool[,] page)
+    {
+        if (t >= StartMs) return (bool[,])page.Clone();
+        double u = Math.Max(0, t) / StartMs;
+        double level = Smooth(u / 0.75);
+        double focus = Ease((u - 0.25) / 0.75);
+        return Field(page, level, focus);
+    }
+
+    // to black: the same in reverse and quicker, the page softens into its haze and dims away
+    public override bool[,] Stop(double t, bool[,] page)
+    {
+        if (t >= StopMs) return new bool[128, 64];
+        double u = Math.Max(0, t) / StopMs;
+        double level = 1 - Smooth(u / 0.92);
+        double focus = 1 - Ease(u / 0.7);
+        return Field(page, level, focus);
+    }
+
+    // brightness of each pixel = level * mix(haze, page, focus), shown through the Bayer threshold
+    static bool[,] Field(bool[,] page, double level, double focus)
+    {
+        var o = new bool[128, 64];
+        if (level <= 0) return o;
+        double[,] haze = Haze(page);
+        for (int x = 0; x < 128; x++)
+            for (int y = 0; y < 64; y++)
+            {
+                double p = page[x, y] ? 1.0 : 0.0;
+                double v = level * ((1 - focus) * haze[x, y] + focus * p);
+                o[x, y] = (Bayer[x & 7, y & 7] + 0.5) / 64.0 < v;
+            }
+        return o;
+    }
+
+    // a soft glow of the page: a 5 x 5 box average, lifted so thin lines still make a visible haze
+    static double[,] Haze(bool[,] page)
+    {
+        const int R = 2;
+        const double Gain = 2.2;
+        const double Peak = 0.7;   // the haze stays dimmer than the page, so the sharp shapes stand out as it gathers
+        var sat = new int[129, 65];
+        for (int x = 0; x < 128; x++)
+            for (int y = 0; y < 64; y++)
+                sat[x + 1, y + 1] = (page[x, y] ? 1 : 0) + sat[x, y + 1] + sat[x + 1, y] - sat[x, y];
+        var h = new double[128, 64];
+        for (int x = 0; x < 128; x++)
+            for (int y = 0; y < 64; y++)
+            {
+                int x0 = Math.Max(0, x - R), x1 = Math.Min(128, x + R + 1);
+                int y0 = Math.Max(0, y - R), y1 = Math.Min(64, y + R + 1);
+                int s = sat[x1, y1] - sat[x0, y1] - sat[x1, y0] + sat[x0, y0];
+                h[x, y] = Peak * Math.Min(1.0, Gain * s / 25.0);
+            }
+        return h;
+    }
+
+    static double Smooth(double u)
+    {
+        u = Math.Max(0, Math.Min(1, u));
+        return u * u * (3 - 2 * u);
+    }
+
+    static double Ease(double u)
+    {
+        u = Math.Max(0, Math.Min(1, u));
+        return u * u * u * (u * (u * 6 - 15) + 10);
+    }
+}
+
+// anim-sand.cs: falling sand. Start: every lit pixel of the page drops in from above the screen and lands
+// on its spot, the middle columns first and spreading out, the lowest grains of each column landing first so
+// the page piles up from the bottom. Stop: the same grains fall away through the bottom edge, lowest first.
+
+class Anim_sand : HsAnim
+{
+    public override string Key { get { return "sand"; } }
+    public override string Name { get { return "Sand"; } }
+    public override int StartMs { get { return 950; } }
+    public override int StopMs { get { return 650; } }
+
+    // start timing (ms)
+    const double S_COL = 380;   // middle column to edge column delay
+    const double S_ROW = 300;   // bottom row to top row delay
+    const double S_JIT = 70;    // per grain jitter
+    const double S_FALL = 560;  // time to fall
+    const double S_LEAD = 110;  // ms of the timeline skipped at the start (nothing on screen yet)
+    const double S_DROP = 67;   // full screen height plus the start gap, for the fall time
+
+    // stop timing (ms)
+    const double E_COL = 90;
+    const double E_ROW = 170;
+    const double E_JIT = 45;
+    const double E_FALL = 330;
+    const double E_DROP = 70;
+
+    public override bool[,] Start(double t, bool[,] page)
+    {
+        if (t >= StartMs) return (bool[,])page.Clone();
+        t = Math.Max(0, t) + S_LEAD;   // skip the first moments, where every grain is still above the screen
+        var o = new bool[128, 64];
+        for (int x = 0; x < 128; x++)
+        {
+            double cd = Math.Abs(x - 63.5) / 63.5;
+            cd = cd * cd * 0.35 + cd * 0.65;            // a soft spread from the middle
+            for (int y = 0; y < 64; y++)
+            {
+                if (!page[x, y]) continue;
+                double d = cd * S_COL + (63 - y) / 63.0 * S_ROW + Jit(x, y) * S_JIT;
+                // each grain starts just above the screen, so the fall time follows real gravity (sqrt of height)
+                double drop = y + 4;
+                double u = (t - d) / (S_FALL * Math.Sqrt(drop / S_DROP));
+                if (u <= 0) continue;
+                if (u >= 1) { o[x, y] = true; continue; }
+                // gravity: starts slow, lands fast, with a gentle last stretch so it does not snap
+                double k = Fall(u);
+                int py = (int)Math.Round(y - drop * (1 - k));
+                if (py >= 0 && py < 64) o[x, py] = true;
+            }
+        }
+        return o;
+    }
+
+    public override bool[,] Stop(double t, bool[,] page)
+    {
+        var o = new bool[128, 64];
+        if (t >= StopMs) return o;
+        t = Math.Max(0, t);
+        for (int x = 0; x < 128; x++)
+        {
+            double cd = Math.Abs(x - 63.5) / 63.5;
+            cd = cd * cd * 0.35 + cd * 0.65;
+            for (int y = 0; y < 64; y++)
+            {
+                if (!page[x, y]) continue;
+                double d = cd * E_COL + (63 - y) / 63.0 * E_ROW + Jit(x, y) * E_JIT;
+                double u = (t - d) / E_FALL;
+                if (u <= 0) { o[x, y] = true; continue; }
+                if (u >= 1) continue;
+                int py = (int)Math.Round(y + E_DROP * u * u);
+                if (py >= 0 && py < 64) o[x, py] = true;
+            }
+        }
+        return o;
+    }
+
+    // accelerating fall, eased into the landing over the last few pixels
+    static double Fall(double u)
+    {
+        // quadratic fall, then a short cubic ease into the spot (continuous slope at the join)
+        const double a = 0.82;              // where the ease takes over
+        double ya = a * a;                   // position at the join (of 1 total, before scaling)
+        double va = 2 * a;                   // speed at the join
+        double total = ya + va * (1 - a) * 0.5; // end position when slowing linearly to zero
+        if (u <= a) return (u * u) / total;
+        double s = u - a, L = 1 - a;
+        double p = ya + va * (s - s * s / (2 * L));
+        return p / total;
+    }
+
+    // fixed per grain jitter 0..1
+    static double Jit(int x, int y)
+    {
+        unchecked
+        {
+            uint h = (uint)(x * 374761393 + y * 668265263);
+            h = (h ^ (h >> 13)) * 1274126177u;
+            h ^= h >> 16;
+            return (h & 0xFFFF) / 65535.0;
+        }
+    }
+}
+
+// anim-iris.cs: a camera iris. Start: a lit point in the middle opens into a circle showing the page,
+// a 1 px lit ring on its edge, until the ring leaves the screen. Stop: the same circle closes to the point and it goes out.
+
+class Anim_iris : HsAnim
+{
+    public override string Key { get { return "iris"; } }
+    public override string Name { get { return "Iris"; } }
+    public override int StartMs { get { return 920; } }
+    public override int StopMs { get { return 560; } }
+
+    const double CX = 63.5, CY = 31.5;
+    const double RMAX = 74.0;      // ring fully past the corners (corner distance is about 71.6)
+    const double RDOT = 1.25;      // the 2 x 2 point in the middle
+    const double DOT_MS = 110;    // how long the point holds (lives over a frame even at 10 a second)
+
+    public override bool[,] Start(double t, bool[,] page)
+    {
+        t = Math.Max(0, t);
+        if (t >= StartMs) return (bool[,])page.Clone();
+        double r;
+        if (t < DOT_MS) r = RDOT;
+        else
+        {
+            double u = (t - DOT_MS) / (StartMs - DOT_MS);
+            r = RDOT + (RMAX - RDOT) * EaseInOut(u);
+        }
+        return Draw(r, page);
+    }
+
+    public override bool[,] Stop(double t, bool[,] page)
+    {
+        t = Math.Max(0, t);
+        if (t >= StopMs) return new bool[128, 64];
+        double shrink = StopMs - DOT_MS;
+        double r;
+        if (t < shrink)
+        {
+            double u = t / shrink;
+            r = RMAX - (RMAX - RDOT) * EaseInOutQuick(u);
+        }
+        else r = RDOT;
+        return Draw(r, page);
+    }
+
+    // inside: the page; a 1 px black gap just inside the ring so the ring reads against busy page parts; the ring; outside black
+    private static bool[,] Draw(double r, bool[,] page)
+    {
+        var o = new bool[128, 64];
+        double ringIn = r - 1.0, gapIn = r - 2.0;
+        for (int x = 0; x < 128; x++)
+        {
+            double dx = x - CX;
+            for (int y = 0; y < 64; y++)
+            {
+                double dy = y - CY;
+                double d = Math.Sqrt(dx * dx + dy * dy);
+                if (d >= r) continue;
+                if (d >= ringIn) o[x, y] = true;
+                else if (d >= gapIn) o[x, y] = false;
+                else o[x, y] = page[x, y];
+            }
+        }
+        return o;
+    }
+
+    // cubic in and out: starts gently, glides, settles softly
+    private static double EaseInOut(double u)
+    {
+        u = Math.Max(0, Math.Min(1, u));
+        double io = u < 0.5 ? 4 * u * u * u : 1 - Math.Pow(-2 * u + 2, 3) / 2;
+        double o = 1 - Math.Pow(1 - u, 3);
+        return 0.6 * io + 0.4 * o;
+    }
+
+    // for the stop: leaves the edges a little faster than it arrives in the middle (decisive, still soft at the point)
+    private static double EaseInOutQuick(double u)
+    {
+        u = Math.Max(0, Math.Min(1, u));
+        return Blend(u);
+    }
+
+    private static double Blend(double u)
+    {
+        // smoother step with a slightly earlier middle: fast through the large radii, soft landing on the point
+        double s = u * u * u * (u * (u * 6 - 15) + 10);
+        double e = 1 - Math.Pow(1 - u, 3);
+        return 0.5 * s + 0.5 * e;
+    }
+}
+
+// anim-blinds.cs: venetian blinds. The screen is eight strips of 8 px.
+// Start: from the top down, each strip shows a thin lit line on its centre, the line splits into two edges
+// that glide apart, and the page appears between them until the strip is fully open.
+// Stop: the same strips close from the bottom up, the edges glide back together into a centre line,
+// and the lines go out one after another.
+
+class Anim_blinds : HsAnim
+{
+    public override string Key { get { return "blinds"; } }
+    public override string Name { get { return "Blinds"; } }
+    public override int StartMs { get { return 1100; } }
+    public override int StopMs { get { return 600; } }
+
+    const int StripH = 8;
+    const int Strips = 64 / StripH;
+    const double HMin = -1.0;          // below 0 the strip is a centre line only
+    const double HMax = StripH / 2.0;  // fully open
+
+    // start: per strip timing, top strip first
+    const double StartStrip = 560;
+    const double StopStrip = 380;
+
+    public override bool[,] Start(double t, bool[,] page)
+    {
+        if (t >= StartMs) return (bool[,])page.Clone();
+        t = Math.Max(0, t);
+        double stagger = (StartMs - StartStrip) / (Strips - 1);
+        var h = new double[Strips];
+        var on = new bool[Strips];
+        for (int s = 0; s < Strips; s++)
+        {
+            double u = (t - s * stagger) / StartStrip;
+            on[s] = u > 0;
+            h[s] = HMin + (HMax - HMin) * EaseOut(u);
+        }
+        return Draw(page, h, on);
+    }
+
+    public override bool[,] Stop(double t, bool[,] page)
+    {
+        if (t >= StopMs) return new bool[128, 64];
+        t = Math.Max(0, t);
+        double stagger = (StopMs - StopStrip) / (Strips - 1);
+        var h = new double[Strips];
+        var on = new bool[Strips];
+        for (int s = 0; s < Strips; s++)
+        {
+            int order = Strips - 1 - s; // bottom strip first
+            double u = (t - order * stagger) / StopStrip;
+            on[s] = u < 1;
+            h[s] = HMax - (HMax - HMin) * EaseIn(u);
+        }
+        return Draw(page, h, on);
+    }
+
+    // h: half opening in px around the strip centre; rows nearer than h show the page,
+    // the first closed row on each side is the lit edge. on = false: the strip is black.
+    static bool[,] Draw(bool[,] page, double[] h, bool[] on)
+    {
+        var o = new bool[128, 64];
+        double c = (StripH - 1) / 2.0;
+        for (int s = 0; s < Strips; s++)
+        {
+            if (!on[s]) continue;
+            double hs = h[s];
+            if (hs >= HMax) { for (int r = 0; r < StripH; r++) CopyRow(page, o, s * StripH + r); continue; }
+            // distance of the edge ring: the smallest row distance (0.5, 1.5, ...) not below hs
+            double edge = Math.Max(0.5, Math.Ceiling(hs - 0.5) + 0.5);
+            for (int r = 0; r < StripH; r++)
+            {
+                int y = s * StripH + r;
+                double d = Math.Abs(r - c);
+                if (d < hs) CopyRow(page, o, y);
+                else if (Math.Abs(d - edge) < 0.01 && edge < c)
+                    for (int x = 0; x < 128; x++) o[x, y] = true; // the lit edge; the strip's outer rows open plainly, so edges of two strips never stack
+            }
+        }
+        return o;
+    }
+
+    static void CopyRow(bool[,] page, bool[,] o, int y)
+    {
+        for (int x = 0; x < 128; x++) o[x, y] = page[x, y];
+    }
+
+    static double Clamp01(double u) { return Math.Max(0, Math.Min(1, u)); }
+    // gentle in, long glide out
+    static double EaseOut(double u)
+    {
+        u = Clamp01(u);
+        double a = u * u * (3 - 2 * u);
+        double b = 1 - Math.Pow(1 - u, 3);
+        return 0.5 * a + 0.5 * b;
+    }
+    // stop: moves at once, settles softly into the centre line
+    static double EaseIn(double u)
+    {
+        u = Clamp01(u);
+        return 0.6 * (u * u * (3 - 2 * u)) + 0.4 * u;
+    }
+}
+
+// anim-glitch.cs: digital glitch. Start: torn rows of the page jump sideways with short bursts of static, and settle
+// until the page sits still (last third calm). Stop: the same rows tear apart sideways in a few hard jolts, then a thin
+// line of static, then black. Every state is held for one 100 ms step so it reads the same at 10 and at 30 pictures a second.
+
+class Anim_glitch : HsAnim
+{
+    public override string Key { get { return "glitch"; } }
+    public override string Name { get { return "Glitch"; } }
+    public override int StartMs { get { return 1100; } }
+    public override int StopMs { get { return 500; } }
+
+    const int W = 128, H = 64, Step = 100;
+    const double CalmU = 0.64;
+
+    // fixed row bands (top y, height) and the order they show up in; same layout for start and stop
+    static readonly int[] BandY, BandH, BandDir;
+    static readonly double[] BandOrder;
+
+    static Anim_glitch()
+    {
+        var r = new Random(4127);
+        var ys = new System.Collections.Generic.List<int>();
+        var hs = new System.Collections.Generic.List<int>();
+        int y = 0;
+        while (y < H)
+        {
+            int h = 3 + r.Next(8);
+            if (y + h > H) h = H - y;
+            ys.Add(y); hs.Add(h); y += h;
+        }
+        BandY = ys.ToArray(); BandH = hs.ToArray();
+        BandDir = new int[BandY.Length]; BandOrder = new double[BandY.Length];
+        for (int i = 0; i < BandY.Length; i++)
+        {
+            BandDir[i] = (i % 2 == 0) ? 1 : -1;
+            if (r.NextDouble() < 0.25) BandDir[i] = -BandDir[i];
+            BandOrder[i] = r.NextDouble();
+        }
+    }
+
+    public override bool[,] Start(double t, bool[,] page)
+    {
+        if (t >= StartMs) return (bool[,])page.Clone();
+        if (t < 0) t = 0;
+        int s = (int)(t / Step);
+        var o = new bool[W, H];
+        if (s == 0) { Line(o, 7); return o; }
+        double u = (s * Step + Step * 0.5) / StartMs;
+        if (u >= CalmU) return (bool[,])page.Clone();
+        double I = Math.Pow(1 - u / CalmU, 1.5);                 // glitch strength, glides down to 0
+        double reveal = 0.12 + 0.88 * Smooth((u - 0.08) / 0.42);               // share of bands that are showing
+        var r = new Random(9001 + s * 131);
+        for (int b = 0; b < BandY.Length; b++)
+        {
+            double roll = r.NextDouble(), mag = r.NextDouble();
+            if (BandOrder[b] > reveal) continue;                 // not in yet: black
+            int dx = 0;
+            if (roll < 0.2 + 0.6 * I) dx = (int)Math.Round((r.NextDouble() < 0.5 ? -1 : 1) * (6 + 38 * mag) * I);
+            CopyRows(o, page, BandY[b], BandH[b], dx);
+        }
+        if (I > 0.3) Blocks(o, page, r, I > 0.6 ? 2 : 1, I);
+        if (r.NextDouble() < 0.2 + 0.8 * I) Static(o, r, s, 0.3 + 0.25 * I);
+        return o;
+    }
+
+    public override bool[,] Stop(double t, bool[,] page)
+    {
+        var o = new bool[W, H];
+        if (t >= StopMs) return o;
+        if (t < 0) t = 0;
+        int s = (int)(t / Step);
+        if (s >= 4) { Line(o, 7); return o; }
+        int[] mag = { 4, 14, 32, 64 };
+        double[] keep = { 1.0, 1.0, 0.65, 0.3 };
+        var r = new Random(7331 + s * 97);
+        for (int b = 0; b < BandY.Length; b++)
+        {
+            double roll = r.NextDouble(), jit = r.NextDouble();
+            if (BandOrder[b] > keep[s]) continue;
+            int dx = 0;
+            if (s > 0 || roll < 0.25) dx = (int)Math.Round(BandDir[b] * mag[s] * (0.55 + 0.45 * jit));
+            CopyRows(o, page, BandY[b], BandH[b], dx);
+        }
+        if (s >= 1) Blocks(o, page, r, s, 0.4 + 0.2 * s);
+        if (s >= 1) Static(o, r, 50 + s, 0.4 + 0.06 * s);
+        return o;
+    }
+
+    static double Smooth(double u) { u = Math.Max(0, Math.Min(1, u)); return u * u * (3 - 2 * u); }
+
+    static void CopyRows(bool[,] o, bool[,] page, int y0, int h, int dx)
+    {
+        for (int y = y0; y < y0 + h && y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                int sx = x - dx;
+                o[x, y] = sx >= 0 && sx < W && page[sx, y];
+            }
+    }
+
+    // a few rectangles of the page shifted on their own
+    static void Blocks(bool[,] o, bool[,] page, Random r, int n, double I)
+    {
+        for (int k = 0; k < n; k++)
+        {
+            int bw = 14 + r.Next(30), bh = 4 + r.Next(8);
+            int bx = r.Next(W - bw), by = r.Next(H - bh);
+            int dx = (int)Math.Round((r.NextDouble() < 0.5 ? -1 : 1) * (6 + 18 * r.NextDouble()) * I);
+            for (int y = by; y < by + bh; y++)
+                for (int x = bx; x < bx + bw; x++)
+                {
+                    int sx = x - dx;
+                    o[x, y] = sx >= 0 && sx < W && page[sx, y];
+                }
+        }
+    }
+
+    // a short burst of static: a band of 3 to 5 rows of noise across part of the screen
+    static void Static(bool[,] o, Random r, int seed, double density)
+    {
+        int bh = 3 + r.Next(3), by = r.Next(H - bh);
+        int bw = 48 + r.Next(72), bx = r.Next(W - bw + 1);
+        for (int y = by; y < by + bh; y++)
+            for (int x = bx; x < bx + bw; x++)
+                o[x, y] = Hash(x / 2, y, seed) < density;     // 2 px wide grains stay crisp on the panel
+    }
+
+    // the thin line of static the start opens with and the stop ends on
+    static void Line(bool[,] o, int seed)
+    {
+        for (int x = 20; x < 108; x++)
+        {
+            double edge = Math.Min(x - 20, 107 - x) / 20.0;      // thinner towards the ends
+            o[x, 31] = Hash(x, 31, seed) < 0.35 + 0.4 * Math.Min(1, edge);
+            o[x, 32] = Hash(x, 32, seed) < 0.15 * Math.Min(1, edge);
+        }
+    }
+
+    static double Hash(int x, int y, int seed)
+    {
+        unchecked
+        {
+            uint h = (uint)(x * 374761393 + y * 668265263 + seed * 1274126177);
+            h = (h ^ (h >> 13)) * 1274126177u;
+            h ^= h >> 16;
+            return (h & 0xffff) / 65536.0;
+        }
+    }
+}
+
+// anim-logo.cs: the headset as a logo.
+// Start: a large line art headset draws itself stroke by stroke (headband from the top outward, then the ear cups,
+// then the inner pad), holds, then a window opens in its middle: the page grows out of it as an oval while the
+// headset zooms past the viewer and leaves. Stop: the same oval closes the page into the middle while the headset
+// comes back from outside and settles small, then it shrinks to a dot that goes out.
+
+class Anim_logo : HsAnim
+{
+    public override string Key { get { return "logo"; } }
+    public override string Name { get { return "Headset"; } }
+    public override int StartMs { get { return 1450; } }
+    public override int StopMs { get { return 660; } }
+
+    // start timeline
+    const double DrawMs = 680, HoldEnd = 820;
+    // stop timeline
+    const double CloseMs = 380, RestEnd = 420, GoneMs = 540;
+    const double BigS = 6, SmallS = 0.5, FullB = 47, Tie = 9.5;
+
+    // one polyline in logo units (centre of the logo at 0,0, about 40 units tall), drawn mirrored too
+    class Stroke
+    {
+        public double[] X, Y, Cum; public double Len, W0, W1;
+        public Stroke(List<double> pts, double w0, double w1)
+        {
+            int n = pts.Count / 2; X = new double[n]; Y = new double[n]; Cum = new double[n];
+            for (int i = 0; i < n; i++) { X[i] = pts[2 * i]; Y[i] = pts[2 * i + 1]; }
+            for (int i = 1; i < n; i++) Cum[i] = Cum[i - 1] + Math.Sqrt((X[i] - X[i - 1]) * (X[i] - X[i - 1]) + (Y[i] - Y[i - 1]) * (Y[i] - Y[i - 1]));
+            Len = Cum[n - 1]; W0 = w0; W1 = w1;
+        }
+    }
+
+    static readonly List<Stroke> Strokes = Build();
+
+    static void Arc(List<double> p, double cx, double cy, double r, double a0, double a1, int n)
+    {
+        for (int i = 0; i <= n; i++)
+        {
+            double a = (a0 + (a1 - a0) * i / n) * Math.PI / 180;
+            p.Add(cx + r * Math.Cos(a)); p.Add(cy - r * Math.Sin(a));
+        }
+    }
+
+    static List<Stroke> Build()
+    {
+        var s = new List<Stroke>();
+        // headband: top centre out to the right cup (the mirror draws the left half at the same time)
+        var band = new List<double>(); Arc(band, 0, 2, 22, 90, 0, 40); s.Add(new Stroke(band, 0.00, 0.42));
+        // right ear cup (x 17..27, y 2..20, corner 4): from the top middle down both sides to the bottom middle
+        double l = 17, r = 27, top = 2, bot = 20, c = 4, mid = 22;
+        var outer = new List<double>();
+        outer.Add(mid); outer.Add(top);
+        Arc(outer, r - c, top + c, c, 90, 0, 8);
+        Arc(outer, r - c, bot - c, c, 0, -90, 8);
+        outer.Add(mid); outer.Add(bot);
+        s.Add(new Stroke(outer, 0.36, 0.80));
+        var inner = new List<double>();
+        inner.Add(mid); inner.Add(top);
+        Arc(inner, l + c, top + c, c, 90, 180, 8);
+        Arc(inner, l + c, bot - c, c, 180, 270, 8);
+        inner.Add(mid); inner.Add(bot);
+        s.Add(new Stroke(inner, 0.36, 0.80));
+        // inner pad of the headband, from the top out
+        var pad = new List<double>(); Arc(pad, 0, 2, 17.5, 90, 38, 24); s.Add(new Stroke(pad, 0.70, 1.00));
+        // the cushion on the inner face of the cup
+        var cush = new List<double>(); cush.Add(20.5); cush.Add(7); cush.Add(20.5); cush.Add(15); s.Add(new Stroke(cush, 0.78, 1.00));
+        return s;
+    }
+
+    static double Clamp01(double u) { return Math.Max(0, Math.Min(1, u)); }
+    static double InOut(double u) { u = Clamp01(u); return u < 0.5 ? 4 * u * u * u : 1 - Math.Pow(-2 * u + 2, 3) / 2; }
+    static double Sine(double u) { u = Clamp01(u); return 0.5 - 0.5 * Math.Cos(Math.PI * u); }
+
+    // oval radius of a pixel (2:1, like the screen): the page shows where this is under b
+    static double OvalR(int x, int y) { double dx = (x + 0.5 - 64) / 2, dy = y + 0.5 - 32; return Math.Sqrt(dx * dx + dy * dy); }
+
+    // draws the logo at scale s (1 = 40 px tall) with progress p, only where keep[x,y] is false
+    static void Logo(bool[,] o, double s, double p, double rad, bool[,] block)
+    {
+        double step = Math.Min(0.35, 0.35 / s);
+        foreach (var st in Strokes)
+        {
+            double q = Clamp01((p - st.W0) / (st.W1 - st.W0));
+            if (q <= 0) continue;
+            double upto = st.Len * q;
+            for (int i = 1; i < st.X.Length; i++)
+            {
+                double a = st.Cum[i - 1], b = st.Cum[i];
+                if (a > upto) break;
+                double e = Math.Min(b, upto), seg = b - a;
+                for (double d = a; d <= e + 1e-9; d += step)
+                {
+                    double k = seg <= 0 ? 0 : (d - a) / seg;
+                    double ux = st.X[i - 1] + (st.X[i] - st.X[i - 1]) * k, uy = st.Y[i - 1] + (st.Y[i] - st.Y[i - 1]) * k;
+                    Stamp(o, 64 + ux * s, 32 + uy * s, rad, block);
+                    Stamp(o, 64 - ux * s, 32 + uy * s, rad, block);
+                }
+            }
+        }
+    }
+
+    static void Stamp(bool[,] o, double x, double y, double r, bool[,] block)
+    {
+        int x0 = (int)Math.Floor(x - r), x1 = (int)Math.Ceiling(x + r), y0 = (int)Math.Floor(y - r), y1 = (int)Math.Ceiling(y + r);
+        double r2 = r * r;
+        for (int i = Math.Max(0, x0); i <= Math.Min(127, x1); i++)
+            for (int j = Math.Max(0, y0); j <= Math.Min(63, y1); j++)
+            {
+                double dx = i + 0.5 - x, dy = j + 0.5 - y;
+                if (dx * dx + dy * dy < r2 && (block == null || !block[i, j])) o[i, j] = true;
+            }
+    }
+
+    static double OvalFor(double s) { return Math.Max(0, Math.Min(FullB, Tie * (s - 1))); }
+
+    static double Rad(double s) { return Math.Max(0.6, Math.Min(0.98, 0.98 * Math.Sqrt(s))); }
+
+    // the page inside an oval of radius b with a 1 px rim, the logo outside it
+    static bool[,] Opening(bool[,] page, double b, double s)
+    {
+        var o = new bool[128, 64];
+        var block = new bool[128, 64];
+        double rim = b + 1.1;
+        for (int x = 0; x < 128; x++)
+            for (int y = 0; y < 64; y++)
+            {
+                double e = OvalR(x, y);
+                if (e < b) { o[x, y] = page[x, y]; block[x, y] = true; }
+                else if (b > 0.6 && e < rim) { o[x, y] = true; block[x, y] = true; }
+                else if (b > 0.6 && e < rim + 1.2) block[x, y] = true;   // a dark gap between the rim and the logo
+            }
+        Logo(o, s, 1, Rad(s), block);
+        return o;
+    }
+
+    public override bool[,] Start(double t, bool[,] page)
+    {
+        if (t >= StartMs) return (bool[,])page.Clone();
+        t = Math.Max(0, t);
+        if (t < HoldEnd)
+        {
+            var o = new bool[128, 64];
+            Logo(o, 1, Sine(t / DrawMs), 0.98, null);
+            return o;
+        }
+        double u = Clamp01((t - HoldEnd) / (StartMs - HoldEnd));
+        // the headset zooms past on a log scale; the oval stays inside it (between the cups, under the band)
+        double s = Math.Pow(BigS, Sine(u));
+        return Opening(page, OvalFor(s), s);
+    }
+
+    public override bool[,] Stop(double t, bool[,] page)
+    {
+        var o = new bool[128, 64];
+        if (t >= StopMs) return o;
+        t = Math.Max(0, t);
+        if (t < CloseMs)
+        {
+            double u = t / CloseMs;
+            double s = SmallS * Math.Pow(BigS / SmallS, 1 - Sine(u));
+            return Opening(page, OvalFor(s), s);
+        }
+        if (t < RestEnd) { Logo(o, SmallS, 1, Rad(SmallS), null); return o; }
+        if (t < GoneMs)
+        {
+            double v = (t - RestEnd) / (GoneMs - RestEnd);
+            double s = SmallS * (1 - v * v);
+            if (s * 40 > 3) { Logo(o, s, 1, Rad(s), null); return o; }
+        }
+        // the dot, then nothing
+        for (int x = 63; x <= 64; x++) for (int y = 31; y <= 32; y++) o[x, y] = true;
+        return o;
+    }
+}
+
+// The headset base station's page (11-12). His own, built in the Headset screen popup (web\extras.js, opened from its
+// card in Controls): one or more pages, each a grid of pieces (the clock, or a reading as a number, bar, ring, knob or
+// graph), drawn by x-hsdraw.cs (Hs.Draw) with our own pixel fonts, every character its own bitmap with an empty column
+// after it (his "42 46 48" bug, digits run together by GDI+, can't come back). And the start up / shut down animations
+// he picked (x-hsdraw.cs too, played by x-batt.cs). hs-layout.json in the data folder keeps it all; with none, his pick 6
+// and no animations. x-batt.cs asks HsPage.Draw(info) for the picture: once a second, every 250 ms for 4 s after the
+// volume knob turns. Burn-in (an OLED): info.Dx / Dy move everything by a pixel a minute, the page stays mostly black.
+// Nothing here talks to a device.
+
+// what a picture may show (-1 or NaN: not known)
+class HsInfo
+{
+    public DateTime Now;
+    public int Dx, Dy;                       // the burn-in shift of this minute, 0 to 2 each
+    public double Cpu = double.NaN, Gpu = double.NaN;   // HWiNFO's "CPU (Tctl/Tdie)" and "GPU Temperature", degrees C
+    public int Head = -1;                    // the headset's battery, percent in GG's steps (0, 12, 25, 37 .. 100)
+    public bool HeadOff, HeadCharging;       // switched off; charging by its cable
+    public int Spare = -1;                   // the spare battery in the base's slot, percent
+    public bool SpareOut, SpareCharging;     // no battery in the slot; the base is charging it (in the slot, not full)
+    public int Mouse = -1;                   // the mouse's battery, percent (its last reading while it sleeps)
+    public bool MouseCharging, MouseAsleep;
+    public int Volume = -1;                  // the base's volume (its knob), 0 to 100
+}
+
+// a page as he builds it (his 11-12 "the number of rows does NOT represent the actual rows in there"): rows from the top,
+// each as tall as he sets it (1 to 3 units, 5 units in all), its pieces side by side in it from the left, each 1 to 3
+// columns wide. Drawn as the renderer's grid: a unit a grid row, every piece at its own place (Grid)
+class HsRow { public int H = 1; public List<HsPiece> Pieces = new List<HsPiece>(); }
+class HsRowPage { public int Cols = 2; public bool Lines = true; public int Gap = -1; public string From, When = "always"; public List<HsRow> Rows = new List<HsRow>(); }   // (From: the ready-made "p:<key>" or saved "s:<id>" page it started as; When: it shows always, only while a game runs ("game") or only while none does ("idle"), 11-13)
+class HsSaved { public string Id, Name; public HsGPage Page; }                 // a page of his own kept under a name, as a saved look
+class HsPreset { public string Key, Name, Group; public HsRowPage Page; public HsGPage G; }   // a ready-made page (G: on the grid)
+// v3 (11-13, the Customize revamp, his "split in 2, 3, 4, 5 and 6"): a page on a grid of 1 to 6 rows and columns, each
+// piece at a cell (AtX, AtY) spanning W x H; its own name, gap and lines
+class HsGPage { public string Name = "Page", When = "always", From; public int Rows = 2, Cols = 2, Gap = -1; public string Lines = "none"; public List<HsPiece> Pieces = new List<HsPiece>(); }
+// a theme (his "keep my current setup and make them actual themes"): its pages, page change, start up / shut down, look
+class HsTheme { public Dictionary<string, string[]> Icons; public string Id, Name; public List<HsGPage> Pages = new List<HsGPage>(); public int Every; public string Start = "", Stop = "", Bar = "blocks"; public int Digits = 1; }
+
+static class HsPage
+{
+    public static string File_;                       // hs-layout.json in the data folder
+    public static Action<string> Log = delegate { };
+    static readonly object gate = new object();       // the pages and Hs's readings: the headset's loop, the second, the popup
+    static List<HsGPage> pages = new List<HsGPage>();   // the current theme's pages (filled by Load: his file, or the default page)
+    static string themeName = "My headset", themeFrom;   // the current theme: its name, where it came from ("t:<id>" his own, "r:<key>" ready-made)
+    static Dictionary<string, string[]> icons;           // the current theme's own icons (null: the built-in ones)
+    static int digits = 1; static string bar = "blocks"; static readonly string[] Bars = { "blocks", "solid" }, LineKinds = { "none", "dotted", "solid" };
+    static List<HsTheme> themes = new List<HsTheme>();  // his saved themes (Yours), 12 at most
+    static int fileV;                                   // the version his file had (v2 kept aside before the first v3 save; newer: never saved over)
+    static int every;                                 // seconds each page shows before the next; 0: the first page only
+    static string startKey = "", stopKey = "";        // the animations he picked ("": none, his own choice, 11-12)
+    static bool wheelFast;   // the Headset tab's "Faster volume wheel" (his 11-14 pick): the headset wheel's number sooner, the base's own volume screen flashing more often (experimental); off by default
+    public static bool WheelFast { get { return wheelFast; } }
+    static int focus = -1; static DateTime focusTill; // the page open in the popup shows on the base meanwhile
+    static List<HsSaved> saved = new List<HsSaved>(); // his own pages kept under a name (Settings' Saved tiles), 12 at most
+    public static Func<bool> Gaming = () => false;    // a game runs now (the app's own game watch): which pages show (their "when")
+    static readonly string[] Whens = { "always", "game", "idle" };
+
+    public static readonly HsAnim[] Anims = { new Anim_tv(), new Anim_scan(), new Anim_fade(), new Anim_sand(), new Anim_iris(), new Anim_blinds(), new Anim_glitch(), new Anim_logo() };
+    static readonly string[] Styles = { "number", "bar", "ring", "knob", "graph" }, Labels = { "icon", "name", "off" }, Ats = { "beside", "above" }, Graphs = { "line", "smooth", "steps", "area", "bars", "dots" }, Sizes = { "auto", "s", "m", "l" }, Aligns = { "auto", "left", "middle", "right" };
+    static readonly int[] Overs = { 60, 120, 600, 1800 }, Everys = { 0, 5, 10, 20, 30, 60 };
+    static readonly string[] NameSizes = { "auto", "small", "tiny" }, OffAses = { "word", "dash", "blank" }, ChgAses = { "blink", "steady", "none" };
+    const int MaxGrid = 6, MaxThemes = 12;   // (v3: rows and columns 1 to 6)
+    const int MaxPages = 6, MaxUnits = 5, MaxSaved = 12, Keep = 1800;   // (5 units: the screen's 62 rows of pixels; a graph: up to 30 min, a value a second)
+
+    static HsPiece P(string src, string style = "number", int w = 1, string label = "icon") { return new HsPiece { Src = src, Style = style, W = w, Label = label, Crit = src == "head" ? 12 : src == "mouse" ? 15 : double.NaN }; }   // (11-14 a battery's low warning as a level he sees: red at 12 / 15, counting down)
+    // the page it starts with: the ready-made Overview (the CPU's temperature as a graph with the GPU's dotted, under it
+    // the headset and its spare, then the volume and the clock). No mouse, in HW Dashboard neither (his 11-13: "NOBODY
+    // ELSE can see the mouse"): he adds it himself
+    const string DefaultKey = "overview";
+    static HsGPage Pick6() { foreach (var x in Presets()) if (x.Key == DefaultKey) return x.G; return Presets()[0].G; }
+    // the renderer's grid for a page (v3): its rows and columns, each piece at its cell; the look is the theme's
+    static HsLayout Grid(HsGPage pg) { return Grid(pg, digits, bar); }
+    static HsLayout Grid(HsGPage pg, int dig, string barLook)
+    {
+        var L = new HsLayout { Rows = pg.Rows, Cols = pg.Cols, Gap = pg.Gap, Lines = pg.Lines != "none", SolidLines = pg.Lines == "solid", Digits = dig, SolidBar = barLook == "solid", Icons = icons };
+        L.Pieces.AddRange(pg.Pieces);
+        return L;
+    }
+    // a v2 page (rows of height units) onto the grid: one grid row a unit, each row's pieces left to right at its first
+    // unit, as tall as their row; lines dotted as they were, the gap as it was (-1). Drawn exactly as before (checked)
+    static HsGPage FromRows(HsRowPage r, string name)
+    {
+        var g = new HsGPage { Name = name ?? "Page", When = r.When ?? "always", From = r.From, Cols = r.Cols, Gap = r.Gap, Lines = r.Lines ? "dotted" : "none" };
+        int y = 0;
+        foreach (var row in r.Rows)
+        {
+            int x = 0;
+            foreach (var p0 in row.Pieces) { var p = p0.Copy(); p.AtX = x; p.AtY = y; p.H = row.H; p.W = Math.Max(1, Math.Min(p.W, r.Cols - x)); x += p.W; g.Pieces.Add(p); }
+            y += row.H;
+        }
+        g.Rows = Math.Max(1, Math.Min(MaxUnits, y));
+        return g;
+    }
+    static HsGPage CopyPage(HsGPage g)
+    {
+        var c = new HsGPage { Name = g.Name, When = g.When, From = g.From, Rows = g.Rows, Cols = g.Cols, Gap = g.Gap, Lines = g.Lines };
+        foreach (var p in g.Pieces) c.Pieces.Add(p.Copy());
+        return c;
+    }
+    static string NewId(Func<string, bool> taken) { string id; do id = "h" + Guid.NewGuid().ToString("N").Substring(0, 10); while (taken(id)); return id; }
+    // the layout presets for a page (his "split in 2, 3, 4, 5 and 6"): its own pieces, in reading order, arranged anew
+    // (their settings kept): two columns, a row each, a column each, the first big beside / over / a third of the rest
+    static List<KeyValuePair<string, HsGPage>> Layouts(HsGPage pg)
+    {
+        var l = new List<KeyValuePair<string, HsGPage>>();
+        var ps = new List<HsPiece>(pg.Pieces); ps.Sort((a1, b1) => a1.AtY != b1.AtY ? a1.AtY.CompareTo(b1.AtY) : a1.AtX.CompareTo(b1.AtX));
+        int n = ps.Count; if (n == 0 || n > MaxGrid) return l;   // (more than 6: no presets, none would keep them all)
+        Action<string, int, int, Func<int, int[]>> add = (name, rows, cols, at) =>
+        {
+            var g = new HsGPage { Name = pg.Name, When = pg.When, Rows = rows, Cols = cols, Gap = pg.Gap, Lines = pg.Lines };
+            for (int k = 0; k < n; k++) { var q = ps[k].Copy(); var a2 = at(k); q.AtX = a2[0]; q.AtY = a2[1]; q.W = a2[2]; q.H = a2[3]; g.Pieces.Add(q); }
+            l.Add(new KeyValuePair<string, HsGPage>(name, g));
+        };
+        if (n >= 2) add("2 columns", (n + 1) / 2, 2, k => new[] { k % 2, k / 2, n % 2 == 1 && k == n - 1 ? 2 : 1, 1 });
+        add(n == 1 ? "Whole screen" : n + " rows", n, 1, k => new[] { 0, k, 1, 1 });
+        if (n >= 2) add(n + " columns", 1, n, k => new[] { k, 0, 1, 1 });
+        if (n >= 3) add("1 big beside", n - 1, 2, k => k == 0 ? new[] { 0, 0, 1, n - 1 } : new[] { 1, k - 1, 1, 1 });
+        if (n >= 3) add("1 big on top", 2, n - 1, k => k == 0 ? new[] { 0, 0, n - 1, 1 } : new[] { k - 1, 1, 1, 1 });
+        if (n >= 2) add("A third", n - 1, 3, k => k == 0 ? new[] { 0, 0, 1, n - 1 } : new[] { 1, k - 1, 2, 1 });
+        return l;
+    }
+
+    // ---- saved ----
+    public static void Load()
+    {
+        lock (gate) if (pages.Count == 0)   // (until his file says otherwise: the ready-made "Everyday", its first page the old default, Overview)
+        {
+            var t = Ready()[0];
+            pages = t.Pages; themeName = t.Name; themeFrom = "r:" + t.Id; every = t.Every; digits = t.Digits; bar = t.Bar; icons = t.Icons;
+        }
+        try { if (File_ != null && File.Exists(File_)) { var d = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(File_)) as Dictionary<string, object>; lock (gate) { if (d != null) fileV = Int(d, "v", 1, 0, 999); Take(d); }
+            if (fileV == 3) try { File.Copy(File_, Path.Combine(Path.GetDirectoryName(File_), "hs-layout.v3-start.json"), true); } catch { } } }   // (v3 as it was at this start: an older build writing over hs-layout.json loses nothing for good)
+        catch (Exception ex)
+        {
+            Log("headset page: hs-layout.json unreadable, the default page instead (kept as hs-layout.json.bad): " + ex.Message);
+            try { File.Copy(File_, File_ + ".bad", true); } catch { }   // (the next change writes a new file over it: his saved pages are in the copy)
+        }
+    }
+    static bool newerSaid;
+    static void Save()
+    {
+        if (File_ == null) return;
+        if (fileV > 3) { if (!newerSaid) { newerSaid = true; Log("headset page: hs-layout.json is from a newer HW Deck (v" + fileV + "): not saved over"); } return; }
+        try
+        {
+            if (fileV > 0 && fileV < 3 && File.Exists(File_))   // (his v1 / v2 file kept as it was, once, before the first v3 save)
+            {
+                var keep = Path.Combine(Path.GetDirectoryName(File_), "hs-layout.v2.json");
+                if (!File.Exists(keep)) File.Copy(File_, keep);
+                fileV = 3;
+            }
+            var tmp = File_ + ".tmp"; File.WriteAllText(tmp, new JavaScriptSerializer().Serialize(Setup()));
+            if (File.Exists(File_)) File.Replace(tmp, File_, null); else File.Move(tmp, File_);
+        }
+        catch (Exception ex) { Log("headset page: not saved: " + ex.Message); }
+    }
+
+    // the setup as JSON (the file, the popup), v3: {v, theme: {name, from, pages, every, start, stop, digits, bar},
+    // themes: [{id, name, theme}], saved: [{id, name, page}], wheelfast}; a page {name, when, from, rows, cols, gap, lines,
+    // pieces: [{x, y, w, h, src, style, ...}]}
+    static Dictionary<string, object> Setup()
+    {
+        var th = ThemeDict(themeName, themeFrom, pages, every, startKey, stopKey, digits, bar, icons);
+        var ts = new List<object>();
+        foreach (var t in themes) ts.Add(new Dictionary<string, object> { { "id", t.Id }, { "name", t.Name }, { "theme", ThemeDict(null, null, t.Pages, t.Every, t.Start, t.Stop, t.Digits, t.Bar, t.Icons) } });
+        var sv = new List<object>();
+        foreach (var x in saved) sv.Add(new Dictionary<string, object> { { "id", x.Id }, { "name", x.Name }, { "page", PageDict(x.Page) } });
+        return new Dictionary<string, object> { { "v", 3 }, { "theme", th }, { "themes", ts }, { "saved", sv }, { "wheelfast", wheelFast } };
+    }
+    static Dictionary<string, object> ThemeDict(string name, string from, List<HsGPage> ps, int ev, string st, string sp, int dig, string barLook, Dictionary<string, string[]> ic = null)
+    {
+        var pl = new List<object>(); foreach (var pg in ps) pl.Add(PageDict(pg));
+        var d = new Dictionary<string, object> { { "pages", pl }, { "every", ev }, { "start", st }, { "stop", sp }, { "digits", dig }, { "bar", barLook } };
+        if (ic != null && ic.Count > 0) { var id = new Dictionary<string, object>(); foreach (var kv in ic) id[kv.Key] = new List<object>(kv.Value); d["icons"] = id; }
+        if (name != null) d["name"] = name;
+        if (from != null) d["from"] = from;
+        return d;
+    }
+    static Dictionary<string, object> PageDict(HsGPage pg)
+    {
+        var pcs = new List<object>();
+        foreach (var p in pg.Pieces)
+        {
+            Func<double, object> N = d => double.IsNaN(d) ? null : (object)d;
+            pcs.Add(new Dictionary<string, object> { { "x", p.AtX }, { "y", p.AtY }, { "w", p.W }, { "h", p.H }, { "src", p.Src }, { "style", p.Style }, { "label", p.Label }, { "at", p.At }, { "name", p.Name }, { "src2", p.Src2 }, { "graph", p.Graph }, { "over", p.Over }, { "seconds", p.Seconds },
+                { "date", p.Date }, { "size", p.Size }, { "align", p.Align }, { "dec", p.Dec }, { "unit", p.Unit }, { "warn", N(p.Warn) }, { "crit", N(p.Crit) }, { "below", p.Below }, { "lo", N(p.Lo) }, { "hi", N(p.Hi) }, { "num", !p.NoNum }, { "nsize", p.NameSz }, { "dig", p.Dig }, { "inv", p.Inv }, { "offas", p.OffAs }, { "offtxt", p.OffTxt }, { "chgas", p.ChgAs } });
+        }
+        var page = new Dictionary<string, object> { { "name", pg.Name }, { "when", pg.When }, { "rows", pg.Rows }, { "cols", pg.Cols }, { "gap", pg.Gap }, { "lines", pg.Lines }, { "pieces", pcs } };
+        if (pg.From != null) page["from"] = pg.From;
+        return page;
+    }
+    // ready-made pages to start from, in groups as Look's themes are by colour (his 11-13 "no defaults like themes",
+    // then "the ready mades are terrible. you ALWAYS want to know the battery and the spare battery, and almost always
+    // the volume, so those 3 are essentials. and why is the mouse battery on one of the ready mades, NOBODY ELSE can see
+    // the mouse"): every one shows the headset, its spare and the volume; what else and how they are drawn differs;
+    // none has the mouse
+    static readonly string[] PresetKeys = { "cpu", "gpu", "head", "spare", "vol" };   // (what they read: kept for their graphs)
+    static List<HsPreset> Presets()
+    {
+        var l = new List<HsPreset>();
+        Func<int, HsPiece[], HsRow> R = (h, ps) => { var r = new HsRow { H = h }; r.Pieces.AddRange(ps); return r; };
+        Action<string, string, string, int, bool, HsRow[]> add = (grp, key, name, cols, lines, rs) => { var pg = new HsRowPage { Cols = cols, Lines = lines, From = "p:" + key }; pg.Rows.AddRange(rs); l.Add(new HsPreset { Key = key, Name = name, Group = grp, G = FromRows(pg, name), Page = pg }); };
+        Func<int, string, bool, HsPiece> Ck = (w, size, date) => { var c = P("clock", "number", w); c.Date = date; c.Size = size; return c; };
+        Func<string, string, string, HsPiece> Gr = (src, src2, kind) => { var g = P(src, "graph", 1, "name"); g.Src2 = src2; g.Graph = kind; g.Over = 120; return g; };
+        Func<HsPiece, int, HsPiece> W = (q, w) => { q.W = w; return q; };
+        // the three alone
+        add("Essentials", "bars", "Bars", 1, false, new[] { R(1, new[] { P("head", "bar") }), R(1, new[] { P("spare", "bar") }), R(1, new[] { P("vol", "bar") }) });
+        add("Essentials", "rings", "Rings", 2, true, new[] { R(3, new[] { P("head", "ring"), P("spare", "ring") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Essentials", "dials", "Dials", 3, true, new[] { R(1, new[] { P("head", "ring"), P("spare", "ring"), P("vol", "knob") }) });
+        add("Essentials", "large", "Large", 1, false, new[] { R(2, new[] { P("head") }), R(2, new[] { P("spare") }), R(1, new[] { P("vol", "bar") }) });
+        add("Essentials", "list", "List", 1, true, new[] { R(1, new[] { P("head") }), R(1, new[] { P("spare") }), R(1, new[] { P("vol") }) });
+        // with the time
+        add("Clock", "clock", "Clock", 2, true, new[] { R(3, new[] { Ck(2, "auto", true) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Clock", "clockbars", "Clock and bars", 1, true, new[] { R(2, new[] { Ck(1, "auto", true) }), R(1, new[] { P("head", "bar") }), R(1, new[] { P("spare", "bar") }), R(1, new[] { P("vol", "bar") }) });
+        add("Clock", "clockrings", "Clock and rings", 3, true, new[] { R(2, new[] { Ck(3, "auto", false) }), R(3, new[] { P("head", "ring"), P("spare", "ring"), P("vol", "knob") }) });
+        // with the CPU's and the GPU's temperatures
+        add("Temperatures", "temps", "Temperatures", 2, true, new[] { R(2, new[] { P("cpu", "number", 1, "name"), P("gpu", "number", 1, "name") }), R(2, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Temperatures", "gauges", "Gauges", 2, true, new[] { R(3, new[] { P("cpu", "knob", 1, "name"), P("gpu", "knob", 1, "name") }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Temperatures", "tempbars", "Temperature bars", 2, true, new[] { R(1, new[] { P("cpu", "bar", 2, "name") }), R(1, new[] { P("gpu", "bar", 2, "name") }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
+        // with a graph of them
+        add("Graphs", "overview", "Overview", 2, true, new[] { R(2, new[] { W(Gr("cpu", "gpu", "line"), 2) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol"), Ck(1, "auto", false) }) });
+        add("Graphs", "graph", "Graph", 2, true, new[] { R(3, new[] { W(Gr("cpu", "gpu", "area"), 2) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Graphs", "graphrings", "Graph and rings", 3, true, new[] { R(2, new[] { W(Gr("gpu", null, "smooth"), 3) }), R(3, new[] { P("head", "ring"), P("spare", "ring"), P("vol", "knob") }) });
+        // (11-14 his "draft some more themes and pages for headset too": ten more, each with the headset, the spare and the volume)
+        Func<HsPiece, HsPiece> Inv = q => { q.Inv = true; return q; };
+        Func<HsPiece, string, HsPiece> Nm = (q, n) => { q.Name = n; return q; };   // (a short name that fits a small ring)
+        add("Clock", "bigclock", "Big clock", 3, false, new[] { R(3, new[] { Ck(3, "l", true) }), R(2, new[] { P("head"), P("spare"), P("vol") }) });
+        add("Clock", "clockside", "Clock beside", 3, true, new[] { R(3, new[] { Ck(2, "auto", true), P("head", "ring") }), R(2, new[] { P("spare"), P("vol", "bar", 2) }) });
+        add("Clock", "spotlight", "Spotlight", 2, false, new[] { R(2, new[] { Inv(P("head", "number", 2)) }), R(2, new[] { P("spare"), P("vol") }), R(1, new[] { Ck(2, "auto", false) }) });
+        add("Load", "power", "Power", 2, true, new[] { R(3, new[] { Nm(P("cpuuse", "knob", 1, "name"), "CPU"), Nm(P("gpupow", "knob", 1, "name"), "GPU") }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Load", "loadbars", "Load bars", 2, true, new[] { R(1, new[] { P("cpuuse", "bar", 2, "name") }), R(1, new[] { P("gpupow", "bar", 2, "name") }), R(2, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Load", "loadrings", "Load rings", 3, true, new[] { R(3, new[] { Nm(P("cpuuse", "ring", 1, "name"), "CPU"), Nm(P("gpupow", "ring", 1, "name"), "GPU"), P("head", "ring") }), R(2, new[] { P("spare"), P("vol", "bar", 2) }) });
+        add("Graphs", "dots", "Dots", 2, true, new[] { R(3, new[] { W(Gr("cpu", "gpu", "dots"), 2) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Graphs", "steps", "Steps", 2, true, new[] { R(3, new[] { W(Gr("gpupow", null, "steps"), 2) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol"), Ck(1, "auto", false) }) });
+        add("Graphs", "loadgraph", "Load graph", 2, true, new[] { R(3, new[] { W(Gr("cpuuse", null, "bars"), 2) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Essentials", "inverted", "Inverted", 1, false, new[] { R(2, new[] { Inv(P("head")) }), R(2, new[] { P("spare") }), R(1, new[] { P("vol", "bar") }) });
+        return l;
+    }
+    // the ready-made THEMES (11-14): 2 pages each from the ready-made pages, a page change, their own digits, bars and
+    // lines. Every page has the headset, the spare and the volume; none has the mouse (his 11-13 rules)
+    static List<HsTheme> Ready()
+    {
+        var pre = Presets(); var l = new List<HsTheme>();
+        Action<string, string, int, int, string, string, string[]> add = (key, name, ev, dig, barLook, lines, keys) =>
+        {
+            var t = new HsTheme { Id = key, Name = name, Every = ev, Digits = dig, Bar = barLook };
+            foreach (var k in keys) foreach (var x in pre) if (x.Key == k) { var pg = CopyPage(x.G); pg.Name = x.Name; pg.When = "always"; pg.From = "p:" + k; if (lines != null) pg.Lines = lines; t.Pages.Add(pg); }
+            l.Add(t);
+        };
+        add("everyday", "Everyday", 10, 1, "blocks", null, new[] { "overview", "clockbars" });
+        add("bignumbers", "Big numbers", 10, 2, "solid", "none", new[] { "large", "temps" });
+        add("round", "Round", 10, 1, "solid", null, new[] { "rings", "clockrings" });
+        add("gauges", "Gauges", 10, 0, "blocks", null, new[] { "dials", "gauges" });
+        add("compact", "Compact", 20, 1, "solid", "solid", new[] { "list", "tempbars" });
+        add("timefirst", "Time first", 20, 1, "blocks", null, new[] { "clock", "clockbars" });
+        add("graphs", "Graphs", 10, 1, "blocks", null, new[] { "graph", "graphrings" });
+        // (11-14 his "draft some more themes and pages for headset too", his "Straight in": eight more)
+        add("nightclock", "Night clock", 20, 0, "solid", "none", new[] { "bigclock", "bars" });
+        add("spotlight", "Spotlight", 10, 1, "blocks", null, new[] { "spotlight", "clockbars" });
+        add("gamer", "Gamer", 10, 2, "solid", "solid", new[] { "power", "loadbars" });
+        add("digital", "Digital", 10, 3, "solid", null, new[] { "clock", "temps" });
+        add("loadwatch", "Load watch", 10, 1, "blocks", null, new[] { "loadrings", "loadgraph" });
+        add("dotted", "Dotted", 10, 1, "blocks", "dotted", new[] { "dots", "clockside" });
+        add("steps", "Steps", 20, 2, "blocks", null, new[] { "steps", "rings" });
+        add("bold", "Bold", 10, 2, "solid", "none", new[] { "inverted", "tempbars" });
+        return l;
+    }
+    // what came in, checked: anything out of range takes its default; a row past the 5 units, or a piece past its row's
+    // columns, is left out; no page: his pick 6. The first saves (11-12 23:00, a grid with pieces 1 to 5 cells tall) are
+    // turned into rows: each piece's row is where its top landed, as tall as its tallest piece
+    static void Take(Dictionary<string, object> d)
+    {
+        if (d == null) return;
+        if (Int(d, "v", 1, 0, 999) >= 3) { TakeV3(d); return; }
+        // v1 / v2 (his file before the revamp): rows of units, saved pages; moved onto the grid, drawn as they were
+        var ps = new List<HsGPage>();
+        foreach (var o in List(d, "pages"))
+        {
+            var pd = o as Dictionary<string, object>; if (pd == null || ps.Count >= MaxPages) continue;
+            object ro; pd.TryGetValue("rows", out ro);
+            var pg = ro is IEnumerable && !(ro is string) ? Rows(pd) : FromGrid(pd);
+            if (pg != null) ps.Add(FromRows(pg, "Page " + (ps.Count + 1)));
+        }
+        pages = ps.Count > 0 ? ps : new List<HsGPage> { Pick6() };
+        object so; d.TryGetValue("saved", out so);
+        if (so is IEnumerable && !(so is string) && !(so is IDictionary))
+        {
+            var sv = new List<HsSaved>(); var ids = new HashSet<string>();
+            foreach (var o in List(d, "saved"))
+            {
+                var sd = o as Dictionary<string, object>; if (sd == null || sv.Count >= MaxSaved) continue;
+                string id = Str(sd, "id"), nm = Str(sd, "name"); object po; sd.TryGetValue("page", out po);
+                var pd = po as Dictionary<string, object>;
+                if (pd == null) continue;
+                if (!IdOk(id) || !ids.Add(id)) { do id = "h" + Guid.NewGuid().ToString("N").Substring(0, 10); while (!ids.Add(id)); }
+                var pg = Rows(pd); pg.From = null; if (pg.Rows.Count == 0) continue;
+                if (nm == null) nm = "Page"; if (nm.Length > 40) nm = nm.Substring(0, 40).TrimEnd();
+                sv.Add(new HsSaved { Id = id, Name = nm, Page = FromRows(pg, nm) });
+            }
+            saved = sv;
+        }
+        int ev = Int(d, "every", 0, 0, 3600); every = Array.IndexOf(Everys, ev) >= 0 ? ev : 0;
+        startKey = AnimKey(Str(d, "start")); stopKey = AnimKey(Str(d, "stop"));
+        if (d.ContainsKey("wheelfast")) wheelFast = true.Equals(d["wheelfast"]);
+        digits = 1; bar = "blocks"; icons = null;
+        // (his setup kept as a theme of his own, picked: "My headset")
+        if (themes.Count == 0)
+        {
+            var t = new HsTheme { Id = NewId(x => false), Name = "My headset", Every = every, Start = startKey, Stop = stopKey, Digits = digits, Bar = bar };
+            foreach (var pg in pages) t.Pages.Add(CopyPage(pg));
+            themes.Add(t); themeName = t.Name; themeFrom = "t:" + t.Id;
+        }
+        if (focus >= pages.Count) focus = -1;
+    }
+    static void TakeV3(Dictionary<string, object> d)
+    {
+        var td = Dict(d, "theme");
+        if (td != null)
+        {
+            var t = ThemeOf(td);
+            pages = t.Pages.Count > 0 ? t.Pages : new List<HsGPage> { Pick6() };
+            every = t.Every; startKey = t.Start; stopKey = t.Stop; digits = t.Digits; bar = t.Bar; icons = t.Icons;
+            var nm = Str(td, "name"); themeName = nm == null ? "Custom" : nm.Length > 40 ? nm.Substring(0, 40).TrimEnd() : nm;
+            var fr = Str(td, "from"); themeFrom = fr != null && fr.Length > 2 && (fr.StartsWith("t:") || fr.StartsWith("r:")) && IdOk(fr.Substring(2)) ? fr : null;
+        }
+        object to; d.TryGetValue("themes", out to);
+        if (to is IEnumerable && !(to is string) && !(to is IDictionary))   // (a setup without the list keeps them as they are)
+        {
+            var tl = new List<HsTheme>(); var ids = new HashSet<string>();
+            foreach (var o in List(d, "themes"))
+            {
+                var x = o as Dictionary<string, object>; if (x == null || tl.Count >= MaxThemes) continue;
+                var t = ThemeOf(Dict(x, "theme")); if (t.Pages.Count == 0) continue;
+                string id = Str(x, "id"), nm = Str(x, "name");
+                if (!IdOk(id) || !ids.Add(id)) { id = NewId(z => ids.Contains(z)); ids.Add(id); }
+                t.Id = id; t.Name = nm == null ? "Theme" : nm.Length > 40 ? nm.Substring(0, 40).TrimEnd() : nm;
+                tl.Add(t);
+            }
+            themes = tl;
+        }
+        object so; d.TryGetValue("saved", out so);
+        if (so is IEnumerable && !(so is string) && !(so is IDictionary))
+        {
+            var sv = new List<HsSaved>(); var ids = new HashSet<string>();
+            foreach (var o in List(d, "saved"))
+            {
+                var sd = o as Dictionary<string, object>; if (sd == null || sv.Count >= MaxSaved) continue;
+                var pg = PageOf(Dict(sd, "page")); if (pg == null || pg.Pieces.Count == 0) continue;
+                string id = Str(sd, "id"), nm = Str(sd, "name");
+                if (!IdOk(id) || !ids.Add(id)) { id = NewId(z => ids.Contains(z)); ids.Add(id); }
+                if (nm == null) nm = "Page"; if (nm.Length > 40) nm = nm.Substring(0, 40).TrimEnd();
+                pg.From = null; sv.Add(new HsSaved { Id = id, Name = nm, Page = pg });
+            }
+            saved = sv;
+        }
+        if (d.ContainsKey("wheelfast")) wheelFast = true.Equals(d["wheelfast"]);
+        if (focus >= pages.Count) focus = -1;
+    }
+    static int IntC(Dictionary<string, object> d, string k, int def, int lo, int hi) { object o; if (!d.TryGetValue(k, out o) || o == null) return def; double v; try { v = Convert.ToDouble(o); } catch { return def; } if (double.IsNaN(v)) return def; return (int)Math.Max(lo, Math.Min(hi, Math.Round(v))); }
+    static Dictionary<string, object> Dict(Dictionary<string, object> d, string k) { object o; return d != null && d.TryGetValue(k, out o) ? o as Dictionary<string, object> : null; }
+    static HsTheme ThemeOf(Dictionary<string, object> td)
+    {
+        var t = new HsTheme(); if (td == null) return t;
+        foreach (var o in List(td, "pages")) { if (t.Pages.Count >= MaxPages) break; var pg = PageOf(o as Dictionary<string, object>); if (pg != null) t.Pages.Add(pg); }
+        int ev = Int(td, "every", 0, 0, 3600); t.Every = Array.IndexOf(Everys, ev) >= 0 ? ev : 0;
+        t.Start = AnimKey(Str(td, "start")); t.Stop = AnimKey(Str(td, "stop"));
+        t.Digits = Int(td, "digits", 1, 0, 3); t.Bar = Pick(td, "bar", Bars);
+        t.Icons = IconsOf(Dict(td, "icons"));
+        return t;
+    }
+    // a theme's icons: rows of X (lit) and . (dark), 1 to 13 rows of 1 to 13, at most 32 of them; a bad one is left out
+    static Dictionary<string, string[]> IconsOf(Dictionary<string, object> d)
+    {
+        if (d == null) return null;
+        var r = new Dictionary<string, string[]>();
+        foreach (var kv in d)
+        {
+            if (r.Count >= 32 || string.IsNullOrEmpty(kv.Key) || kv.Key.Length > 64 || kv.Value is string) continue;
+            var en = kv.Value as IEnumerable; if (en == null) continue;
+            var rows = new List<string>(); int w = 0; bool bad = false;
+            foreach (var o in en)
+            {
+                var s = o as string;
+                if (s == null || s.Length == 0 || s.Length > 13 || rows.Count >= 13) { bad = true; break; }
+                foreach (char ch in s) if (ch != 'X' && ch != '.') bad = true;
+                rows.Add(s); w = Math.Max(w, s.Length);
+            }
+            if (bad || rows.Count == 0) continue;
+            var a = new string[rows.Count]; for (int k = 0; k < a.Length; k++) a[k] = rows[k].PadRight(w, '.');
+            r[kv.Key] = a;
+        }
+        return r.Count > 0 ? r : null;
+    }
+    // the built-in icons (the editor's "Reset to default" and its starting point)
+    static readonly string[] SpareRows = { "XXXXXXXXXXXX.", "X..........X.", "X..........XX", "X..........XX", "X..........XX", "X..........X.", "XXXXXXXXXXXX." };
+    static Dictionary<string, object> IconDefaults()
+    {
+        Func<string[], object> L = a => new List<object>(a);
+        return new Dictionary<string, object> { { "head", L(Ico.Headset) }, { "spare", L(SpareRows) }, { "vol", L(Ico.Speaker) }, { "mute", L(Ico.Mute) }, { "mouse", L(Ico.Mouse) }, { "bolt", L(Ico.Bolt) } };
+    }
+    // a v3 page: its grid, each piece at its cell inside it; one that would cover another's cell is left out
+    static HsGPage PageOf(Dictionary<string, object> pd)
+    {
+        if (pd == null) return null;
+        object ro; pd.TryGetValue("rows", out ro);
+        if (ro is IEnumerable && !(ro is string)) { var r = Rows(pd); return r.Rows.Count > 0 ? FromRows(r, Str(pd, "name") ?? "Page") : null; }   // (a v2 page inside: moved over)
+        var g = new HsGPage { Rows = Int(pd, "rows", 2, 1, MaxGrid), Cols = Int(pd, "cols", 2, 1, MaxGrid), Gap = Int(pd, "gap", -1, -1, 6), Lines = Pick(pd, "lines", LineKinds), When = Pick(pd, "when", Whens) };
+        var nm = Str(pd, "name"); g.Name = nm == null ? "Page" : nm.Length > 24 ? nm.Substring(0, 24).TrimEnd() : nm;
+        string from = Str(pd, "from"); if (from != null && from.Length > 2 && (from.StartsWith("p:") || from.StartsWith("s:")) && IdOk(from.Substring(2))) g.From = from;
+        var own = new bool[g.Rows, g.Cols];
+        foreach (var q in List(pd, "pieces"))
+        {
+            var qd = q as Dictionary<string, object>; var p = Piece(qd); if (p == null) continue;
+            int x = IntC(qd, "x", 0, 0, g.Cols - 1), y = IntC(qd, "y", 0, 0, g.Rows - 1), w = IntC(qd, "w", 1, 1, g.Cols - x), h = IntC(qd, "h", 1, 1, g.Rows - y);   // (clamped: a hand-edited place stays near where it was)
+            bool free = true; for (int a2 = 0; a2 < h; a2++) for (int b2 = 0; b2 < w; b2++) if (own[y + a2, x + b2]) free = false;
+            if (!free) continue;
+            for (int a2 = 0; a2 < h; a2++) for (int b2 = 0; b2 < w; b2++) own[y + a2, x + b2] = true;
+            p.AtX = x; p.AtY = y; p.W = w; p.H = h; g.Pieces.Add(p);
+        }
+        return g;
+    }
+    static HsRowPage Rows(Dictionary<string, object> pd)
+    {
+        var pg = new HsRowPage { Cols = Int(pd, "cols", 2, 1, 3), Lines = Bool(pd, "lines", true) };   // (no "gap": the setting went, his 11-13 "bad fix")
+        pg.When = Pick(pd, "when", Whens);
+        string from = Str(pd, "from"); if (from != null && from.Length > 2 && (from.StartsWith("p:") || from.StartsWith("s:")) && IdOk(from.Substring(2))) pg.From = from;
+        int units = 0;
+        foreach (var r in List(pd, "rows"))
+        {
+            var rd = r as Dictionary<string, object>; if (rd == null) continue;
+            var row = new HsRow { H = Int(rd, "h", 1, 1, 3) };
+            if (units + row.H > MaxUnits) break;
+            units += row.H;
+            int x = 0;
+            foreach (var q in List(rd, "pieces"))
+            {
+                var p = Piece(q as Dictionary<string, object>); if (p == null) continue;
+                p.W = Math.Min(p.W, pg.Cols); if (x + p.W > pg.Cols) continue;
+                x += p.W; row.Pieces.Add(p);
+            }
+            pg.Rows.Add(row);
+        }
+        return pg;
+    }
+    static HsRowPage FromGrid(Dictionary<string, object> pd)
+    {
+        var L = new HsLayout { Rows = Int(pd, "rows", 4, 1, 5), Cols = Int(pd, "cols", 2, 1, 3), Lines = Bool(pd, "lines", true) };
+        foreach (var q in List(pd, "pieces")) { var qd = q as Dictionary<string, object>; var p = Piece(qd); if (p == null) continue; p.H = qd != null ? Int(qd, "h", 1, 1, 5) : 1; L.Pieces.Add(p); }
+        Hs.Place(L);
+        var pg = new HsRowPage { Cols = L.Cols, Lines = L.Lines };
+        var tops = new SortedDictionary<int, List<HsPiece>>();
+        foreach (var p in L.Pieces) if (p.X >= 0) { List<HsPiece> l; if (!tops.TryGetValue(p.Y, out l)) tops[p.Y] = l = new List<HsPiece>(); l.Add(p); }
+        var ys = new List<int>(tops.Keys); int units = 0;
+        for (int k = 0; k < ys.Count; k++)
+        {
+            int next = k + 1 < ys.Count ? ys[k + 1] : L.Rows, h = 1;
+            foreach (var p in tops[ys[k]]) h = Math.Max(h, Math.Min(p.H, L.Rows - p.Y));
+            h = Math.Max(1, Math.Min(3, Math.Min(h, next - ys[k])));
+            if (units + h > MaxUnits) break;
+            units += h;
+            var row = new HsRow { H = h };
+            var l2 = tops[ys[k]]; l2.Sort((a, b) => a.X.CompareTo(b.X));
+            foreach (var p in l2) { p.AtX = p.AtY = -1; row.Pieces.Add(p); }
+            pg.Rows.Add(row);
+        }
+        return pg.Rows.Count > 0 ? pg : null;
+    }
+    // a ready-made page's key, a saved page's id: lower-case letters and digits, 40 at most
+    static bool IdOk(string id) { if (id == null || id.Length == 0 || id.Length > 40) return false; foreach (char ch in id) if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))) return false; return true; }
+    static HsPiece Piece(Dictionary<string, object> qd)
+    {
+        if (qd == null) return null;
+        string src = Str(qd, "src"); if (src == null) return null;
+        var p = new HsPiece { Src = src, Style = Pick(qd, "style", Styles), Label = Pick(qd, "label", Labels), At = Pick(qd, "at", Ats), W = Int(qd, "w", 1, 1, MaxGrid), Src2 = Str(qd, "src2"), Graph = Pick(qd, "graph", Graphs), Seconds = Bool(qd, "seconds", false), Date = Bool(qd, "date", true),
+            Size = Pick(qd, "size", Sizes), Align = Pick(qd, "align", Aligns), Dec = Int(qd, "dec", 0, 0, 2), Unit = Bool(qd, "unit", true), Warn = Num(qd, "warn"), Crit = Num(qd, "crit"), Lo = Num(qd, "lo"), Hi = Num(qd, "hi") };
+        object bo; if (qd.TryGetValue("below", out bo) && bo is bool) p.Below = (bool)bo;
+        object nb; if (qd.TryGetValue("num", out nb) && nb is bool) p.NoNum = !(bool)nb;   // (v3)
+        p.NameSz = Pick(qd, "nsize", NameSizes); p.Dig = Int(qd, "dig", -1, -1, 3); p.Inv = Bool(qd, "inv", false);   // (11-14)
+        p.OffAs = Pick(qd, "offas", OffAses); p.ChgAs = Pick(qd, "chgas", ChgAses); var ot = Str(qd, "offtxt"); if (ot != null) { ot = Caps(ot).Trim(); if (ot.Length > 6) ot = ot.Substring(0, 6).TrimEnd(); p.OffTxt = ot.Length > 0 ? ot : null; }   // (11-14 his battery states)
+        var nm = Str(qd, "name"); if (nm != null) { nm = Caps(nm); if (nm.Length > 16) nm = nm.Substring(0, 16).TrimEnd(); p.Name = nm.Length > 0 ? nm : null; }   // (his own label words, in the screen's letters)
+        int over = Int(qd, "over", 120, 1, Keep); p.Over = Array.IndexOf(Overs, over) >= 0 ? over : 120;
+        if (p.Src2 == "clock" || p.Src2 == p.Src) p.Src2 = null;
+        return p;
+    }
+    static IEnumerable List(Dictionary<string, object> d, string k) { object o; return d.TryGetValue(k, out o) && o is IEnumerable && !(o is string) ? (IEnumerable)o : new object[0]; }
+    static string Str(Dictionary<string, object> d, string k) { object o; if (!d.TryGetValue(k, out o) || !(o is string)) return null; var s = ((string)o).Trim(); return s.Length == 0 || s.Length > 200 ? null : s; }
+    static double Num(Dictionary<string, object> d, string k)
+    {
+        object o; if (!d.TryGetValue(k, out o) || o == null) return double.NaN;
+        double v; if (!double.TryParse(Convert.ToString(o, CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture, out v) || double.IsInfinity(v) || Math.Abs(v) > 1e9) return double.NaN;
+        return v;
+    }
+    static bool Bool(Dictionary<string, object> d, string k, bool def) { object o; return d.TryGetValue(k, out o) && o is bool ? (bool)o : def; }
+    static int Int(Dictionary<string, object> d, string k, int def, int lo, int hi)
+    {
+        object o; if (!d.TryGetValue(k, out o) || o == null) return def;
+        double v; if (!double.TryParse(Convert.ToString(o, CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture, out v)) return def;
+        int n = (int)Math.Round(v); return n < lo || n > hi ? def : n;
+    }
+    static string Pick(Dictionary<string, object> d, string k, string[] from) { var s = Str(d, k); return s != null && Array.IndexOf(from, s) >= 0 ? s : from[0]; }
+    static string AnimKey(string k) { foreach (var a in Anims) if (a.Key == k) return k; return ""; }
+
+    // ---- the picture on the base ----
+    public static bool[,] Draw(HsInfo i) { lock (gate) return Hs.Draw(Grid(Showing(i.Now)), i).Px; }
+    static HsGPage Showing(DateTime t)
+    {
+        if (focus >= 0 && focus < pages.Count && DateTime.UtcNow < focusTill) return pages[focus];
+        // (each page's Shows: always, only while a game runs, only while none does. The ones that fit now take turns;
+        // none fits: every page, so the screen is never left without one)
+        bool g = false; try { g = Gaming(); } catch { }
+        var ps = new List<HsGPage>();
+        foreach (var pg in pages) if (pg.When == "always" || (pg.When == "game") == g) ps.Add(pg);
+        if (ps.Count == 0) ps = pages;
+        if (every <= 0 || ps.Count < 2) return ps[0];
+        long s = (long)(t - new DateTime(2000, 1, 1)).TotalSeconds;
+        return ps[(int)(s / every % ps.Count)];
+    }
+    // the animation he picked to start the page (start) or end it (null: none); one by its key (the popup's preview)
+    public static HsAnim Anim(bool start) { return Find(start ? startKey : stopKey); }
+    public static HsAnim Find(string k) { foreach (var a in Anims) if (a.Key == k) return a; return null; }
+
+    // ---- the readings, every second from the dashboard (x-form.cs): the values of the readings on his pages, and a
+    // history of each for the graphs (Hs.Extra, Hs.Hist; Hs.Units / Names / Maxes from the catalog) ----
+    static Source fsrc; static int fver = -1; static readonly Dictionary<string, int> at = new Dictionary<string, int>();
+    public static void Feed(Source s)
+    {
+        var i = Batt.Info(DateTime.Now);
+        lock (gate)
+        {
+            var keys = new HashSet<string>();
+            Action<HsGPage> want = pg => { foreach (var p in pg.Pieces) { if (p.Src != "clock") keys.Add(p.Src); if (p.Src2 != null) keys.Add(p.Src2); } };
+            foreach (var pg in pages) want(pg);
+            foreach (var t in themes) foreach (var pg in t.Pages) want(pg);   // (his themes' pictures in Customize draw real graphs too)
+            foreach (var k0 in PresetKeys) keys.Add(k0);   // (the ready-made pages' and his saved pages' too: their pictures in Settings draw real graphs)
+            foreach (var x in saved) want(x.Page);
+            if (s != null && (s != fsrc || s.Version != fver)) { fsrc = s; fver = s.Version; at.Clear(); for (int k = 0; k < s.Readings.Count; k++) at[s.Readings[k].Key] = k; }
+            foreach (var k in keys)
+            {
+                double v = double.NaN; int j;
+                switch (k)
+                {
+                    case "cpu": v = i.Cpu; break;
+                    case "gpu": v = i.Gpu; break;
+                    case "head": v = i.HeadOff || i.Head < 0 ? double.NaN : i.Head; break;
+                    case "spare": v = i.SpareOut || i.Spare < 0 ? double.NaN : i.Spare; break;
+                    case "mouse": v = i.Mouse < 0 ? double.NaN : i.Mouse; break;
+                    case "vol": v = i.Volume < 0 ? double.NaN : i.Volume; break;
+                    default:
+                        if (s != null && at.TryGetValue(k, out j) && j < s.Readings.Count)
+                        {
+                            var r = s.Readings[j];
+                            if (j < s.Values.Length) v = s.Values[j];
+                            Hs.Units[k] = Unit(r.Unit ?? ""); Hs.Names[k] = Caps(r.Label ?? "");
+                            bool pct = r.Unit == "%" || r.Unit == Deg + "C";
+                            Hs.Maxes[k] = pct ? 100 : Nice(j < s.Max.Length ? s.Max[j] : double.NaN);
+                        }
+                        Hs.Extra[k] = v; break;
+                }
+                if (double.IsInfinity(v)) v = double.NaN;
+                double[] h;
+                if (!Hs.Hist.TryGetValue(k, out h)) { h = new double[Keep]; for (int n = 0; n < Keep; n++) h[n] = double.NaN; Hs.Hist[k] = h; }
+                Array.Copy(h, 1, h, 0, Keep - 1); h[Keep - 1] = v;
+            }
+            foreach (var k in new List<string>(Hs.Hist.Keys)) if (!keys.Contains(k)) { Hs.Hist.Remove(k); Hs.Extra.Remove(k); }
+        }
+    }
+    static readonly string Deg = ((char)176).ToString();
+    // the pixel fonts have capitals, digits and % : - ! only
+    static string Caps(string s)
+    {
+        var b = new StringBuilder();
+        foreach (char c0 in s.ToUpperInvariant()) { char c = c0; if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '%' || c == '-' || c == ':' || c == '.' || c == '/' || c == '!')) c = ' '; if (c == ' ' && (b.Length == 0 || b[b.Length - 1] == ' ')) continue; b.Append(c); }
+        return b.ToString().TrimEnd();
+    }
+    static string Unit(string u) { return u == Deg + "C" ? Deg : u == "Mbit/s" ? "MBIT" : Caps(u).Replace(" ", ""); }
+    // a bar's or ring's top for a reading with no top of its own: 1, 2 or 5 times a power of ten over the most it read
+    static double Nice(double mx)
+    {
+        if (double.IsNaN(mx) || mx <= 0) return 100;
+        double t = mx * 1.1, p = Math.Pow(10, Math.Floor(Math.Log10(t)));
+        foreach (double f in new[] { 1.0, 2, 5, 10 }) if (f * p >= t) return f * p;
+        return 10 * p;
+    }
+
+    // ---- the popup (x-form.cs: "x.hs.<what>", answered with "x.hsv") ----
+    //   get  {page, cards}  the page n as it is now (and the animations' cards with cards); n shows on the base for 3 s
+    //   set  {setup, page}  his change: taken, saved, and the page n back
+    //   play {key, which, page}  one animation's pictures, 25 a second, for its card; the base plays it too
+    static int galPage = -1, galN;
+    public static Dictionary<string, object> Message(string what, Dictionary<string, object> m)
+    {
+        int n = Int(m, "page", 0, 0, MaxPages - 1);
+        if (what == "set" && fileV <= 3)   // (a file from a newer HW Deck: read only)
+        {
+            object o; m.TryGetValue("setup", out o);
+            lock (gate) Take(o as Dictionary<string, object>);
+            Save();
+        }
+        if (what == "get" || what == "set")
+        {
+            var r = new Dictionary<string, object>();
+            var i = Batt.Info(DateTime.Now); i.Dx = i.Dy = 1;   // (the preview stays put: the base's own moves a pixel a minute)
+            lock (gate)
+            {
+                if (n >= pages.Count) n = pages.Count - 1;
+                focus = n; focusTill = DateTime.UtcNow.AddSeconds(3);
+                var pg = pages[n]; var L = Grid(pg);
+                var px = Hs.Draw(L, i).Px;
+                Func<double, double> F = v => Math.Round(v, 5);
+                var rects = new List<object>();   // (each piece, in the page's own order: null when it found no room)
+                foreach (var p in L.Pieces) rects.Add(p.X < 0 ? null : new object[] { F((p.Bx + 1) / 128.0), F((p.By + 1) / 64.0), F(p.Bw / 128.0), F(p.Bh / 64.0) });
+                var colx = new List<object>(); for (int c = 0; c < L.Cols; c++) colx.Add(new object[] { F((L.ColX[c] + 1) / 128.0), F(L.ColW[c] / 128.0) });
+                var rowy = new List<object>(); for (int rr = 0; rr < L.Rows; rr++) rowy.Add(new object[] { F((L.RowY[rr] + 1) / 64.0), F(L.RowH[rr] / 64.0) });
+                r["img"] = Bits(px); r["rects"] = rects; r["colx"] = colx; r["rowy"] = rowy;
+                r["readonly"] = fileV > 3;
+                // (the page's layout presets, its digits in the four designs, the bar looks, the tiles: pictures for Customize's
+                // galleries; not every second, the base's knob waits on this lock: on a change, another page, and each 5th ask)
+                bool gal = what == "set" || Bool(m, "cards", false) || n != galPage || ++galN % 5 == 0; galPage = n;
+                if (gal) {
+                r["icodef"] = IconDefaults();
+                var lay = new List<object>();
+                foreach (var kv in Layouts(pg)) lay.Add(new Dictionary<string, object> { { "name", kv.Key }, { "img", Bits(Hs.Draw(Grid(kv.Value), i).Px) }, { "page", PageDict(kv.Value) } });
+                r["lay"] = lay;
+                var dig = new List<object>(); for (int k = 0; k < 4; k++) dig.Add(Bits(Hs.Draw(Grid(pg, k, bar), i).Px));
+                r["dig"] = dig;
+                HsGPage bp = null; foreach (var x in Presets()) if (x.Key == "bars") bp = x.G;
+                if (bp != null) r["bars"] = new List<object> { Bits(Hs.Draw(Grid(bp, digits, "blocks"), i).Px), Bits(Hs.Draw(Grid(bp, digits, "solid"), i).Px) };
+                }
+                r["what"] = what; r["setup"] = Setup(); r["page"] = n;
+                var an = new List<object>(); foreach (var a in Anims) an.Add(new Dictionary<string, object> { { "key", a.Key }, { "name", a.Name } });
+                r["anims"] = an;
+                var pre = Presets();
+                if (gal) {
+                var pimg = new Dictionary<string, object>(); foreach (var x in pre) pimg[x.Key] = Bits(Hs.Draw(Grid(x.G), i).Px);
+                var simg = new Dictionary<string, object>(); foreach (var x in saved) simg[x.Id] = Bits(Hs.Draw(Grid(x.Page), i).Px);
+                var timg = new Dictionary<string, object>(); foreach (var t in themes) { var tl = Grid(t.Pages[0], t.Digits, t.Bar); tl.Icons = t.Icons; timg[t.Id] = Bits(Hs.Draw(tl, i).Px); }   // (his themes: their first page in their own look)
+                var rimg = new Dictionary<string, object>(); foreach (var t in Ready()) { var rl0 = Grid(t.Pages[0], t.Digits, t.Bar); rl0.Icons = t.Icons; rimg[t.Id] = Bits(Hs.Draw(rl0, i).Px); }
+                r["pimg"] = pimg; r["simg"] = simg; r["timg"] = timg; r["rimg"] = rimg;
+                }
+                if (Bool(m, "cards", false))
+                {
+                    var cards = new Dictionary<string, object>();
+                    foreach (var a in Anims) { cards[a.Key + "-start"] = Bits(a.Start(a.StartMs * 0.45, px)); cards[a.Key + "-stop"] = Bits(a.Stop(a.StopMs * 0.45, px)); }
+                    r["cards"] = cards;
+                    var pl = new List<object>();
+                    foreach (var x in pre) pl.Add(new Dictionary<string, object> { { "key", x.Key }, { "name", x.Name }, { "group", x.Group }, { "page", PageDict(x.G) } });
+                    r["presets"] = pl;
+                    var rl = new List<object>();
+                    foreach (var t in Ready()) rl.Add(new Dictionary<string, object> { { "key", t.Id }, { "name", t.Name }, { "theme", ThemeDict(null, null, t.Pages, t.Every, "", "", t.Digits, t.Bar, t.Icons) } });
+                    r["rthemes"] = rl;
+                }
+            }
+            return r;
+        }
+        if (what == "play")
+        {
+            var a = Find(Str(m, "key")); if (a == null) return null;
+            bool start = Str(m, "which") != "stop";
+            Batt.Preview(a, start);   // (the base plays it too, when it shows his page: his 11-12 "no animations")
+            var i = Batt.Info(DateTime.Now); i.Dx = i.Dy = 1;
+            var frames = new List<object>();
+            lock (gate)
+            {
+                if (n >= pages.Count) n = pages.Count - 1;
+                var px = Hs.Draw(Grid(pages[n]), i).Px;
+                int len = start ? a.StartMs : a.StopMs;
+                for (int t = 0; t < len; t += 40) frames.Add(Bits(start ? a.Start(t, px) : a.Stop(t, px)));
+                frames.Add(Bits(start ? a.Start(len, px) : a.Stop(len, px)));
+                if (!start) { frames.Add(Bits(new bool[128, 64])); frames.Add(Bits(new bool[128, 64])); }   // (a moment of black, then the card's own picture)
+            }
+            return new Dictionary<string, object> { { "play", new Dictionary<string, object> { { "key", a.Key }, { "which", start ? "start" : "stop" }, { "ms", 40 }, { "frames", frames } } } };
+        }
+        return null;
+    }
+    // a picture for the page: 128 x 64 bits, row by row, the first pixel the highest bit, as base64
+    static string Bits(bool[,] px)
+    {
+        var b = new byte[128 * 64 / 8];
+        for (int y = 0; y < 64; y++) for (int x = 0; x < 128; x++) if (px[x, y]) { int k = y * 128 + x; b[k >> 3] |= (byte)(0x80 >> (k & 7)); }
+        return Convert.ToBase64String(b);
+    }
+}
+
+// The headset's and the mouse's batteries, read by the dashboard itself (no SteelSeries GG, no Logitech G HUB), and the
+// headset base station's small screen showing the dashboard (11-12, his "looks amazing start working" after the screen
+// test). Protocol and proof: memory note re-headset-mouse; the proof reader with the same classes and the same gates is
+// Code\projects\hwdeck\local\batteries\batteries.cs.
+//   headset  Arctis Nova Pro Wireless base station, USB 1038:12E0, HID interface 4, which Windows splits by report id:
+//            FFC0 collection = report 06: questions 06 B0 / 06 B7 and their replies, and the screen (feature 06 93
+//            draws, output 06 95 gives the base its own view back); FF00 collection = report 07, what the base pushes
+//   mouse    LIGHTSPEED receiver, USB 046D:C54D, HID interface 2, HID++ (short 10 on FF00/0001, long 11 on FF00/0002)
+// Every packet leaves through one of four gates (Arctis.Out, Arctis.Feature, Arctis.Raw for the volume knob, Lightspeed.Call): status questions (06 B0,
+// 06 B7, 06 20, 06 10, 06 80; HID++ ping, getFeature, 1004 getStatus), the two screen commands, and the volume knob's own reports (gate 4) only. NEVER add: 06 09 (save to flash), 06 01 (reset), any 06 <setting> write (EQ 33 / 2E,
+// sidetone 39, mic 37, gain 27, BT B2 / B3, timer C1, mode C3, LED BF, ANC BD / B9, home view 89), 06 85 (the screen's
+// brightness, a setting the base keeps), and on the mouse any HID++ "set" function or receiver register write (80 / 82).
+// What the screen shows is drawn by x-hspage.cs (free to redesign); this file decides when. The screen is an OLED and
+// burns in (his 11-12; 11-13 he saw it on a white picture): the page moves by a pixel every minute over 3 x 3 places,
+// and goes dark (every pixel off) while the PC is locked, after 2 minutes with nobody at it (not while a game runs),
+// while Windows has the monitors off, as it goes to sleep and as Windows shuts down (or, his setting, the base's own
+// view comes back then). The base's own view comes back (06 95) only when he switches the screen off in
+// Controls, when the dashboard quits, or while SteelSeries GG runs (the screen is GG's then), and for a moment on
+// every click of the base's volume knob, with our picture right after it, where its knob can't be taken over: there the only way past the base's own volume
+// screen (see volume below). A test copy (--data or --fake) reads nothing (HWDECK_BATT=1 lets one, for its own check).
+
+static class Batt
+{
+    public static Action<string> Log = delegate { };
+    public static Action Changed = delegate { };    // what the headset's state shows changed (HW Dashboard's Controls card)
+    public static Func<bool> Blocked = () => false;   // a copy that must never open the devices
+    public static bool MouseOn;   // the LIGHTSPEED mouse too: HW Dashboard only (his 11-13: not for HW Deck users), set before Start (HW Dashboard's test and trial copies)
+    public static string ScreenFile;                 // hs-screen.txt in the data folder: "on" his pages (Custom), "base" the base's own screen (Original), "dark" (Off); "off" (before 11-14): dark in HW Dashboard, the base's own in HW Deck; none: the base's own
+    public static string StateFile;                  // batt.txt in the data folder: the mouse's last reading (a start while it sleeps showed "--")
+    // what was read (-1: not known). The headset's levels are the base's steps, 0 to 8, shown as GG does (0, 12 .. 100 %)
+    public static volatile int HeadLevel = -1, SpareLevel = -1, HeadPower = -1, MousePct = -1, MouseCharging = -1;
+    public static volatile bool HeadThere, MouseThere, MouseAsleep;
+    // found at least once in this run: HW Deck's readings for them are in its list from then on (as the 12V-2x6
+    // connector's are only for a card that reports its pins), so nobody without this headset or mouse sees them
+    public static volatile bool HeadSeen, MouseSeen;
+    public const string HeadKey = "hwdeck.0/headbatt", SpareKey = "hwdeck.0/sparebatt", MouseKey = "hwdeck.0/mousebatt";
+    // the spare's slot is read as empty when the base says level 0: that is what it said with the battery taken out
+    // (his 11-12). No flag of its own is known yet; the base's answers are logged on every change ("base said") to find one
+    public static bool SpareOut { get { return SpareLevel == 0; } }
+    public static bool SpareCharging { get { return SpareLevel > 0 && SpareLevel < 8; } }   // (the base charges what is in its slot)
+    // the dashboard's own numbers for the page, every second (Feed)
+    public static double Cpu = double.NaN, Gpu = double.NaN;
+    public static volatile bool Gaming;
+    // the screen: switched on in Controls; what it shows now (none, off, gg, base, dark, page) and why it is dark
+    public static volatile bool ScreenOn;
+    public static volatile bool ScreenBase;          // ScreenOn false: true the base's own screen and knob (Original, his 11-14 "allow it to return to the old ui"), false dark (Off)
+    public static volatile bool DisplaysOff;          // Windows turned the monitors off (the form's display state notice): dark, game or not
+    const int AwaySec = 120;                          // nobody at the PC this long: dark (was 10 min; his 11-13 "dark sooner")
+    static volatile string mode = "", darkWhy = "";
+    static volatile bool locked, asleep, ending;
+    static int endingAt;
+    // the base's volume, 0 to 100: asked with 06 20 (its answer's [3]) every minute, and pushed as the knob turns
+    // (07 25 <x>); both 0x38 - x, 0 to 56 (ggoled, Arctis Sound Manager; 15 pushes a turn, seen 11-12). Left to itself
+    // the base answers every click with its own volume screen: it takes the screen back, drops every picture for 5 s
+    // and shows its home view (its firmware: "if the host owns the screen, take it back", nothing else is checked).
+    // 06 95 and our picture right after end that at once, but its screens still show for about 40 ms a click: that is
+    // the way for a firmware this was not proven on, for its other home view, and for the headset's own wheel.
+    // THE KNOB WITH NONE OF THE BASE'S SCREENS (11-13, his "the goal is perfection. 0 old ui"; read from the firmware
+    // GG keeps on disk, checked by independent readers, proven on his base: hwdeck\local\hs-knob-1112, findings.md):
+    //   - 06 1b 81 01 01 is the firmware's key test mode: it then only REPORTS the knob and the two buttons to the PC
+    //     (06 b1 81 01 <key> <state>: key 3 / 4 a click up / down, 1 the knob pressed, 2 the back button) and does
+    //     nothing with them. Memory only; 06 1b 81 01 00, or a replug, ends it.
+    //   - the PC sets the volume itself: 06 25 <0x38 - level>. The base then draws its volume gauge once (no take back).
+    //   - 06 1b 8a 01 <b> passes one byte to the OLED's controller (an SSD1309 kind: its start up sequence begins
+    //     fd 12). fd 16 locks it: it ignores every command and every picture write and keeps showing what it has;
+    //     fd 12 unlocks. So: lock, 06 25, wait for the gauge to be over, unlock, our picture. The gauge never shows.
+    //   - a byte sent while the base is busy with its display is DROPPED with no sign, so every lock and unlock waits
+    //     (busFree), and the unlock goes three times. No picture while locked: the base sends the panel its window
+    //     only when it differs from the last one it sent. Never another byte through 06 1b 8a.
+    //   - the gauge also lands in the base's copy of our picture (columns 75 to 127): the right half is always sent
+    //     after a change. Its other home view draws the gauge over both halves: not handled, so that view keeps the
+    //     old way.
+    //   - THE HEADSET'S OWN WHEEL (his 11-13 pick "Build quiet wheel"): its clicks reach the base as a volume message,
+    //     and the base takes the screen back for one only while the screen is the host's (every 06 93 makes it so,
+    //     06 95 00 makes it the base's again). So between pictures the panel stays locked and the screen is handed
+    //     back (06 95 00, its home frame goes to the locked panel): a wheel click then draws nothing. A picture: the
+    //     left half while still locked (into the base's copy only), the panel unlocked, the right half (the base sends
+    //     the panel its whole copy), locked again once the base's display is surely free, 06 95 00. Before the panel
+    //     opens the volume is asked: a click in the locked part stops it there. Only in the open 45 ms or so can a
+    //     click reach the panel: so while the wheel turns nothing is drawn, the number comes once it has rested
+    //     QuietMs; a click that may have met the open moment is cleaned up (locked again, handed back) and drawn
+    //     sooner. The base's own dimming can't reach a locked panel; his brightness slider ends the hold first. The
+    //     base knob's first click goes through the open moment, the rest of its turn the way above, held again once it
+    //     has rested. On wherever the knob mode works (11-14, his pick A; 11-13 it had scrambled the panel within
+    //     minutes, the cause fixed in Hold, and the re-anchor in Open undoes a shifted write pointer). The Headset
+    //     tab's "Faster volume wheel" picks the faster timing (experimental); its Refresh button sets the screen up again.
+    //   - a button on the base while the mode is on: ignored (his 11-14 "BLOCK THESE COMMANDS FULLY": a knob press or
+    //     the headset wheel's double click gave the base its own menus for 20 s); its menus work with the mode off.
+    //     Every way out switches the mode off and unlocks: the screen switched
+    //     off, GG, sleep, shutdown, quit, the base lost, an error nobody caught (OnCrash); and every connect cleans up
+    //     after a run that died. A kill or a power cut leaves the knob dead (and the panel frozen if it fell inside
+    //     the 80 ms of a lock) until the app runs again or the base is replugged.
+    public static bool KnobZero = true;              // false (or hs-knob.txt = "off" beside hs-screen.txt): the old way for everyone (the clean up at connect still runs)
+    const string KnobFirmware = "0001.029.027";      // the base's own firmware (1.29.27) in its answer to 06 10: read from and proven on this one only
+    const int PassMs = 40, GaugeMs = 45, HandMs = 20000;   // the base's display busy after a picture half, and from 06 25 to the end of its gauge (14 ms was too short: the unlock was dropped, his 11-13 "the percentage didnt move"); a button's hand over
+    static bool knobOk, knobFw, knobAsked, knobClean, knobMode, knobWasOn, knobSoon, panelLocked, basePressed, firstHold; static string knobWhy = "";
+    static int knobLevel = -1, knobClicks, knobTries;   // the base's volume 0 to 56 as last read or set; clicks reported, not applied yet; its firmware asked and not answered
+    static long busFree, handUntil, firstHoldUntil;  // Ms() when the base's display is free again; the base has its own screens until then; no picture before the first questions until then
+    static byte[] sentLeft, sentRight;               // the two halves the base has of our picture (null: not ours, or not known)
+    public static bool OffIsBlack;                    // HW Dashboard (set by the fork): the Headset screen switched off, "all off" and the app quitting show a BLACK screen, never the base's own view (his 11-14 "when I mean shut down the deck i mean show on the screen ONLY BLACK not the old ui"). HW Deck: switched off = the base's own view
+    static volatile bool allOff; static uint allOffTick;   // his "all off" ran: dark until all on, or until he is back (input 5 s after it), his 11-14 "the headset deck didnt turn off when i ran all-off script"
+    public static void AllOff(bool on) { allOff = on; var li = new uint[] { 8, 0 }; allOffTick = GetLastInputInfo(li) ? li[1] : unchecked((uint)Environment.TickCount); lastSec = -1; Log("headset screen: all " + (on ? "off: dark" : "on")); }
+    static bool AllOffNow() { if (!allOff) return false; var li = new uint[] { 8, 0 }; if (GetLastInputInfo(li) && unchecked(li[1] - allOffTick) > 5000 && unchecked(li[1] - allOffTick) < 0x80000000u) { allOff = false; return false; } return true; }   // (input after it, past the click that ran it: he is back)
+    public static bool WheelQuiet = false;           // set by WheelMode: always on since 11-14 (before: hs-wheel.txt = "on"; off 11-13 21:2x to 11-14, when the hold scrambled the base's panel within minutes, cured by a replug)
+    const int HitQuietMs = 300, HomeMs = 90;          // after a click that may have met a picture; from 06 95 00 to the end of the base's home draw
+    static int QuietMs = 700;                        // held: the wheel rested this long, its number drawn. His pauses inside one go are 200 to 650 ms, so shorter puts pictures inside his goes: a faster number, more flashes (his 11-14 "the delay is HORRENDOUS": try shorter). Set by WheelMode: 200, or 30 with the faster wheel
+    static bool wheelSet, wheelFastNow;              // the wheel mode set from the Headset tab's switch (WheelMode), and which
+    static int HeldPassMs = 40;                       // (26 from the 05:37 trim to 06:07: back to 40, a lock pair at a pass END is the one firmware-proven break path, board 065630 R4)
+    const int HeldPassMsTrim = 26;                       // held: from the right half's send to the lock. The firmware's pass: 8 rows of 128 bytes over SPI at 400 kHz, 20.5 ms plus 8 event hops, rows chained in one handler so a lock sent during it is dropped whole (board wheel-1114, route S review). PassMs (40) left about 15 ms of open panel per picture for nothing: about 20 % of the flashes (the trim, his 11-14 "Yes, trim it")
+    static int HeldEveryMs = 1000;                   // held: his page's own changes drawn at most this often (1000: every second, as unheld). Each change opens the panel about 60 ms: every 1 s about 1 go in 16 can start on it, 2 s 1 in 32, 5 s 1 in 80 (11-14)
+    static long heldAt;                              // when a picture last went through the open moment
+    static bool held, wheelHit, wheelOwed; static int holdFails;   // panel locked + screen the base's; a wheel click came within the open moment; its number not drawn yet
+    static byte[] heldL, heldR;                      // the halves the locked panel shows (null: not known, maybe the base's frame)
+    static long wheelAt = -100000, turnAt = -100000, openTo;   // the wheel's last click; the base knob's last turn; a push until then may be a click that met the open moment
+    static volatile int volume = -1; static long fastUntil, drawnAt, knobAt = -100000;
+    static int Vol(byte x) { return Math.Max(0, Math.Min(100, (0x38 - x) * 100 / 0x38)); }
+
+    static Thread th, mt; static volatile bool stop;
+    static readonly object hl = new object();   // the headset's handle: its loop, and Windows' power and session events
+    static Arctis head; static Lightspeed mouse;
+    static bool drew, lastDark, paged; static long darkAt, headLook, headAsk, mouseLook, mouseAsk, ggLook; static int sendFails, lastSec = -1;   // (paged: the base shows his page now, so a shut down animation has a page to leave)
+    static bool gg, headSeen; static byte mDev, mIdx; static string lastSaid = "";
+    static readonly Stopwatch clock = Stopwatch.StartNew();
+    static long Ms() { return clock.ElapsedMilliseconds; }
+
+    public static void Start()
+    {
+        if (th != null) return;
+        string sf = ""; try { if (ScreenFile != null && File.Exists(ScreenFile)) sf = File.ReadAllText(ScreenFile).Trim(); } catch { }
+        ScreenOn = sf == "on"; ScreenBase = sf == "base" || sf == "" || (sf == "off" && !OffIsBlack);   // (the base's own screen until Custom is picked in the Headset tab; ExtStart has set OffIsBlack by now)
+        try { if (ScreenFile != null) { string kf = Path.Combine(Path.GetDirectoryName(ScreenFile), "hs-knob.txt"); if (File.Exists(kf) && File.ReadAllText(kf).Trim() == "off") KnobZero = false; } } catch { }
+        WheelMode();
+        try
+        {
+            var w = StateFile != null && File.Exists(StateFile) ? File.ReadAllText(StateFile).Split(' ') : new string[0];
+            int p, c;
+            if (w.Length >= 3 && w[0] == "mouse" && int.TryParse(w[1], out p) && int.TryParse(w[2], out c) && p >= 0 && p <= 100) { MousePct = p; MouseCharging = c; }
+        }
+        catch { }
+        SystemEvents.SessionSwitch += OnSwitch; SystemEvents.PowerModeChanged += OnPower; SystemEvents.SessionEnding += OnEnding; AppDomain.CurrentDomain.UnhandledException += OnCrash;
+        stop = false;
+        th = new Thread(HeadLoop) { IsBackground = true, Name = "headset" };
+        if (MouseOn) mt = new Thread(MouseLoop) { IsBackground = true, Name = "mouse" };   // (its own: a sleepy mouse answers in up to 1 s, the knob can't wait)
+        th.Start(); if (mt != null) mt.Start();
+    }
+
+    // the dashboard quits: the base gets its own view back, but stays dark when Windows is ending (the PC goes off)
+    public static void Stop()
+    {
+        if (th == null) return;
+        try { SystemEvents.SessionSwitch -= OnSwitch; SystemEvents.PowerModeChanged -= OnPower; SystemEvents.SessionEnding -= OnEnding; AppDomain.CurrentDomain.UnhandledException -= OnCrash; } catch { }
+        stop = true;
+        lock (hl)
+        {
+            if (head != null)
+            {
+                try { if (knobMode || knobFw) Knob(false); } catch { }   // (the knob is the base's own again; on the proven firmware always, in case an off was lost)
+                try { if (ending && ScreenOn && !gg) Dark(); else { if (paged && ScreenOn && !gg) Play(HsPage.Anim(false), false, HsPage.Draw(Info(DateTime.Now))); if (drew) { if (OffIsBlack && !gg) Dark(); else head.ScreenBack(); } } } catch { }   // (quitting: his shut down animation first; HW Dashboard: then black, not the base's own view, 11-14)
+                head.Dispose(); head = null;
+            }
+        }
+        th.Join(2000); th = null;
+        bool mouseDone = mt == null || mt.Join(3000); mt = null;   // (a mouse call waits up to 2.5 s)
+        if (mouseDone && mouse != null) { try { mouse.Dispose(); } catch { } mouse = null; }   // (still in a call: left to the exit, not freed under it, the review 11-12)
+    }
+
+    public static void FakeHeadset()
+    {
+        HeadSeen = HeadThere = true; HeadLevel = 5; SpareLevel = 8; HeadPower = 0;
+        if (MouseOn) { MouseSeen = MouseThere = true; MousePct = 87; MouseCharging = 0; }
+        volume = 45; Brightness = 3; knobFw = true;   // (a --fake copy's Headset tab shows the wheel switch, as on his base)
+    }
+
+    // the base's brightness 1 to 10 (06 80's answer [2], or as last set; -1 not known). His slider in Customize sets it
+    // with 06 85 when he lets go (11-14, his "why not?" to it). The app never sends 06 09, but the base saves its settings
+    // image (brightness, idle brightness, dim timer, home view, volume) to flash on its own 10 s after a wheel level change
+    // (firmware: 0x1224c timer, cb 0xda45, the "app_data" record; hs-knob board wheel-1114, item 7, reviewed 11-14), so a
+    // brightness set here persists after his next wheel turn, as the volume does
+    public static volatile int Brightness = -1;
+    static volatile int brightWant = -1; static bool brightAsked;
+    public static void SetBright(int v, bool real)
+    {
+        if (v < 1 || v > 10) return;
+        if (!real) { Brightness = v; return; }
+        brightWant = v;
+    }
+
+    public static void SetScreen(bool on) { SetScreen(on ? "on" : "dark", true); }   // (Controls' switch in HW Dashboard: off = dark)
+    // the Headset tab's Screen (his 11-14 pick): "on" his pages (Custom), "base" the base's own screen and knob (Original),
+    // "dark" (Off). save false: a --fake copy's, in memory only
+    public static void SetScreen(string m, bool save)
+    {
+        if (m != "on" && m != "base" && m != "dark") return;
+        ScreenOn = m == "on"; ScreenBase = m == "base";
+        if (save) try { if (ScreenFile != null) File.WriteAllText(ScreenFile, m); } catch { }
+        Log("headset screen: " + (m == "on" ? "custom" : m == "base" ? "original" : "off"));
+        lastSec = -1; Changed();
+    }
+
+    // his page changed (the Headset screen popup): drawn again now, not at the next second
+    public static void Redraw() { lastSec = -1; }
+
+    // the Controls card (x.care's x.ctl.hs): found, switched on, its last line
+    public static Dictionary<string, object> Card()
+    {
+        var d = new Dictionary<string, object>();
+        d["there"] = HeadThere; d["mouse"] = MouseOn; d["on"] = ScreenOn; d["base"] = !ScreenOn && ScreenBase; d["off"] = HeadPower == 1; d["chg"] = HeadPower == 2; d["gg"] = mode == "gg";
+        string m = mode;
+        d["bright"] = HeadThere ? Brightness : -1;
+        d["wheel"] = HeadThere && knobFw && KnobZero;   // (the Headset tab's "Faster volume wheel": only on the base the wheel mode is proven on)
+        d["cap"] = !HeadThere ? "not found" : m == "gg" ? "SteelSeries GG has it" : m == "dark" ? darkWhy : "headset " + HeadText() + ", " + SpareText();
+        return d;
+    }
+
+    // every second from the dashboard: its CPU and GPU temperatures (HWiNFO's), and whether a game runs
+    static int cpuI = -1, gpuI = -1, feedVer = -1; static Source feedSrc;
+    public static void Feed(Source s, bool gaming)
+    {
+        Gaming = gaming;
+        if (s == null || s.Status != "ok") { Cpu = Gpu = double.NaN; return; }
+        if (s != feedSrc || s.Version != feedVer) { feedSrc = s; feedVer = s.Version; cpuI = Find(s, "CPU (Tctl/Tdie)"); gpuI = Find(s, "GPU Temperature"); }
+        Cpu = cpuI >= 0 && cpuI < s.Values.Length ? s.Values[cpuI] : double.NaN;
+        Gpu = gpuI >= 0 && gpuI < s.Values.Length ? s.Values[gpuI] : double.NaN;
+    }
+    static int Find(Source s, string label)
+    {
+        for (int i = 0; i < s.Readings.Count; i++) if (s.Readings[i].Orig == label || s.Readings[i].Label == label) return i;
+        return -1;
+    }
+
+    static int P(int level) { return level < 0 ? -1 : level * 100 / 8; }   // (12, 37, 62, 87: GG's own, cut, not rounded)
+    public static double Pct(int level) { return level < 0 ? double.NaN : P(level); }
+    public static double HeadValue() { return HeadPower == 1 ? double.NaN : Pct(HeadLevel); }   // (off: no value)
+    public static double SpareValue() { return SpareOut ? double.NaN : Pct(SpareLevel); }      // (out: no value)
+    static string Level(int l) { return l < 0 ? "--" : P(l) + "%"; }
+    static string HeadText() { return HeadPower == 1 ? "off" : Level(HeadLevel) + (HeadPower == 2 && HeadLevel >= 0 ? " charging" : ""); }
+    static string SpareText() { return SpareOut ? "no spare" : "spare " + Level(SpareLevel) + (SpareCharging ? " charging" : ""); }
+    static string MouseText() { return MousePct < 0 ? "--" : MousePct + "%" + (MouseCharging == 1 || MouseCharging == 2 ? " charging" : ""); }
+
+    // what the page is drawn from (x-hspage.cs)
+    static readonly int[,] Orbit = { { 0, 0 }, { 1, 0 }, { 2, 0 }, { 2, 1 }, { 1, 1 }, { 0, 1 }, { 0, 2 }, { 1, 2 }, { 2, 2 } };   // (1 px a minute; a snake, so a move is one pixel but the last)
+    internal static HsInfo Info(DateTime t)
+    {
+        int k = (int)(t.Ticks / TimeSpan.TicksPerMinute % 9);
+        return new HsInfo
+        {
+            Now = t, Dx = Orbit[k, 0], Dy = Orbit[k, 1], Cpu = Cpu, Gpu = Gpu,
+            Head = P(HeadLevel), HeadOff = HeadPower == 1, HeadCharging = HeadPower == 2,
+            Spare = P(SpareLevel), SpareOut = SpareOut, SpareCharging = SpareCharging,
+            Mouse = MousePct, MouseCharging = MouseCharging == 1 || MouseCharging == 2, MouseAsleep = MouseAsleep,
+            Volume = volume
+        };
+    }
+
+    // ---- Windows' events: dark at once, not at the loop's next second (sleep and shutdown don't wait) ----
+    static void OnSwitch(object s, SessionSwitchEventArgs e)
+    {
+        if (e.Reason == SessionSwitchReason.SessionLock) { locked = true; ThreadPool.QueueUserWorkItem(_ => GoDark(true)); }   // (off Windows' own thread: its animation takes a second)
+        else if (e.Reason == SessionSwitchReason.SessionUnlock) { locked = false; lastSec = -1; }
+    }
+    static void OnPower(object s, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode == PowerModes.Suspend) { asleep = true; GoDark(false); }   // (no animation: sleep doesn't wait)
+        else if (e.Mode == PowerModes.Resume) { asleep = false; lastSec = -1; }
+    }
+    static void OnEnding(object s, SessionEndingEventArgs e) { ending = true; endingAt = Environment.TickCount; GoDark(false); }   // (nor Windows shutting down)
+    static void GoDark(bool anim)
+    {
+        if (!ScreenOn && !knobMode && !panelLocked) return;   // (Off / all off keep the knob ours too: freed below, the release review 11-15)
+        // (sleep and shutdown wait about 2 s for Windows' handlers: no long wait for the base, the loop's own next look
+        // makes it dark if this can't, the review 11-12)
+        if (!Monitor.TryEnter(hl, anim ? 5000 : 1500)) return;
+        try { if (head != null && (knobMode || panelLocked) && (asleep || ending)) try { Knob(false); } catch { }   // (PC going to sleep or off: the knob is the base's own)
+            if (!ScreenOn) return;   // (switched off: the base is dark or its own already; finally lets go of hl)
+            if (head != null && !gg) try { if (anim && paged && !asleep && !ending) Play(HsPage.Anim(false), false, HsPage.Draw(Info(DateTime.Now))); Dark(); } catch { } }
+        finally { Monitor.Exit(hl); }
+    }
+
+    // ---- the headset's loop: the base kept open, asked every minute, its pushes read the moment they come (else every
+    // 30 ms); the screen every second, at once when the knob turns ----
+    static void HeadLoop()
+    {
+        headLook = 0; ggLook = -100000;
+        while (!stop)
+        {
+            long now = Ms(); bool knob = false;
+            lock (hl)
+            {
+                if (stop) break;
+                try { knob = HeadStep(now); } catch (Exception ex) { LostHead(now, ex.Message); }
+            }
+            if (!knob && knobClicks == 0 && !basePressed && now - ggLook >= 10000) { ggLook = now; bool g = gg; try { g = GgRuns(); } catch { } if (g != gg) { gg = g; lastSec = -1; } }   // (not on a click: it can take a while)
+            if (ending && unchecked(Environment.TickCount - endingAt) > 60000) ending = false;   // (the shutdown was cancelled: carry on)
+            int sec = DateTime.Now.Second;
+            if (sec != lastSec || knob || (now < fastUntil && now - drawnAt >= 250) || (held && wheelOwed && (now - wheelAt >= QuietMs || ProgressDue(now))))   // (the wheel has rested: its number now, not at the next second)
+            {
+                lastSec = sec;
+                lock (hl)
+                {
+                    if (stop) break;
+                    try { Screen(Ms(), knob); } catch (Exception ex) { LostHead(Ms(), ex.Message); }
+                }
+            }
+            var pv = Interlocked.Exchange(ref preview, null);   // (an animation picked in the popup: played here too)
+            if (pv != null)
+            {
+                lock (hl) { if (!stop) try { PlayPreview(pv); } catch (Exception ex) { LostHead(Ms(), ex.Message); } }
+            }
+            lock (hl) { if (!stop && HoldDue(Ms())) try { Hold(); } catch (Exception ex) { LostHead(Ms(), ex.Message); } }   // (the quiet wheel: right after a picture, or once the base knob has rested)
+            WheelMode();   // (the Headset tab's switch: its values at once, no restart)
+            if (refreshWant) { refreshWant = false; lock (hl) { if (!stop && head != null) try { DoRefresh(); } catch (Exception ex) { LostHead(Ms(), ex.Message); } } }   // (his Refresh button)
+            // (wait for the base's next push, at most 30 ms. The push collection always has a read waiting after HeadStep;
+            // its event is never disposed, so a base lost meanwhile only makes this wait the full 30 ms)
+            WaitHandle ev = null, ev2 = null;
+            lock (hl) { if (head != null && head.Push != null) { ev = head.Push.ReadEvent; ev2 = head.Cmd.ReadEvent; } }   // (the key test mode's reports come on the command collection; neither event is ever disposed)
+            lock (hl) { if (!stop && held && WheelQuiet && head != null) try { PollWheel(Ms()); } catch (Exception ex) { LostHead(Ms(), ex.Message); } }   // (the wheel's level asked every 10 ms while it turns: its clicks known at once, not up to 100 ms later by the push)
+            int nap = held && WheelQuiet ? 5 : 30;
+            if (ev == null) Thread.Sleep(nap); else WaitHandle.WaitAny(new[] { ev, ev2 }, nap);
+        }
+    }
+
+    // an animation picked in the Headset screen popup, played on the base as well (his 11-12 "no animations"), when it
+    // shows his page: a start up from black to the page, a shut down to black and the page back half a second later
+    sealed class Pv { public HsAnim A; public bool Start; }
+    static Pv preview;
+    public static void Preview(HsAnim a, bool start) { if (a != null) Interlocked.Exchange(ref preview, new Pv { A = a, Start = start }); }
+    static void PlayPreview(Pv pv)
+    {
+        if (head == null || mode != "page" || !paged) return;
+        var px = HsPage.Draw(Info(DateTime.Now));
+        if (pv.Start) { Send(new bool[128, 64]); Thread.Sleep(250); Play(pv.A, true, px); }
+        else { Play(pv.A, false, px); Send(new bool[128, 64]); Thread.Sleep(500); }
+        Send(HsPage.Draw(Info(DateTime.Now))); drawnAt = Ms();
+    }
+
+    static bool HeadStep(long now)
+    {
+        if (head == null)
+        {
+            if (now < headLook) return false;
+            headLook = now + 10000;
+            head = Arctis.Open();
+            if (head == null) return false;
+            headAsk = now + (!headSeen ? 300 : knobWasOn ? 1000 : 5000);   // (the base just came back: give it GG's own 5 s first)
+            if (!headSeen || knobWasOn) { firstHold = true; firstHoldUntil = now + 2500; }   // (a run that died may have left the panel locked: no picture before the first questions have cleaned up)
+            headSeen = true; drew = false; sendFails = 0; HeadThere = true; HeadSeen = true; lastSec = -1;
+            knobOk = knobFw = knobAsked = knobClean = knobMode = knobWasOn = knobSoon = panelLocked = basePressed = false; knobWhy = ""; knobLevel = -1; knobClicks = knobTries = 0; busFree = 0; handUntil = 0; sentLeft = sentRight = null;
+            held = wheelHit = wheelOwed = false; heldL = heldR = null; holdFails = 0; openTo = 0; wheelAt = turnAt = -100000;
+            Brightness = -1; brightAsked = false;   // (asked again: a restarted base is back at its own brightness)
+            Log("headset base station found"); Changed();
+        }
+        head.CollectPushes();
+        bool knob = false;
+        if (head.Pushes.Count > 0 && now < handUntil) handUntil = now + HandMs;   // (he is busy on the base: its own screens a while longer)
+        foreach (var r in head.Pushes)
+        {
+            if (r.Length < 3 || r[0] != 0x07) continue;
+            if (r[1] == 0x25)
+            {
+                if (held && r[2] <= 0x38 && 0x38 - r[2] == knobLevel) continue;   // (held: the same level = the echo of our own 06 25 or a late copy of a polled click, the review 11-14)
+                bool polled = held && Ms() - levelAskAt < 150;   // (the level is asked every 10 ms: the push, up to 100 ms late, would only put an older level back)
+                if (!polled) { volume = Vol(r[2]); if (r[2] <= 0x38) knobLevel = 0x38 - r[2]; }
+                if (held)   // (the quiet wheel: the base drew nothing for it; its number once it has rested. While held nothing else moves the volume: the base knob's turns set it unheld, and their echo comes within 100 ms)
+                {
+                    if (now - wheelAt > 4000) Log("headset screen: the headset's wheel, drawn once it rests");   // (once a go)
+                    if (!polled) { wheelAt = now; wheelOwed = true; }
+                    if (!polled && now <= openTo) { wheelHit = true; lastSec = -1; }   // (it may have met the open moment: cleaned up at once. Polled: PollWheel knows the click's time to 10 ms and decides)
+                    continue;
+                }
+                fastUntil = now + 4000; knob = true; continue;
+            }
+            if (r[1] == 0xB7 || r[1] == 0xB5) headAsk = Math.Min(headAsk, now + 300);   // (battery, the headset's link: ask now)
+            Log("base pushed " + Hex(r, 2, 10));   // (rare: battery, link, its buttons)
+        }
+        head.Pushes.Clear();
+        foreach (var r in head.Inbox)   // the key test mode's reports: 06 b1 81 01 <key> <state>
+        {
+            if (r.Length < 6 || r[0] != 0x06 || r[1] != 0xB1 || r[2] != 0x81 || r[3] != 0x01) continue;
+            if (r[4] == 3) knobClicks++; else if (r[4] == 4) knobClicks--; else if (r[5] != 0) { basePressed = true; pressKey = r[4]; }   // (a click up, a click down, a button going down)
+            lastSec = -1;
+        }
+        head.Inbox.Clear();
+        if (!knobMode) { knobClicks = 0; basePressed = false; }   // (reports of a mode that is not ours, left on by a run that died: nothing to apply, and they must not hold the questions back)
+        if (brightWant > 0 && held && !knob && knobClicks == 0 && !basePressed && now - wheelAt >= QuietMs) Release();   // (his brightness slider while the wheel is held: a locked panel ignores it, so the hold ends first; held again once it is set)
+        if (brightWant > 0 && !knob && knobClicks == 0 && !basePressed && !panelLocked && !held && now >= busFree)
+        {
+            int bw = System.Threading.Interlocked.Exchange(ref brightWant, -1);   // (taken in one step: a newer value arriving now is never lost)
+            if (bw > 0 && head.Bright(bw)) { Brightness = bw; Log("headset base: brightness " + bw + " (his slider)"); } else if (bw > 0) Log("headset base: brightness " + bw + " not taken");
+            if (bw > 0) busFree = Math.Max(busFree, Ms() + PassMs);   // (the base may still be setting it on the panel: no lock byte meanwhile, the review 11-14)
+        }
+        if (now < headAsk || knob || knobClicks != 0 || basePressed || (held && now - wheelAt < 3000)) return knob;   // (the minute's questions take 200 ms: not while the knob or the wheel turns)
+        headAsk = now + 60000;
+        var b0 = head.Ask(0xB0);
+        Thread.Sleep(50);   // (GG's own gap between two questions)
+        var b7 = head.Ask(0xB7);
+        Thread.Sleep(50);
+        var b20 = head.Ask(0x20);
+        if (b20 != null && b20[3] <= 0x38 && Vol(b20[3]) != volume) { volume = Vol(b20[3]); lastSec = -1; }
+        if (b20 != null && b20[3] <= 0x38) knobLevel = 0x38 - b20[3];
+        if (b0 != null)   // (its firmware, asked once; then, on the proven one only, its home view every minute: he can change that in the base's menu)
+        {
+            if (!knobAsked) { Thread.Sleep(50); KnobFirmwareIs(head.Ask(0x10)); }
+            byte[] ux = null;
+            if (knobFw) { Thread.Sleep(50); ux = head.Ask(0x80); }
+            KnobCheck(ux);
+            if (ux == null && Brightness < 0 && !brightAsked) { brightAsked = true; Thread.Sleep(50); ux = head.Ask(0x80); }   // (another firmware: its brightness asked once)
+            if (ux != null && ux[2] >= 1 && ux[2] <= 10 && brightWant < 0) Brightness = ux[2];
+        }
+        else if (!knobAsked && !knobSoon) { knobSoon = true; headAsk = now + 5000; }   // (no answer to the first questions: once more in 5 s, not in a minute; the clean up after a run that died waits on them)
+        if (b0 == null)
+        {
+            if (head.Cmd.LastError > 0) throw new IOException("Windows error " + head.Cmd.LastError);   // (unplugged: 1167)
+            return knob;
+        }
+        // its answers, logged when they change: to learn what else moves when the spare comes out or the cable goes in
+        string said = "b0 " + Hex(b0, 2, 20) + " | b7 " + Hex(b7, 2, 8) + " | 20 " + Hex(b20, 2, 8);
+        if (said != lastSaid) { lastSaid = said; Log("base said " + said); }
+        int l = b0[6], s = b0[7], p = b0[15];
+        if (l <= 8 && s <= 8 && (l != HeadLevel || s != SpareLevel || p != HeadPower))
+        {
+            HeadLevel = l; SpareLevel = s; HeadPower = p; Changed();
+            Log("headset battery " + HeadText() + ", " + SpareText());   // (a change only: a step is about an hour)
+            lastSec = -1;
+        }
+        return knob;
+    }
+
+    static string Hex(byte[] b, int from, int to)
+    {
+        if (b == null) return "none";
+        var sb = new System.Text.StringBuilder();
+        for (int i = from; i < Math.Min(to, b.Length); i++) { if (sb.Length > 0) sb.Append(' '); sb.Append(b[i].ToString("x2")); }
+        return sb.ToString();
+    }
+
+    // ---- the mouse's loop: the receiver kept open, its pushes read every 100 ms, the battery asked every minute ----
+    static void MouseLoop()
+    {
+        mouseLook = 0;
+        while (!stop)
+        {
+            long now = Ms();
+            try { MouseStep(now); } catch (Exception ex) { LostMouse(now, ex.Message); }
+            Thread.Sleep(100);
+        }
+    }
+
+    static void MouseStep(long now)
+    {
+        if (mouse == null)
+        {
+            if (now < mouseLook) return;
+            mouseLook = now + 10000;
+            mouse = Lightspeed.Open();
+            if (mouse == null) return;
+            mouseAsk = now + 1000; mDev = 0; mIdx = 0; MouseThere = true; MouseSeen = true;
+            Log("mouse receiver found"); Changed();
+        }
+        foreach (var r in mouse.Listen())
+        {
+            // the receiver: its link to the mouse went down (deep sleep, off) or came up (it woke)
+            if (r.Length >= 7 && r[0] == 0x10 && r[2] == 0x41 && r[1] == (mDev == 0 ? 1 : mDev))
+            {
+                if ((r[4] & 0x40) != 0) { if (!MouseAsleep) { MouseAsleep = true; Changed(); Log("mouse asleep or off"); } }
+                else mouseAsk = Math.Min(mouseAsk, now + 1500);
+            }
+            // its battery, as an event (it sends one as it wakes) or as anyone's getStatus answer (G HUB's too)
+            else if (r.Length >= 7 && r[0] == 0x11 && mIdx != 0 && r[1] == mDev && r[2] == mIdx && (r[3] & 0xF0) <= 0x10)
+                SetMouse(r[4], r[6]);
+        }
+        if (now < mouseAsk) return;
+        mouseAsk = now + 60000;
+        int pct, chg;
+        int k = mouse.Status(ref mDev, ref mIdx, out pct, out chg);
+        if (k == 1) SetMouse(pct, chg);
+        else if (k == 0 && !MouseAsleep) { MouseAsleep = true; Changed(); Log("mouse asleep or off"); }   // (asleep: the last value stays)
+    }
+    static void SetMouse(int pct, int chg)
+    {
+        bool ch = pct != MousePct || chg != MouseCharging || MouseAsleep, logIt = pct != MousePct || chg != MouseCharging;
+        MousePct = pct; MouseCharging = chg; MouseAsleep = false;
+        if (ch) Changed();
+        if (logIt)
+        {
+            Log("mouse battery " + MouseText());   // (a change only)
+            try { if (StateFile != null) File.WriteAllText(StateFile, "mouse " + pct + " " + chg); } catch { }
+            lastSec = -1;
+        }
+    }
+
+    static void LostHead(long now, string why)
+    {
+        Log("headset base station lost: " + why);
+        knobWasOn = knobMode || panelLocked;
+        if (head != null && knobWasOn) { try { head.NoWait = true; Unlock(); head.KeyTest(false); } catch { } }   // (best effort: gone for real, these fail at once)
+        knobMode = panelLocked = held = false; knobClicks = 0; basePressed = false;
+        if (head != null) { try { head.Dispose(); } catch { } head = null; }
+        headLook = now + 10000; HeadThere = false; drew = false; paged = false; Changed();
+    }
+    static void LostMouse(long now, string why)
+    {
+        Log("mouse receiver lost: " + why);
+        if (mouse != null) { try { mouse.Dispose(); } catch { } mouse = null; }
+        mouseLook = now + 10000; MouseThere = false; Changed();
+    }
+
+    static bool GgRuns()
+    {
+        foreach (var n in new[] { "SteelSeriesGG", "SteelSeriesGGClient", "SteelSeriesEngine" })
+        {
+            var ps = Process.GetProcessesByName(n); bool any = ps.Length > 0;
+            foreach (var p in ps) p.Dispose();
+            if (any) return true;
+        }
+        return false;
+    }
+
+    [DllImport("user32.dll")] static extern bool GetLastInputInfo(uint[] info);
+    static uint IdleSec() { var li = new uint[] { 8, 0 }; return GetLastInputInfo(li) ? unchecked((uint)Environment.TickCount - li[1]) / 1000 : 0; }
+
+    // ---- the screen ----
+    static void Screen(long now, bool click)
+    {
+        string m, why = "";
+        if (basePressed) { basePressed = false; if (knobMode) Log("headset screen: a button on the base (key " + pressKey + "), ignored"); }   // (his 11-14 "BLOCK THESE COMMANDS FULLY": no more 20 s of its own menus)
+        if (head == null) m = "none";
+        else if (!ScreenOn) { if (headSeen && !gg && !ScreenBase) { m = "dark"; why = "dark, switched off"; } else if (headSeen && !gg && AllOffNow()) { m = "dark"; why = "dark, all off"; } else m = "off"; }   // (Original: the base's own screen and knob; dark for all off only)
+        else if (gg) m = "gg";
+        else if (now < handUntil && !ending && !asleep && !locked) m = "base";   // (dark wins: PC going off, asleep or locked)
+        else if (ending) { m = "dark"; why = "dark, PC shutting down"; }
+        else if (asleep) { m = "dark"; why = "dark, PC asleep"; }
+        else if (locked) { m = "dark"; why = "dark while locked"; }
+        else if (AllOffNow()) { m = "dark"; why = "dark, all off"; }
+        else if (DisplaysOff) { m = "dark"; why = "dark, monitors off"; }
+        else if (!Gaming && IdleSec() >= AwaySec) { m = "dark"; why = "dark while away"; }
+        else m = "page";
+        if (m != mode || why != darkWhy)
+        {
+            if (m != mode || m == "dark") Log("headset screen: " + (why != "" ? why : m));
+            mode = m; darkWhy = why; Changed();
+        }
+        if (head == null) return;
+        if (firstHold) { if (knobAsked || now >= firstHoldUntil) firstHold = false; else { lastSec = -1; return; } }   // (the first questions clean up after a run that died: no picture into a panel that may still be locked)
+        bool wantKnob = knobOk && (m == "page" || (m == "dark" && !ending && !asleep));   // (PC off or asleep: the knob is the base's own)
+        if (wantKnob != knobMode) Knob(wantKnob);
+        if (m == "off" || m == "gg" || m == "base") { if (drew) { if (m == "off" && paged) Play(HsPage.Anim(false), false, HsPage.Draw(Info(DateTime.Now))); head.ScreenBack(); drew = false; Bus(PassMs); sentLeft = sentRight = null; } paged = false; return; }   // (Power off: his shut down animation first)
+        if (click)   // (a knob click: the base's own volume screen is up, and drops every picture until 06 95)
+        {
+            if (now - knobAt > 4000) Log("headset screen: volume knob, taken back from the base's volume screen");   // (once a turn)
+            knobAt = now; head.ScreenBack(); Bus(PassMs); sentLeft = sentRight = null;
+            if (m == "dark") { Dark(); return; }
+        }
+        if (knobMode && knobClicks != 0 && (m == "dark" ? lastDark : paged) && KnobTurn(now, m == "dark")) return;   // (the knob, reported by the key test mode: the volume is ours to set; at the top or the bottom nothing was sent and the pass goes on)
+        bool owed = false;
+        if (held)   // (the quiet wheel: nothing is drawn while it turns)
+        {
+            if (wheelHit) { wheelHit = false; CleanUp(); }
+            if (now - wheelAt < QuietMs && !ProgressDue(now)) return;
+            owed = wheelOwed || heldL == null; wheelOwed = false;
+        }
+        if (held && !owed && m != "dark" && HeldEveryMs > 1000 && now - heldAt < HeldEveryMs) return;   // (held, his page's own changes at most every HeldEveryMs: each one opens the panel for a moment a wheel click can meet; the wheel's number never waits)
+        if (m == "dark") { if (!lastDark || now - darkAt >= 5000 || (held && !Shows(Packets(new bool[128, 64])))) { if (paged && !asleep && !ending) Play(HsPage.Anim(false), false, HsPage.Draw(Info(DateTime.Now))); Dark(); if (knobMode && knobClicks != 0) lastSec = -1; } return; }   // (again every 5 s, in case the base took it back; his shut down animation first, away or locked)
+        var px = HsPage.Draw(Info(DateTime.Now));
+        if (!paged && !click) Play(HsPage.Anim(true), true, px);   // (the page comes back: the dashboard started, unlocked, woke, he is back; his start up animation first)
+        Send(px); lastDark = false; drawnAt = Ms(); paged = true;
+        if (knobMode && knobClicks != 0) lastSec = -1;   // (clicks that came before the page was up: next look)
+    }
+
+    static void Dark() { Send(new bool[128, 64]); lastDark = true; darkAt = Ms(); paged = false; }
+
+    // ---- the volume knob with none of the base's own screens (see volume above) ----
+    // the base's answer to 06 10, asked once per connect: its firmware, as text from byte 2
+    // ("0000.003.0820001.029.027" then the headset's own version). No answer: asked again with the next minute's
+    // questions, three times in all, then it counts as not the proven one (one missed answer must not leave a run
+    // that died uncleaned)
+    static void KnobFirmwareIs(byte[] fw)
+    {
+        var sb = new System.Text.StringBuilder();
+        if (fw != null) for (int i = 2; i < 34 && i < fw.Length; i++) sb.Append(fw[i] >= 0x20 && fw[i] < 0x7f ? (char)fw[i] : '.');
+        string s = sb.ToString();
+        knobAsked = fw != null || ++knobTries >= 3; knobFw = s.Length >= 24 && s.Substring(12, 12) == KnobFirmware && head != null && head.Pid == "12e0";   // (the PC base station only: the Xbox ones are found too since 11-15, their firmware never proven)
+        Log("headset base: firmware " + (fw == null ? "not answered" : s.TrimEnd('.')) + (knobFw || !knobAsked ? "" : " (the volume knob stays the old way: not the firmware it was proven on)"));
+    }
+    // an error nobody caught is ending the app: the knob is the base's own again and the panel unlocked, best effort
+    // (a kill or a power cut can't be caught: the next run's first questions clean up)
+    static void OnCrash(object s, UnhandledExceptionEventArgs e)
+    {
+        if (!e.IsTerminating || !Monitor.TryEnter(hl, 300)) return;
+        try { if (head != null && (knobMode || panelLocked)) { head.NoWait = true; Unlock(); head.KeyTest(false); knobMode = false; } }
+        catch { }
+        finally { Monitor.Exit(hl); }
+    }
+    // every minute: on the proven firmware, clean up once what a run that died left behind (whatever the switch says),
+    // then the base's screen settings (06 80: [5] = 0 is the detailed home view): the knob is ours only in that view
+    static void KnobCheck(byte[] ux)
+    {
+        if (knobFw && !knobClean && !knobMode) { Unlock(); knobClean = head.KeyTest(false); }   // (refused: again next minute)
+        if (knobFw && ux == null && knobOk) return;   // (one answer missed: as it was, the next minute asks again)
+        bool view = ux != null && ux[5] == 0, ok = KnobZero && knobFw && view;
+        string why = !knobFw ? "firmware" : !KnobZero ? "switched off" : ux == null ? "no answer" : !view ? "the base's home view is not the detailed one" : "";
+        if (ok != knobOk || why != knobWhy) { knobOk = ok; knobWhy = why; lastSec = -1; if (knobFw) Log("headset base: the volume knob without its own screens: " + (ok ? "yes" : "no, " + why)); }
+    }
+
+    // the key test mode on or off; off also unlocks the panel
+    static void Knob(bool on)
+    {
+        if (on)
+        {
+            var ux = head.Ask(0x80);   // (the home view again: only the detailed one's gauge stays in the right half)
+            var v = ux != null && ux[5] == 0 ? head.Ask(0x20) : null;   // (and the volume as it is now: he may have turned it on the base or on the headset meanwhile)
+            if (v == null || v[3] > 0x38)
+            {
+                knobOk = false; knobWhy = ux == null ? "no answer" : ux[5] != 0 ? "the base's home view is not the detailed one" : "no volume";   // (the minute's check tries again)
+                if (ux == null || v == null) headAsk = Math.Min(headAsk, Ms() + 5000);   // (a missed answer, common right after a start: asked again in 5 s, not a minute of the old knob, 11-14)
+                Log("headset base: the volume knob without its own screens: no, " + knobWhy); return;
+            }
+            knobLevel = 0x38 - v[3]; volume = Vol(v[3]);
+            Unlock();
+            if (!head.KeyTest(true)) { head.KeyTest(false); knobClean = false; Log("headset base: the key test mode was not taken"); knobOk = false; knobWhy = "not taken"; return; }   // (it may have landed all the same: off now, and again with the minute's check)
+            knobMode = true; knobClicks = 0;
+            Log("headset base: the volume knob is ours (key test mode on, volume " + volume + "%)");
+        }
+        else
+        {
+            try { Release(); } catch { }   // (a refused picture must not keep the knob dead or the panel locked: the unlock and the off still go)
+            Unlock();
+            bool off = head.KeyTest(false);
+            if (!off) { Thread.Sleep(8); off = head.KeyTest(false); }   // (once more: a lost off is a dead knob)
+            knobClean = off;   // (refused twice: the minute's check sends it again)
+            if (knobMode) Log("headset base: the volume knob is its own again (key test mode off" + (off ? ")" : ", NOT taken: again within a minute)"));
+            knobMode = false; knobClicks = 0;
+        }
+    }
+
+    // the knob turned: the volume set here, the panel locked around it so the base's gauge never reaches it. False at
+    // the top or the bottom of the range: nothing was sent (every 06 25 also goes to the headset, which beeps at its limit)
+    static bool KnobTurn(long now, bool dark)
+    {
+        int nl = Math.Max(0, Math.Min(0x38, knobLevel + knobClicks)); knobClicks = 0;
+        if (nl == knobLevel) return false;
+        if (now - knobAt > 4000) Log("headset screen: volume knob, set here with the panel locked");   // (once a turn)
+        knobAt = now; knobLevel = nl; volume = Vol((byte)(0x38 - nl));
+        var px = dark ? new bool[128, 64] : HsPage.Draw(Info(DateTime.Now));
+        if (held) Open(Packets(px), false);   // (the quiet wheel's hold: this click's page through the open moment; the rest of the turn as below, held again once the knob has rested)
+        if (!dark) { WaitBus(); SendHalves(px, false); }   // (the page answers the knob first, ALWAYS, also while he keeps turning: the number shows 40 to 80 ms after a click, the sound follows; his 11-13 "small input delay", then 17:33 "the knob still has a delay to when it updates i think", and the test with the page first every time 17:43: "base knob was fine")
+        WaitBus();
+        panelLocked = head.PanelLock(true);
+        bool set = false;
+        try { set = head.SetLevel(nl); busFree = Ms() + GaugeMs; }
+        finally { Unlock(); }
+        bool more = false;   // (more clicks came meanwhile: he keeps turning)
+        head.CollectPushes();
+        foreach (var r in head.Inbox) if (r.Length >= 6 && r[0] == 0x06 && r[1] == 0xB1 && r[2] == 0x81 && r[3] == 0x01 && (r[4] == 3 || r[4] == 4)) { more = true; break; }
+        if (more && !dark) sentRight = null;   // (the next click's page sends the right half first, so the gauge's columns in the base's copy are ours again before anything else is flushed: one picture less per step while he turns, about 40 ms, 11-14 "for knob as well". The last step of a turn still sends it at once)
+        else SendHalves(px, true);   // (the right half always: the gauge's columns in the base's copy are ours again, and the panel gets a fresh window)
+        drawnAt = turnAt = Ms();
+        if (!set) { var v = head.Ask(0x20); if (v != null && v[3] <= 0x38) { knobLevel = 0x38 - v[3]; volume = Vol(v[3]); lastSec = -1; } }   // (the volume was not taken: what the base really has)
+        return true;
+    }
+
+    // unlocked three times, 8 ms apart, once the base's display is free: a pair that lands while it is busy is dropped
+    // with no sign, and a later pair cures a half one. A frozen panel is the worse miss
+    static void Unlock()
+    {
+        NapUntil(busFree + 8);   // (the timing GaugeMs was proven with: Thread.Sleep then came back about 8 ms late on average and slept 8 as about 16; kept so, the review 11-14)
+        for (int i = 0; i < 3; i++) { if (i > 0) NapUntil(Ms() + 16); head.PanelLock(false); }
+        panelLocked = held = wheelHit = false;
+    }
+    // (to the millisecond: Thread.Sleep could add up to 15 ms to every wait of the knob's steps, 11-14)
+    static void WaitBus() { NapUntil(busFree); }
+    // the base's display is busy for ms more: a picture that lands during a pass makes it run one more, never more than that
+    static void Bus(int ms) { long n = Ms(); busFree = Math.Min(Math.Max(busFree, n) + ms, n + 2 * ms); }
+
+    // a picture as its two halves, the right one first; a half the base already has is skipped (the right one never when forced)
+    static void SendHalves(bool[,] px, bool forceRight)
+    {
+        var reps = Packets(px);
+        for (int i = 1; i >= 0; i--)
+        {
+            if (!(i == 1 && forceRight) && Same(i == 1 ? sentRight : sentLeft, reps[i])) continue;
+            bool ok = head.Feature(reps[i]); Bus(PassMs);
+            if (i == 1) sentRight = ok ? reps[i] : null; else sentLeft = ok ? reps[i] : null;
+            drew = true;
+            if (ok) sendFails = 0;
+            else if (++sendFails >= 3) throw new IOException("the screen refused 3 pictures in a row");
+        }
+    }
+    static bool Same(byte[] a, byte[] b)
+    {
+        if (a == null || b == null || a.Length != b.Length) return false;
+        for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
+        return true;
+    }
+
+    // a start up or shut down animation he picked (x-hsdraw.cs; null: none), as fast as the base takes pictures, at most
+    // 30 a second, all within its own length (0.3 to 1.5 s). The base's top rate, measured 11-13: a full picture takes
+    // 36 ms (two halves of 18 ms, the same while the knob turns), so about 27 a second
+    static void Play(HsAnim a, bool start, bool[,] page)
+    {
+        if (a == null) return;
+        int len = start ? a.StartMs : a.StopMs, n = 0; var sw = Stopwatch.StartNew();
+        while (true)
+        {
+            long t = sw.ElapsedMilliseconds; if (t >= len || (start && stop) || asleep || ending) break;   // (the PC is going: the lock is free for GoDark, which has 1.5 s to switch the knob's mode off)
+            Send(start ? a.Start(t, page) : a.Stop(t, page)); n++;
+            long rest = 33 - (sw.ElapsedMilliseconds - t); if (rest > 0) Thread.Sleep((int)rest);
+        }
+        Log("headset screen: " + (start ? "start up " : "shut down ") + a.Name + ", " + n + " pictures in " + sw.ElapsedMilliseconds + " ms");
+    }
+
+    static void Send(bool[,] px)
+    {
+        if (held) { Show(px); return; }
+        bool ok = true;
+        var reps = Packets(px);
+        bool rightFirst = sentRight == null;   // (the base's copy may still hold the gauge's columns, a knob step that left its right half to the next picture: the right half first, so no flush ever shows them, the review 11-14)
+        for (int k = 0; k < 2; k++) { int i = rightFirst ? 1 - k : k; bool one = head.Feature(reps[i]); ok &= one; Bus(PassMs); if (i == 0) sentLeft = one ? reps[i] : null; else sentRight = one ? reps[i] : null; }
+        drew = true;
+        if (ok) sendFails = 0;
+        else if (++sendFails >= 3) throw new IOException("the screen refused 3 pictures in a row");
+    }
+
+    // ---- the quiet wheel (see volume above): held = the panel locked and the screen the base's ----
+    // the wheel mode, from the Headset tab's "Faster volume wheel" (saved with the headset's setup): off = the number
+    // 200 ms after he rests (his 11-14 pick A, the default), on = 30 ms and the lock 34 ms after a half (B, experimental:
+    // snappier, the base's own volume screen flashes more often). Always held where the knob mode works: his 11-14
+    // "Base's own screen SHOULD NOT BE an option". hs-wheel.txt is no longer read
+    static void WheelMode()
+    {
+        bool fast = HsPage.WheelFast;
+        if (wheelSet && fast == wheelFastNow) return;
+        wheelSet = true; wheelFastNow = fast;
+        WheelQuiet = true; HeldEveryMs = 1000; QuietMs = fast ? 30 : 200; HeldPassMs = fast ? 34 : 40; ProgressMs = 0;
+        Log("headset screen: the wheel mode " + (fast ? "faster (experimental)" : "standard") + ", number after " + QuietMs + " ms of rest, lock " + HeldPassMs + " ms after a half");
+    }
+
+    // the Headset tab's Refresh (his 11-14 "add a refresh button to unbug in case it happens"): the screen set up again
+    // with the commands the knob and the wheel send anyway (no new bytes): the base's own screens' time ended, the hold
+    // ended (our last picture through the open moment), the panel unlocked, the key test mode off and on again; then the
+    // base's gauge at the same level on the locked panel, unlocked, and the whole picture at the next look (the knob's
+    // own step: the right half after the gauge makes the base send its window command, so a shifted write pointer is
+    // set again). Not at 0 or 56 (the headset beeps at its limit): the picture alone then
+    static volatile bool refreshWant; static int pressKey;
+    public static void Refresh() { refreshWant = true; }
+    static void DoRefresh()
+    {
+        Log("headset screen: refresh (his button)");
+        handUntil = 0; basePressed = false; knobClicks = 0; wheelHit = wheelOwed = false;
+        if (knobMode || held || panelLocked) Knob(false);
+        else if (knobFw) { Unlock(); head.KeyTest(false); }   // (the connect's own clean up: a panel left locked by a dropped unlock is free again, the review 11-14)
+        sentLeft = sentRight = null; heldL = heldR = null; lastDark = false;   // (drew kept: a switch off in the same pass still hands the screen back, the review 11-14)
+        if (mode == "off" && !gg) { head.ScreenBack(); drew = false; paged = false; busFree = Ms() + HomeMs; }   // (Original: the screen the base's own again, in case it was left holding a picture)
+        if (knobOk && !gg && (mode == "page" || (mode == "dark" && !ending && !asleep)))   // (as Screen's own: PC going off or asleep, the knob stays the base's)
+        {
+            NapUntil(Ms() + HomeMs);   // (off and on not back to back: the base's own draw after the key test mode's off is over first, the review 11-14)
+            Knob(true);
+            if (knobMode && knobLevel > 0 && knobLevel < 0x38)
+            {
+                WaitBus(); panelLocked = head.PanelLock(true);
+                try { head.SetLevel(knobLevel); busFree = Ms() + GaugeMs; } finally { Unlock(); }
+            }
+        }
+        headAsk = Math.Min(headAsk, Ms() + 300); lastSec = -1;   // (the minute's questions soon: the base's home view again; the picture at the next look, both halves)
+    }
+
+    // the wheel's level, asked: every 10 ms while it is in use (3 s from its last click), every 40 ms otherwise. A change
+    // = a click now (the push comes up to 100 ms later, from the base's timer); one within the open moment = maybe a hit.
+    // His clicks come in bursts (2 or 3, 16 to 50 ms apart) with 150 to 300 ms between them (131 timed clicks, 11-14): the
+    // number goes out QuietMs after a burst and is on the panel before the next one
+    static long levelAskAt, lockedAt = -100000, anchorAt = -100000, tryAt = -100000;
+    static int ProgressMs;   // held: while he keeps turning, the number also goes out this often (0: only once he rests QuietMs), right after one of his bursts (30 ms quiet); his 11-14 "if i keep giving inputs nonstop it stays the old value until i pause"
+    static bool ProgressDue(long now) { return ProgressMs > 0 && wheelOwed && now - wheelAt >= 30 && now - tryAt >= ProgressMs; } static bool hitCheck;   // (hitCheck: the first answered poll after a lock decides whether a click met the open moment)
+    static void PollWheel(long now)
+    {
+        if (now - levelAskAt < (now - wheelAt < 3000 ? 10 : 50)) return;
+        levelAskAt = now;
+        var v = head.Ask(0x20, 40);
+        if (v == null || v[3] > 0x38) return;
+        bool check = hitCheck; hitCheck = false;
+        int lv = 0x38 - v[3];
+        if (lv == knobLevel) return;
+        if (now - wheelAt > 4000) Log("headset screen: the headset's wheel, drawn after each burst");   // (once a go)
+        knobLevel = lv; volume = Vol(v[3]); wheelAt = Ms(); wheelOwed = true;
+        if (check) { wheelHit = true; lastSec = -1; }   // (the first answer after the lock: the click may have come before it, while the panel was open)
+    }
+
+    static bool HoldDue(long now) { return head != null && WheelQuiet && knobMode && !held && drew && !firstHold && brightWant <= 0 && (mode == "page" || mode == "dark") && now - turnAt >= Math.Max(QuietMs, 300); }   // (the base knob's rest stays 300 ms: the wheel's short quiet would hold between its detents, the review 11-14)   // (not while his brightness waits: it can't reach a locked panel)
+
+    // held: a picture the panel doesn't show yet goes through the open moment
+    static void Show(bool[,] px)
+    {
+        var reps = Packets(px);
+        if (Shows(reps)) return;   // (the panel shows it already: no open moment)
+        Open(reps, true);
+    }
+    static bool Shows(List<byte[]> reps) { return heldL != null && heldR != null && Ms() - heldAt < (Ms() - wheelAt < 10000 || knobLevel <= 0 || knobLevel >= 0x38 ? 5000 : 60000) && Same(heldL, reps[0]) && Same(heldR, reps[1]); }   // (at most 5 s old: a wheel click at 0 or 100 % changes no level and sends no push, so a hit then is unseen; and an unlock dropped in a long pass leaves the old picture; the review 11-14)
+
+    // held: a picture through the open moment. Its left half while the panel is still locked (it only goes into the
+    // base's copy; the screen is the host's from here), then, unless a wheel click came meanwhile (mayStop), the panel
+    // unlocked and the right half: the base sends the panel its whole copy, the whole new picture. Hold() ends the
+    // moment. False: nothing changed on the panel, still held
+    static bool Open(List<byte[]> reps, bool mayStop)
+    {
+        NapUntil(busFree);
+        if (mayStop) tryAt = Ms();
+        bool okL = head.Feature(reps[0]);
+        // RE-ANCHOR (11-14, board wheel-1114 065038 / 065700): the 06 25 gauge right behind the left half (a partial window,
+        // to the locked panel: the base's window cache becomes partial), so the right half below, on the UNLOCKED panel, makes
+        // the base send its own window command (22 00 07 21 00 7f, one transfer) = the panel's write pointer reset at the start
+        // of every picture. A lock pair split at a pass edge (a lone 12 / 16 moves that pointer, kept for ever by the skipped
+        // window command: the 06:04 break) is undone by the next picture. The level asked right before (a click in between
+        // would be undone); never at 0 or 56 (the headset beeps at its limit)
+        bool anchored = false, early = false;
+        if (okL && mayStop && knobLevel > 0 && knobLevel < 0x38 && (Ms() - wheelAt < 30000 || Ms() - anchorAt >= 60000))   // (up to 30 s after the wheel's last use, else every 60 s: each 06 25 also goes to the headset and re-applies the volume)
+        {
+            var v0 = head.Ask(0x20, 40);
+            if (v0 != null && v0[3] <= 0x38)
+            {
+                int lv0 = 0x38 - v0[3];
+                if (lv0 != knobLevel) { early = true; knobLevel = lv0; volume = Vol(v0[3]); }
+                else if (lv0 > 0 && lv0 < 0x38) { anchored = head.SetLevel(lv0); if (anchored) anchorAt = Ms(); }
+            }
+        }
+        Bus(anchored ? HeldPassMs + 12 : HeldPassMs);   // (its pass goes to the locked panel, the gauge's chained behind it; the unlock must not land inside them)
+        NapUntil(busFree);
+        bool click = early || (mayStop && WheelWaits());
+        if (!click && mayStop && okL && knobLevel >= 0)   // (the base sends its push up to 100 ms after a click, its level changes at once: asked, so a click in the locked part is caught before the panel opens, 11-14)
+        {
+            var v = head.Ask(0x20);
+            if (v != null && v[3] <= 0x38 && 0x38 - v[3] != knobLevel) { click = true; knobLevel = 0x38 - v[3]; volume = Vol(v[3]); Log("headset screen: a wheel click came just before a picture: stopped before the panel opened"); }   // (the level kept: the next picture is not stopped by the same change)
+            click |= WheelWaits();   // (a push that came while it was asked; at 0 or 100 % only the push shows a click)
+        }
+        if (!okL || click)
+        {
+            if (click) { wheelAt = Ms(); wheelOwed = true; NapUntil(Ms() + HomeMs); }   // (it may have taken the screen back behind the lock: its draw is over first)
+            head.ScreenBack(); busFree = Ms() + HomeMs; sentLeft = sentRight = null;   // (a refused half still made the screen the host's: the base's again)
+            if (!okL && ++sendFails >= 3) throw new IOException("the screen refused 3 pictures in a row");
+            return false;
+        }
+        head.PanelLock(false); panelLocked = held = wheelHit = false;
+        bool okR = head.Feature(reps[1]); Bus(HeldPassMs);   // (the open moment: locked again once this pass is surely over)
+        sentLeft = reps[0]; sentRight = okR ? reps[1] : null; drew = true; heldAt = Ms();
+        if (okR) sendFails = 0; else if (++sendFails >= 3) throw new IOException("the screen refused 3 pictures in a row");
+        return true;
+    }
+
+    // the open moment ends: the panel locked again ONLY once the base's display is surely free (two pairs, 8 ms apart, as
+    // Unlock and the knob do); then 06 95 00: the screen is the base's again (a wheel click draws nothing) and its home
+    // frame goes to the locked panel and into its copy. Until 11-14 the first tries went out about 18 ms after the last
+    // half, while the base was still sending the panel its rows: a lock is two reports (fd, then 16), and when the fd
+    // lands in a gap between rows and the 16 is dropped, the panel's chip takes the base's next command as the fd's
+    // value and reads the rest as commands of their own. Most likely why the held wheel left the panel scrambled until a
+    // replug (11-13 21:0x); knobtest9 (always waited) and the knob path (WaitBus) never did
+    static void Hold()
+    {
+        NapUntil(busFree);
+        // a click in the open moment: the base is drawing its own frame now (about 90 ms, which busFree doesn't know),
+        // so the lock waits until that draw is over (the review 11-14), and the panel counts as showing the base's frame
+        // (the question before the lock is NEEDED: 11-14 06:04 the snappier wheel left it out and scrambled the panel
+        // within a minute (a replug cured it). A take back is ONE full pass (board 065038 / 065630), but a lock pair whose fd
+        // is dropped by a running pass and whose 16 lands after it leaves a lone 16 on the unlocked chip (the pointer moves);
+        // the click that starts such a pass changes the level first, so this question sees it)
+        bool click = WheelWaits();
+        if (!click && knobLevel >= 0)
+        {
+            var v = head.Ask(0x20, 40);
+            if (v != null && v[3] <= 0x38 && 0x38 - v[3] != knobLevel) { click = true; knobLevel = 0x38 - v[3]; volume = Vol(v[3]); }
+            click |= WheelWaits();
+        }
+        if (click) { NapUntil(Ms() + HomeMs); wheelAt = Ms(); wheelOwed = true; Log("headset screen: a wheel click met a picture: locked once the base's own draw was over, drawn again once it rests"); }
+        bool any = head.PanelLock(true);
+        NapUntil(Ms() + 24);   // (the second pair 24 ms later: a take back started in the first pair's gap is over by then, and this one resolves a pending fd now, board 065700 C3)
+        if (knobLevel >= 0) { var v2 = head.Ask(0x20, 40); if (v2 != null && v2[3] <= 0x38 && 0x38 - v2[3] != knobLevel) { knobLevel = 0x38 - v2[3]; volume = Vol(v2[3]); wheelAt = Ms(); wheelOwed = true; click = true; NapUntil(Ms() + HomeMs); } }   // (asked again before pair 2, board 070414 C2: a click since pair 1 = its take back's pass may run, so pair 2 waits it out; the panel then counts as maybe showing the base's frame)
+        any |= head.PanelLock(true);
+        if (!any) { if (++holdFails >= 3) throw new IOException("the panel lock was refused 3 times"); return; }
+        holdFails = 0; panelLocked = held = true; heldL = click ? null : sentLeft; heldR = click ? null : sentRight;
+        lockedAt = Ms(); hitCheck = true;
+        head.ScreenBack();
+        openTo = Ms() + 110;   // (a click in the open moment is pushed up to 100 ms later)
+        busFree = Ms() + HomeMs; sentLeft = sentRight = null;
+    }
+
+    // a wheel click may have met the open moment: the base took the screen (its frame may be on the panel, and the lock
+    // may have been dropped during its draw). Locked again and handed back; drawn again once the wheel has rested HitQuietMs
+    static void CleanUp()
+    {
+        NapUntil(Ms() + HomeMs);   // (its draw is over: a take back is ONE full pass, chained at most behind ours, board 065038 / 065630 R7; HomeMs kept as the margin)
+        NapUntil(busFree);
+        for (int i = 0; i < 2; i++) { if (i > 0) NapUntil(Ms() + 24); head.PanelLock(true); }   // (two pairs 24 ms apart: fewer pairs near a pass edge, 11-14)
+        head.ScreenBack(); busFree = Ms() + HomeMs; sentLeft = sentRight = null; heldL = heldR = null; panelLocked = held = true;
+        Log("headset screen: a wheel click may have met a picture: locked again, drawn again once it rests");
+    }
+
+    // the hold ends (the knob mode goes off): the last picture again through the open moment, so the screen is the host's
+    // with our picture on the panel, as before the hold (neither the base's frame nor half of it shows)
+    static void Release()
+    {
+        if (!held) return;
+        Open(heldL != null && heldR != null ? new List<byte[]> { heldL, heldR } : Packets(new bool[128, 64]), false);
+    }
+
+    // a volume push not looked at yet (the list holds only those: the loop empties it each pass), also one the minute's
+    // questions picked up: held, that is the headset's wheel turning
+    static bool WheelWaits()
+    {
+        head.CollectPushes();
+        foreach (var r in head.Pushes) if (r.Length >= 3 && r[0] == 0x07 && r[1] == 0x25 && r[2] <= 0x38 && 0x38 - r[2] != knobLevel) return true;   // (a new level only: the base's echo of our own 06 25 carries the same one, the review 11-14)
+        return false;
+    }
+
+    // a wait to the millisecond (the open moment's timing): a high resolution waitable timer (Windows 10 1803 on), else
+    // Thread.Sleep, which may sleep 15 ms
+    [DllImport("kernel32.dll")] static extern IntPtr CreateWaitableTimerExW(IntPtr attr, IntPtr name, uint flags, uint access);
+    [DllImport("kernel32.dll")] static extern bool SetWaitableTimer(IntPtr timer, ref long due, int period, IntPtr routine, IntPtr arg, bool resume);
+    [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr handle, uint ms);
+    static IntPtr napTimer; static bool napTried;
+    static void NapUntil(long t)
+    {
+        while (true)
+        {
+            long w = t - Ms(); if (w <= 0) return;
+            if (!napTried) { napTried = true; napTimer = CreateWaitableTimerExW(IntPtr.Zero, IntPtr.Zero, 2, 0x1F0003); }   // (2: high resolution; all access)
+            long due = -w * 10000;   // (from now, in 100 ns)
+            if (napTimer != IntPtr.Zero && SetWaitableTimer(napTimer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false)) WaitForSingleObject(napTimer, 1000);
+            else Thread.Sleep((int)Math.Min(w, 250));
+        }
+    }
+
+    // the two 06 93 feature reports of a full picture (left and right halves, 64 x 64 each): pixels column by column,
+    // bit x * h + y, the lowest bit the top pixel
+    internal static List<byte[]> Packets(bool[,] px)
+    {
+        var list = new List<byte[]>();
+        for (int x0 = 0; x0 < 128; x0 += 64)
+        {
+            var rep = new byte[6 + 64 * 64 / 8];
+            rep[0] = 0x06; rep[1] = 0x93; rep[2] = (byte)x0; rep[3] = 0; rep[4] = 64; rep[5] = 64;
+            for (int x = 0; x < 64; x++)
+                for (int y = 0; y < 64; y++)
+                    if (px[x0 + x, y]) { int bit = x * 64 + y; rep[6 + bit / 8] |= (byte)(1 << (bit % 8)); }
+            list.Add(rep);
+        }
+        return list;
+    }
+}
+
+// ---- plain Windows HID: find by interface path, caps, overlapped read with a timeout, write, feature. Several programs
+// can hold the same collection at once; each open handle gets its own copy of every input report, so answers meant for
+// GG or G HUB reach us too (told apart by the command byte or the software id) ----
+sealed class HidDev : IDisposable
+{
+    [StructLayout(LayoutKind.Sequential)]
+    struct Caps
+    {
+        public ushort Usage, UsagePage, InputReportByteLength, OutputReportByteLength, FeatureReportByteLength;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 17)] public ushort[] Reserved;
+        public ushort NumberLinkCollectionNodes, NumberInputButtonCaps, NumberInputValueCaps, NumberInputDataIndices,
+            NumberOutputButtonCaps, NumberOutputValueCaps, NumberOutputDataIndices,
+            NumberFeatureButtonCaps, NumberFeatureValueCaps, NumberFeatureDataIndices;
+    }
+    [DllImport("hid.dll")] static extern void HidD_GetHidGuid(out Guid g);
+    [DllImport("hid.dll", SetLastError = true)] static extern bool HidD_GetPreparsedData(SafeFileHandle h, out IntPtr pp);
+    [DllImport("hid.dll")] static extern bool HidD_FreePreparsedData(IntPtr pp);
+    [DllImport("hid.dll")] static extern int HidP_GetCaps(IntPtr pp, out Caps caps);
+    [DllImport("hid.dll", SetLastError = true)] static extern bool HidD_SetFeature(SafeFileHandle h, byte[] buf, int len);
+    [DllImport("hid.dll", SetLastError = true)] static extern bool HidD_SetOutputReport(SafeFileHandle h, byte[] buf, int len);
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)] static extern int CM_Get_Device_Interface_List_Size(out int len, ref Guid g, string id, int flags);
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)] static extern int CM_Get_Device_Interface_List(ref Guid g, string id, char[] buf, int len, int flags);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr sa, uint disp, uint flags, IntPtr tmpl);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool ReadFile(SafeFileHandle h, IntPtr buf, int n, IntPtr read, IntPtr ov);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool WriteFile(SafeFileHandle h, IntPtr buf, int n, IntPtr written, IntPtr ov);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetOverlappedResult(SafeFileHandle h, IntPtr ov, out int n, bool wait);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool CancelIoEx(SafeFileHandle h, IntPtr ov);
+
+    public ushort UsagePage, Usage;
+    public int InLen, OutLen, FeatLen, LastError;
+    SafeFileHandle h;
+    IntPtr rov, wov;
+    readonly ManualResetEvent rev = new ManualResetEvent(false), wev = new ManualResetEvent(false);
+    byte[] rbuf; GCHandle rpin; bool pending;
+
+    public WaitHandle ReadEvent { get { return rev; } }
+
+    public static List<string> Paths(string idPart)
+    {
+        Guid g; HidD_GetHidGuid(out g);
+        var list = new List<string>();
+        int len;
+        if (CM_Get_Device_Interface_List_Size(out len, ref g, null, 0) != 0 || len < 2) return list;
+        var buf = new char[len];
+        if (CM_Get_Device_Interface_List(ref g, null, buf, len, 0) != 0) return list;
+        foreach (string p in new string(buf).Split('\0'))
+            if (p.Length > 0 && p.ToLowerInvariant().Contains(idPart)) list.Add(p);
+        list.Sort(StringComparer.OrdinalIgnoreCase);
+        return list;
+    }
+
+    // opened for read and write, overlapped; null when it can't be (in use only for reading by someone, gone)
+    public static HidDev Open(string path)
+    {
+        var h = CreateFile(path, 0xC0000000u, 3, IntPtr.Zero, 3, 0x40000000u, IntPtr.Zero);
+        if (h.IsInvalid) { h.Dispose(); return null; }
+        var d = new HidDev(); d.h = h;
+        IntPtr pp;
+        if (HidD_GetPreparsedData(h, out pp))
+        {
+            Caps c; HidP_GetCaps(pp, out c);
+            d.UsagePage = c.UsagePage; d.Usage = c.Usage;
+            d.InLen = c.InputReportByteLength; d.OutLen = c.OutputReportByteLength; d.FeatLen = c.FeatureReportByteLength;
+            HidD_FreePreparsedData(pp);
+        }
+        d.rov = NewOv(d.rev); d.wov = NewOv(d.wev);
+        d.rbuf = new byte[Math.Max(d.InLen, 1)];
+        d.rpin = GCHandle.Alloc(d.rbuf, GCHandleType.Pinned);
+        return d;
+    }
+
+    static IntPtr NewOv(ManualResetEvent ev)
+    {
+        IntPtr p = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(NativeOverlapped)));
+        var o = new NativeOverlapped(); o.EventHandle = ev.SafeWaitHandle.DangerousGetHandle();
+        Marshal.StructureToPtr(o, p, false);
+        return p;
+    }
+    static void ResetOv(IntPtr p, ManualResetEvent ev)
+    {
+        ev.Reset();
+        var o = new NativeOverlapped(); o.EventHandle = ev.SafeWaitHandle.DangerousGetHandle();
+        Marshal.StructureToPtr(o, p, false);
+    }
+
+    // one read always waiting on the device
+    public void Arm()
+    {
+        if (pending || InLen == 0) return;
+        ResetOv(rov, rev);
+        if (!ReadFile(h, rpin.AddrOfPinnedObject(), InLen, IntPtr.Zero, rov))
+        {
+            int e = Marshal.GetLastWin32Error();
+            if (e != 997) throw new IOException("read failed, Windows error " + e);
+        }
+        pending = true;
+    }
+
+    // one input report, or null after ms milliseconds
+    public byte[] Take(int ms)
+    {
+        if (InLen == 0) return null;
+        Arm();
+        if (!rev.WaitOne(ms)) return null;
+        int n;
+        bool ok = GetOverlappedResult(h, rov, out n, false);
+        pending = false;
+        if (!ok) throw new IOException("read failed, Windows error " + Marshal.GetLastWin32Error());
+        var r = new byte[n]; Array.Copy(rbuf, r, n);
+        return r;
+    }
+
+    public List<byte[]> TakeAll()
+    {
+        var l = new List<byte[]>(); byte[] r;
+        while ((r = Take(0)) != null) l.Add(r);
+        return l;
+    }
+
+    // an output report, padded to the collection's length; false when the device didn't take it (LastError says why)
+    public bool Write(byte[] report, int ms)
+    {
+        LastError = 0;
+        var buf = new byte[OutLen]; Array.Copy(report, buf, Math.Min(report.Length, OutLen));
+        var pin = GCHandle.Alloc(buf, GCHandleType.Pinned);
+        try
+        {
+            ResetOv(wov, wev);
+            if (!WriteFile(h, pin.AddrOfPinnedObject(), OutLen, IntPtr.Zero, wov))
+            {
+                int e = Marshal.GetLastWin32Error();
+                if (e != 997) { LastError = e; return false; }
+            }
+            int n;
+            if (!wev.WaitOne(ms)) { CancelIoEx(h, wov); GetOverlappedResult(h, wov, out n, true); LastError = -1; return false; }
+            bool ok = GetOverlappedResult(h, wov, out n, false);
+            if (!ok) LastError = Marshal.GetLastWin32Error();
+            return ok;
+        }
+        finally { pin.Free(); }
+    }
+
+    // an output report through the control pipe (SET_REPORT), padded like Write: no wait for the device's next look at
+    // its OUT endpoint, which WriteFile has (32 ms on the headset base)
+    public bool SetOutput(byte[] report)
+    {
+        LastError = 0;
+        var buf = new byte[OutLen]; Array.Copy(report, buf, Math.Min(report.Length, OutLen));
+        bool ok = HidD_SetOutputReport(h, buf, OutLen);
+        if (!ok) LastError = Marshal.GetLastWin32Error();
+        return ok;
+    }
+
+    public bool SetFeature(byte[] report)
+    {
+        var buf = new byte[FeatLen]; Array.Copy(report, buf, Math.Min(report.Length, FeatLen));
+        return HidD_SetFeature(h, buf, FeatLen);
+    }
+
+    public void Dispose()
+    {
+        if (h == null) return;
+        if (pending) { int n; CancelIoEx(h, rov); GetOverlappedResult(h, rov, out n, true); pending = false; }
+        h.Dispose(); h = null;
+        if (rpin.IsAllocated) rpin.Free();
+        if (rov != IntPtr.Zero) Marshal.FreeHGlobal(rov);
+        if (wov != IntPtr.Zero) Marshal.FreeHGlobal(wov);
+    }
+}
+
+// ---- the headset: Arctis Nova Pro Wireless base station. 06 B0 ("wireless_settings" in GG's own list), its answer:
+// [6] the headset's battery 0-8, [7] the spare's (charging in the base) 0-8, [14] radio link (1 not paired, 4 paired
+// but off, 8 connected), [15] the headset's power (1 off, 2 charging by cable, 8 on) ----
+sealed class Arctis : IDisposable
+{
+    public HidDev Cmd, Push;   // Cmd = the FFC0 collection (report 06), Push = the FF00 collection (report 07)
+    public readonly List<byte[]> Pushes = new List<byte[]>();
+    public readonly List<byte[]> Inbox = new List<byte[]>();   // what came in on the command collection that was nobody's answer (the key test mode's reports)
+    public bool NoWait;   // the base may be gone: gate 4 only tries the quick pipe
+    public string Pid;    // which base station: "12e0" the PC one (his, the one proven), "12e5" / "225d" the Xbox ones
+
+    public static Arctis Open()
+    {
+        var a = new Arctis();
+        foreach (string id in Ids)
+        {
+            foreach (string p in HidDev.Paths("vid_1038&pid_" + id + "&mi_04"))
+            {
+                var d = HidDev.Open(p); if (d == null) continue;
+                if (d.UsagePage == 0xFFC0 && a.Cmd == null) a.Cmd = d;
+                else if (d.UsagePage == 0xFF00 && a.Push == null) a.Push = d;
+                else d.Dispose();
+            }
+            if (a.Cmd != null) { a.Pid = id; break; }   // (one base: its command and push collections, the release review 11-15)
+            if (a.Push != null) { a.Push.Dispose(); a.Push = null; }
+        }
+        if (a.Cmd == null) { a.Dispose(); return null; }
+        return a;
+    }
+    // the base stations: the PC version (his), the Xbox version and the Xbox white one (11-15: HeadsetControl and ggoled
+    // drive all three the same way, interface 4, report 06; only the PC version was proven here)
+    static readonly string[] Ids = { "12e0", "12e5", "225d" };
+
+    // GATE 1: output reports. The status questions B0, B7, 10 (its firmware), 80 (its screen settings) and 20 (its volume; ggoled and Arctis Sound Manager ask it too),
+    // and 95 (the screen back to the base's own view). Nothing else.
+    bool Out(byte cmd)
+    {
+        if (cmd != 0xB0 && cmd != 0xB7 && cmd != 0x20 && cmd != 0x95 && cmd != 0x10 && cmd != 0x80) throw new InvalidOperationException("blocked headset command " + cmd.ToString("x2"));
+        return Cmd.Write(new byte[] { 0x06, cmd }, 1000);
+    }
+
+    // GATE 2: feature reports. Only 06 93 (draw a block of pixels), inside 128 x 64.
+    public bool Feature(byte[] report)
+    {
+        if (report.Length < 6 || report[0] != 0x06 || report[1] != 0x93) throw new InvalidOperationException("blocked screen report");
+        if (report[2] > 127 || report[3] > 63 || report[4] == 0 || report[4] > 64 || report[5] == 0 || report[5] > 64 || report[5] % 8 != 0)
+            throw new InvalidOperationException("screen block outside 128 x 64");
+        return Cmd.SetFeature(report);
+    }
+
+    // 06 95 through the control pipe first: 2 ms, where Out (WriteFile) waits up to 32 ms (knob test 3, 11-13); Out
+    // from then on if the base ever refuses it that way
+    static bool slowBack;
+    public bool ScreenBack()
+    {
+        if (!slowBack) { if (Cmd.SetOutput(new byte[] { 0x06, 0x95 })) return true; slowBack = true; }
+        return Out(0x95);
+    }
+
+    // GATE 4 (11-13): the volume knob with none of the base's own screens. Exactly these reports and no other, ever:
+    // 06 1b 81 01 00 / 01 (the firmware's key test mode off / on), 06 1b 8a 01 fd then 16 or 12 (the OLED controller
+    // locked / unlocked), 06 25 <0x38 - level> (the volume). Read from firmware 1.29.27 and proven on it; Batt sends
+    // them to that firmware only. Through the control pipe (about 2 ms each, in order)
+    bool Raw(params byte[] r)
+    {
+        bool ok = r.Length == 5 && r[0] == 0x06 && r[1] == 0x1b && r[3] == 0x01 && ((r[2] == 0x81 && r[4] <= 1) || (r[2] == 0x8a && (r[4] == 0xfd || r[4] == 0x16 || r[4] == 0x12)));
+        ok |= r.Length == 3 && r[0] == 0x06 && r[1] == 0x25 && r[2] <= 0x38;
+        ok |= r.Length == 3 && r[0] == 0x06 && r[1] == 0x85 && r[2] >= 1 && r[2] <= 10;   // (the brightness, 11-14: only when he moves its slider; never 06 09, but the base's own save after a wheel turn keeps it)
+        if (!ok) throw new InvalidOperationException("blocked headset report");
+        return Cmd.SetOutput(r) || (!NoWait && Cmd.Write(r, 1000));
+    }
+    public bool KeyTest(bool on) { return Raw(0x06, 0x1b, 0x81, 0x01, (byte)(on ? 1 : 0)); }
+    public bool PanelLock(bool on) { return Raw(0x06, 0x1b, 0x8a, 0x01, 0xfd) & Raw(0x06, 0x1b, 0x8a, 0x01, (byte)(on ? 0x16 : 0x12)); }
+    public bool Bright(int b) { if (b < 1 || b > 10) throw new InvalidOperationException("brightness outside 1 to 10"); return Raw(0x06, 0x85, (byte)b); }
+    public bool SetLevel(int level) { if (level < 0 || level > 0x38) throw new InvalidOperationException("volume level outside 0 to 56"); return Raw(0x06, 0x25, (byte)(0x38 - level)); }
+
+    public void CollectPushes() { if (Push != null) Pushes.AddRange(Push.TakeAll()); Inbox.AddRange(Cmd.TakeAll()); if (Inbox.Count > 256) Inbox.RemoveRange(0, Inbox.Count - 256); }
+
+    // one question (06 B0, 06 B7, 06 20, 06 10 or 06 80) and its answer, or null when none came within a second
+    public byte[] Ask(byte cmd, int timeoutMs = 1000)   // (timeoutMs: the wheel's 10 ms polls wait 40 ms at most, the review 11-14)
+    {
+        CollectPushes();
+        if (!Out(cmd)) return null;
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            var r = Cmd.Take((int)Math.Max(1, timeoutMs - sw.ElapsedMilliseconds));
+            if (r == null) break;
+            if (r.Length >= 16 && r[0] == 0x06 && r[1] == cmd) return r;
+            Inbox.Add(r);   // (not the answer: a report of the key test mode, or someone else's answer)
+        }
+        return null;
+    }
+
+    public void Dispose()
+    {
+        if (Cmd != null) Cmd.Dispose();
+        if (Push != null) Push.Dispose();
+    }
+}
+
+// ---- the mouse: HID++ over the LIGHTSPEED receiver (Logitech's documented calls; Solaar and LGSTrayBattery use the
+// same). A request: 10 <device> <feature index> <function << 4 | software id> p0 p1 p2; its answer has the same first
+// 4 bytes (often as a long 11 report). Errors: 10 <dev> 8F .. (HID++ 1.0, from the receiver: 8 "unknown device" = the
+// mouse is in deep sleep or off) or 11 <dev> FF .. (2.0). Software id 0E (G HUB uses 0D, Solaar 0B) ----
+sealed class Lightspeed : IDisposable
+{
+    public HidDev Short, Long;
+    readonly List<byte[]> pushes = new List<byte[]>();
+    const byte Sw = 0x0E;
+    const int Wait = 2500;   // (in light sleep it answers in 300 to 1000 ms, measured 11-12)
+
+    public static Lightspeed Open()
+    {
+        var l = new Lightspeed();
+        foreach (string p in HidDev.Paths("vid_046d&pid_c54d&mi_02"))
+        {
+            var d = HidDev.Open(p); if (d == null) continue;
+            if (d.UsagePage == 0xFF00 && d.Usage == 0x0001 && l.Short == null) l.Short = d;
+            else if (d.UsagePage == 0xFF00 && d.Usage == 0x0002 && l.Long == null) l.Long = d;
+            else d.Dispose();
+        }
+        if (l.Short == null || l.Long == null) { l.Dispose(); return null; }
+        return l;
+    }
+
+    // GATE 3: HID++ feature calls, reads only: 0000 root (0 getFeature, 1 ping), 1004 unified battery (1 getStatus)
+    public byte[] Call(byte dev, int feature, byte index, int fn, byte[] args, out string err)
+    {
+        if (!((feature == 0x0000 && (fn == 0 || fn == 1)) || (feature == 0x1004 && fn == 1)))
+            throw new InvalidOperationException("blocked HID++ call " + feature.ToString("x4") + " fn " + fn);
+        var req = new byte[7];
+        req[0] = 0x10; req[1] = dev; req[2] = index; req[3] = (byte)((fn << 4) | Sw);
+        if (args != null) Array.Copy(args, 0, req, 4, Math.Min(3, args.Length));
+        err = null;
+        pushes.AddRange(Short.TakeAll()); pushes.AddRange(Long.TakeAll());
+        if (!Short.Write(req, 1000)) { err = "the receiver did not take it (Windows error " + Short.LastError + ")"; if (Short.LastError > 0) throw new IOException(err); return null; }
+        var sw = Stopwatch.StartNew();
+        var evs = new WaitHandle[] { Short.ReadEvent, Long.ReadEvent };
+        while (sw.ElapsedMilliseconds < Wait)
+        {
+            Short.Arm(); Long.Arm();
+            if (WaitHandle.WaitAny(evs, (int)Math.Max(1, Wait - sw.ElapsedMilliseconds)) == WaitHandle.WaitTimeout) break;
+            foreach (var d in new[] { Short, Long })
+            {
+                var r = d.Take(0);
+                if (r == null) continue;
+                if (r.Length >= 7 && r[1] == req[1])
+                {
+                    if (r[2] == req[2] && r[3] == req[3]) { var t = new byte[r.Length - 4]; Array.Copy(r, 4, t, 0, t.Length); return t; }
+                    if ((r[2] == 0x8F || r[2] == 0xFF) && r[3] == req[2] && r[4] == req[3]) { err = (r[2] == 0x8F ? "HID++ 1.0 error " : "HID++ 2.0 error ") + r[5]; return null; }
+                }
+                pushes.Add(r);
+            }
+        }
+        err = "no answer in " + Wait + " ms";
+        return null;
+    }
+
+    // what came in by itself since the last look (the receiver's link changes, the mouse's battery events)
+    public List<byte[]> Listen()
+    {
+        var l = new List<byte[]>(pushes); pushes.Clear();
+        l.AddRange(Short.TakeAll()); l.AddRange(Long.TakeAll());
+        return l;
+    }
+
+    // the battery: 1 read (percent, charging: 0 no, 1 / 2 charging, 3 full), 0 asleep or off, -1 no answer. dev and idx
+    // are found once (the ping, getFeature 1004) and kept; a failed call finds them again next time
+    public int Status(ref byte dev, ref byte idx, out int pct, out int chg)
+    {
+        pct = chg = -1; string err;
+        if (dev == 0)
+        {
+            bool sleepy = false;
+            for (byte d = 1; d <= 6 && dev == 0; d++)
+            {
+                byte mark = (byte)(0x40 + d);
+                var r = Call(d, 0x0000, 0, 1, new byte[] { 0, 0, mark }, out err);
+                if (r != null && r.Length >= 3 && r[2] == mark) dev = d;
+                else if (d == 1 && Sleepy(err)) sleepy = true;
+            }
+            if (dev == 0) return sleepy ? 0 : -1;
+            idx = 0;
+        }
+        if (idx == 0)
+        {
+            var r = Call(dev, 0x0000, 0, 0, new byte[] { 0x10, 0x04, 0 }, out err);
+            if (r == null || r[0] == 0) { bool s = Sleepy(err); if (!s) dev = 0; return s ? 0 : -1; }
+            idx = r[0];
+        }
+        var st = Call(dev, 0x1004, idx, 1, null, out err);
+        if (st == null || st.Length < 3) { if (Sleepy(err)) return 0; idx = 0; return -1; }
+        pct = st[0]; chg = st[2];
+        return 1;
+    }
+    static bool Sleepy(string err) { return err != null && (err == "HID++ 1.0 error 8" || err == "HID++ 1.0 error 9"); }
+
+    public void Dispose()
+    {
+        if (Short != null) Short.Dispose();
+        if (Long != null) Long.Dispose();
+    }
+}
+}
+// ==== headset end ====

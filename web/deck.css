@@ -29,11 +29,41 @@ button { font-family: inherit; }
 .tbar button, .tbar nav { app-region: no-drag; -webkit-app-region: no-drag; }
 .tbar .name { font-weight: 650; color: var(--hi); letter-spacing: 0.04em; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
 .tclock { font-size: 14px; color: #5c5c5c; font-variant-numeric: tabular-nums; margin-left: -1px; white-space: nowrap; }
-@media (max-width: 960px) { .tclock { display: none; } .tbar { gap: 6px; } .tbar .name { max-width: 36vw; font-size: 15px; } }
+/* the bar's steps move (his 11-13 "it's still snappy, the clock just disappears, the view modes switch snaps into small
+   sizes, smaller snap are still snaps ... just make smooth animations"): what leaves closes and fades (--on: 0 on it:
+   its width, its gap and its opacity go to nothing; --mw, its own width, set by titleFit, so it closes from where it
+   is and opens to it), what gets tighter eases (the gap --tg, the buttons' padding --ip, the tabs' padding, the name's
+   size). The time and the buttons that leave give way first while a step is on its way (flex-shrink), so the name is
+   never cut for it. Before the steps below: they set these */
+/* In and out of edit mode nothing here eases by the clock: titleFit sets these values from the bar's width at every
+   frame of a drag (tbSolve: --tp, --tg, --ip, --ew, --eip on the bar, --nf on the name, --on from 1 to 0 on what closes),
+   so the parts follow the window's edge. Eased only: a part that closes the rest of the way when a drag stops with it
+   half closed, or opens again (.tbo, for the 180 ms it takes; the buttons' own hover list kept in theirs) */
+.tbar { --tg: 10px; gap: var(--tg); }
+.tbar .name { --nw: 32vw; font-size: var(--nf, 17px); }
+.tbar > .ib { padding: 7px var(--ip, 7px); }
+.tbar > .ib.tbo { transition: padding 180ms ease, max-width 180ms ease, opacity 150ms ease, margin 180ms ease, scale 90ms ease-out, background-color 140ms ease-out, color 140ms ease-out, border-color 140ms ease-out; }
+.tclock.tbo, .histtools.tbo, .eblab.tbo, .tbar .name.tbo { transition: max-width 180ms ease, opacity 150ms ease, margin 180ms ease; }
+.ebsep.tbo { transition: width 180ms ease, margin 180ms ease, opacity 150ms ease; }
+.ebb.tbo { transition: background 150ms, color 150ms, font-size 180ms ease, gap 180ms ease, padding 180ms ease; } .editbar.tbo { transition: padding 180ms ease; }
+:root[data-motion="off"] .tbo { transition: none !important; }
+.tbar .name.tbc, .tbar .name.tbo { text-overflow: clip; }   /* (the name closing, edit mode's last stage, or opening again, eased: no dots as it goes) */
+.tbar.tbn > .grow { flex: 0 0 0px !important; }   /* (tbStages' copy: the spacer takes nothing, the bar's parts end where they need to) */
+.tclock { overflow: hidden; flex-shrink: 1000000; min-width: 0; max-width: calc(var(--mw, 5em) * var(--on, 1)); opacity: var(--on, 1); margin-left: calc(-1px - var(--tg) * (1 - var(--on, 1))); }
+.app.editing .tbar .name { max-width: calc(min(var(--nw), var(--mw, 100vw)) * var(--on, 1)); opacity: var(--on, 1); margin-right: calc(var(--tg) * (var(--on, 1) - 1)); }
+.tbar.tbm { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; }   /* (titleFit's copy of the bar, measured) */
+.tbar.tbm, .tbar.tbm *, .tbar.tbi, .tbar.tbi * { transition: none !important; } .tbar.tbm > :not(.grow) { flex-shrink: 0 !important; }   /* (tbi: a jump of the window, the steps at once) */
+@media (max-width: 960px) { .tclock { --on: 0; } .tbar { --tg: 6px; } .tbar .name { max-width: 36vw; --nw: 36vw; --nf: 15px; } }
 /* (narrower still, half a high-DPI screen: Restart HWiNFO (also in the banner and Settings) and undo/redo (Ctrl+Z) step
    aside, so the window buttons and Settings stay in reach, 11-06) */
-@media (max-width: 760px) { .app:not(.editing) #rstBtn, .app:not(.editing) .histtools { display: none; } .app:not(.editing) nav#screens button { padding: 5px 7px; } .tbar .name { min-width: 0; } .winbtns, #setBtn, #savesBtn { flex-shrink: 0; } }
-#rstBtn { margin-left: -4px; }
+@media (max-width: 760px) { .app:not(.editing) #rstBtn, .app:not(.editing) .histtools { --on: 0; } .app:not(.editing) .tbar { --tp: 7px; } .tbar .name { min-width: 0; } .winbtns, #setBtn, #savesBtn { flex-shrink: 0; } }
+/* (the PC's name keeps its first letters at any width, his 11-13 "the computer name on the top left was gone": the gaps
+   and the buttons beside it get tighter first) */
+@media (max-width: 760px) { .tbar { --tg: 4px; } }
+@media (max-width: 680px) { .tbar { --ip: 5px; } }
+/* (the widths in the rules around here are only where the bar starts from before titleFit has run: it sets every one
+   of these itself, in and out of edit mode) */
+#rstBtn { overflow: hidden; flex-shrink: 1000; min-width: 0; max-width: calc(var(--mw, 30px) * var(--on, 1)); opacity: var(--on, 1); margin-left: calc(-4px - var(--tg) * (1 - var(--on, 1))); padding-inline: calc(var(--ip, 7px) * var(--on, 1)); }
 .ib.spin svg { animation: spin 1.1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
 :root[data-motion="minimal"] .ib.spin svg, :root[data-motion="off"] .ib.spin svg { animation: none; } .ib.spin { color: #9a9a9a; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--g44, #444444); flex: none; }
@@ -44,7 +74,7 @@ button { font-family: inherit; }
 .btn, .ib, .chip, .seg button, .mclose { transition: scale 90ms ease-out, background-color 140ms ease-out, color 140ms ease-out, border-color 140ms ease-out; }   /* (2.1: their hover colours fade, as the others do) */
 .tbar .grow { flex: 1; }
 nav#screens { position: relative; display: inline-flex; background: var(--nav, #151515); border: 1px solid var(--nav-line, #242424); border-radius: 9px; padding: 2px; margin-left: 10px; }
-nav#screens button { position: relative; z-index: 1; background: none; border: 0; color: #8c8c8c; font-size: 13.5px; padding: 5px 14px; border-radius: 7px; cursor: pointer; transition: color 200ms; }
+nav#screens button { position: relative; z-index: 1; background: none; border: 0; color: #8c8c8c; font-size: 13.5px; padding: 5px var(--tp, 14px); border-radius: 7px; cursor: pointer; transition: color 200ms; }
 nav#screens button:hover { color: #e0e0e0; } nav#screens button.active { color: var(--pill-fg, #fff); }
 nav#screens .ind { position: absolute; top: 2px; bottom: 2px; left: 0; width: 0; border-radius: 7px; background: var(--pill, var(--g2b, #2b2b2b));
                    transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
@@ -63,26 +93,26 @@ nav#screens .ind.still { transition: none; }
 /* the title bar's right side (11-02, his pick F): undo and redo quiet by the icons, then Edit, Save, the rest; while
    editing, a strip of its own (Editing, Category, Storage, Selected, undo, redo, Done), centred between the reset button
    and Save by a spacer on each side, and Edit, undo and redo there instead */
-.histtools { display: inline-flex; gap: 2px; margin-right: 12px; }
+.histtools { display: inline-flex; gap: 2px; margin-right: calc(12px * var(--on, 1)); margin-left: calc(var(--tg) * (var(--on, 1) - 1)); overflow: hidden; flex-shrink: 1000; min-width: 0; max-width: calc(var(--mw, 66px) * var(--on, 1)); opacity: var(--on, 1); }
 .app.editing .histtools, .app.editing #editBtn { display: none; }
-.editbar { display: none; flex: none; align-items: center; gap: 2px; background: var(--g1a, #1a1a1a); border: 1px solid var(--g2e, #2e2e2e); border-radius: 11px; padding: 3px 4px 3px 12px;
+.editbar { display: none; flex: none; align-items: center; gap: 2px; background: var(--g1a, #1a1a1a); border: 1px solid var(--g2e, #2e2e2e); border-radius: 11px; padding: 3px 4px 3px calc(4px + 8px * var(--ew, 1));
            box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5); app-region: no-drag; -webkit-app-region: no-drag; }
 .app.editing .editbar { display: inline-flex; }
 /* (it pops in from setEdit, as you go into edit mode only: 11-02, the motion audit) */
-.eblab { margin-right: 8px; letter-spacing: 0.08em; text-transform: uppercase; font-size: 10.5px; font-weight: 600; color: #8a8a8a; }
-.ebsep { width: 1px; height: 16px; background: var(--g2e, #2e2e2e); margin: 0 4px; }
-.editbar .ib { padding: 5px 7px; }
+.eblab { margin-right: calc(8px * var(--ew, 1)); margin-left: calc(-2px * (1 - var(--ew, 1))); letter-spacing: 0.08em; text-transform: uppercase; font-size: 10.5px; font-weight: 600; color: #8a8a8a; overflow: hidden; white-space: nowrap; max-width: calc(var(--mw, 7em) * var(--ew, 1)); opacity: var(--ew, 1); }   /* (--ew: the edit strip's words, 1 to 0) */
+.ebsep { width: calc(1px * var(--on, 1)); height: 16px; background: var(--g2e, #2e2e2e); margin: 0 calc(4px * var(--on, 1)) 0 calc(4px * var(--on, 1) - 2px * (1 - var(--on, 1))); opacity: var(--on, 1); }   /* (closed, they take the strip's 2 px gap with them) */
+.editbar .ib { padding: 5px var(--eip, 7px); }
 .ebdone { background: #e6e6e6; color: #111; border: 0; border-radius: 8px; font: inherit; font-size: 12px; font-weight: 600; padding: 5px 12px; margin-left: 6px; cursor: pointer; transition: background 150ms; } .ebdone:hover { background: #fff; }
-.ebb { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; color: #a8a8a8; font: inherit; font-size: 12px; padding: 5px 9px 5px 7px; border-radius: 8px; cursor: pointer; transition: background 150ms, color 150ms; }
+.ebb { display: inline-flex; align-items: center; gap: calc(6px * var(--ew, 1)); background: none; border: 0; color: #a8a8a8; font: inherit; font-size: calc(12px * var(--ew, 1)); padding: 5px calc(7px + 2px * var(--ew, 1)) 5px 7px; border-radius: 8px; cursor: pointer; transition: background 150ms, color 150ms; }
 .ebb svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .ebb:hover { background: var(--g26, #262626); color: #fff; } .ebb.on { background: var(--g2c, #2c2c2c); color: #fff; }   /* (a drawer open: lit) */
 .ebb.unhov:hover { background: none; color: #a8a8a8; }   /* (just switched off under the pointer: it looks off until the pointer leaves, his 11-06) */
 .app:not(.editing) .tbar .grow + .editbar + .grow { display: none; }   /* (out of edit mode one spacer is enough) */
 /* (narrow windows while editing, 11-02: the strip's words go, its buttons keep their icons and tips; narrower, the title
    goes and the view tabs tighten, so the window's own buttons stay on screen) */
-@media (max-width: 1240px) { .app.editing .eblab { display: none; } .app.editing .ebb { font-size: 0; gap: 0; padding: 5px 7px; } .app.editing .editbar { padding-left: 4px; } }
-@media (max-width: 960px) { .app.editing .tbar .name { display: none; } .app.editing nav#screens button { padding: 5px 9px; } .app.editing .tclock { display: none; } }
-@media (max-width: 800px) { .app.editing #rstBtn, .app.editing .ebsep { display: none; } .app.editing .tbar { gap: 4px; } .app.editing nav#screens button { padding: 5px 7px; } }
+@media (max-width: 1240px) { .app.editing .tbar { --ew: 0; } }
+@media (max-width: 960px) { .app.editing .tbar { --tp: 9px; } }   /* (the name: e5, only when nothing else makes room, 11-13) */
+@media (max-width: 800px) { .app.editing #rstBtn, .app.editing .ebsep { --on: 0; } .app.editing .tbar { --tg: 4px; --tp: 7px; } }
 .winbtns { display: flex; gap: 2px; margin-left: 4px; flex: none; }
 .winbtns button { background: none; border: 0; color: #777; cursor: pointer; padding: 7px 11px; border-radius: 7px; transition: background-color 140ms ease-out, color 140ms ease-out; }
 .winbtns button:hover { background: var(--g26, #262626); color: #fff; }
@@ -179,6 +209,7 @@ nav#screens .ind.still { transition: none; }
 /* a start: out of sight until its readings, values and extras are in (see bootCheck) */
 .app.boot .viewwrap { opacity: 0; transition: none; }
 html[data-motion="off"] .viewwrap { transition: none; }
+.app.wdrag #sections { overflow-y: hidden; }   /* (a window's edge being dragged: see winFit) */
 #sections { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; padding: 4px 18px 18px; scrollbar-width: thin; scrollbar-color: var(--g2a, #2a2a2a) transparent; scrollbar-gutter: stable; }   /* the same width with or without a scrollbar: a fit can't flip the layout */
 #view { font-size: 1rem; }   /* text in the views follows the fit (the chrome around them stays in px) */
 .dropmark { position: absolute; background: var(--edit); border-radius: 2px; pointer-events: none; z-index: 20; box-shadow: 0 0 0 3px var(--edit-soft); display: none; }
@@ -457,6 +488,10 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .tg.shorts.narrow .tile.short .tv { justify-self: start; margin-top: 0.15rem; }
 /* Overview looks: a small card, a list (no big reading), a band (the name on the left, the cells side by side) */
 .card.small .hero canvas { height: 3.4rem; }
+/* Overview's spare room (ovGrow, 11-13): each row a little taller, its graph more so, a card's big graph most */
+.ov .card .row { padding-block: calc(0.46rem * (0.6 + 0.4 * var(--sp, 1)) + var(--ovx, 0px) * 0.2); }
+.ov .card .row canvas.rsp { height: calc(1.85rem + var(--ovx, 0px) * 0.5); }
+.ov .card .hero canvas { height: calc(4.9rem + var(--ovx, 0px) * 1.6); } .ov .card.small .hero canvas { height: calc(3.4rem + var(--ovx, 0px) * 1.2); }
 .card.small .hv { font-size: 1.85rem; }
 .card.band { flex-direction: row; align-items: stretch; padding: calc(0.62rem * (0.7 + 0.3 * var(--sp, 1))) 1.23rem; gap: 0; }
 .ov:not(.arr) > .card.band { grid-column: 1 / -1; }
@@ -659,7 +694,7 @@ select.dsel-n { display: none; }
 .insp .closer { display: inline-flex; }
 
 @media (max-width: 1100px) {
-  nav#screens button { padding: 5px 10px; }
+  .tbar { --tp: 10px; }
 }
 
 /* ---------- popups (fixed px, identical at any view scale) ---------- */
@@ -1007,6 +1042,7 @@ select.dsel-n { display: none; }
 .setrow:last-child { border-bottom: 0; }
 .setrow > div { min-width: 0; }
 .setrow small { display: block; color: #7b7b7b; font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.cz-box .setrow > div > small::first-letter { text-transform: uppercase; }   /* (Customize's small lines start with a capital, his 11-14) */
 .setrow small.k { font-family: var(--f-mono); font-size: 11.5px; }
 .setrow small.y { color: var(--yellow); }
 .setin { background: var(--panel); border: 1px solid var(--line2); color: var(--fg); font: inherit; font-size: 13px; border-radius: 7px; padding: 5px 9px; width: 210px; flex: none; }
@@ -1068,17 +1104,17 @@ select.dsel-n { display: none; }
 .notice .nt .ib { padding: 4px; margin: -4px -2px -4px 0; } .notice .nt .ib svg { width: 14px; height: 14px; }
 .notice .na { display: flex; justify-content: flex-end; margin-top: 10px; }
 /* the update notes (2.4.2): one card, the ones after it as sheets peeking out above it, a deck */
-#upw { position: absolute; right: 18px; bottom: 18px; z-index: 95; width: min(380px, calc(100% - 36px)); pointer-events: none; }
-#upw .notice { position: absolute; left: 0; right: 0; bottom: 0; width: auto; z-index: 1; display: flex; flex-direction: column; }   /* (one pile, each as tall as the tallest: upLock, 11-07) */
+#upw { position: absolute; left: 18px; top: 58px; z-index: 95; width: min(380px, calc(100% - 36px)); pointer-events: none; }   /* (top left, under the title bar (50 px): the X stays put whatever a card's height, his 11-13) */
+#upw .notice { position: absolute; left: 0; right: 0; top: 0; bottom: auto; width: auto; z-index: 1; display: flex; flex-direction: column; }   /* (one pile, each card its own size, its top fixed: upLock, 11-13) */
 #upw .notice > :nth-child(2) { flex: 1 0 auto; }
 #upw .notice > * { transition: opacity 140ms; } #upw .notice.swap > * { opacity: 0; }   /* (every card of the pile swaps its words in place, 11-08) */
 #upw .nt { gap: 8px; } #upw .nt b { margin-right: auto; }
 #upw .upc { font-size: 12px; color: #6f6f6f; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #upn ul { margin: 2px 0 0; padding: 0 0 0 16px; max-height: calc(100vh - 150px); overflow-y: auto; } #upn li { margin: 3px 0; } #upn li::marker { color: #555; }
 #upn .na[hidden] { display: none; }
-#upw .upsh { position: absolute; inset: 0; border-radius: 12px; border: 1px solid var(--line2); background: var(--g1a, #1a1a1a); transform-origin: 50% 0; opacity: 0; pointer-events: none;
+#upw .upsh { position: absolute; inset: 0; border-radius: 12px; border: 1px solid var(--line2); background: var(--g1a, #1a1a1a); transform-origin: 50% 100%; opacity: 0; pointer-events: none;
              transition: opacity 220ms, transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1); }
-#upw .s1 { z-index: 0; transform: translateY(-8px) scale(0.95); } #upw .s2 { z-index: -1; background: var(--g17, #171717); transform: translateY(-16px) scale(0.9); }
+#upw .s1 { z-index: 0; transform: translateY(8px) scale(0.95); } #upw .s2 { z-index: -1; background: var(--g17, #171717); transform: translateY(16px) scale(0.9); }   /* (the cards behind peek out under it) */
 #upw[data-n="2"] .notice.show ~ .s1, #upw[data-n="3"] .notice.show ~ .upsh { opacity: 1; }
 /* Saves: Starter above the five slots */
 #sstart .srow2 { margin-bottom: 14px; transition: background 400ms, border-color 150ms, box-shadow 150ms; }   /* (Starter: a block like the slots, a wider gap under it) */
@@ -1246,6 +1282,33 @@ select.dsel-n { display: none; }
 /* Settings in sections: a header, then its rows in a block, with room between the blocks */
 .setsec { margin: 0 0 18px; } .setsec:first-child { margin-top: 10px; } .setsec:last-child { margin-bottom: 2px; }
 .setsec > h3 { margin: 0 0 7px 3px; font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em; color: #8c8c8c; }   /* (its own case: HWiNFO stays HWiNFO) */
+/* a section that folds on its first row (11-13: Headset's "Show on the base station", Look's "Theme"): the row stays, a
+   chevron at its right (down while open); everything after it glides shut under it. Cut to its box only while shut or
+   gliding: open, nothing is cut, so the headset's picture can stay pinned to the card */
+.setbox .setrow.setfold-h { cursor: pointer; } .setbox .setrow.setfold-h:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--edit); border-radius: 6px; }
+.setfold-r { display: inline-flex; align-items: center; flex: none; }
+.setfold-h .lk-chev { flex: none; transform: rotate(90deg); stroke: #9a9a9a; } .setsec-f.shut .setfold-h .lk-chev { transform: none; stroke: #7a7a7a; }
+.setfold-h:hover .lk-chev { stroke: #d8d8d8; }
+.setsec-b { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.setsec-f.shut .setsec-b { grid-template-rows: 0fr; }
+.setsec-b > div { min-height: 0; min-width: 0; } .setsec-f.shut .setsec-b > div, .setsec-f.anim .setsec-b > div { overflow: hidden; }
+.setsec-f.shut .setbox .setrow.setfold-h { border-bottom-color: transparent; }
+:root[data-motion="off"] .setsec-b, :root[data-motion="off"] .setfold-h .lk-chev { transition: none; }
+/* Look: its Theme row is the fold; open, the preview and the tiles follow it as one row did before; shut, its Save and its jump list go */
+.setsec-f:not(.shut) .setbox .setrow.lk-th.setfold-h { border-bottom: 0; padding-bottom: 0; }
+.setbox .setrow.lk-thb { display: block; padding-top: 0; }
+.setsec-f.shut .lk-th-r > :not(.lk-chev) { display: none; }
+/* the tiles' lists show a thin bar (11-13, his "all the mocks picker are missing the scrollbar"): the popups' own */
+.lk-th-rc > .lk-th-l { scrollbar-width: auto; inset: 0 -8px 0 -4px; padding-right: 2px; }
+.lk-th-rc > .lk-th-l::-webkit-scrollbar { display: block; width: 10.25px; background: transparent; }
+.lk-th-rc > .lk-th-l::-webkit-scrollbar-track, .lk-th-rc > .lk-th-l::-webkit-scrollbar-corner { background: transparent; }
+.lk-th-rc > .lk-th-l::-webkit-scrollbar-thumb { background: var(--g34, #343434) padding-box; border: 2px solid transparent; border-radius: 6px; min-height: 30px; }
+.lk-th-rc > .lk-th-l::-webkit-scrollbar-thumb:hover, .lk-th-rc > .lk-th-l::-webkit-scrollbar-thumb:active { background-color: var(--g44, #444); }
+/* the x on the picked page's tab (the headset's pages) */
+.hsx .hs-pg .rng button { display: inline-flex; align-items: center; } /* 11-13 his "the x is not centred": the tab centres its x like its text */
+.hsx .hs-px { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin: 0 -4px 0 6px; border-radius: 4px; color: #8a8a8a; transition: color 140ms ease-out, background-color 140ms ease-out; }
+.hsx .hs-px:hover { color: #fff; background: var(--g33, #333333); }
+.hsx .hs-px svg { width: 9px; height: 9px; stroke: currentColor; stroke-width: 1.7; fill: none; stroke-linecap: round; }
 .setbox { background: var(--box, #191919); border: 1px solid var(--line, #242424); border-radius: 11px; padding: 0 15px; }
 .setbox .setrow { padding: 12px 0; }
 #setmodal .mcard { width: min(900px, 94vw); }   /* (wider, his ask 11-02: the rows as they were, more room for their text) */
@@ -1323,7 +1386,18 @@ select.dsel-n { display: none; }
 .lk-pop { width: 316px; margin: 2px 0 10px auto; background: var(--g15, #151515); border: 1px solid var(--g2c, #2c2c2c); border-radius: 12px; padding: 12px; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45); }
 .lk-g { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
 .lk-g button { aspect-ratio: 1; border-radius: 50%; border: 0; padding: 0; background: var(--c); cursor: pointer; transition: transform 120ms, box-shadow 120ms; }
+.lk-g button:where(:not(.lk-x, .lk-es)) { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }   /* (11-14 a faint edge on every swatch, not on Saved's x or +: black and the darkest tones show on the dark editor; :where keeps it under .on) */
 .lk-g button:hover { transform: scale(1.12); } :root[data-motion="off"] .lk-g button:hover { transform: none; } .lk-g button.on { box-shadow: 0 0 0 2px var(--g15, #151515), 0 0 0 3.5px #e6e6e6; }
+/* (the colours picked last, under the tones: one list for every colour picker, 2.4.9) */
+.lk-rl { margin: 11px 0 7px; color: #5c5c5c; font-size: 11.5px; }
+/* (his saved colours, at most two rows: a dashed + keeps the colour the editor is on, an x on one, shown under the pointer, takes it out; 2.4.9) */
+.lk-sc { position: relative; display: block; } .lk-sc > button:first-child { display: block; width: 100%; }
+.lk-g .lk-scx { top: -4px; right: -4px; width: 14px; height: 14px; aspect-ratio: auto; border-radius: 50%; background: var(--g22, #222222); box-shadow: 0 0 0 1.5px var(--g15, #151515); transition: opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out; }
+.lk-g .lk-scx:hover { transform: none; background: var(--g33, #333333); color: #fff; } .lk-g .lk-scx svg { width: 8px; height: 8px; }
+.lk-sc:hover .lk-scx, .lk-g .lk-scx:focus-visible { opacity: 1; }
+.lk-g .lk-sca { border: 1px dashed var(--g3a, #3a3a3a); background: none; color: #8a8a8a; display: flex; align-items: center; justify-content: center; transition: color 140ms ease-out, border-color 140ms ease-out; }
+.lk-g .lk-sca:hover { transform: none; color: #fff; border-color: var(--g55, #555555); } .lk-g .lk-sca svg { width: 11px; height: 11px; }
+.lk-g .lk-sca:disabled, .lk-g .lk-sca:disabled:hover { opacity: 0.4; cursor: default; color: #8a8a8a; border-color: var(--g3a, #3a3a3a); }   /* (the colour the editor is on is saved already) */
 .lk-f { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .lk-hex { flex: 1; min-width: 0; background: var(--g10, #101010); border: 1px solid var(--g2a, #2a2a2a); border-radius: 7px; color: #ddd; font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; padding: 5px 8px; transition: border-color 150ms; }
 .lk-hex:focus { border-color: var(--g4a, #4a4a4a); outline: none; }
@@ -1438,7 +1512,7 @@ select.dsel-n { display: none; }
 :root[data-pops="view"] .lk-th-l { --lk-gap: var(--tile-solid); }
 .lk-th-l.lk-more { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent); }   /* (more below: a short fade, no slivers of a cut row's names) */
 .lk-th-l::-webkit-scrollbar { display: none; }
-.lk-fh { position: sticky; top: 0; z-index: 1; font-size: 12px; color: #8a8a8a; padding: 2px 0 3px; margin-bottom: 4px; background: var(--lk-gap); }
+.lk-fh { position: sticky; top: 0; z-index: 3; font-size: 12px; color: #8a8a8a; padding: 2px 0 3px; margin-bottom: 4px; background: var(--lk-gap); box-shadow: 0 -5px 0 var(--lk-gap), -7px 0 0 var(--lk-gap), 7px 0 0 var(--lk-gap), -7px -5px 0 var(--lk-gap), 7px -5px 0 var(--lk-gap); }   /* (11-14 his "the cell is clipping through the title": a section's title above its tiles, its background a little past its edges so a picked tile's ring never shows over it) */
 .lk-th-l section + section { margin-top: 12px; }
 .lk-tg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 8px; }
 .lk-t { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; background: none; border: 0; padding: 0; font: inherit; color: #a8a8a8; text-align: left; cursor: pointer; }
@@ -1448,6 +1522,7 @@ select.dsel-n { display: none; }
 .lk-ln { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 4px; } .lk-ln i { display: block; width: 13px; height: 2px; border-radius: 1px; }
 .lk-tn { display: block; min-height: 1.4em; font-size: 12.5px; color: #a8a8a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 140ms ease-out; }
 .lk-sv .lk-tn { cursor: pointer; }
+.lk-t.lk-uh .lk-tn { visibility: hidden; }   /* (11-14 release checks: its picture under the pinned group title, its name goes with it) */
 .lk-t:hover .lk-tn, .lk-t.on .lk-tn { color: #fff; }
 .lk-t:focus-visible, .lk-tb:focus-visible { outline: none; } .lk-t:focus-visible .lk-sw, .lk-tb:focus-visible .lk-sw { box-shadow: 0 0 0 2px var(--edit); }
 .lk-x { position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: var(--g22, #222222); color: #cfcfcf; cursor: pointer; opacity: 0; transition: opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out; }
@@ -1473,6 +1548,7 @@ select.dsel-n { display: none; }
 .lk-fl .lk-pop { margin: 0; box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6); }
 /* the palette and its categories */
 .setrow.lk-palh small.lk-ph { visibility: hidden; }
+.cz-l .setrow.lk-palh > .lk-dd { width: 260px; }   /* (11-14 release checks: in Customize's left column "Custom, from <palette>" wrapped beside the 300 px list and the rows under it moved 17 px) */
 .lk-rows { position: relative; display: flex; flex-direction: column; }
 .lk-cr { display: grid; grid-template-columns: 190px minmax(0, 1fr) 320px 112px; gap: 16px; align-items: center; height: 44px; border-bottom: 1px solid var(--g1e, #1e1e1e); }
 .lk-cn { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--c); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1496,7 +1572,7 @@ select.dsel-n { display: none; }
 .bg-h svg { width: 8px; height: 8px; stroke: #777; stroke-width: 1.6; stroke-linecap: round; fill: none; }
 .bg-h:hover { box-shadow: 0 0 0 1px var(--g8a, #8a8a8a); } .bg-h:hover svg { stroke: #fff; }
 .bg-h.f { background: var(--c); box-shadow: 0 0 0 2px var(--box, #191919), 0 0 0 3px var(--g55, #555555); } .bg-h.f.on { box-shadow: 0 0 0 2px var(--box, #191919), 0 0 0 3.5px #e6e6e6; }
-.bg-side { min-width: 0; padding-top: 4px; } .bg-side > .lk-row:first-child, .ce-in > .lk-row:first-child { border-top: 0; }
+.bg-side { min-width: 0; padding-top: 4px; } .bg-side .lk-row > .lk-rng { flex: 1 1 auto; width: auto; min-width: 50px; } .bg-side .lk-row:has(> .lk-rng) > .sp { display: none; } .bg-side .lk-row:has(> .lk-rng) > .lk-name { flex: none; width: 56px; }   /* (11-14 his pick: they showed no name and no value, the 190 px slider took the row) */ .bg-side > .lk-row:first-child, .ce-in > .lk-row:first-child { border-top: 0; }
 .bg-fh { display: flex; align-items: center; gap: 10px; padding: 13px 0 5px; margin-top: 6px; border-top: 1px solid var(--g26, #262626); }
 .bg-fh .lk-name { color: #fff; } .bg-fh i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
 .bg-x { margin-left: auto; width: 26px; height: 26px; border-radius: 7px; border: 0; background: none; display: grid; place-items: center; cursor: pointer; }
@@ -1524,3 +1600,178 @@ select.dsel-n { display: none; }
 :root[data-pops="view"] .setbox { background: var(--tile); border-color: var(--tile-line); border-radius: var(--card-r); }
 :root[data-pops="view"] :is(#gmodal, #wmodal) .gx-day { background: transparent; border-bottom: 1px solid var(--tile-line); --dayc: var(--bg); }   /* (View, his option 3: a line under the day; solid only while stuck on top, 11-09) */
 :root[data-pops="view"] :is(#gmodal, #wmodal) .gx-day.stuck { background: var(--bg); border-bottom-color: transparent; box-shadow: -48px 0 0 var(--bg), 48px 0 0 var(--bg); }   /* (stuck on top: the popup's own colour from edge to edge, not a lighter box short of its sides, his 11-12 "the week days bg around it looks very very odd") */
+/* the Headset popup's base station screen (11-13, from HW Dashboard's Headset screen popup) */
+.hsx .hs-pv { position: relative; display: block; max-width: 480px; margin: 10px auto 12px; border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px var(--g2c, #2c2c2c); line-height: 0; background: #000; }
+.hsx .hs-pv canvas { width: 100%; aspect-ratio: 2 / 1; display: block; image-rendering: pixelated; }
+.hsx .hs-pg { display: flex; align-items: center; gap: 6px; margin-top: 14px; } .hsx .rng { margin: 0; }
+.hsx .setrow .seg, .hsx .hs-sel { width: 236px; flex: none; } .hsx .setrow .seg.w5 { width: 330px; }
+.hsx .setrow:has(> .seg, > .hs-sel, > .hs-rgw, > .setin) > div:first-child { flex: 0 0 120px; }
+.hsx .setrow > .hs-rgw, .hsx .setrow > .setin.hs-tx, .hsx .setrow > .setin.hs-pn { flex: 1 1 0; width: auto; max-width: 380px; min-width: 0; box-sizing: border-box; } .hsx .setrow > .hs-rgw > .lk-rng { flex: 1 1 auto; width: auto; min-width: 0; }   /* (sliders and name boxes on the same column) */ .hsx .setrow > .seg, .hsx .setrow > .hs-sel, .hsx .setrow > .seg.w5, .hsx .setrow > .seg.w6 { flex: 1 1 0; width: auto; max-width: 380px; min-width: 0; }   /* (11-14 his "looks goofy this sliders": a name column, the rest one width, edges in line) */
+.hsx .setrow .seg > button { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-left: 2px; padding-right: 2px; }   /* (a row's buttons equal) */
+.hsx .msec .btn { order: 2; margin-left: 4px; text-transform: none; letter-spacing: 0; font-weight: 400; padding: 5px 11px; }
+.hsx .msec .btn + .btn { order: 3; }
+.hsx .hs-ov { position: absolute; box-sizing: border-box; border: 1px dashed rgba(255, 255, 255, 0.12); border-radius: 4px; cursor: pointer; transition: border-color 120ms, background-color 120ms; }
+.hsx .hs-ov:hover { border-color: rgba(255, 255, 255, 0.45); }
+.hsx .hs-ov.on { border: 1.5px solid var(--edit, #e8e8e8); background: var(--edit-soft, rgba(255, 255, 255, 0.07)); }
+.hsx .hs-ov.hs-empty { border: 1px dashed rgba(255, 255, 255, 0.24); display: flex; align-items: center; justify-content: center; color: rgba(255, 255, 255, 0.4); }
+.hsx .hs-ov.hs-empty:hover { color: #e8e8e8; background: rgba(255, 255, 255, 0.05); }
+.hsx .hs-ov.hs-empty svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+.hsx .th-grid { margin-top: 4px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.hsx .th-b.playing .th-pv { box-shadow: 0 0 0 1.5px var(--edit, #e8e8e8); }
+.hsx .hs-tpv { height: auto; aspect-ratio: 2 / 1; background: #000; }
+.hsx .hs-tpv canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+/* (11-13, the Customize revamp: the left column's galleries three a row with Look's theme tiles, the picked one ringed;
+   the Themes / Pages switch over the right column; the picked piece's x; the page name; the gap's slider) */
+.hsx .cz-l { --lk-gap: var(--box, #191919); }
+:root[data-pops="view"] .hsx .cz-l { --lk-gap: var(--tile-solid); }
+.hsx .cz-l .lk-fh.hs-gfh { position: static; background: none; margin: 14px 0 6px; }
+.hsx .lk-tg.hs-g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 4px; } .hsx .lk-tg.hs-g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 4px; }
+.hsx .lk-t.playing .lk-sw { box-shadow: 0 0 0 1.5px var(--edit, #e8e8e8); }
+.hsx .hs-rseg { display: flex; margin: 0 10px 12px 0; }
+.hsx .hs-ov .hs-ox { position: absolute; right: -8px; top: -8px; margin: 0; z-index: 1; border-radius: 50%; background: var(--pop, #151515); box-shadow: 0 0 0 1px var(--edit, #e8e8e8); color: var(--edit, #e8e8e8); }   /* (11-14 release checks: on the outline's corner, off the piece's text) */
+.cz-box .hs-pv { overflow: visible; } .cz-box .hs-pv > canvas { border-radius: 8px; }   /* (the handles may stand out of the picture; it keeps its round corners itself) */
+.hsx .setin.hs-pn { width: 220px; }
+.hsx .hs-rgw { display: inline-flex; align-items: center; gap: 10px; }
+.hsx .hs-tr { display: inline-flex; align-items: center; } .hsx .hs-tr > .hs-rf { margin-right: 10px; }   /* (the Refresh button, 11-14: clear of the brightness slider) */
+.hsx .setrow.hs-scr > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; } .hsx .setrow.hs-scr > div:first-child > .hs-rf { margin-right: -4px; } .hsx .setrow.hs-scr small { white-space: normal; }   /* (Screen, his 11-14 pick: Refresh at the end of the name, by Off / Original / Custom) */
+.hsx .hs-br { display: inline-flex; align-items: center; gap: 10px; margin-right: 18px; }
+.hsx .hs-br .lk-v { min-width: 3.2em; text-align: right; }
+.hsx .hs-ic { display: inline-flex; align-items: center; gap: 12px; }
+.hsx .hs-ic canvas { image-rendering: pixelated; background: #000; padding: 5px 7px; border-radius: 5px; box-shadow: 0 0 0 1px var(--g2c, #2c2c2c); }
+.hsx .hs-isw { display: flex !important; align-items: center; justify-content: center; background: #000; }
+.hsx .hs-isw canvas { width: auto !important; height: auto !important; image-rendering: pixelated; }
+.hsx .hs-ied .hs-igrid { display: grid; gap: 1px; background: var(--g24, #242424); padding: 1px; border-radius: 6px; width: max-content; margin: 4px auto 0; touch-action: none; user-select: none; }
+.hsx .hs-ied .hs-igrid i { width: 22px; height: 22px; background: #0b0b0b; cursor: pointer; }
+.hsx .hs-ied .hs-igrid i.on { background: #ececec; }
+.hsx .hs-ied .hs-igrid i.fa { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18); }
+.hsx .hs-ireal { display: flex; gap: 18px; align-items: end; justify-content: center; margin: 14px 0 4px; }
+.hsx .hs-ireal span { background: #000; border-radius: 5px; padding: 8px; line-height: 0; box-shadow: 0 0 0 1px var(--g2c, #2c2c2c); }
+.hsx .hs-ireal canvas { image-rendering: pixelated; display: block; }
+.hsx .hs-itools { display: flex; gap: 6px; justify-content: center; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.hsx .hs-ist { display: inline-flex; align-items: center; gap: 4px; margin: 0 8px; }
+.hsx .hs-ist span { min-width: 1.6em; text-align: center; font-variant-numeric: tabular-nums; }
+.hsx .hs-ipick { margin: 4px 0 8px; }
+.hsx .ib svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+.hsx .setrow .seg.w6 { width: 380px; }
+.hsx .setrow .setin.hs-tx { width: 236px; box-sizing: border-box; text-transform: uppercase; } .hsx .setrow .setin.hs-tx::placeholder { color: #5a5a5a; }
+.hsx .setrow .setin.spin { width: 120px; box-sizing: border-box; }
+/* Settings' Headset section (11-13): a number of its own or none, as the Keep rows; the folds' rows indented a little */
+/* the page tabs and the picture pinned at the top of Settings while the controls under it scroll (11-13), on the box's colour */
+.hsx .hs-stick { position: sticky; top: -20px; z-index: 4; background: var(--box, #191919); margin: 0 -15px; padding: 8px 15px 0; border-bottom: 1px solid var(--g1e, #1e1e1e); }
+.hsx .hs-stick .hs-pg { margin-top: 4px; }
+.hsx * { scroll-margin-top: 330px; } .hsx .hs-stick, .hsx .hs-stick * { scroll-margin-top: 0; }   /* (brought into view below the pinned picture, not under it) */
+.hsx .hs-pre { margin-top: 4px; }
+/* the page picker (11-13, his "just copy the style of themes"): Look's theme picker's own parts (.lk-th-*, .lk-t, .lk-sw,
+   .lk-tn, .lk-x, .lk-add) with the base station's picture where Look has the window's; a tile's swatch is its page */
+.hsx .hs-stick { padding-bottom: 12px; } :root[data-pops="view"] .hsx .hs-stick { background: var(--tile-solid); }   /* (Popups = View: Settings' boxes are the cells' colour, as the list beside it knows) */
+.hsx .hs-th-h { min-height: 32px; } .hsx .hs-th-h .hs-pg { margin-top: 0; min-width: 0; flex: 1; }
+.hsx .hs-nm { margin-left: 8px; font-size: 12px; color: #7b7b7b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.hsx .hs-th-w { margin-top: 10px; } .hsx .hs-th-w .hs-pv { max-width: none; margin: 0; align-self: start; }
+.hsx .hs-pv.hs-hov .hs-ovs { display: none; }   /* (a tile pointed at: its page alone, no boxes of the one being built) */
+.hsx .hs-pvg { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; }
+.hsx .hs-sw { height: auto; aspect-ratio: 2 / 1; background: #000; overflow: hidden; } .hsx .hs-sw.lk-es { background: none; }
+.hsx .hs-sw canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+.hsx .hs-sv .lk-tn { cursor: pointer; } .hsx .hs-sv:hover .lk-x { opacity: 1; }
+.hsx .lk-th-l section:last-child { min-height: 100%; }   /* (the last group's name reaches the top too: nothing of the one before it left in sight) */
+.hsx .setrow .hs-val .seg { width: auto; } .hsx .hs-val .setin.spin { width: 96px; }
+.hsx .hs-in .setrow { padding-left: 14px; } .hsx .hs-in .setrow:last-child { border-bottom: 0; } .hsx .hs-in .th-grid, .hsx .hs-in .msec { margin-left: 14px; }
+.hsx .hs-fold { border-bottom: 1px solid var(--g1e, #1e1e1e); } .hsx .hs-pgb { display: inline-flex; gap: 8px; }
+/* (11-14 his "cant even tell which category is which": the picked piece in one panel, the page above it, the theme below) */
+.cz-l .lk-fh { position: static; box-shadow: none; }   /* (11-14 a gallery's title in the settings column scrolls with it: stuck at the top it lay over its section's head) */
+.cz-l .cz-pc { margin: 10px -10px; padding: 0 10px; border: 0; outline: 1px solid rgba(255, 255, 255, 0.08); outline-offset: -1px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); }   /* (11-14 his pick A, after "fat, not centered, weird remove position": the box reaches 10 px past the rows instead of pushing its text 17 px in, so its title, rows and arrow sit on the same pixel as the rows above and below. Its line is an inset outline: crisp top and bottom like a border (an inset shadow lost its bottom line at 150%) but no layout room, so the 10 px stays exact at any scale) */
+.cz-l .cz-pc > :last-child { border-bottom: 0; } .cz-l .cz-pc > .lk-head:not(.open) { border-bottom-color: transparent; }
+.cz-l .cz-pc > .lk-body > div > .hs-in > .setrow { padding-left: 0; }   /* (11-14 the piece's own rows and its sections' heads under its title; its sections' rows a step in) */
+.cz-l .cz-pc > .setrow:first-child > div:first-child { color: #ececec; }   /* (the title as big as every other row's: folded, the box is a row's height) */
+.cz-l .cz-pc > .lk-head > .btn { margin: 0 0 0 auto; padding: 4px 10px; font-size: 12px; gap: 6px; } .cz-l .cz-pc > .lk-head > .btn svg { width: 12px; height: 12px; }   /* (Remove a size smaller, right beside the arrow) */
+.cz-l .cz-pc > .lk-head > .lk-prev { padding-left: 0; } .cz-l .cz-pc > .lk-head .lk-chev { margin-left: 0; }
+.cz-l .cz-pc > .lk-body > div > .lk-in { padding-bottom: 0; }   /* (open, the box ends at its last row) */
+.cz-l .lk-head:not(.open):has(+ .lk-body + .cz-pc) { border-bottom-color: transparent; }   /* (no line just above the box) */
+.hsx .hs-btns { display: inline-flex; gap: 8px; }
+.hs-go { border-bottom: 0; padding-top: 14px; }
+/* drag on the picture (11-13): the piece follows the pointer, a line where it goes, an outline for a swap or a size */
+.hsx .hs-ov { touch-action: none; }
+.hsx .hs-ov.drag { z-index: 2; opacity: 1; transition: none; cursor: grabbing; border: 1.5px solid var(--edit, #e8e8e8); background: #000; }
+.hsx .hs-ov .hs-gh { position: absolute; inset: 1px; width: calc(100% - 2px); height: calc(100% - 2px); image-rendering: pixelated; border-radius: 3px; pointer-events: none; }
+.hsx .hs-ov .hs-rz { position: absolute; right: -7px; bottom: -7px; display: flex; align-items: center; justify-content: center; width: 14px; height: 14px; cursor: nwse-resize; border-radius: 50%; background: var(--pop, #151515); box-shadow: 0 0 0 1px var(--edit, #e8e8e8); touch-action: none; }
+.hsx .hs-ov .hs-rz:hover { background: var(--edit-bg, #262626); }
+.hsx .hs-ov .hs-rz svg { width: 10px; height: 10px; stroke: var(--edit, #e8e8e8); fill: none; stroke-width: 2; stroke-linecap: round; }
+.hsx .hs-mk { position: absolute; box-sizing: border-box; pointer-events: none; border-radius: 3px; z-index: 3; }
+.hsx .hs-mk.in { background: var(--edit, #e8e8e8); border-radius: 2px; }
+.hsx .hs-mk.sw, .hsx .hs-mk.sz { border: 1.5px solid var(--edit, #e8e8e8); background: var(--edit-soft, rgba(255, 255, 255, 0.07)); }
+/* ---- Customize (11-13, his pick of the mock): Settings' window in another dress, opened by its own button beside the gear.
+   Wider; in its head the tabs (Look, Headset, a build's own) and undo / redo; one thing on show, in two columns: at the
+   left its switch, its picture (pinned) and its rows (they scroll under the picture), at the right the ready-made ones in
+   a column of their own, the jump list on top of them ---- */
+#setmodal .cz-ic, #setmodal .cz-tabs, #setmodal .cz-hist { display: none; }
+#setmodal.cz .mhead > svg:first-child { display: none; } #setmodal.cz .mhead > svg.cz-ic { display: block; }
+#setmodal.cz .mhead { gap: 12px; min-height: 36px; }
+#setmodal.cz .mtitle { flex: none; margin-right: 8px; }
+#setmodal.cz .cz-tabs:not(:empty) { display: inline-flex; flex: none; width: auto; }
+#setmodal.cz .cz-tabs button { flex: none; padding: 6px 18px; font-size: 13.5px; }
+#setmodal.cz .cz-tabs button.nw::after { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--edit); margin-left: 7px; vertical-align: 2px; }   /* (the Headset tab not opened yet, a headset just found: the app's dot, 11-15) */
+/* (its tabs' pill, as Settings' segments have: drawn and slid by segPills) */
+#czTabs.pill { position: relative; } #czTabs.pill > button { position: relative; z-index: 1; } #czTabs.pill > button.on { background: none; }
+#czTabs.pill > .ind { position: absolute; top: 2px; bottom: 2px; left: 2px; width: 0; border-radius: 6px; background: var(--seg-on, var(--g26, #262626)); transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+#czTabs.pill > .ind.still { transition: none; }
+#setmodal.cz .cz-hist { display: inline-flex; gap: 2px; margin-left: auto; margin-right: 6px; }
+#setmodal.cz .mcard { width: min(1060px, 96vw); height: min(90vh, 900px); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+#setmodal.cz #setbody { flex: 1; min-height: 0; margin-top: 14px; }
+.cz-box { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 372px; padding: 0; overflow: hidden; }
+.cz-box.cz-look, .cz-box.cz-hs { grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr); }   /* (11-14: the picture on the right, above the tiles; the PC screen tab sets its own) */
+.cz-box > .hsx, .cz-box > .cz-in { display: contents; }
+.cz-l { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 15px 12px; border-right: 1px solid var(--line, #242424); }
+.cz-r { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 12px 4px 0 14px; }
+.cz-r > .lk-dd { width: auto; margin: 0 10px 10px 0; }
+.cz-r > .lk-th-l { position: relative; inset: auto; flex: 1; min-height: 0; margin: 0 0 0 -4px; padding: 0 4px 6px; scrollbar-width: auto; }
+:is(.cz-l, .cz-r > .lk-th-l)::-webkit-scrollbar { display: block; width: 10.25px; background: transparent; }
+:is(.cz-l, .cz-r > .lk-th-l)::-webkit-scrollbar-track, :is(.cz-l, .cz-r > .lk-th-l)::-webkit-scrollbar-corner { background: transparent; }
+:is(.cz-l, .cz-r > .lk-th-l)::-webkit-scrollbar-thumb { background: var(--g34, #343434) padding-box; border: 2px solid transparent; border-radius: 6px; min-height: 30px; }
+:is(.cz-l, .cz-r > .lk-th-l)::-webkit-scrollbar-thumb:hover, :is(.cz-l, .cz-r > .lk-th-l)::-webkit-scrollbar-thumb:active { background-color: var(--g44, #444); }
+:is(.cz-l, .cz-r > .lk-th-l)::-webkit-scrollbar-button { display: none; }
+.cz-r > .lk-th-l.lk-more { -webkit-mask-image: none; mask-image: none; }   /* (its own scrollbar says there is more) */
+/* (18:1x "there should not be any blank space at the end of the scroll": the last group is as tall as its tiles, not as the list) */
+.cz-r > .lk-th-l section:last-child { min-height: 0; }
+.cz-r > .lk-th-l > :last-child { margin-bottom: 0; }
+.cz-rows > .setrow:last-child, .cz-rows > :last-child > .setrow:last-child { border-bottom: 0; }
+/* the pinned part: Look's name and picture; the headset's page tabs and picture */
+/* (the column sits a part of a pixel off the screen's grid, and a row scrolling by showed in the one line above the pinned
+   part: a strip of its own colour above it covers that line; pinning it a pixel higher alone did not) */
+.cz-pin, .cz-l .hs-stick { position: sticky; top: -1px; z-index: 4; background: var(--box, #191919); margin: 0 -15px; padding: 12px 15px; border-bottom: 1px solid var(--g1e, #1e1e1e); box-shadow: 0 -3px 0 0 var(--box, #191919); }
+:root[data-pops="view"] .cz-pin, :root[data-pops="view"] .cz-l .hs-stick { background: var(--tile-solid); box-shadow: 0 -3px 0 0 var(--tile-solid); }
+.cz-th { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; margin-bottom: 10px; }
+.cz-th .cz-nm { font-size: 14px; color: #ececec; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cz-th .cz-nm small { display: inline; margin-left: 12px; font-size: 13px; color: #7b7b7b; }
+.cz-pin .lk-pv.cz-sm { margin: 0 auto; }   /* (a colour's editor open: the picture smaller, in the middle) */
+/* (11-14 his layout: the pinned part at the top of the right column, the tiles scroll under it) */
+.cz-r > .cz-pin, .cz-r > .hs-stick, .hsx .cz-r > .hs-stick { position: static; flex: none; z-index: auto; margin: 0 10px 10px 0; padding: 0 0 12px; background: none; box-shadow: none; border-bottom: 1px solid var(--g1e, #1e1e1e); }
+:root[data-pops="view"] .cz-r > .cz-pin, :root[data-pops="view"] .hsx .cz-r > .hs-stick { background: none; box-shadow: none; }
+.cz-r > .hs-stick .hs-pv { display: block; max-width: none; margin: 10px 0 0; }
+.cz-r > .hs-stick .hs-th-h { min-height: 32px; }
+.cz-r > .cz-pin .lk-pv.cz-sm { margin: 0; max-width: none !important; }
+.cz-look .cz-r .lk-tg, .hsx .cz-r .lk-tg { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cz-l .setrow.cz-top > div:first-child { white-space: nowrap; }
+.cz-l .setrow.cz-top .hs-br .lk-rng { width: 130px; }
+.cz-l .bg-ed { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; }
+.cz-l .bg-mini { width: 100%; }
+.hsx .cz-r .hs-pg .rng button { white-space: nowrap; }
+.hsx .cz-r .hs-th-h { display: grid; grid-template-columns: minmax(0, max-content) max-content minmax(0, 1fr) auto; grid-template-rows: 32px auto; align-items: center; column-gap: 6px; row-gap: 8px; }
+.hsx .cz-r .hs-th-h .hs-pg { display: contents; }
+.hsx .cz-r .hs-th-h .hs-nm { grid-row: 1; grid-column: 1 / 4; }
+.hsx .cz-r .hs-th-h .lk-th-r { grid-row: 1; grid-column: 4; }
+.hsx .cz-r .hs-th-h .rng { grid-row: 2; grid-column: 1; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }   /* (many tabs: they scroll, Save stays in sight) */
+.hsx .cz-r .hs-th-h .hs-pg > .ib { grid-row: 2; grid-column: 2; }
+.cz-l { scrollbar-gutter: stable; }
+.cz-r .hs-ovs .hs-ox { transform: scale(1.35); transform-origin: center; }
+.cz-r .hs-ovs .hs-rz { transform: scale(1.35); transform-origin: center; }
+.hsx .cz-l .lk-in > .hs-gfh, .hsx .cz-l .lk-in > .lk-tg { margin-left: var(--hs-ind, 14px); }
+.hsx .cz-r .hs-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* (the colour editor floating by its chip, over the rows: nothing under it moves) */
+#setbody .lk-pop.lk-float { position: absolute; z-index: 40; width: 316px; max-width: calc(100% - 16px); margin: 0; box-sizing: border-box; background: var(--pop, #151515); border: 1px solid var(--g2c, #2c2c2c); border-radius: 12px; padding: 12px 14px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6); }
+.cz-l .setrow.cz-top { border-bottom: 0; padding-bottom: 4px; }
+.cz-l .hs-stick .hs-pv { display: block; max-width: none; margin: 10px 0 0; }
+.cz-l .hs-stick .hs-th-h { min-height: 32px; }
+/* (the pinned part's height is the column's scroll padding, set by czPin: the editor's older fixed offset would add to it) */
+.cz-box .hsx * { scroll-margin-top: 0; }
+/* (its motion: a switch is drawn in its new state first; put back with the transition off, then let go, so it slides) */
+.tog2.still, .tog2.still::after { transition: none; }

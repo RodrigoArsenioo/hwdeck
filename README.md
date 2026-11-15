@@ -24,6 +24,7 @@ Windows 10 and 11, 64-bit.
 - It starts with a layout made from your PC's sensors. Press **E** to change it.
 - Click a cell to see its graph. Select one to give it warning lines.
 - The clock shows past warnings, the gamepad your game sessions.
+- Customize, beside the gear, sets how it looks, and the screen of a SteelSeries Arctis Nova Pro Wireless base station.
 - Settings has the rest.
 
 ## Good to know
@@ -31,6 +32,7 @@ Windows 10 and 11, 64-bit.
 - The free HWiNFO stops sharing after 12 hours. Turn on **Keep HWiNFO sharing** in Settings and HW Deck restarts it for you.
 - No account, no tracking. It only contacts GitHub for updates, and Cloudflare for the speed test once you turn it on (LibreSpeed when Cloudflare refuses).
 - Your data is in `%APPDATA%\HW Deck`.
+- To draw on the headset's base station screen, SteelSeries GG has to be closed: it owns the screen while it runs.
 - Not made by or affiliated with HWiNFO.
 
 ## Build

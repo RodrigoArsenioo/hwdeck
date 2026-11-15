@@ -253,6 +253,643 @@ EXT.kinds.net = {
     const keys = new Set(rows.map(keyOf)); for (const f of [...list.children]) if (!keys.has(f.dataset.at)) f.remove();
   }
 };
+// ---- the headset (11-13, from HW Dashboard: a SteelSeries Arctis Nova Pro Wireless base station): HW Deck's own
+// readings for its batteries, in the list only once it was found (as the 12V-2x6 connector's only for a card that reports
+// its pins); the Headset cell; in its popup the base station's screen: HW Deck's page on it (off until switched on),
+// rows of pieces built here, the start up and shut down animations. Everything is the host's (HsPage): a change goes
+// there (hs.set) and comes back drawn (hsv); while the popup is open it is asked again each second (hs.get)
+const HSK_HEAD = 'hwdeck.0/headbatt', HSK_SPARE = 'hwdeck.0/sparebatt', HSK_MOUSE = 'hwdeck.0/mousebatt';
+const HS_I = '<svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6.5" rx="1.5"/><rect x="17" y="14" width="4" height="6.5" rx="1.5"/></svg>';
+const HSX = (() => {
+    // (11-13, the Customize revamp, his mock pick "sure put it in my dashboard"): the base station's screen as a THEME (his
+    // "keep my current setup and make them actual themes"): its pages on a grid of 1 to 6 rows and columns (his "split in
+    // 2, 3, 4, 5 and 6"), a gap and lines of the page's own, a number that can be hidden (his "digit hider"), the theme's
+    // digits and bar look, page change and start up / shut down; his own themes and the ready-made ones on the right,
+    // the page gallery under "+". Everything is the host's (HsPage, setup v3): a change goes there (hs.set) and comes
+    // back drawn (hsv); while the window is open it is asked again each second (hs.get)
+    const HS = { page: 0, sel: null, v: null, cards: null, play: null, full: true, el: null, pend: {},
+      folds: { page: true, piece: true, states: true, text: true, graph: true, levels: true, scale: true, look: true, beh: true }, presets: null, view: 'themes', adding: false,
+      pimg: {}, simg: {}, timg: {}, hov: null, pvKey: '', pvT: 0, thTop: null, nmT: 0, sets: 0, setAt: 0, ico: 'head', icodef: null, paint: null };
+    const hsEl = () => HS.el && HS.el.isConnected ? HS.el : null;
+    const HS_X = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>', HS_PLUS = '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>', HS_RF = '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4.5h-4.5"/></svg>';
+    const HS_ST = [['number', 'Number'], ['bar', 'Bar'], ['ring', 'Ring'], ['knob', 'Knob'], ['graph', 'Graph']], HS_LB = [['icon', 'Icon'], ['name', 'Name'], ['off', 'Off']], HS_AT = [['beside', 'Beside'], ['above', 'Above']], HS_GR = [['line', 'Line'], ['smooth', 'Smooth'], ['steps', 'Steps'], ['area', 'Area'], ['bars', 'Bars'], ['dots', 'Dots']];
+    const HS_SZ = [['auto', 'Auto'], ['s', 'S'], ['m', 'M'], ['l', 'L']], HS_AL = [['auto', 'Auto'], ['left', 'Left'], ['middle', 'Middle'], ['right', 'Right']], HS_DEC = [[0, '0'], [1, '1'], [2, '2']], HS_DIR = [[0, 'Above'], [1, 'Below']];
+    const HS_ICO = ['head', 'spare', 'mouse', 'vol'], HS_BATT = ['head', 'spare', 'mouse'];
+    const HS_NAME = { cpu: 'CPU', gpu: 'GPU', head: 'HEADSET', spare: 'SPARE', mouse: 'MOUSE', vol: 'VOLUME' };
+    const hsDefName = k => HS_NAME[k] || String((BYKEY.get(k) || {}).label || k).toUpperCase();
+    const HS_SCR = [['dark', 'Off'], ['base', 'Original'], ['on', 'Custom']], hsScr = H => H.on ? 'on' : H.base ? 'base' : 'dark';   // (the Headset tab's Screen, his 11-14 pick: Off dark, Original the base's own screen, Custom his pages)
+    const HS_WHEN = [['always', 'Always'], ['game', 'Gaming'], ['idle', 'Not gaming']];
+    const HS_OV = [[60, '1 min'], [120, '2 min'], [600, '10 min'], [1800, '30 min']], HS_EV = [[0, 'Off'], [5, '5 s'], [10, '10 s'], [20, '20 s'], [30, '30 s'], [60, '1 min']];
+    const HS_LN = [['none', 'None'], ['dotted', 'Dotted'], ['solid', 'Solid']], HS_NUM = [[1, 'Shown'], [0, 'Hidden']];
+    const HS_DIG = [[1, 'Blocky'], [0, 'Strokes'], [2, 'Thick strokes'], [3, 'Seven segments']], HS_BAR = [['blocks', 'Blocks'], ['solid', 'Solid']];
+    const HS_N = n => Array.from({ length: n }, (_, i) => [i + 1, String(i + 1)]), HS_MAX = 6;
+    const HS_OWN = () => [['Clock', [['clock', 'Clock']]], [feed.hs && feed.hs.mouse ? 'Headset and mouse' : 'Headset', [['head', 'Headset battery'], ['spare', 'Spare battery']].concat(feed.hs && feed.hs.mouse ? [['mouse', 'Mouse battery']] : [], [['vol', 'Volume']])], ['Temperatures', [['cpu', 'CPU temperature'], ['gpu', 'GPU temperature']]]];   // (the mouse: HW Dashboard only, 11-13)
+    // (11-14, his "logo editor") the icons a theme can have of its own: the built-in ones, then any reading's
+    const HS_ICONS = () => [['head', 'Headset'], ['spare', 'Spare battery'], ['vol', 'Speaker'], ['mute', 'Mute']].concat(feed.hs && feed.hs.mouse ? [['mouse', 'Mouse']] : [], [['bolt', 'Charging']]);
+    const HS_ICOK = { head: 1, spare: 1, vol: 1, mute: 1, mouse: 1, bolt: 1 };
+    const hsIcoName = k => { const b = HS_ICONS().find(x => x[0] === k); if (b) return b[1]; const own = HS_OWN().flatMap(g => g[1]).find(x => x[0] === k); return own ? own[1] : (BYKEY.get(k) || {}).label || k; };
+    const hsIcoRows = k => { const T = hsT(); return (T && T.icons && T.icons[k]) || (HS.icodef || {})[k] || null; };
+    const hsHasIco = k => HS_ICO.includes(k) || !!hsIcoRows(k);
+    // (11-14: an icon's canvas made at its size, not the browser's 300 x 150 until it is painted: its row stood 130 px
+    // taller for a moment, and a panel's motion measured it)
+    const hsIcoWH = (key, k) => { const r = hsIcoRows(key); return r && r.length ? ' width="' + r.reduce((a, x) => Math.max(a, x.length), 0) * k + '" height="' + r.length * k + '"' : ''; };
+    function hsIcoCv(cv, rows, k) {
+      if (!cv || !rows || !rows.length) return;
+      const w = rows.reduce((a, r) => Math.max(a, r.length), 0), h = rows.length;
+      cv.width = w * k; cv.height = h * k; const g = cv.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, cv.width, cv.height); g.fillStyle = '#ececec';
+      rows.forEach((r, y) => { for (let x = 0; x < r.length; x++) if (r[x] === 'X') g.fillRect(x * k, y * k, k, k); });
+    }
+    const hsT = () => HS.v && HS.v.setup.theme;
+    const hsPg = () => { const T = hsT(); return T && (T.pages[HS.page] || T.pages[0]); };
+    const hsCur = () => { const Pg = hsPg(); return Pg && HS.sel != null && Pg.pieces[HS.sel] || null; };
+    const hsNew = (x, y) => ({ x, y, w: 1, h: 1, src: 'cpu', style: 'number', label: 'name', at: 'beside', name: null, src2: null, graph: 'line', over: 120, seconds: false, date: true, size: 'auto', align: 'auto', dec: 0, unit: true, warn: null, crit: null, below: null, lo: null, hi: null, num: true, offas: 'word', offtxt: null, chgas: 'blink' });
+    const clone = o => JSON.parse(JSON.stringify(o));
+    const hsClip = () => { if (HS.clip === undefined) { try { HS.clip = JSON.parse(localStorage.getItem('hsClip') || 'null'); } catch (e) { HS.clip = null; } } return HS.clip; };   // (a copied page, kept while the window is shut)
+    const hsSeg = (k, list, on, cls, off) => '<span class="seg pills' + (cls ? ' ' + cls : '') + '" id="hsg-' + k + '">' + list.map(x => '<button data-hsk="' + k + '" data-hsv="' + x[0] + '"' + (String(x[0]) === String(on) ? ' class="on"' : '') + (off && off(x[0]) && String(x[0]) !== String(on) ? ' disabled' : '') + '>' + x[1] + '</button>').join('') + '</span>';
+    const hsRow = (lab, c) => '<div class="setrow"><div>' + lab + '</div>' + c + '</div>';
+    const hsTog = (k, on) => '<button class="tog2' + (on ? ' on' : '') + '" data-hsk="' + k + '" data-hsv="' + (on ? '0' : '1') + '"></button>';
+    function hsOpts(sel, none) {
+      const o = (v, t) => '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(t) + '</option>', seen = new Set();
+      let h = none ? o('', 'None') : '';
+      for (const [g, xs] of HS_OWN()) { if (none && g === 'Clock') continue; h += '<optgroup label="' + g + '">' + xs.map(x => { seen.add(x[0]); return o(x[0], x[1]); }).join('') + '</optgroup>'; }
+      for (const c of S.L.cats || []) {
+        const xs = (c.cells || []).map(id => [S.L.cells[id], id]).filter(x => x[0] && x[0].key && BYKEY.has(x[0].key) && !seen.has(x[0].key));
+        if (xs.length) h += '<optgroup label="' + esc(c.name || '') + '">' + xs.map(x => { seen.add(x[0].key); return o(x[0].key, nameIn(x[1])); }).join('') + '</optgroup>';
+      }
+      if (sel && !seen.has(sel)) h += o(sel, sel);
+      return h;
+    }
+    // a picture from the host: 128 x 64 bits, row by row, as base64
+    function hsBits(cv, b64) {
+      if (!cv || !b64) return;
+      const x = cv.getContext('2d'), im = x.createImageData(128, 64), b = atob(b64), d = im.data;
+      for (let k = 0; k < 8192; k++) { const o = k * 4, on = b.charCodeAt(k >> 3) & (0x80 >> (k & 7)); d[o] = d[o + 1] = d[o + 2] = on ? 236 : 0; d[o + 3] = 255; }
+      x.putImageData(im, 0, 0);
+    }
+    const hsBox = (r, cls, x, v, inner, extra) => '<i class="hs-ov' + cls + '" data-hsx="' + x + '" data-hsv="' + v + '"' + (extra || '') + ' style="left:' + (r[0] * 100 - 0.55).toFixed(2) + '%;top:' + (r[1] * 100 - 1.1).toFixed(2) + '%;width:' + (r[2] * 100 + 1.1).toFixed(2) + '%;height:' + (r[3] * 100 + 2.2).toFixed(2) + '%">' + (inner || '') + '</i>';
+    const hsFold = (f, name, small, rows, extra) => '<div class="setrow lk-head hs-fold' + (HS.folds[f] ? ' open' : '') + '" data-hsx="fold" data-f="' + f + '" role="button" tabindex="0" aria-expanded="' + !!HS.folds[f] + '"><div>' + esc(name) + '<small>' + esc(small) + '</small></div>' + (extra || '') +
+      '<span class="lk-prev"><svg class="lk-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg></span></div>' +
+      '<div class="lk-body' + (HS.folds[f] ? ' open' : '') + '"><div><div class="lk-in hs-in">' + rows + '</div></div></div>';
+    const hsUnitOf = k => k === 'cpu' || k === 'gpu' ? '°C' : HS_ICO.includes(k) ? '%' : ((BYKEY.get(k) || {}).unit || 'Value');
+    function hsVal(k, v, ph, unit, none) {
+      const on = v != null || !!HS.pend[k];
+      return '<span class="setkeep hs-val">' + (on ? spinBox('data-hsk="' + k + '" data-idle="600" maxlength="6" aria-label="' + esc(unit) + '"', v == null ? '' : v, ph) : '') +
+        '<span class="seg pills" id="hsg-n-' + k + '"><button data-hsn="' + k + '" data-hsv="set"' + (on ? ' class="on"' : '') + '>' + esc(unit) + '</button><button data-hsn="' + k + '" data-hsv="none"' + (on ? '' : ' class="on"') + '>' + none + '</button></span></span>';
+    }
+    const hsName = (list, v) => (list.find(x => String(x[0]) === String(v)) || [0, v])[1];
+    // a gallery in the left column (layout presets, digits, bars, animations): Look's theme tiles, three a row, the picked one ringed
+    const hsGal = (label, list, four) => '<div class="lk-fh hs-gfh">' + esc(label) + '</div><div class="lk-tg ' + (four ? 'hs-g4' : 'hs-g3') + '">' + list.map(x => '<button class="lk-t' + (x.on ? ' on' : '') + '" ' + x.attrs + '><span class="lk-sw hs-sw"><canvas width="128" height="64" ' + x.cv + '></canvas></span><span class="lk-tn">' + esc(x.name) + '</span></button>').join('') + '</div>';
+    // ---- themes: his own ("t:<id>"), the ready-made ones ("r:<key>", for now one ready-made page each); a page's gallery ----
+    const hsThemes = () => (HS.v && HS.v.setup.themes) || [], hsSavedL = () => (HS.v && HS.v.setup.saved) || [];
+    const hsGroups = () => { const g = []; for (const x of HS.presets || []) if (!g.includes(x.group)) g.push(x.group); return g; };
+    const HS_PK = ['nsize', 'dig', 'inv', 'offas', 'offtxt', 'chgas', 'x', 'y', 'w', 'h', 'src', 'style', 'label', 'at', 'name', 'src2', 'graph', 'over', 'seconds', 'date', 'size', 'align', 'dec', 'unit', 'warn', 'crit', 'below', 'lo', 'hi', 'num'];
+    const hsPageCore = pg => [pg.rows, pg.cols, pg.gap, pg.lines, pg.when || 'always', pg.pieces.map(q => HS_PK.map(k => q[k] == null ? null : q[k]))];
+    const hsCore = T => JSON.stringify([T.pages.map(hsPageCore), T.every || 0, T.start || '', T.stop || '', T.digits == null ? 1 : T.digits, T.bar || 'blocks', T.icons || null]);   // (what it is, not what it is called)
+    function hsRtheme(key) {   // (a ready-made theme, the host's; his start up and shut down kept)
+      const x = (HS.rthemes || []).find(x => x.key === key), T = hsT(); if (!x) return null;
+      return Object.assign(clone(x.theme), { name: x.name, from: 'r:' + key, start: T ? T.start : '', stop: T ? T.stop : '' });
+    }
+    // a theme for a file: no name or source, nothing of the mouse (his rule: nobody else sees the mouse)
+    function hsForFile(T) {
+      const t = clone(T); delete t.from; delete t.name;
+      t.pages.forEach(pg => { pg.pieces = pg.pieces.filter(q => q.src !== 'mouse'); pg.pieces.forEach(q => { if (q.src2 === 'mouse') q.src2 = null; }); delete pg.from; });
+      if (t.icons) { delete t.icons.mouse; if (!Object.keys(t.icons).length) delete t.icons; }
+      return t;
+    }
+    // a theme from a file: one of his (named after the file's, a number added when taken), picked
+    function hsImp(m) {
+      if (!HS.v) return;
+      if (!m.theme || !Array.isArray(m.theme.pages) || !m.theme.pages.some(p => p && typeof p === 'object' && (Array.isArray(p.pieces) || Array.isArray(p.rows)))) { toast('Not a headset theme'); return; }   // (no page in it: the default page and no theme, the release review 11-15)
+      const S2 = HS.v.setup; if (!S2.themes) S2.themes = []; if (S2.themes.length >= 12) { toast('12 themes at most'); return; }
+      const base = String(m.name || 'Imported').slice(0, 36), names = new Set(S2.themes.map(x => x.name)); let name = base, n = 2; while (names.has(name)) name = base + ' ' + n++;
+      let id; do id = 'h' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36); while (S2.themes.some(x => x.id === id));
+      const body = clone(m.theme); delete body.from; delete body.name;
+      S2.themes.push({ id, name, theme: body });
+      S2.theme = Object.assign(clone(body), { name, from: 't:' + id }); HS.page = 0; HS.sel = null; HS.pend = {}; HS.view = 'themes'; HS.full = true; hsSet();
+    }
+    function hsSrc(T) {
+      const f = (T && T.from) || '', id = f.slice(2);
+      if (f.startsWith('t:')) { const x = hsThemes().find(x => x.id === id); return x ? { kind: 't', id, name: x.name, theme: x.theme } : null; }
+      if (f.startsWith('r:')) { const t = hsRtheme(id); return t ? { kind: 'r', id, name: t.name, theme: t } : null; }
+      return null;
+    }
+    const hsDirty = T => { const s = hsSrc(T); return !s || hsCore(T) !== hsCore(s.theme); };
+    const hsImgOf = k => !k ? null : k[0] === 't' ? HS.timg[k.slice(2)] : k[0] === 's' ? HS.simg[k.slice(2)] : k[0] === 'r' ? (HS.rimg || {})[k.slice(2)] : HS.pimg[k.slice(2)];
+    // the big picture: the page being built, or the tile pointed at (no boxes over that one)
+    function hsPvShow() {
+      const m = hsEl(), pv = m && m.querySelector('.hs-pv'), cv = pv && pv.querySelector('canvas'); if (!cv || !HS.v) return;
+      const img = hsImgOf(HS.hov), key = img ? HS.hov : '';
+      if (key !== HS.pvKey && cv.dataset.drawn && motionMode() !== 'off') {
+        const g = document.createElement('canvas'); g.width = 128; g.height = 64; g.className = 'hs-pvg'; g.getContext('2d').drawImage(cv, 0, 0);
+        pv.querySelectorAll('.hs-pvg').forEach(x => x.remove()); cv.after(g);
+        g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: 'ease-out' }).onfinish = () => g.remove();
+      }
+      HS.pvKey = key; pv.classList.toggle('hs-hov', !!img); hsBits(cv, img || HS.v.img); cv.dataset.drawn = '1';
+    }
+    const hsPvAsk = () => { clearTimeout(HS.pvT); HS.pvT = setTimeout(hsPvShow, 60); };
+    const hsOpen = () => document.getElementById('setmodal').classList.contains('open');
+    // a theme picked: it becomes the one on the screen (the window's undo gives the old one back)
+    function hsPickTheme(kind, id) {
+      if (!HS.v) return;
+      const S2 = HS.v.setup, T = hsT(), src = hsSrc(T);
+      if (src && src.kind === kind && src.id === id && !hsDirty(T)) return;
+      const t = kind === 't' ? (() => { const x = hsThemes().find(x => x.id === id); return x ? Object.assign(clone(x.theme), { name: x.name, from: 't:' + id }) : null; })() : hsRtheme(id);
+      if (!t) return;
+      S2.theme = t; HS.page = 0; HS.sel = null; HS.pend = {}; HS.full = true; hsSet();
+    }
+    // a tile of the page gallery: the page that is open becomes it (always; the + makes a new page first). Its name: a
+    // "Page N" or the name of the page it came from takes the picked one's, a name he typed stays (11-14)
+    const hsSrcName = f => { if (!f) return null; const id = f.slice(2), x = f[0] === 'p' ? (HS.presets || []).find(x => x.key === id) : hsSavedL().find(x => x.id === id); return x ? x.name : null; };
+    function hsPickPage(kind, id) {
+      if (!HS.v) return;
+      const T = hsT(), cur = hsPg(); if (!T || !cur) return;
+      const auto = !cur.name || /^Page \d+$/.test(cur.name) || cur.name === hsSrcName(cur.from);
+      let pg;
+      if (kind === 'e') pg = { name: cur.name, rows: 2, cols: 2, gap: -1, lines: 'none', pieces: [] };
+      else {
+        const x = kind === 'p' ? (HS.presets || []).find(x => x.key === id) : hsSavedL().find(x => x.id === id); if (!x) return;
+        pg = Object.assign(clone(x.page), { name: auto ? x.name.slice(0, 24) : cur.name, from: kind + ':' + id });
+      }
+      pg.when = cur.when || 'always'; T.pages[HS.page] = pg;
+      HS.adding = false; HS.sel = null; HS.pend = {}; HS.full = true; hsSet();
+    }
+    // Save: into his own theme it came from; Save as new (and a ready-made one's only save): a new one of his, named after it
+    function hsSave(asNew) {
+      if (!HS.v) return;
+      const S2 = HS.v.setup, T = hsT(), src = hsSrc(T); if (!T) return; if (!S2.themes) S2.themes = [];
+      const body = clone(T); delete body.from; delete body.name;
+      let t = !asNew && src && src.kind === 't' ? S2.themes.find(x => x.id === src.id) : null;
+      if (t) t.theme = body;
+      else {
+        if (S2.themes.length >= 12) return;
+        const base = src ? src.name : (T.name || 'My theme'), names = new Set(S2.themes.map(x => x.name)); let name = base, n = 2; while (names.has(name)) name = base + ' ' + n++;
+        let id; do id = 'h' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36); while (S2.themes.some(x => x.id === id));
+        t = { id, name: name.slice(0, 40), theme: body }; S2.themes.push(t);
+      }
+      T.from = 't:' + t.id; T.name = t.name; HS.full = true; hsSet();
+    }
+    function hsSavePage() {   // (the page into the gallery's Yours)
+      const S2 = HS.v.setup, Pg = hsPg(); if (!Pg || !Pg.pieces.length) return; if (!S2.saved) S2.saved = []; if (S2.saved.length >= 12) return;
+      const page = clone(Pg); delete page.from; delete page.when;
+      let id; do id = 'h' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36); while (S2.saved.some(x => x.id === id));
+      const names = new Set(S2.saved.map(x => x.name)); let name = Pg.name || 'My page', n = 2; while (names.has(name)) name = (Pg.name || 'My page') + ' ' + n++;
+      S2.saved.push({ id, name: name.slice(0, 40), page }); HS.full = true; hsSet();
+    }
+    function hsAskRmPage() {
+      const n = HS.page, T = hsT(); if (!T || T.pages.length < 2) return;
+      askConfirm('Delete ' + (T.pages[n].name || 'this page') + '?', '', 'Delete', () => {
+        const T2 = hsT(); if (!T2 || T2.pages.length < 2 || n >= T2.pages.length) return;
+        T2.pages.splice(n, 1); HS.page = Math.max(0, n - 1); HS.sel = null; HS.full = true; hsSet();
+      });
+    }
+    function hsAskDelete(kind, id) {
+      const list = kind === 't' ? hsThemes() : hsSavedL(), x = list.find(x => x.id === id); if (!x) return;
+      askConfirm('Delete ' + x.name + '?', '', 'Delete', () => {
+        if (!HS.v) return; const S2 = HS.v.setup;
+        if (kind === 't') { S2.themes = hsThemes().filter(y => y.id !== id); const T = hsT(); if (T && T.from === 't:' + id) delete T.from; }   // (the theme on the screen stays as it is, now Custom)
+        else { S2.saved = hsSavedL().filter(y => y.id !== id); for (const pg of hsT().pages) if (pg.from === 's:' + id) delete pg.from; }
+        HS.full = true; hsSet();
+      });
+    }
+    // which cells a page's pieces cover (null: free)
+    function hsOwn(Pg, skip) {
+      const o = Array.from({ length: Pg.rows }, () => Array(Pg.cols).fill(null));
+      Pg.pieces.forEach((q, i) => { if (i === skip) return; for (let a = 0; a < q.h; a++) for (let b = 0; b < q.w; b++) if (o[q.y + a] && q.x + b < Pg.cols) o[q.y + a][q.x + b] = i; });
+      return o;
+    }
+    const hsFree = (Pg, x, y, w, h, skip) => { if (x < 0 || y < 0 || x + w > Pg.cols || y + h > Pg.rows) return false; const o = hsOwn(Pg, skip); for (let a = 0; a < h; a++) for (let b = 0; b < w; b++) if (o[y + a][x + b] != null) return false; return true; };
+    const hsNeedR = Pg => Pg.pieces.reduce((a, q) => Math.max(a, q.y + q.h), 1), hsNeedC = Pg => Pg.pieces.reduce((a, q) => Math.max(a, q.x + q.w), 1);
+    function hsDraw(full) {
+      const m = hsEl(); if (!m || !HS.v) return;
+      if (HS.czs !== window.czSession) { HS.czs = window.czSession; for (const k in HS.folds) HS.folds[k] = false; }   // (a new opening of Customize: all folded)
+      const v = HS.v, T = hsT(), Pg = hsPg(), p = hsCur(), H = feed.hs || {};
+      if (!T || !Pg) return;
+      if (full || !m.querySelector('.hs-pv')) {
+        const src = hsSrc(T), dirty = hsDirty(T), groups = hsGroups();
+        // the device (his 11-14 pick): Screen Off (dark), Original (the base's own screen) or Custom (his pages), Refresh at the
+        // end of its name; the base's brightness under it, for all three; the faster wheel with Custom only
+        const state = v.readonly ? 'set up by a newer HW Deck, read only' : H.there === false ? 'not found' : H.gg ? 'SteelSeries GG has it' : '';
+        const bri = H.bright > 0 ? '<div class="setrow"><div>Brightness</div><span class="hs-rgw"><input type="range" class="lk-rng" data-hsbr="1" min="1" max="10" step="1" value="' + H.bright + '" style="--v:' + ((H.bright - 1) / 9 * 100) + '%" aria-label="Brightness"><span class="lk-v">' + H.bright * 10 + '%</span></span></div>' : '';
+        const head = '<div class="setrow hs-scr' + (bri ? ' cz-top' : '') + '"><div><div>Screen' + (state ? '<small>' + esc(state) + '</small>' : '') + '</div>' + (H.there && !H.gg ? '<button class="ib hs-rf" data-hsx="refresh" title="Refresh" aria-label="Refresh">' + HS_RF + '</button>' : '') + '</div>' + hsSeg('screen', HS_SCR, hsScr(H)) + '</div>' + bri +
+          (H.wheel && H.on ? '<div class="setrow"><div>Faster volume wheel<small>Experimental</small></div><button class="tog2' + (v.setup.wheelfast ? ' on' : '') + '" data-hsx="wheelfast" aria-pressed="' + !!v.setup.wheelfast + '" aria-label="Faster volume wheel"></button></div>' : '');   // (his 11-14 pick: the base's own screen is no option, the faster wheel a switch)
+        // pinned: the page tabs by name, "+" for the page gallery, the theme's name and Save; the picture
+        const tabs = T.pages.map((pg, i) => '<button data-hsx="page" data-hsv="' + i + '"' + (i === HS.page ? ' class="on"' : '') + '>' + esc(pg.name || 'Page ' + (i + 1)) + (i === HS.page && T.pages.length > 1 ? '<span class="hs-px" data-hsx="rmpage" role="button" title="Remove page" aria-label="Remove page">' + LK_X + '</span>' : '') + '</button>').join('');
+        const room = hsThemes().length < 12, saves = dirty ? (src && src.kind === 't' ? (room ? '<button class="btn" data-hsx="saveas">Save as new</button>' : '') + '<button class="btn hs-save" data-hsx="save">Save</button>' : room ? '<button class="btn hs-save" data-hsx="saveas">Save as new</button>' : '') : '';
+        const top = '<div class="hs-stick"><div class="lk-th-h hs-th-h"><div class="hs-pg"><span class="rng"><i class="ri"></i>' + tabs + '</span>' +
+          '<button class="ib" data-hsx="addpage"' + (T.pages.length < HS_MAX ? ' title="Add a page"' : ' disabled title="' + HS_MAX + ' pages at most"') + ' aria-label="Add a page">' + HS_PLUS + '</button>' + '<span class="hs-nm">' + esc((T.name || 'Custom') + (dirty ? ', changed' : '')) + '</span></div><span class="lk-th-r">' + saves + '</span></div>' +
+          '<span class="hs-pv"><canvas width="128" height="64"></canvas><span class="hs-ovs"></span></span></div>';
+        // the page's own part: name, when it shows, its layout
+        const lay = (v.lay || []).map((x, i) => ({ name: x.name, attrs: 'data-hsx="lay" data-hsv="' + i + '"', cv: 'data-hsl="' + i + '"', on: false }));
+        let h = hsFold('page', Pg.name || 'Page', [hsName(HS_WHEN, Pg.when || 'always').toLowerCase(), Pg.rows + ' rows', Pg.cols + ' columns', 'gap ' + (Pg.gap < 0 ? 'auto' : Pg.gap + ' px'), Pg.lines === 'none' ? 'no lines' : Pg.lines + ' lines'].join(', '),
+          hsRow('Name', '<input class="setin hs-pn" data-hsk="pname" maxlength="24" spellcheck="false" autocomplete="off" value="' + esc(Pg.name || '') + '">') +
+          hsRow('Shows', hsSeg('when', HS_WHEN, Pg.when || 'always', 'w6')) +
+          (lay.length ? hsGal('Layout', lay) : '') +
+          hsRow('Rows', hsSeg('rows', HS_N(HS_MAX), Pg.rows, '', x => x < hsNeedR(Pg))) +
+          hsRow('Columns', hsSeg('cols', HS_N(HS_MAX), Pg.cols, '', x => x < hsNeedC(Pg))) +
+          hsRow('Gap', '<span class="hs-rgw"><input type="range" class="lk-rng" data-hsk="gap" min="0" max="6" step="1" value="' + (Pg.gap < 0 ? (Pg.lines !== 'none' ? 5 : 4) : Pg.gap) + '" style="--v:' + ((Pg.gap < 0 ? (Pg.lines !== 'none' ? 5 : 4) : Pg.gap) / 6 * 100) + '%" aria-label="Gap"><span class="lk-v">' + (Pg.gap < 0 ? 'auto' : Pg.gap + ' px') + '</span></span>') +
+          hsRow('Lines', hsSeg('lines', HS_LN, Pg.lines || 'none')) +
+          hsRow('Page', '<span class="hs-pgb"><button class="btn" data-hsx="pgdup"' + (T.pages.length >= HS_MAX ? ' disabled' : '') + '>Duplicate</button><button class="btn" data-hsx="pgcopy">Copy</button><button class="btn" data-hsx="pgpaste"' + (!hsClip() || T.pages.length >= HS_MAX ? ' disabled' : '') + '>Paste</button></span>'));   // (11-14 his "allow a copy paste and duplicated feature for pages")
+        if (p) {   // the picked piece
+          const own = HS_OWN().flatMap(g => g[1]).find(x => x[0] === p.src), srcName = own ? own[1] : (BYKEY.get(p.src) || {}).label || p.src;
+          const pcAt = h.length;   // (11-14 the picked piece is one section: its rows and its own sections inside, folding as a whole as in the PC screen tab)
+          h += hsRow('Shows', '<div class="hs-sel"><select data-hsk="src">' + hsOpts(p.src, false) + '</select></div>');
+          const size = hsRow('Text size', hsSeg('size', HS_SZ, p.size || 'auto')), sizeT = (p.size || 'auto') === 'auto' ? 'size auto' : 'size ' + hsName(HS_SZ, p.size);
+          const align = hsRow('Align', hsSeg('align', HS_AL, p.align || 'auto'));
+          if (p.src === 'clock') h += hsRow('Seconds', hsTog('seconds', p.seconds)) + hsRow('Date', hsTog('date', p.date)) + hsFold('text', 'Text', sizeT, size + align);
+          else {
+            h += hsRow('Style', hsSeg('style', HS_ST, p.style, 'w5'));
+            if (p.style !== 'number') h += hsRow('Number', hsSeg('num', HS_NUM, p.num === false ? 0 : 1));
+            h += hsRow('Inverted', hsTog('inv', !!p.inv));
+            const words = p.label !== 'off' && (p.style === 'graph' || p.label === 'name' || !hsHasIco(p.src)), place = p.style === 'number' && p.label !== 'off';
+            h += hsRow('Label', hsSeg('label', HS_LB, p.label)) + (place ? hsRow('Label position', hsSeg('at', HS_AT, p.at || 'beside')) : '') +
+              (p.label === 'icon' && p.style !== 'graph' ? hsRow('Icon', '<span class="hs-ic">' + (hsIcoRows(p.src) ? '<canvas data-hsi="' + esc(p.src) + '" data-k="2"' + hsIcoWH(p.src, 2) + '></canvas>' : '') + '<button class="btn' + (HS.view === 'icons' && HS.ico === p.src ? ' on' : '') + '" data-hsx="icoedit" data-hsv="' + esc(p.src) + '">' + (HS.view === 'icons' && HS.ico === p.src ? 'Editing' : hsIcoRows(p.src) ? 'Edit' : 'New') + '</button></span>') : '') +
+              (words ? hsRow('Label text', '<input class="setin hs-tx" data-hsk="name" maxlength="16" spellcheck="false" autocomplete="off" placeholder="' + esc(hsDefName(p.src)) + '" value="' + esc(p.name || '') + '">') : '');
+            const digOn = p.style === 'number' || p.style === 'ring' || p.style === 'knob', dg = p.dig == null || p.dig < 0 ? -1 : p.dig;
+            const digSel = '<div class="hs-sel"><select data-hsk="dig">' + [[-1, "Theme's"]].concat(HS_DIG).map(x => '<option value="' + x[0] + '"' + (x[0] === dg ? ' selected' : '') + '>' + x[1] + '</option>').join('') + '</select></div>';
+            h += hsFold('text', 'Text', [sizeT, (p.dec || 0) === 1 ? '1 decimal' : (p.dec || 0) + ' decimals', p.unit === false ? 'no unit' : 'unit'].concat(dg >= 0 ? [hsName(HS_DIG, dg).toLowerCase() + ' digits'] : [], words && (p.nsize || 'auto') !== 'auto' ? ['name ' + p.nsize] : []).join(', '),
+              size + align + hsRow('Decimals', hsSeg('dec', HS_DEC, p.dec || 0)) + hsRow('Unit', hsTog('unit', p.unit !== false)) + (digOn ? hsRow('Digits', digSel) : '') + (words ? hsRow('Name size', hsSeg('nsize', [['auto', 'Auto'], ['small', 'Small'], ['tiny', 'Tiny']], p.nsize || 'auto')) : ''));
+            if ((p.style === 'bar' || p.style === 'ring' || p.style === 'knob') && !HS_BATT.includes(p.src)) { const u0 = hsUnitOf(p.src);
+              h += hsFold('scale', 'Scale', p.lo == null && p.hi == null ? 'low and high auto' : (p.lo == null ? 'auto' : p.lo) + ' to ' + (p.hi == null ? 'auto' : p.hi), hsRow('Low', hsVal('lo', p.lo, '0', u0, 'Auto')) + hsRow('High', hsVal('hi', p.hi, '100', u0, 'Auto'))); }
+            const u = hsUnitOf(p.src);
+            if (p.style === 'graph') h += hsFold('graph', 'Graph', [hsName(HS_GR, p.graph), hsName(HS_OV, p.over), p.lo == null && p.hi == null ? 'low and high auto' : (p.lo == null ? 'auto' : p.lo) + ' to ' + (p.hi == null ? 'auto' : p.hi)].join(', '),
+              hsRow('Second line', '<div class="hs-sel"><select data-hsk="src2">' + hsOpts(p.src2 || '', true) + '</select></div>') + hsRow('Graph', hsSeg('graph', HS_GR, p.graph, 'w6')) + hsRow('Time across', hsSeg('over', HS_OV, p.over)) +
+              hsRow('Low', hsVal('lo', p.lo, '0', u, 'Auto')) + hsRow('High', hsVal('hi', p.hi, '100', u, 'Auto')));
+            const down = p.below == null ? HS_BATT.includes(p.src) : p.below, batt = HS_BATT.includes(p.src);
+            h += hsFold('levels', 'Warning levels', p.warn == null && p.crit == null ? 'none' : [p.warn != null ? 'yellow at ' + p.warn : '', p.crit != null ? 'red at ' + p.crit : ''].filter(Boolean).join(', ') + (down ? ', below' : ', above'),
+              hsRow('Warn when', hsSeg('below', HS_DIR, down ? 1 : 0)) + hsRow('Yellow at', hsVal('warn', p.warn, batt ? '20' : '80', u, 'None')) + hsRow('Red at', hsVal('crit', p.crit, batt ? '10' : '90', u, 'None')));
+            if (batt) {   // (11-14 his "when it's empty, when its off, when its charging the blinking thunder, all this should be customizable")
+              const offW = p.src === 'spare' ? 'EMPTY' : 'OFF', oa = p.offas || 'word', ca = p.chgas || 'blink';
+              const OFFS = [['word', 'Word'], ['dash', 'Dash'], ['blank', 'Nothing']], CHGS = [['blink', 'Blinking'], ['steady', 'Steady'], ['none', 'Hidden']];
+              const offRows = p.src === 'mouse' ? '' : hsRow(p.src === 'spare' ? 'When empty' : 'When off', hsSeg('offas', OFFS, oa)) + (oa === 'word' ? hsRow('Word', '<input class="setin hs-tx" data-hsk="offtxt" maxlength="6" spellcheck="false" autocomplete="off" placeholder="' + offW + '" value="' + esc(p.offtxt || '') + '">') : '');
+              h += hsFold('states', 'States', [p.src === 'mouse' ? '' : (p.src === 'spare' ? 'empty: ' : 'off: ') + (oa === 'word' ? (p.offtxt || offW) : hsName(OFFS, oa).toLowerCase()), 'charging: ' + hsName(CHGS, ca).toLowerCase()].filter(Boolean).join(', '), offRows + hsRow('Charging', hsSeg('chgas', CHGS, ca)));
+            }
+          }
+          h = h.slice(0, pcAt) + '<div class="cz-pc">' + hsFold('piece', srcName, (p.src === 'clock' ? 'clock' : hsName(HS_ST, p.style).toLowerCase() + (p.num === false && p.style !== 'number' ? ', number hidden' : '')), h.slice(pcAt), '<button class="btn" data-hsx="rm">' + HS_X + 'Remove</button>') + '</div>';   // (his "cant even tell which category is which")
+        }
+        // the theme's own parts: its look, its behaviour
+        const dg = T.digits == null ? 1 : T.digits, bl = T.bar || 'blocks';
+        h += hsFold('look', 'Look', [hsName(HS_DIG, dg).toLowerCase() + ' digits', 'bars in ' + (bl === 'solid' ? 'one piece' : 'blocks')].join(', '),
+          hsGal('Digits', HS_DIG.map(x => ({ name: x[1], attrs: 'data-hsk="digits" data-hsv="' + x[0] + '"', cv: 'data-hsd="' + x[0] + '"', on: x[0] === dg })), true) +
+          hsGal('Bars', HS_BAR.map((x, i) => ({ name: x[1], attrs: 'data-hsk="bar" data-hsv="' + x[0] + '"', cv: 'data-hsb="' + i + '"', on: x[0] === bl }))));
+        const an = k => k ? ((v.anims || []).find(x => x.key === k) || { name: k }).name : 'none';
+        const agal = w => (v.anims || []).length ? hsGal(w === 'start' ? 'Start up' : 'Shut down', [{ key: '', name: 'None' }].concat(v.anims || []).map(a => ({ name: a.name, attrs: 'data-hsx="anim" data-hsw="' + w + '" data-hsv="' + a.key + '"', cv: 'data-hsc="' + (a.key ? a.key + '-' + w : '') + '"', on: (T[w] || '') === a.key }))) : '';
+        h += hsFold('beh', 'Behaviour', ['page change ' + (T.every ? 'every ' + hsName(HS_EV, T.every) : 'off'), 'start ' + an(T.start), 'stop ' + an(T.stop)].join(', '),
+          hsRow('Change page every', hsSeg('every', HS_EV, T.every || 0)) + agal('start') + agal('stop'));
+        // the right column: Themes (his own, then the ready-made), Pages (the gallery; "+" adds from it)
+        const rseg = '<div class="hs-rseg"><span class="seg seg3 pills" id="hsg-view"><button data-hsx="view" data-hsv="themes"' + (HS.view === 'themes' ? ' class="on"' : '') + '>Themes</button><button data-hsx="view" data-hsv="pages"' + (HS.view === 'pages' ? ' class="on"' : '') + '>Pages</button><button data-hsx="view" data-hsv="icons"' + (HS.view === 'icons' ? ' class="on"' : '') + '>Icons</button></span></div>';
+        const tile = (k, id, name, on, del) => '<div class="lk-t' + (del ? ' hs-sv' : '') + (on ? ' on' : '') + '"><button class="lk-tb" data-hsx="tile" data-hk="' + k + '" data-hid="' + esc(id) + '" aria-pressed="' + on + '" aria-label="' + esc(name) + '"><span class="lk-sw hs-sw"><canvas width="128" height="64" data-hst="' + k + ':' + esc(id) + '"></canvas></span></button>' +
+          '<span class="lk-tn" data-hk="' + k + '" data-hid="' + esc(id) + '">' + esc(name) + '</span>' + (del ? '<button class="lk-x" data-hsx="savex" data-hk="' + k + '" data-hid="' + esc(id) + '" title="Delete" aria-label="Delete ' + esc(name) + '">' + LK_X + '</button>' : '') + '</div>';
+        const add = (a, title, label) => '<button class="lk-t lk-add" data-hsx="' + a + '" title="' + title + '" aria-label="' + title + '"><span class="lk-sw lk-es hs-sw">' + LK_PLUS + '</span><span class="lk-tn">' + (label ? esc(label) : '&nbsp;') + '</span></button>';
+        const sec = (name, body) => '<section data-f="' + esc(name) + '"><div class="lk-fh">' + esc(name) + '</div><div class="lk-tg">' + body + '</div></section>';
+        let right = rseg + (HS.view === 'icons' ? '' : '<span class="lk-dd"><select id="hsJump" aria-label="Groups"></select></span>');   // (11-14 the gallery's jump list, as the PC screen and Look tabs: filled from its sections below)
+        if (HS.view === 'icons') right += '<div class="lk-th-l" id="hsThL">' + hsIcoView() + '</div>';
+        else if (HS.view === 'pages') right += '<div class="lk-th-l" id="hsThL">' + sec('Start from', tile('e', 'empty', 'Empty', false, false)) + ((y => y ? sec('Yours', y) : '')(hsSavedL().map(x => tile('s', x.id, x.name, false, true)).join('') + (hsSavedL().length < 12 && Pg.pieces.length ? add('savepage', 'Save this page', 'Save page') : ''))) +   // (no heading over nothing)
+          groups.map(g => sec(g, (HS.presets || []).filter(x => x.group === g).map(x => tile('p', x.key, x.name, false, false)).join(''))).join('') + '</div>';
+        else right += '<div class="lk-th-l" id="hsThL">' + sec('Yours', hsThemes().map(x => tile('t', x.id, x.name, !!src && src.kind === 't' && src.id === x.id, true)).join('') + (hsThemes().length < 12 ? add('saveas', 'Save as a new theme') : '')) +
+          sec('Ready-made', (HS.rthemes || []).map(x => tile('r', x.key, x.name, !!src && src.kind === 'r' && src.id === x.key, false)).join('')) +
+          '<div class="hs-itools hs-io"><button class="btn" data-hsx="export" title="Save this theme to a file">Export</button>' + (hsThemes().length < 12 ? '<button class="btn" data-hsx="import" title="Add a theme from a file">Import</button>' : '') + '</div></div>';
+        const card = m.closest('.mcard'), st = card ? card.scrollTop : 0, l0 = m.querySelector('#hsThL');
+        if (l0 && hsOpen()) HS.thTop = l0.scrollTop;
+        const sl0 = m.querySelector('.cz-l'), sy = sl0 ? sl0.scrollTop : 0; let mo = null; try { mo = czSnap(m); } catch (e) { }
+        const fa = document.activeElement, keep = fa && m.contains(fa) && fa.matches && fa.matches('input[data-hsk]') ? fa.dataset.hsk : null, kv = keep ? fa.value : null, ks = keep ? fa.selectionStart : null;
+        m.innerHTML = '<div class="cz-l">' + head + '<div class="cz-rows">' + h + '</div></div><div class="cz-r">' + top + right + '</div>';   // (11-14: the picture above the tiles)
+        { const js = m.querySelector('#hsJump'), l = m.querySelector('#hsThL'); if (js && l) { const fs = [...l.querySelectorAll(':scope > section[data-f]')].map(x => x.dataset.f); if (!HS.jf || !fs.includes(HS.jf)) HS.jf = fs[0] || ''; js.innerHTML = fs.map(f => '<option value="' + esc(f) + '"' + (f === HS.jf ? ' selected' : '') + '>' + esc(f) + '</option>').join(''); } }
+        const sl1 = m.querySelector('.cz-l'); if (sl1) sl1.scrollTop = sy; czPin();
+        if (card) card.scrollTop = st;
+        if (keep) { const i = m.querySelector('input[data-hsk="' + keep + '"]'); if (i) { i.value = kv; i.focus({ preventScroll: true }); try { i.setSelectionRange(ks, ks); } catch (e) { } } }   // (a field being typed in keeps its focus through a redraw, the reviewer's 11-13)
+        dselUp(m);
+        { const rg = m.querySelector('.cz-r .hs-th-h .rng'), on = rg && rg.querySelector('button.on'); if (rg && on) { rg.style.maxWidth = 'none'; if (on.offsetLeft + on.offsetWidth > rg.scrollLeft + rg.clientWidth) rg.scrollLeft = on.offsetLeft + on.offsetWidth - rg.clientWidth; else if (on.offsetLeft < rg.scrollLeft) rg.scrollLeft = on.offsetLeft; } }   // (11-14 the picked page's tab, its x too, always in sight)
+        const l = m.querySelector('#hsThL'); if (l) { if (HS.thTop != null) l.scrollTop = HS.thTop; lkMore(l); }
+        for (const r of m.querySelectorAll('.rng')) { const on = r.querySelector('button.on'), ri = r.querySelector('.ri'); if (on && ri) { ri.style.width = on.offsetWidth + 'px'; ri.style.transform = 'translateX(' + (on.offsetLeft - 2) + 'px)'; } }
+        try { czGlide(m, mo, HS.page + ':' + (HS.sel == null ? '' : HS.sel)); } catch (e) { }
+        for (const cv of m.querySelectorAll('canvas[data-hsc]')) if (!HS.play || HS.play.key !== cv.dataset.hsc) hsBits(cv, cv.dataset.hsc ? (HS.cards || {})[cv.dataset.hsc] : v.img);
+      }
+      for (const cv of m.querySelectorAll('canvas[data-hsi]')) hsIcoCv(cv, HS.paint && HS.paint.key === cv.dataset.hsi ? HS.paint.rows : hsIcoRows(cv.dataset.hsi), +cv.dataset.k || 1);
+      for (const cv of m.querySelectorAll('canvas[data-hst]')) hsBits(cv, hsImgOf(cv.dataset.hst));
+      for (const cv of m.querySelectorAll('canvas[data-hsl]')) hsBits(cv, ((v.lay || [])[+cv.dataset.hsl] || {}).img);
+      for (const cv of m.querySelectorAll('canvas[data-hsd]')) hsBits(cv, (v.dig || [])[+cv.dataset.hsd]);
+      for (const cv of m.querySelectorAll('canvas[data-hsb]')) hsBits(cv, (v.bars || [])[+cv.dataset.hsb]);
+      hsPvShow();
+      if (HS.drag) return;
+      // the boxes over the picture: each piece (the picked one: its x and its corner), each free cell with a +
+      let o = '';
+      (v.rects || []).forEach((r, i) => { const on = HS.sel === i; if (r) o += hsBox(r, on ? ' on' : '', 'pick', i, on ? '<span class="hs-px hs-ox" data-hsx="rm" role="button" title="Remove" aria-label="Remove">' + LK_X + '</span><span class="corner hs-rz" title="Drag to size it">' + ICONS.corner + '</span>' : ''); });
+      const cx = v.colx || [], ry = v.rowy || [], own = hsOwn(Pg);
+      for (let y = 0; y < Pg.rows && y < ry.length; y++) for (let x = 0; x < Pg.cols && x < cx.length; x++) if (own[y][x] == null) o += hsBox([cx[x][0], ry[y][0], cx[x][1], ry[y][1]], ' hs-empty', 'addcell', x + ',' + y, HS_PLUS);
+      { const ov = m.querySelector('.hs-ovs'); if (ov._h !== o) { ov.innerHTML = o; ov._h = o; czOvGlide(ov, 'hs', HS.page + ':' + HS.sel); } }   // (11-14: drawn again only when it changed, so the picked one's glide isn't cut short)
+    }
+    // the Icons view: the built-in icons, his readings' own, + for CPU, GPU or any reading; the picked one in a zoomed
+    // grid (click flips a pixel, drag paints), its real size beside it, the tools, reset (or remove for a reading's)
+    function hsIcoView() {
+      const T = hsT(), own = Object.keys(T.icons || {}).filter(k => !HS_ICOK[k]);
+      const tile = (k, name) => '<div class="lk-t' + (HS.ico === k ? ' on' : '') + '"><button class="lk-tb" data-hsx="ico" data-hsv="' + esc(k) + '" aria-pressed="' + (HS.ico === k) + '" aria-label="' + esc(name) + '"><span class="lk-sw hs-sw hs-isw"><canvas data-hsi="' + esc(k) + '" data-k="4"></canvas></span></button><span class="lk-tn">' + esc(name) + '</span></div>';
+      const plus = (k, name) => '<button class="lk-t lk-add" data-hsx="icoadd" data-hsv="' + esc(k) + '" title="New icon" aria-label="New icon for ' + esc(name) + '"><span class="lk-sw lk-es hs-sw">' + LK_PLUS + '</span><span class="lk-tn">' + esc(name) + '</span></button>';
+      let h = '<section><div class="lk-fh">Icons</div><div class="lk-tg hs-g3">' + HS_ICONS().map(x => tile(x[0], x[1])).join('') + own.map(k => tile(k, hsIcoName(k))).join('') +
+        ['cpu', 'gpu'].filter(k => !own.includes(k)).map(k => plus(k, k.toUpperCase())).join('') + (own.length < 26 ? plus('', 'Any reading') : '') + '</div>';
+      if (HS.icoPick) h += '<div class="hs-sel hs-ipick"><select data-hsk="icoadd"><option value="">Pick a reading</option>' + hsOpts('', true).replace(/<option value="(|head|spare|mouse|vol)"[^>]*>[^<]*<\/option>/g, '').replace(/<optgroup label="[^"]*"><\/optgroup>/g, '') + '</select></div>';
+      h += '</section>';
+      const k = HS.ico, rows = hsIcoRows(k);
+      if (!rows) return h;
+      const w = rows.reduce((a, r) => Math.max(a, r.length), 0), hh = rows.length, mine = !!(T.icons || {})[k], spare = k === 'spare';
+      const ib = (t, title, svg) => '<button class="ib" data-hsx="icot" data-hsw="' + t + '" title="' + title + '" aria-label="' + title + '"><svg viewBox="0 0 24 24">' + svg + '</svg></button>';
+      let g = '<div class="hs-igrid" style="grid-template-columns: repeat(' + w + ', 22px)">';
+      for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) { const on = rows[y][x] === 'X', fa = spare && x >= 2 && x <= w - 4 && y >= 2 && y <= hh - 3; g += '<i data-ix="' + x + '" data-iy="' + y + '"' + (on || fa ? ' class="' + (on ? 'on' : 'fa') + '"' : '') + '></i>'; }
+      g += '</div>';
+      const step = (t, n, lo, hi, title) => '<span class="hs-ist"><button class="ib" data-hsx="icot" data-hsw="' + t + '-"' + (n <= lo ? ' disabled' : '') + ' title="' + title + ' smaller" aria-label="' + title + ' smaller"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button><span>' + n + '</span><button class="ib" data-hsx="icot" data-hsw="' + t + '+"' + (n >= hi ? ' disabled' : '') + ' title="' + title + ' bigger" aria-label="' + title + ' bigger"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></button></span>';
+      h += '<section class="hs-ied"><div class="lk-fh">' + esc(hsIcoName(k)) + '</div>' + g +
+        '<div class="hs-ireal"><span><canvas data-hsi="' + esc(k) + '" data-k="1"></canvas></span><span><canvas data-hsi="' + esc(k) + '" data-k="2"></canvas></span></div>' +
+        '<div class="hs-itools">' + ib('mirror', 'Mirror', '<path d="M12 3v18"/><path d="M8 7L4 12l4 5V7z"/><path d="M16 7l4 5-4 5V7z"/>') + ib('flip', 'Flip', '<path d="M3 12h18"/><path d="M7 8l5-4 5 4H7z"/><path d="M7 16l5 4 5-4H7z"/>') +
+        ib('left', 'Nudge left', '<path d="M15 6l-6 6 6 6"/>') + ib('right', 'Nudge right', '<path d="M9 6l6 6-6 6"/>') + ib('up', 'Nudge up', '<path d="M6 15l6-6 6 6"/>') + ib('down', 'Nudge down', '<path d="M6 9l6 6 6-6"/>') +
+        ib('invert', 'Invert', '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 20L20 4v16H4z" fill="currentColor"/>') + ib('clear', 'Clear', '<path d="M6 6l12 12M18 6L6 18"/>') + '</div>' +
+        (spare ? '' : '<div class="hs-itools">' + step('w', w, 1, 13, 'Width') + step('h', hh, 1, 13, 'Height') + '</div>') +
+        '<div class="hs-itools">' + (HS_ICOK[k] ? (mine ? '<button class="btn" data-hsx="icot" data-hsw="reset">Reset to default</button>' : '') : '<button class="btn" data-hsx="icot" data-hsw="remove">' + HS_X + 'Remove</button>') + '</div></section>';
+      return h;
+    }
+    // a reading's own icon, made blank (8 x 7); the picture shows it once a piece of that reading has Label: Icon
+    function hsIcoNew(k) {
+      const T = hsT(); if (!T || !k || HS_ICOK[k]) return false;
+      T.icons = T.icons || {};
+      if (!T.icons[k]) { if (Object.keys(T.icons).length >= 32) return false; T.icons[k] = Array.from({ length: 7 }, () => '........'); }
+      HS.view = 'icons'; HS.full = true; hsSet(); return true;
+    }
+    function hsIcoPut(rows) {
+      const T = hsT(), k = HS.ico; if (!T || !k) return;
+      T.icons = T.icons || {}; T.icons[k] = rows; HS.full = true; hsSet();
+    }
+    function hsIcoTool(t) {
+      const T = hsT(), k = HS.ico, rows = hsIcoRows(k); if (!T || !rows) return;
+      const w = rows[0].length, h = rows.length, flip = c => c === 'X' ? '.' : 'X';
+      let r = rows.slice();
+      if (t === 'reset') { if (T.icons) { delete T.icons[k]; if (!Object.keys(T.icons).length) delete T.icons; } HS.full = true; hsSet(); return; }
+      if (t === 'remove') { if (T.icons) { delete T.icons[k]; if (!Object.keys(T.icons).length) delete T.icons; } HS.ico = 'head'; HS.full = true; hsSet(); return; }
+      if (t === 'mirror') r = r.map(x => [...x].reverse().join(''));
+      else if (t === 'flip') r = r.reverse();
+      else if (t === 'invert') r = r.map(x => [...x].map(flip).join(''));
+      else if (t === 'clear') r = r.map(x => '.'.repeat(x.length));
+      else if (t === 'left') r = r.map(x => x.slice(1) + x[0]);
+      else if (t === 'right') r = r.map(x => x[x.length - 1] + x.slice(0, -1));
+      else if (t === 'up') r = r.slice(1).concat([r[0]]);
+      else if (t === 'down') r = [r[r.length - 1]].concat(r.slice(0, -1));
+      else if (t === 'w+' && w < 13) r = r.map(x => x + '.');
+      else if (t === 'w-' && w > 1) r = r.map(x => x.slice(0, -1));
+      else if (t === 'h+' && h < 13) r = r.concat(['.'.repeat(w)]);
+      else if (t === 'h-' && h > 1) r = r.slice(0, -1);
+      else return;
+      hsIcoPut(r);
+    }
+    // painting: a press flips the pixel and paints that value over every pixel the pointer crosses; sent when let go
+    function hsIcoCell(c) {
+      const P = HS.paint; if (!P || !c) return;
+      const x = +c.dataset.ix, y = +c.dataset.iy, row = P.rows[y]; if (row == null || row[x] == null) return;
+      const ch = P.v ? 'X' : '.'; if (row[x] === ch) return;
+      P.rows[y] = row.slice(0, x) + ch + row.slice(x + 1); P.n++;
+      c.classList.toggle('on', P.v);
+      const m = hsEl(); if (m) for (const cv of m.querySelectorAll('canvas[data-hsi="' + CSS.escape(P.key) + '"]')) hsIcoCv(cv, P.rows, +cv.dataset.k || 1);
+    }
+    document.addEventListener('pointerdown', e => {
+      const c = e.target.closest && e.target.closest('.hsx .hs-igrid i'); if (!c || e.button !== 0 || !HS.v) return;
+      const rows = hsIcoRows(HS.ico); if (!rows) return;
+      e.preventDefault();
+      HS.paint = { key: HS.ico, rows: rows.slice(), v: rows[+c.dataset.iy][+c.dataset.ix] !== 'X', n: 0 };
+      hsIcoCell(c);
+    });
+    document.addEventListener('pointermove', e => { if (!HS.paint) return; const c = document.elementFromPoint(e.clientX, e.clientY); if (c && c.closest && c.closest('.hsx .hs-igrid i')) hsIcoCell(c.closest('.hs-igrid i')); });
+    const hsIcoUp = () => { const P = HS.paint; if (!P) return; HS.paint = null; if (P.n && P.key === HS.ico) hsIcoPut(P.rows); };
+    document.addEventListener('pointerup', hsIcoUp);
+    document.addEventListener('pointercancel', hsIcoUp);
+    function hsMsg(m) {
+      if (m.play) { hsPlay(m.play); return; }
+      if (m.what === 'set') { HS.sets = Math.max(0, (HS.sets || 0) - 1); if (HS.sets > 0) return; HS.setAt = 0; }
+      else if (HS.setAt && performance.now() - HS.setAt < 3000) return;
+      else HS.sets = 0;
+      if (!m.setup || !m.setup.theme) return;   // (an answer from before the revamp: nothing to draw)
+      if (m.cards) HS.cards = m.cards;
+      const hadPre = !!HS.presets;
+      if (m.presets) HS.presets = m.presets;
+      if (m.pimg) HS.pimg = m.pimg; if (m.simg) HS.simg = m.simg; if (m.timg) HS.timg = m.timg; if (m.icodef) HS.icodef = m.icodef;
+      if (m.rimg) HS.rimg = m.rimg; if (m.rthemes) HS.rthemes = m.rthemes;
+      if (HS.v && HS.page === m.page) for (const k of ['lay', 'dig', 'bars']) if (m[k] === undefined) m[k] = HS.v[k];
+      const Hd = feed.hs || {}, dsig = [Hd.there, !!Hd.gg, !!Hd.on, !!Hd.base, Hd.bright > 0, !!Hd.wheel].join();   // (the base found / lost, GG, its brightness and wheel known: the top row again, the release review 11-15)
+      const full = HS.full || !HS.v || HS.dsig !== dsig || HS.page !== m.page || hadPre !== !!HS.presets || JSON.stringify(HS.v.setup) !== JSON.stringify(m.setup) || JSON.stringify((HS.v.lay || []).map(x => x.name)) !== JSON.stringify((m.lay || []).map(x => x.name));
+      HS.dsig = dsig; HS.page = m.page; HS.v = m; HS.full = false; HS.last = JSON.stringify(m.setup); HS.lastPage = m.page;
+      if (!hsCur()) HS.sel = null;
+      if (hsEl()) hsDraw(full);
+    }
+    function hsPlay(pl) {
+      const key = pl.key + '-' + pl.which, id = { key }, cvOf = () => hsEl() && hsEl().querySelector('canvas[data-hsc="' + key + '"]');
+      HS.play = id; let i = 0;
+      const mark = on => { const c = cvOf(), b = c && c.closest('.lk-t'); if (b) b.classList.toggle('playing', on); };
+      const step = () => {
+        if (HS.play !== id || !hsEl()) { mark(false); return; }
+        mark(true);
+        if (i < pl.frames.length) { hsBits(cvOf(), pl.frames[i++]); setTimeout(step, pl.ms); }
+        else setTimeout(() => { if (HS.play === id) HS.play = null; mark(false); hsBits(cvOf(), (HS.cards || {})[key]); }, 500);
+      };
+      step();
+    }
+    const hsAsk = cards => send({ t: 'hs.get', page: HS.page, cards: !!cards });
+    const hsSet = () => { if (HS.v) { if (HS.sets && performance.now() - HS.setAt > 3000) HS.sets = 0; HS.sets = (HS.sets || 0) + 1; HS.setAt = performance.now();
+      const now = JSON.stringify(HS.v.setup);
+      if (HS.last && HS.last !== now && czOn && document.getElementById('setmodal').classList.contains('open')) { const was = JSON.parse(HS.last); czStep('hs', { t: 'hs.set', setup: was, page: Math.max(0, Math.min(HS.lastPage == null ? HS.page : HS.lastPage, was.theme.pages.length - 1)) }, { t: 'hs.set', setup: JSON.parse(now), page: HS.page }); }
+      HS.last = now; HS.lastPage = HS.page;
+      send({ t: 'hs.set', setup: HS.v.setup, page: HS.page }); } };
+    // rows or columns fewer: never below what the pieces need (those buttons are off); more: the pieces stay where they are
+    function hsClick(e) {
+      if (HS.dragAt && performance.now() - HS.dragAt < 300) return;
+      if (HS.v && e.target.closest('.hs-pv') && !e.target.closest('.hs-ov')) { if (HS.sel != null) { HS.sel = null; HS.pend = {}; hsDraw(true); } return; }
+      const nm = e.target.closest('.hsx .lk-th-l .hs-sv .lk-tn'); if (nm) { if (HS.v && e.detail === 1) { const k = nm.dataset.hk, id = nm.dataset.hid; clearTimeout(HS.nmT); HS.nmT = setTimeout(() => { if (k === 't') hsPickTheme('t', id); else hsPickPage('s', id); }, 260); } return; }   // (a name picks too, after a double-click's time: a double-click renames)
+      const b = e.target.closest('[data-hsx], [data-hsk], [data-hsn]'); if (!b || b.disabled || !HS.v || b.matches('input, select')) return;
+      if (b.dataset.hsx === 'fold') { const f = b.dataset.f, open = !HS.folds[f]; HS.folds[f] = open; b.classList.toggle('open', open); b.setAttribute('aria-expanded', open); if (b.nextElementSibling) b.nextElementSibling.classList.toggle('open', open); return; }
+      if (b.dataset.hsn) {
+        const n = b.dataset.hsn, q = hsCur(); if (!q) return;
+        if (b.dataset.hsv === 'none') { HS.pend[n] = false; if (q[n] == null) { hsDraw(true); return; } q[n] = null; HS.full = true; hsSet(); return; }
+        if (q[n] == null && !HS.pend[n]) { HS.pend[n] = true; hsDraw(true); const i = hsEl() && hsEl().querySelector('input[data-hsk="' + n + '"]'); if (i) i.focus(); }
+        return;
+      }
+      const S2 = HS.v.setup, T = hsT(), Pg = hsPg(), p = hsCur(), a = b.dataset.hsx, k = b.dataset.hsk, val = b.dataset.hsv;
+      if (k === 'screen') { const H = feed.hs; if (!H || hsScr(H) === val) return; send({ t: 'hs.screen', m: val }); H.on = val === 'on'; H.base = val === 'base'; hsDraw(true); return; }   // (the device's, not the setup's: not in undo)
+      if (a === 'refresh') { send({ t: 'hs.refresh' }); b.classList.add('spin'); setTimeout(() => b.classList.remove('spin'), 1100); return; }   // (his 11-14 "add a refresh button to unbug in case it happens")
+      if (a === 'wheelfast') { S2.wheelfast = !S2.wheelfast; HS.full = true; hsSet(); return; }   // (saved with the setup: undo takes it back too)
+      if (a === 'view') { HS.view = val; HS.adding = false; HS.thTop = 0; HS.jf = null; hsDraw(true); return; }
+      if (a === 'ico') { HS.ico = val; HS.thTop = null; hsDraw(true); return; }
+      if (a === 'icoedit') { HS.ico = val; HS.view = 'icons'; HS.adding = false; HS.thTop = 0; if (hsIcoRows(val) || !hsIcoNew(val)) hsDraw(true); return; }
+      if (a === 'icoadd') { if (val) { HS.ico = val; hsIcoNew(val); } else { HS.icoPick = true; hsDraw(true); } return; }
+      if (a === 'icot') { hsIcoTool(b.dataset.hsw); return; }
+      if (a === 'tile') { if (b.dataset.hk === 't' || b.dataset.hk === 'r') hsPickTheme(b.dataset.hk, b.dataset.hid); else hsPickPage(b.dataset.hk, b.dataset.hid); return; }
+      if (a === 'save' || a === 'saveas') { hsSave(a === 'saveas'); return; }
+      if (a === 'savepage') { hsSavePage(); return; }
+      if (a === 'export') { const T = hsT(); if (T) send({ t: 'hs.export', name: T.name || 'Headset theme', theme: hsForFile(T) }); return; }
+      if (a === 'import') { send({ t: 'hs.import' }); return; }
+      if (a === 'savex') { hsAskDelete(b.dataset.hk, b.dataset.hid); return; }
+      if (a === 'pick') { const i = +val; HS.sel = HS.sel === i ? null : i; HS.pend = {}; if (HS.sel != null) HS.folds.piece = true; hsDraw(true); if (HS.sel != null) czToPiece(); return; }   // (the picked one again: none picked; 11-14 his "when i click on a cell it should scroll me to that cell settings")
+      if (a === 'page') { HS.page = +val; HS.sel = null; HS.full = true; hsAsk(false); return; }
+      if (a === 'addpage') {   // (a new empty page at once, opened; the gallery on the right fills it, 11-14)
+        const T = hsT(); if (!T || T.pages.length >= HS_MAX) return;
+        const names = new Set(T.pages.map(q => q.name)); let n = T.pages.length + 1; while (names.has('Page ' + n)) n++;
+        T.pages.push({ name: 'Page ' + n, when: 'always', rows: 2, cols: 2, gap: -1, lines: 'none', pieces: [] });
+        HS.page = T.pages.length - 1; HS.sel = null; HS.pend = {}; HS.adding = false; HS.view = 'pages'; HS.thTop = 0; HS.full = true; hsSet(); return;
+      }
+      if (a === 'rmpage') { hsAskRmPage(); return; }
+      if (a === 'pgdup' || a === 'pgpaste') {   // (a copy of this page, or the one copied, as a new page right after this one, opened)
+        const T = hsT(), src = a === 'pgdup' ? T && T.pages[HS.page] : hsClip(); if (!T || !src || T.pages.length >= HS_MAX) return;
+        const np = clone(src), names = new Set(T.pages.map(q => q.name)), b0 = (np.name || 'Page').replace(/\s+\d+$/, '').slice(0, 20); let nm = b0, k = 2; while (names.has(nm)) nm = b0 + ' ' + k++; np.name = nm;   // ("Overview 2" copied: "Overview 3")
+        T.pages.splice(HS.page + 1, 0, np); HS.page++; HS.sel = null; HS.pend = {}; HS.full = true; hsSet(); return;
+      }
+      if (a === 'pgcopy') { const T = hsT(); if (!T || !T.pages[HS.page]) return; HS.clip = clone(T.pages[HS.page]); try { localStorage.setItem('hsClip', JSON.stringify(HS.clip)); } catch (e) { } hsDraw(true); return; }
+      if (!T || !Pg) return;
+      if (a === 'lay') { const x = (HS.v.lay || [])[+val]; if (!x) return; const keepName = Pg.name, keepWhen = Pg.when; T.pages[HS.page] = Object.assign(clone(x.page), { name: keepName, when: keepWhen, from: Pg.from }); HS.sel = null; }
+      else if (a === 'addcell') { const [x, y] = val.split(',').map(Number); Pg.pieces.push(hsNew(x, y)); HS.sel = Pg.pieces.length - 1; HS.pend = {}; }
+      else if (a === 'rm') { if (!p) return; Pg.pieces.splice(HS.sel, 1); HS.sel = null; HS.pend = {}; }
+      else if (a === 'anim') { T[b.dataset.hsw] = val; if (val) send({ t: 'hs.play', key: val, which: b.dataset.hsw, page: HS.page }); }
+      else if (!k) return;
+      else if (k === 'rows') { const n = +val; if (n < hsNeedR(Pg)) return; Pg.rows = n; }
+      else if (k === 'cols') { const n = +val; if (n < hsNeedC(Pg)) return; Pg.cols = n; }
+      else if (k === 'lines') Pg.lines = val;
+      else if (k === 'when') Pg.when = val;
+      else if (k === 'every') T.every = +val;
+      else if (k === 'digits') T.digits = +val;
+      else if (k === 'bar') T.bar = val;
+      else if (!p) return;
+      else if (k === 'num') p.num = val === '1';
+      else p[k] = k === 'over' || k === 'dec' ? +val : k === 'seconds' || k === 'date' || k === 'unit' || k === 'below' || k === 'inv' ? val === '1' : val;
+      HS.full = true; hsSet();
+    }
+    function hsChange(e) {
+      if (e.target.id === 'hsJump') { const l = document.getElementById('hsThL'), x = l && l.querySelector('section[data-f="' + CSS.escape(e.target.value) + '"]'); if (x) { HS.jf = e.target.value; HS.jumpAt = performance.now(); l.scrollTo({ top: x.offsetTop, behavior: motionMode() === 'off' ? 'auto' : 'smooth' }); } return; }
+      const s = e.target.closest && e.target.closest('select[data-hsk], input[data-hsk]'); if (!s || !HS.v) return;
+      const k = s.dataset.hsk, t = s.value.trim(), Pg = hsPg(), p = hsCur();
+      if (k === 'icoadd') { HS.icoPick = false; if (s.value) { HS.ico = s.value; if (hsIcoRows(s.value) || !hsIcoNew(s.value)) hsDraw(true); } else hsDraw(true); return; }
+      if (k === 'pname') { if (!Pg) return; Pg.name = t.slice(0, 24) || Pg.name; }
+      else if (k === 'gap') { if (!Pg) return; Pg.gap = Math.max(0, Math.min(6, +s.value)); }
+      else if (!p) return;
+      else if (k === 'src') {   // (11-14 a battery's low warning as a level he sees and can clear: red at 12 for the headset, 15 for the mouse; switched away, it goes)
+        const was = p.src, LOWB = { head: 12, mouse: 15 }; p.src = s.value;
+        if (LOWB[was] != null && p.warn == null && p.crit === LOWB[was]) p.crit = null;   // (the old battery's default goes first)
+        if (LOWB[p.src] != null && p.warn == null && p.crit == null) p.crit = LOWB[p.src];
+      }
+      else if (k === 'src2') p.src2 = s.value || null;
+      else if (k === 'name') p.name = t || null;
+      else if (k === 'offtxt') p.offtxt = t.toUpperCase().slice(0, 6) || null;   // (his own word for off / empty)
+      else { const n = +t.replace(',', '.'); p[k] = t === '' || !isFinite(n) ? null : n; if (p[k] != null) HS.pend[k] = false; }
+      HS.full = true; hsSet();
+    }
+    // the gap slider: its value shown while dragged (sent when let go)
+    document.addEventListener('input', e => { const r = e.target; if (!r.matches || !r.matches('input.lk-rng[data-hsbr]')) return; r.style.setProperty('--v', ((+r.value - 1) / 9 * 100) + '%'); const lv = r.parentNode.querySelector('.lk-v'); if (lv) lv.textContent = r.value * 10 + '%'; });
+    document.addEventListener('change', e => { const r = e.target; if (!r.matches || !r.matches('input.lk-rng[data-hsbr]')) return; const v = +r.value; send({ t: 'hs.bright', v }); if (feed.hs) feed.hs.bright = v; });   // (the base's brightness, sent when let go; a device setting, not part of a theme)
+    document.addEventListener('input', e => { const r = e.target; if (!r.matches || !r.matches('.hsx input.lk-rng[data-hsk="gap"]')) return; r.style.setProperty('--v', (+r.value / 6 * 100) + '%'); const lv = r.parentNode.querySelector('.lk-v'); if (lv) lv.textContent = r.value + ' px'; });
+    function detail(box) {
+      const H = feed.hs || {}, d = document.querySelector('#mdesc .hsx-d');
+      if (d) setText(d, H.there === false ? 'not found' : H.cap || '');
+      if (!box.querySelector('.hs-go')) box.innerHTML = '<div class="setrow hs-go"><div>Base station screen</div><button class="btn" data-hs-open>Customize</button></div>';
+    }
+    function mount(at) {
+      if (!HS.el) { HS.el = document.createElement('div'); HS.el.className = 'hsx'; }
+      at.replaceWith(HS.el);
+      if (!HS.v) { HS.full = true; HS.sel = null; HS.play = null; } else hsDraw(true);   // (put back: drawn whole, so nothing of before stays on)
+      const l = HS.el.querySelector('#hsThL'); if (l && HS.thTop != null) l.scrollTop = HS.thTop;
+      if (!S.setFold.hs || !HS.v) hsAsk(true);
+    }
+    function shown() { HS.thTop = null; HS.full = true; HS.adding = false; hsAsk(true); }
+    // a tile pointed at or reached by the keys: shown on the big picture; a name double-clicked: renamed
+    const hsTileOf = el => { if (!el || !el.closest) return null; const t = el.closest('#hsThL [data-hsx="tile"]'); if (t) return t; const s = el.closest('#hsThL .hs-sv'); return s ? s.querySelector('.lk-tb') : null; };
+    document.addEventListener('pointerover', e => { const t = hsTileOf(e.target); if (!t) return; HS.hov = t.dataset.hk + ':' + t.dataset.hid; hsPvAsk(); });
+    document.addEventListener('pointerout', e => { if (!HS.hov || !(e.target.closest && e.target.closest('#hsThL'))) return; if (hsTileOf(e.relatedTarget)) return; HS.hov = null; hsPvAsk(); });
+    document.addEventListener('scroll', e => { if (e.target && e.target.id === 'hsThL' && hsOpen()) { HS.thTop = e.target.scrollTop; lkMore(e.target); hsJumpFollow(e.target); } }, true);
+    // (the jump list follows the section at the top as the wheel scrolls; at the end, the last one)
+    function hsJumpFollow(l) {
+      if (HS.jumpAt && performance.now() - HS.jumpAt < 700) return;
+      const secs = [...l.querySelectorAll(':scope > section[data-f]')]; if (!secs.length) return;
+      let f = secs[0].dataset.f; for (const x of secs) if (x.offsetTop - l.scrollTop <= 12) f = x.dataset.f;
+      if (l.scrollTop + l.clientHeight >= l.scrollHeight - 1) f = secs[secs.length - 1].dataset.f;
+      if (f === HS.jf) return; HS.jf = f;
+      const sl = document.getElementById('hsJump'); if (!sl) return; sl.value = f; const b = sl.nextElementSibling; if (b && b.classList.contains('dsel')) b.firstChild.innerHTML = dselLab(sl.options[sl.selectedIndex]);
+    }
+    document.addEventListener('dblclick', e => {
+      const n = e.target.closest && e.target.closest('.hsx .hs-sv .lk-tn'); if (!n || !HS.v) return; clearTimeout(HS.nmT);
+      const kind = n.dataset.hk, id = n.dataset.hid, list = kind === 't' ? hsThemes() : hsSavedL(), x = list.find(y => y.id === id); if (!x) return;
+      e.preventDefault();
+      const i = document.createElement('input'); i.className = 'lk-rn'; i.maxLength = 40; i.value = x.name; i.spellcheck = false; i.setAttribute('aria-label', 'Name');
+      n.replaceWith(i); i.focus(); i.select();
+      let done = false; const end = keep => { if (done) return; done = true; const val = i.value.trim(), cur = (kind === 't' ? hsThemes() : hsSavedL()).find(y => y.id === id); if (keep && val && cur && val !== cur.name) { cur.name = val.slice(0, 40); const T = hsT(); if (kind === 't' && T && T.from === 't:' + id) T.name = cur.name; HS.full = true; hsSet(); } else hsDraw(true); };
+      i.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); end(true); } else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); end(false); } });
+      i.addEventListener('blur', () => end(true));
+    });
+    let hsWas = false;   // (the window going from open to shut only: not any change of its class while shut, as in the opening's hold, 11-14 release checks)
+    new MutationObserver(() => { const o = hsOpen(), was = hsWas; hsWas = o; if (was && !o) { HS.thTop = null; HS.hov = null; HS.adding = false; HS.view = 'themes'; HS.full = true; } }).observe(document.getElementById('setmodal'), { attributes: true, attributeFilter: ['class'] });
+    setInterval(() => { if (hsEl() && $('setmodal').classList.contains('open') && !document.hidden && !S.setFold.hs) hsAsk(false); }, 1000);
+    document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches && e.target.matches('.hsx input[data-hsk]')) { e.preventDefault(); const t = e.target; setTimeout(() => t.blur(), 0); } });
+    // ---- on the picture: drag a piece to a free place (onto one of the same size: the two swap), its corner to span cells ----
+    const hsCell = (fx, fy) => { const v = HS.v, cx = v.colx || [], ry = v.rowy || []; let x = 0, y = 0; cx.forEach((c, i) => { if (fx >= c[0] - 0.01) x = i; }); ry.forEach((r, i) => { if (fy >= r[0] - 0.01) y = i; }); return [x, y]; };
+    const hsArea = (x, y, w, h) => { const v = HS.v, cx = v.colx || [], ry = v.rowy || []; if (!cx[x] || !ry[y] || !cx[x + w - 1] || !ry[y + h - 1]) return null; return [cx[x][0], ry[y][0], cx[x + w - 1][0] + cx[x + w - 1][1] - cx[x][0], ry[y + h - 1][0] + ry[y + h - 1][1] - ry[y][0]]; };
+    function hsMark(r, cls) {
+      const ov = hsEl() && hsEl().querySelector('.hs-ovs'); if (!ov) return;
+      let m = ov.querySelector('.hs-mk'); if (!r) { if (m) m.remove(); return; }
+      if (!m) { m = document.createElement('i'); ov.appendChild(m); }
+      m.className = 'hs-mk ' + cls;
+      Object.assign(m.style, { left: (r[0] * 100).toFixed(2) + '%', top: (r[1] * 100).toFixed(2) + '%', width: (r[2] * 100).toFixed(2) + '%', height: (r[3] * 100).toFixed(2) + '%' });
+    }
+    document.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || !HS.v) return;
+      const t = e.target.closest && e.target.closest('.hsx .hs-ovs .hs-rz, .hsx .hs-ovs [data-hsx="pick"]'); if (!t || e.target.closest('.hs-ox')) return;
+      const box = t.closest('[data-hsx="pick"]'), i = +box.dataset.hsv, Pg = hsPg(); if (!Pg || !Pg.pieces[i]) return;
+      HS.drag = { box, i, size: t.classList.contains('hs-rz'), x0: e.clientX, y0: e.clientY, moved: false, R: box.closest('.hs-pv').getBoundingClientRect(), to: null };
+      e.preventDefault();
+    });
+    document.addEventListener('pointermove', e => {
+      const D = HS.drag; if (!D) return;
+      const dx = e.clientX - D.x0, dy = e.clientY - D.y0;
+      if (!D.moved && Math.hypot(dx, dy) < 4) return;
+      D.moved = true;
+      const fx = (e.clientX - D.R.left) / D.R.width, fy = (e.clientY - D.R.top) / D.R.height, Pg = hsPg(), q = Pg.pieces[D.i], [cx, cy] = hsCell(fx, fy);
+      if (D.size) { const w = Math.max(1, cx - q.x + 1), h = Math.max(1, cy - q.y + 1); D.to = hsFree(Pg, q.x, q.y, w, h, D.i) ? { w, h } : null; hsMark(D.to ? hsArea(q.x, q.y, w, h) : null, 'sz'); return; }
+      if (!D.box.isConnected) { const nb = hsEl() && hsEl().querySelector('.hs-ov[data-hsx="pick"][data-hsv="' + D.i + '"]'); if (!nb) { HS.drag = null; hsMark(null); return; } D.box = nb; }
+      D.box.classList.add('drag'); D.box.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+      const own = hsOwn(Pg), other = own[cy] && own[cy][cx];
+      if (other != null && other !== D.i) { const q2 = Pg.pieces[other]; D.to = q2.w === q.w && q2.h === q.h ? { swap: other } : null; hsMark(D.to ? hsArea(q2.x, q2.y, q2.w, q2.h) : null, 'sw'); return; }
+      const x = Math.min(cx, Pg.cols - q.w), y = Math.min(cy, Pg.rows - q.h);
+      D.to = (x !== q.x || y !== q.y) && hsFree(Pg, x, y, q.w, q.h, D.i) ? { x, y } : null; hsMark(D.to ? hsArea(x, y, q.w, q.h) : null, 'in');
+    });
+    const hsDrop = () => {
+      const D = HS.drag; HS.drag = null; if (!D) return;
+      hsMark(null); D.box.classList.remove('drag'); D.box.style.transform = '';
+      if (!D.moved) return;
+      HS.dragAt = performance.now();
+      const Pg = hsPg(), to = D.to; if (!to || !Pg) return;
+      const q = Pg.pieces[D.i];
+      if (D.size) { if (q.w === to.w && q.h === to.h) return; q.w = to.w; q.h = to.h; }
+      else if (to.swap != null) { const q2 = Pg.pieces[to.swap], x = q.x, y = q.y; q.x = q2.x; q.y = q2.y; q2.x = x; q2.y = y; }
+      else { q.x = to.x; q.y = to.y; }
+      HS.sel = D.i; HS.pend = {}; HS.full = true; hsSet();
+    };
+    document.addEventListener('pointerup', hsDrop);
+    document.addEventListener('pointercancel', hsDrop);
+    document.addEventListener('click', e => { if (e.target.closest && e.target.closest('.hsx')) hsClick(e); });
+    document.addEventListener('change', e => { if (e.target.closest && e.target.closest('.hsx')) hsChange(e); });
+    document.addEventListener('click', e => { if (e.target.closest && e.target.closest('[data-hs-open]')) hsOpenSettings(); });
+    // (Esc with a piece picked: the piece is let go first; the next Esc closes the window, his 11-14 "i cant unselect pieces")
+    window.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' || !HS.v || HS.sel == null || dselOpen || HS.drag) return;
+      const t = e.target; if (t && t.matches && t.matches('input, select, textarea')) return;
+      const m = hsEl(); if (!m || !m.closest('#setmodal.open, .modal.open')) return;   // (shown: inside an open window)
+      e.preventDefault(); e.stopImmediatePropagation(); HS.sel = null; HS.pend = {}; hsDraw(true);
+    }, true);
+    function stepped(msg) { HS.sets = (HS.sets || 0) + 1; HS.setAt = performance.now(); HS.full = true; HS.sel = null; if (msg && msg.setup) { HS.last = JSON.stringify(msg.setup); if (msg.page != null) HS.lastPage = msg.page; } }
+    return { msg: hsMsg, imp: hsImp, forFile: hsForFile, detail, mount, draw: hsDraw, shown, stepped, state: HS };
+  })();
+EXT.kinds.headset = {
+  icon: () => HS_I,
+  eval(out, r) {
+    const H = feed.hs || {}, v = r.v; out.col = 'white';
+    if (v == null || !isFinite(v)) return false;
+    out.v = v; out.txt = String(Math.round(v)); out.utxt = '%';
+    const sp = BYKEY.get(HSK_SPARE), spare = sp && sp.v != null && isFinite(sp.v) ? 'spare ' + Math.round(sp.v) + '%' : 'no spare';
+    const sub = H.chg ? 'charging, ' + spare : spare;
+    out.sub = sub; out.tsub = sub; out.tsubS = sub; out.subS = { of: sub, s: sub };
+    return true;
+  },
+  desc: () => '<span class="hsx-d"></span>',
+  detail(box) { HSX.detail(box); }
+};
 const $ = id => document.getElementById(id);
 const app = $('app'), sectionsEl = $('sections'), dropmark = $('dropmark');
 const esc = s => String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -282,7 +919,9 @@ const COLORS = { white: '#e8e8e8', yellow: '#e6c84a', red: '#e5484d', grey: '#55
 
 // ---------- the catalog: every reading HWiNFO shares ----------
 const TYPES = ['none', 'temp', 'volt', 'fan', 'current', 'power', 'clock', 'usage', 'other'];
-const TYPE_NAME = { temp: 'Temp', volt: 'Volt', fan: 'Fan', power: 'Power', current: 'Current', clock: 'Clock', usage: 'Usage', other: 'Other' };
+const TYPE_NAME = { own: 'HW Deck', fps: 'FPS', temp: 'Temp', volt: 'Volt & amps', fan: 'Fan', power: 'Power', current: 'Current', clock: 'Clock', usage: 'Usage', other: 'Other' };
+const chipT = r => r.unit === 'FPS' || /^hwdeck\.0\/fps/.test(r.key) ? 'fps' : r.t === 'current' ? 'volt' : r.t;   // (Storage's chip for a reading: frame rates their own, amps with volts, his 11-13)
+const ownR = r => /^(hwdeck|x)\./.test(r.key);   // (made by the app, not HWiNFO: Storage's "HW Deck" chip, his 11-13)
 let SENS = [], READ = [], BYKEY = new Map(), BYMATCH = new Map();
 const feed = { bnIn: [null, null, 0], status: 'missing', age: 0, fake: false, dataDir: '', version: '', pc: '', got: false, game: null, front: false, gameSince: 0, hwinfo: null, autostart: false, keep: false, keepBusy: false, keepWait: false, fps: false, fpsState: 'off', fpsBusy: false, fpsWait: false, updates: true, latest: null, pm: false, nonClient: true };
 
@@ -822,7 +1461,7 @@ function tidyViews(L) {
 }
 const cleanSlot = s => s && typeof s === 'object' && s.layout && Array.isArray(s.layout.cats)
   ? { v: 1, name: typeof s.name === 'string' ? s.name.trim().slice(0, 80) : '', layout: cleanLayout(s.layout) } : null;
-const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined, title: undefined, clock: true, look: { theme: 'classic', changed: false, base: '#0d0d0d', fades: [], cell: '#151515', op: 100, line: true, corners: 'normal', tint: 'none', acc: '#ffffff', pal: 'muted', pops: 'cells' }, listFilt: { g: false, w: false }, lookSaved: [] };   // (listFilt: the period chart's window filters the list under it, Sessions g, Warning history w; off by default, his 11-09)
+const S = { L: emptyLayout(), slots: [null, null, null, null, null], active: null, edit: true, screen: 'tiles', motion: undefined, title: undefined, clock: true, look: { theme: 'classic', changed: false, base: '#0d0d0d', fades: [], cell: '#151515', op: 100, line: true, corners: 'normal', tint: 'none', acc: '#ffffff', pal: 'muted', pops: 'cells' }, listFilt: { g: false, w: false }, lookSaved: [], recent: [], savedCols: [], setFold: { hs: false, look: false } };   // (setFold: Settings' Headset and Look sections folded away, 11-13; listFilt: the period chart's window filters the list under it, Sessions g, Warning history w; off by default, his 11-09)
 // the title bar: your title (this PC's name when there is none), the feed's dot and the time of the last reading
 function renderTitle() {
   setText($('title'), (S.title && S.title.trim()) || feed.pc || feed.brand || 'HW Deck');
@@ -854,6 +1493,29 @@ function applyMotion() { document.documentElement.dataset.motion = motionMode();
 // yellow and red. The page sets the tokens from the look (--bg, --tile, --pop, ...); deck.css only reads them
 const THEMES = { tint: ['none', 'accent', 'spectrum'], corners: ['sharp', 'normal', 'round'] };
 const ACC0 = '#ffffff', ACC_OLD = { classic: '#7fa6e8', oled: '#9cb0f4' }, isHex = c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
+// ---- recent colours (2.4.9, 11-13, his "the rgb should add a recent colors with a shared state in themes as well"):
+// the colours picked last, newest first, kept with the view's state (state.json, `recent`). One list for every colour
+// picker: the Look's colour editor shows it under its tones, and a build's own pickers read and add to it (HW
+// Dashboard: the case lights). Not part of an undo step: a colour taken back was still used ----
+const RECENT_N = 8;
+const cleanRecent = a => Array.isArray(a) ? [...new Set(a.filter(isHex).map(c => c.toLowerCase()))].slice(0, RECENT_N) : [];
+const recentList = () => S.recent.slice();
+// (keep: picked from the list itself, which then stays in its order under the pointer)
+function recentAdd(c, keep) {
+  if (!isHex(c)) return; c = c.toLowerCase();
+  if (S.recent[0] === c || (keep && S.recent.includes(c))) return;
+  S.recent = [c].concat(S.recent.filter(x => x !== c)).slice(0, RECENT_N); saveState();
+}
+// ---- saved colours (2.4.9, 11-13, his "add saved colors as well (limit 2 rows) to themes as well"): the colours he
+// keeps, in the order saved, at most two rows of the colour editor (16). With the view's state (state.json,
+// `savedCols`), one list for every colour picker like the colours picked last, and no part of an undo step either ----
+const SAVED_N = 16;
+const cleanSavedCols = a => Array.isArray(a) ? [...new Set(a.filter(isHex).map(c => c.toLowerCase()))].slice(0, SAVED_N) : [];
+const savedCols = () => S.savedCols.slice();
+function savedColAdd(c) { if (!isHex(c)) return; c = c.toLowerCase(); if (S.savedCols.includes(c) || S.savedCols.length >= SAVED_N) return; S.savedCols = S.savedCols.concat(c); saveState(); }
+function savedColDel(c) { c = String(c).toLowerCase(); if (!S.savedCols.includes(c)) return; S.savedCols = S.savedCols.filter(x => x !== c); saveState(); }
+// (the editor's Recent row: a saved colour is in its own row already)
+const recentShown = () => S.recent.filter(c => !S.savedCols.includes(c));
 const FADE_AT = { tl: [0, 0, 'Top left'], t: [50, 0, 'Top'], tr: [100, 0, 'Top right'], r: [100, 50, 'Right'], br: [100, 100, 'Bottom right'], b: [50, 100, 'Bottom'], bl: [0, 100, 'Bottom left'], l: [0, 50, 'Left'] };
 // the themes to start from. Classic is the look of before (Standard's greys exactly); OLED and Soft the cards of those
 // names, now themes
@@ -1195,6 +1857,7 @@ function partOf(c) {
   const k = c.key || '';
   if (k === CONN) return 'gpu';
   if (k === NETD || k === NETU) return null;   // (the internet: no part of its own)
+  if (k === HSK_HEAD || k === HSK_SPARE || k === HSK_MOUSE) return null;   // (the headset and the mouse, 11-13)
   if (k.startsWith('hwdeck.')) return 'game';
   const r = BYKEY.get(k); if (!r) return null;
   const s = SENS[r.s] ? SENS[r.s].name : '', l = r.label || '';
@@ -1263,10 +1926,13 @@ function dropGone() {
   for (const k in holdSince) if (!ruled(S.L.cells[k])) delete holdSince[k];
   if (!Object.values(S.L.cells).some(c => c && c.key === 'hwdeck.0/12v')) { c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; }   // (no connector cell left: its pin episode ends)
 }
-function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, pins: [DR.L.pinned, DR.R.pinned], sides: [DR.L.side, DR.R.side], rPlaced: DR.R.placed || undefined, title: S.title, clock: S.clock, look: lookPlain() ? undefined : S.look, lookSaved: S.lookSaved.length ? S.lookSaved : undefined, hide: S.hide, listFilt: S.listFilt.g || S.listFilt.w ? { g: S.listFilt.g, w: S.listFilt.w } : undefined, starter: S.starterSeen === true || undefined, starterNoted: S.starterNoted === true || undefined } }); }, 300); }
+function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, pins: [DR.L.pinned, DR.R.pinned], sides: [DR.L.side, DR.R.side], rPlaced: DR.R.placed || undefined, title: S.title, clock: S.clock, look: lookPlain() ? undefined : S.look, lookSaved: S.lookSaved.length ? S.lookSaved : undefined, hide: S.hide, listFilt: S.listFilt.g || S.listFilt.w ? { g: S.listFilt.g, w: S.listFilt.w } : undefined, setFold: S.setFold.hs || S.setFold.look ? { hs: S.setFold.hs, look: S.setFold.look } : undefined, starter: S.starterSeen === true || undefined, starterNoted: S.starterNoted === true || undefined, hsToast: S.hsToast === true || undefined, hsTab: S.hsTab === true || undefined, recent: S.recent.length ? S.recent : undefined, savedCols: S.savedCols.length ? S.savedCols : undefined } }); }, 300); }
 function saveSlot(i) { send({ t: 'save', file: 'slots/slot' + (i + 1), data: S.slots[i] }); }
 // undo steps hold the layout and which slot it came from, so Clear then Undo is exactly where you were
 let undoStack = [], redoStack = [];
+// (Customize, 11-13: on show or not, its tab, how deep the history was when it opened, the steps it undid; a build's tabs)
+let czOn = false, czTab = 'look', czBase = 0, czRedoN = 0, czPickWas = null, czScrollKey = null;
+const CZ_EXT = [];
 // (each step also remembers the view it was made in and what was selected: undo and redo go back there and select it
 // again, so what they change is seen; the panel audit 11-06, an undo in a view out of sight looked like it did nothing)
 const stepMeta = new Map();
@@ -1303,7 +1969,7 @@ const fitOf = new Map(); let fitPin = null, fitOkNow = true;
 let fitWas = null;
 const fitNow = () => fitWas || ({ fs: parseFloat(document.documentElement.style.fontSize) || 0, ok: fitOkNow, w: sectionsEl.clientWidth, h: sectionsEl.clientHeight, screen: S.screen, target: cssScale() });
 function fitKeep(st, s) { st.push(s); fitOf.set(s, fitNow()); if (fitOf.size > 400) fitOf.delete(fitOf.keys().next().value); }
-function pushUndo(before) { fitKeep(undoStack, atStep(before, stepMeta.get(before))); undoSeq++; if (undoStack.length > 80) undoStack.shift(); redoStack = []; toastStale(); }
+function pushUndo(before) { fitKeep(undoStack, atStep(before, stepMeta.get(before))); undoSeq++; if (undoStack.length > 80) { undoStack.shift(); czBase = Math.max(0, czBase - 1); } redoStack = []; czRedoN = 0; toastStale(); }
 function snap() { pushUndo(snapOf()); }
 // a change that changes nothing (Alt+arrow at the end of a list) leaves no undo step
 function mutate(fn, msg) { if (nudge) flushNudge(); const before = snapOf(); fn(); tidyViews(S.L); if (snapOf() === before) { syncUndo(); renderInsp(); return; } pushUndo(before); flipNext = true; afterChange(); if (msg) toast(msg, true); }
@@ -1327,9 +1993,9 @@ let onLayout = null;   // (the sessions popup: Customize and the open sessions d
 function afterChange() { preview = null; tidyViews(S.L); fixSel(); if (relinkFor && !S.L.cells[relinkFor]) endRelink(true); saveState(); subscribe(); renderView(false); renderStorage(); renderInsp(); syncUndo(); syncSaves(); if (onLayout) onLayout(); }
 // (a step the host does, a Restore in Settings: undone and redone by the host, its log, not the layout: 11-02)
 const hostStep = e => { if (e[2] !== 'h') return null; try { const o = JSON.parse(e); return o.host ? o : null; } catch (x) { return null; } };
-function undo() { if (nudge) flushNudge(); keyStep.t = 0; if (!undoStack.length) return; retireToastUndo(); const e = undoStack.pop(), h = hostStep(e); if (h) { redoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } const at = stepAt(e); fitKeep(redoStack, atStep(snapOf(), at)); fitPin = fitOf.get(e) || null; restore(e); fixSel(); goAt(at); flipNext = true; afterChange(); }   // (it glides back the way it went)
-function redo() { if (nudge) flushNudge(); keyStep.t = 0; if (!redoStack.length) return; retireToastUndo(); const e = redoStack.pop(), h = hostStep(e); if (h) { undoStack.push(JSON.stringify({ host: h.redo, redo: h.host })); undoSeq++; send(typeof h.host === 'string' ? { t: h.host } : h.host); syncUndo(); return; } const at = stepAt(e); fitKeep(undoStack, atStep(snapOf(), at)); fitPin = fitOf.get(e) || null; restore(e); fixSel(); goAt(at); flipNext = true; afterChange(); }
-function syncUndo() { $('undo').disabled = $('undoE').disabled = !undoStack.length; $('redo').disabled = $('redoE').disabled = !redoStack.length; }   // (the title bar's and the editing strip's)
+function undo() { if (nudge) flushNudge(); keyStep.t = 0; if (!undoStack.length) return; retireToastUndo(); const e = undoStack.pop(), h = hostStep(e); if (h) { redoStack.push(JSON.stringify({ host: h.redo, redo: h.host, cz: h.cz })); send(typeof h.host === 'string' ? { t: h.host } : h.host); if (h.cz) czStepped(h.cz, h.host); syncUndo(); return; } const at = stepAt(e); fitKeep(redoStack, atStep(snapOf(), at)); fitPin = fitOf.get(e) || null; restore(e); fixSel(); goAt(at); flipNext = true; afterChange(); }   // (it glides back the way it went)
+function redo() { if (nudge) flushNudge(); keyStep.t = 0; if (!redoStack.length) return; retireToastUndo(); const e = redoStack.pop(), h = hostStep(e); if (h) { undoStack.push(JSON.stringify({ host: h.redo, redo: h.host, cz: h.cz })); undoSeq++; send(typeof h.host === 'string' ? { t: h.host } : h.host); if (h.cz) czStepped(h.cz, h.host); syncUndo(); return; } const at = stepAt(e); fitKeep(undoStack, atStep(snapOf(), at)); fitPin = fitOf.get(e) || null; restore(e); fixSel(); goAt(at); flipNext = true; afterChange(); }
+function syncUndo() { $('undo').disabled = $('undoE').disabled = !undoStack.length; $('redo').disabled = $('redoE').disabled = !redoStack.length; czSync(); }   // (the title bar's and the editing strip's)
 function fixSel() { if (sel && !S.L.cells[sel]) sel = null; if (selCat && !S.L.cats.some(c => c.id === selCat)) selCat = null; }
 const layoutSig = L => JSON.stringify(L, (k, v) => k === 'collapsed' ? undefined : v);
 // (the slot as the view would be after the same Yes/No line fix, so that fix alone isn't a change)
@@ -1356,9 +2022,10 @@ function cellKeys() {
     const lr = c.key && BYKEY.get(c.key), fp = gfKind(lr) === 'low' && fpsOf(lr); if (fp) set.add(fp.key);   // (a 1% low's "% of the fps": the live fps, 11-06)
     if (c.key === CONN && feed.c12keys) for (const k of [].concat(...feed.c12keys)) if (k) set.add(k);   // its pins (their voltages too, where shared)
     if (c.key === NETD) set.add(NETU);   // (the internet: its upload line)
+    if (c.key === HSK_HEAD) set.add(HSK_SPARE);   // (the headset: its spare under it, 11-13)
   }
   if (EXT.keys) for (const k of EXT.keys()) set.add(k);
-  if (modalCid && TCELL[modalCid]) set.add(TCELL[modalCid].key);   // (a popup with no cell: its reading too, while it is open)
+  if (modalCid && TCELL[modalCid]) { set.add(TCELL[modalCid].key); if (TCELL[modalCid].key === HSK_HEAD) set.add(HSK_SPARE); }   // (a popup with no cell: its reading too, while it is open)
   return [...set];
 }
 function subscribe() {
@@ -2262,6 +2929,9 @@ function arrHtml(cls, v, block, auto) {
 // window has room for (30rem each in Tiles, 27rem in Overview); the widths then follow what each column holds, as in a
 // row of your own, so the columns end about level. Making it your own starts from exactly this (lastAuto)
 const lastAuto = {};
+// (Automatic Overview at a window too small for it even at the smallest text: its columns worked out as for smaller text,
+// so more of them, per window size; his 11-13 "avoid scrollable")
+const ovColK = {}, ovColKey = () => sectionsEl.clientWidth + 'x' + sectionsEl.clientHeight + ':' + S.L.cats.length;
 function autoRows(vn) {
   // (empty categories, shown only in edit mode, go at the end: the others sit where they do outside edit mode)
   const cats = S.L.cats.filter(c => cellsOf(c).length);
@@ -2270,7 +2940,7 @@ function autoRows(vn) {
   const rows = [];
   const put = id => { let r = rows[rows.length - 1], c = r && r.cols[r.cols.length - 1]; if (!c || c.stack.length >= MAXS[vn]) { if (r && r.cols.length < MAXC[vn]) r.cols.push(c = { stack: [] }); else rows.push(r = { cols: [c = { stack: [] }] }); } c.stack.push(id); };
   if (!cats.length) { for (const c of S.L.cats) put(c.id); return rows; }
-  const v = viewOf(vn), sp = v && v.gap === 'tight' ? 0.6 : v && v.gap === 'roomy' ? 1.5 : 1, fs = cssScale();
+  const v = viewOf(vn), sp = v && v.gap === 'tight' ? 0.6 : v && v.gap === 'roomy' ? 1.5 : 1, fs = cssScale() * (vn === 'overview' ? ovColK[ovColKey()] || 1 : 1);
   const W = Math.max(1, sectionsEl.clientWidth - 36) / fs, gap = (vn === 'tiles' ? 1.7 : 0.92) * sp, min = vn === 'tiles' ? 30 : 27;
   const n = Math.max(1, Math.min(MAXC[vn], cats.length, Math.floor((W + gap) / (min + gap) + 1e-6))), colW = (W - (n - 1) * gap) / n, g = 0.62 * sp;
   // how tall a category comes out in a column that wide (rem, roughly: it only decides where categories go)
@@ -2695,6 +3365,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
 
 // ---------- fit: in the clean view, the largest scale at which nothing scrolls (it scrolls past 60%) ----------
 let fitRatio = 1, fitTimer = 0;
+let viewScale = 1;   // (a window drag draws the view scaled, the text at the size the drag began with: see winFit. The size on screen is the layout's x this)
 const cssScale = () => Math.min(22, Math.max(12, 0.0048 * Math.min(innerWidth, innerHeight * 1.9) + 7));
 // the view has the same room in edit mode (Storage and the settings are drawers over it), so it fits the same way
 const fits = () => { layoutPass(); return sectionsEl.scrollHeight <= sectionsEl.clientHeight; };
@@ -2937,7 +3608,7 @@ function balanceRow(row, cols, W, cg, fs, g, nat) {
   if (S.screen === 'tiles') {
     // (the tracks counted at the full text size, so a fit only scales the split: an edit anywhere that fits the text a
     // little smaller moved an untouched row's line by up to 176 px, 11-08 audit 0201. Wm: the row at that size, in px of now)
-    const m0 = TILE_MIN * fs, q = Math.max(1, cssScale() / fs), Kq = Math.floor((W / q - (C - 1) * cg + C * g) / (m0 + g) + 1e-6);
+    const m0 = TILE_MIN * fs, q = Math.max(1, cssScale() / (fs * viewScale)), Kq = Math.floor((W / q - (C - 1) * cg + C * g) / (m0 + g) + 1e-6);
     const Wm = Kq >= C ? W / q : W, K0 = Kq >= C ? Kq : Math.floor((W - (C - 1) * cg + C * g) / (m0 + g) + 1e-6);
     if (K0 < C) return false;
     // tracks of at least m wide: each column starts at what its categories need (short tiles want two tracks), then
@@ -3074,15 +3745,133 @@ function nameFit() {
   els.forEach((e, i) => { if (ks[i] < 1) e.style.fontSize = (f0[i] * ks[i]).toFixed(2) + 'px'; });
   titleFit();
 }
-// the PC's name in the title bar: a little smaller too, or not shown where even that doesn't fit (the smallest window,
-// edit mode's buttons); again whenever it changes
-function titleFit() {
-  const tt = document.getElementById('title'), rg = document.createRange();
-  if (tt) {
-    tt.style.fontSize = ''; tt.style.visibility = '';
-    const w = tt.getBoundingClientRect().width; rg.selectNodeContents(tt); const need = rg.getBoundingClientRect().width;
-    if (tt.firstChild && need > w + 0.05) { const k = w / need; if (k >= 0.85) tt.style.fontSize = (parseFloat(getComputedStyle(tt).fontSize) * Math.floor(k * 100) / 100).toFixed(2) + 'px'; else tt.style.visibility = 'hidden'; }
+// the PC's name in the title bar keeps its whole text at any window size (his 11-13 "while resizing the name gets hidden
+// and gets a ...": the steps below came at fixed widths, 960 and 760 px, and his dashboard has a button more, so between
+// them the bar was full, the name cut, then hidden): as soon as the bar is full, the time goes, then Restart HWiNFO and
+// undo / redo (both also elsewhere), then the buttons get tighter (tb1 to tb3: the same steps as at those widths). Only
+// a long title of your own in the smallest window gets smaller text, then the dots; never hidden. At every size a
+// resize draws (before it is painted), and whenever the name or the bar changes
+// Edit mode the same way, its own steps (e1 to e5: the edit buttons compact, the time away and the tabs tighter,
+// Restart HWiNFO and the separator away, tighter buttons, and last the name away, the room going to the edit buttons;
+// the same as at 1240, 960 and 800 px, where they came before and the window's buttons ran off the right edge at 720)
+// The steps move (his 11-13 "it's still snappy, the clock just disappears, the view modes switch snaps into small sizes,
+// smaller snap are still snaps ... just make smooth animations"): what leaves closes and fades, what gets tighter eases
+// (deck.css, --on, --mw, --tg, --ip). So they are worked out on a copy of the bar, laid out beside it unseen with no
+// steps on it: measured on the bar itself, a step on its way would be put back and taken again at every frame of a
+// drag and never be seen moving. Only when the bar, its window or its text changed (the key). They move while the
+// window's edge is dragged (the bar's width a little other than at the last fit, up to 24 px); a jump (maximized, put
+// back, snapped to a side, edit mode entered) takes them at once, as the window itself jumps: for the 180 ms a step
+// takes the bar would stand too full, the name clipped and, in edit mode at 720 px, the window's buttons past its end
+// The bar's parts follow the window's edge instead, in and out of edit mode (his 11-13 answer "The title bar", after the
+// eased steps, then his "yes" to edit mode's too): as the bar gets fuller they give way in turn, px for px with the
+// edge, nothing eased by the clock while a drag goes on, so nothing lags the edge and nothing pops when a step is due.
+// Out of edit mode: the tabs' padding 14 to 10 px, the time closes (fading as it goes), the gaps 10 to 6 and the name
+// 17 to 15 px, Restart HWiNFO and undo / redo close, then the tabs to 7, the gaps to 4, the buttons' padding 7 to 5.
+// Edit mode: first the edit buttons' words shrink away, then the same turns (its tabs by 9), and last the name closes,
+// its room going to the edit buttons. Both end with one stage tighter still (tabs 5, gaps 2, buttons' padding 3 px)
+// for a bar with more buttons than fit at the smallest window. TBS: each stage's values at its end. tbStages measures once, on a copy of the
+// bar, how wide the bar is at the end of each stage (a stage is a straight line between two of them); tbSolve, at
+// every frame, works out how far into which stage the bar's width is and sets the values. A drag that stops with a
+// part part closed closes it the rest of the way, eased (titleRest), and it comes back, eased, once it fits whole.
+// Then, as before: a long title of your own gets smaller text, and the dots
+const TBS = [
+  // (the last stage of each, tighter still: 11-13 17:2x the bar got a button more, Customize, and edit mode at the
+  // smallest window, everything closed, was 26 px over: the window's buttons past its end)
+  [{ tp: 14, tg: 10, nf: 17, ip: 7, ck: 1, rh: 1 }, { tp: 10 }, { ck: 0 }, { tg: 6, nf: 15 }, { rh: 0 }, { tp: 7, tg: 4, ip: 5 }, { tp: 5, tg: 2, ip: 3 }],
+  [{ tp: 14, tg: 10, nf: 17, ip: 7, eip: 7, ck: 1, rh: 1, ew: 1, nm: 1 }, { ew: 0 }, { tp: 10 }, { ck: 0 }, { tp: 9, tg: 6, nf: 15 }, { rh: 0 }, { tp: 7, tg: 4, ip: 5, eip: 5 }, { nm: 0 }, { tp: 5, tg: 2, ip: 3, eip: 3 }],
+].map(t => { let cur = {}; return t.map(x => (cur = Object.assign({}, cur, x))); });
+// (what closes, 1 to 0: the time; Restart HWiNFO with undo / redo, in edit mode with the strip's separator; the edit
+// buttons' words; the name. Never left part closed once a drag has stopped)
+const TB_OPEN = ['ck', 'rh', 'ew', 'nm'], TBC = '.tclock, #rstBtn, .histtools, .eblab';
+const tbParts = (bar, tt, p, ed) => p === 'ck' ? [...bar.querySelectorAll('.tclock')] : p === 'rh' ? [...bar.querySelectorAll(ed ? '#rstBtn, .ebsep' : '#rstBtn, .histtools')] : p === 'ew' ? [...bar.querySelectorAll('.eblab, .ebb, .editbar')] : [tt];
+let tbKey = '', tbSig = '', tbW = 0, tbN = null, tbSt = null;
+const tbHold = {};
+function tbPut(bar, tt, v, ed) {
+  bar.style.setProperty('--tp', v.tp.toFixed(2) + 'px'); bar.style.setProperty('--tg', v.tg.toFixed(2) + 'px'); bar.style.setProperty('--ip', v.ip.toFixed(2) + 'px');
+  tt.style.setProperty('--nf', v.nf.toFixed(2) + 'px');
+  for (const e of tbParts(bar, tt, 'ck', ed)) e.style.setProperty('--on', v.ck.toFixed(3));
+  for (const e of tbParts(bar, tt, 'rh', ed)) e.style.setProperty('--on', v.rh.toFixed(3));
+  if (ed) { bar.style.setProperty('--ew', v.ew.toFixed(3)); bar.style.setProperty('--eip', v.eip.toFixed(2) + 'px'); tt.style.setProperty('--on', v.nm.toFixed(3)); tt.classList.toggle('tbc', v.nm < 1); }
+  else { bar.style.removeProperty('--ew'); bar.style.removeProperty('--eip'); tt.style.removeProperty('--on'); tt.classList.remove('tbc'); }
+}
+function tbStages(bar, tt, ed) {
+  const c = bar.cloneNode(true), ct = c.querySelector('.name'), S = TBS[ed ? 1 : 0];
+  c.removeAttribute('id'); c.classList.add('tbm', 'tbn'); c.style.width = bar.offsetWidth + 'px';
+  for (const e of c.querySelectorAll('.tbo')) e.classList.remove('tbo');
+  for (const e of c.querySelectorAll(TBC + ', .name')) e.style.removeProperty('--mw');
+  ct.style.fontSize = ''; ct.style.visibility = '';
+  bar.parentNode.appendChild(c);
+  try {
+    const cs = getComputedStyle(c), pl = parseFloat(cs.paddingLeft) || 0, pr = parseFloat(cs.paddingRight) || 0, x0 = c.getBoundingClientRect().left + pl;
+    const ext = () => { const kids = [...c.children].filter(e => e.getClientRects().length); return kids.length ? kids[kids.length - 1].getBoundingClientRect().right - x0 : 0; };
+    const N = [];
+    tbPut(c, ct, S[0], ed); N.push(ext());
+    // (their own widths, read while they are open: what they close from and open to; the name's, edit mode's last stage)
+    const real = bar.querySelectorAll(TBC);
+    c.querySelectorAll(TBC).forEach((e, k) => { const w = e.getBoundingClientRect().width; if (real[k] && w > 1) real[k].style.setProperty('--mw', (w + 0.02).toFixed(2) + 'px'); });
+    const rg = document.createRange(); let capped = false, textW = 0;
+    if (ct.firstChild) { rg.selectNodeContents(ct); textW = rg.getBoundingClientRect().width; capped = textW > ct.getBoundingClientRect().width + 0.05; }   // (a long title, cut by its cap: the cap goes with the window, measured every time)
+    if (textW > 0) tt.style.setProperty('--mw', (textW + 1).toFixed(2) + 'px');
+    for (let k = 1; k < S.length; k++) { tbPut(c, ct, S[k], ed); N.push(ext()); }
+    return { N, capped, textW, pad: pl + pr };
+  } finally { c.remove(); }
+}
+function tbSolve(bar, tt, sig, bw, smooth, ed) {
+  const S = TBS[ed ? 1 : 0], n = S.length - 1;
+  // (kept while the title's text is under its cap, 32vw, 36vw from 960 px down, at this window: review 11-13)
+  const st = tbN && tbN.sig === sig && !tbN.capped && tbN.textW < innerWidth * (innerWidth <= 960 ? 0.36 : 0.32) - 1 ? tbN : (tbN = Object.assign(tbStages(bar, tt, ed), { sig })), N = st.N, avail = bw - st.pad - 1;
+  // (how far into each stage: 0 before it, 1 past it; a value goes from the stage before's to this one's by that much)
+  const v = Object.assign({}, S[0]);
+  for (let k = 0; k < n; k++) {
+    const t = N[k] - N[k + 1] > 0.01 ? Math.min(1, Math.max(0, (N[k] - avail) / (N[k] - N[k + 1]))) : avail < N[k] ? 1 : 0;
+    if (t > 0) for (const p in S[k + 1]) if (S[k + 1][p] !== S[k][p]) v[p] = S[k][p] + (S[k + 1][p] - S[k][p]) * t;
   }
+  const ease = [];
+  for (const p of TB_OPEN) if (p in v) {
+    // (held closed since a drag stopped on it part closed: back, eased, once it fits whole)
+    // (not a title cut by its cap: its size is fitted against its box below, which an ease would have at 0 px; review 11-13)
+    if (tbHold[p]) { if (v[p] >= 1) { tbHold[p] = false; if (!(p === 'nm' && st.capped)) ease.push(...tbParts(bar, tt, p, ed)); } else v[p] = 0; }
+    // (a jump of the window lands where a drag would stop: nothing left part closed)
+    if (!smooth && v[p] > 0 && v[p] < 1) { tbHold[p] = true; v[p] = 0; }
+  }
+  if (smooth) tbEase(ease);
+  tbPut(bar, tt, v, ed);
+  tbSt = { v, ed };
+  // a title the bar still has no room for (every stage used), or one cut by its own cap: smaller text, down to 60%, then
+  // the dots (not the name as it closes, edit mode's last stage)
+  let fs = ed && v.nm < 1 ? tt.style.fontSize : '';   // (closing: the size it had, not back to full size for the frames it takes; review 11-13)
+  tt.style.visibility = '';
+  if ((st.capped || avail < N[n]) && !(ed && v.nm < 1)) {
+    if (tt.style.fontSize) tt.style.fontSize = '';
+    if (tt.firstChild) { const rg = document.createRange(); rg.selectNodeContents(tt); const nw = rg.getBoundingClientRect().width, w = tt.getBoundingClientRect().width; if (nw > w + 0.05) fs = (parseFloat(getComputedStyle(tt).fontSize) * Math.max(0.6, Math.floor(w / nw * 100) / 100)).toFixed(2) + 'px'; }
+  }
+  if (tt.style.fontSize !== fs) tt.style.fontSize = fs;
+  placeTabInd(true);
+}
+// (a part that closes or opens by itself: eased for the 180 ms it takes, see deck.css)
+function tbEase(els) { for (const e of els) { e.classList.add('tbo'); clearTimeout(e._tbo); e._tbo = setTimeout(() => e.classList.remove('tbo'), 260); } }
+// a drag stopped (winSettle): a part left part closed (the time, Restart HWiNFO and undo / redo, the edit buttons'
+// words, edit mode's name) closes the rest of the way
+function titleRest() {
+  const bar = document.getElementById('titlebar'), tt = document.getElementById('title');
+  if (!bar || !tt || !tbSt) return;
+  const v = tbSt.v, ed = tbSt.ed; let any = false;
+  for (const p of TB_OPEN) if (p in v && v[p] > 0 && v[p] < 1) { tbHold[p] = true; v[p] = 0; tbEase(tbParts(bar, tt, p, ed)); any = true; }
+  if (any) tbPut(bar, tt, v, ed);
+}
+function titleFit() {
+  const tt = document.getElementById('title'), bar = document.getElementById('titlebar'), ck = document.getElementById('clock');
+  if (!tt || !bar) return;
+  const ed = app.classList.contains('editing');
+  const bw = bar.clientWidth, sig = [ed, tt.textContent, ck ? ck.textContent.length + (ck.hidden ? 'h' : '') : '', [...bar.children].map(e => (e.id || e.className.replace(/ ?tbo/, '')) + (e.hidden ? 'h' : '')).join()].join('|'), key = bw + '|' + innerWidth + '|' + sig;
+  if (key === tbKey) return;
+  // (a frame of a drag: the bar a little wider or narrower than at the last fit, or, however far it went, the resize
+  // before it under 100 ms ago; else a jump: maximized, put back, snapped to a side, edit mode in or out)
+  const same = sig === tbSig, smooth = same && (Math.abs(bw - tbW) <= 24 || winLast - winPrev < 100);
+  tbKey = key; tbSig = sig; tbW = bw;
+  if (!same) for (const p of TB_OPEN) tbHold[p] = false;   // (another bar: nothing held closed from the one before)
+  bar.classList.remove('e1', 'e2', 'e3', 'e4', 'e5', 'tbt', 'tbi');   // (edit mode's steps of before: none is left on it)
+  tbSolve(bar, tt, sig, bw, smooth, ed);
 }
 function layoutPass() {
   const fs = parseFloat(document.documentElement.style.fontSize) || 13, view = $('view');
@@ -3159,6 +3948,28 @@ function placeDividers(view) {
   rows.forEach((r, i) => r.querySelectorAll(':scope > .ldiv').forEach(d => { const x = pos[i][+d.dataset.k]; if (x !== undefined) d.style.left = x.toFixed(1) + 'px'; }));
 }
 // Fill rows (Tiles): the room left under the view goes to their tiles, all of a row one height, at most twice their own
+// Overview's spare room (his 11-13 "make the overview properly scalable with window resizes ... just like in cells"): what
+// is left under the view after the fit goes into its rows and graphs (--ovx: each row a little taller, its graph more
+// so, a card's big graph most), as much as still fits, so the cards reach the window's bottom instead of a band under them
+function ovGrow(quick, sc) {   // (quick: a window's edge being dragged; sc: the scale the view is drawn at there, see winFit)
+  const view = $('view');
+  if (!view || !view.classList.contains('ov')) return;
+  view.style.removeProperty('--ovx');
+  const pb = parseFloat(getComputedStyle(sectionsEl).paddingBottom) || 0;
+  const lim = view.offsetTop + (sectionsEl.clientHeight - pb - 2 - view.offsetTop) / (sc > 0 ? sc : 1);   // (the bottom the view may reach, in its own px)
+  const spare = lim - (view.offsetTop + view.offsetHeight);
+  // (quick: by the view's own height only, the scroll area's counts what is gliding: see winFit)
+  if (spare < 6 || (!quick && sectionsEl.scrollHeight > sectionsEl.clientHeight)) return;
+  const fs = parseFloat(document.documentElement.style.fontSize) || 13, ok = x => { view.style.setProperty('--ovx', (x / fs).toFixed(4) + 'rem'); return view.offsetTop + view.offsetHeight <= lim && (quick || sectionsEl.scrollHeight <= sectionsEl.clientHeight); };
+  let lo = 0, hi = Math.min(spare, 3 * fs);
+  // (a window being dragged: two straight-line steps, a frame's worth of layouts, not twelve. --ovx makes rows taller
+  // only, so each column's height is a straight line of it and the view's the tallest of them: a step along the line
+  // through two heights stops at or under where the view meets the bottom)
+  const bot = x => { view.style.setProperty('--ovx', (x / fs).toFixed(4) + 'rem'); return view.offsetTop + view.offsetHeight; }, room = lim;
+  if (quick && !ok(hi)) { const b0 = room - spare, bh = bot(hi); let x = bh > b0 ? hi * spare / (bh - b0) : 0; const bx = bot(x); if (bh > bx && hi > x) x += (hi - x) * Math.max(0, room - bx) / (bh - bx); for (let i = 0; i < 3 && x > 0 && !ok(x); i++) x = Math.max(0, x - 0.5); lo = x; }
+  else if (!ok(hi)) for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (ok(mid)) lo = mid; else hi = mid; } else lo = hi;
+  if (lo < 0.5) view.style.removeProperty('--ovx'); else ok(lo);
+}
 function growPass() {
   const view = $('view');
   if (!view || !view.classList.contains('tl') || !view.classList.contains('arr')) return;
@@ -3248,9 +4059,13 @@ const fitKey = target => hashKey(JSON.stringify([S.screen, target, !!EXT.ready, 
 function autofit(preview) {
   if (document.hidden) drawnHidden = true;   // (measured in the tray: again when the window shows)
   const root = document.documentElement, v = $('view');
+  unscale(v);   // (a window drag's scale: a fit measures the view as it is laid out, see winFit)
   if (!S.L.cats.length || v.classList.contains('empty') || v.classList.contains('setup')) { root.style.fontSize = '13px'; fitRatio = 1; layoutPass(); return; }
   fitNoEven = true;   // (fitted as All fit: see fillEven)
-  const target = cssScale(), key = fitKey(target), floor = Math.max(9, target * 0.6);
+  v.style.removeProperty('--ovx');   // (Overview's grown rows: their own size while sizes are tried, ovGrow after)
+  // (Overview down to 6 px, graphs and all, before it gives up, his 11-13 "avoid scrollable": at 9 a 1405 x 600 window,
+  // which fits at 8, scrolled. Its graphs never go: "tiles dont do that")
+  const ovw = S.screen === 'overview', target = cssScale(), key = fitKey(target), floor = Math.max(ovw ? 6 : 9, target * (ovw ? 0.5 : 0.6));
   // (Automatic Grid: a size per table count)
   const ag = S.screen === 'grid' && !isCustom('grid'), nOn = ag && v.querySelectorAll('.gtable').length > 1 ? 2 : 1, mkey = ag ? key + '/' + nOn : key, memo = preview ? undefined : fitMemo[mkey];
   app.classList.toggle('fitting', S.edit);   // edit mode fits like the normal view: empty categories (hidden there) don't count
@@ -3343,6 +4158,10 @@ function autofit(preview) {
     if (!got) { lo = target; ok = false; at(lo); }
     exactUnits = false;
   }
+  if (!ok && ovw && !preview && !S.edit && !isCustom('overview')) {   // (Automatic Overview too tall even at the smallest size: more columns, drawn again and fitted)
+    const k = ovColKey(), f = ovColK[k] || 1, n = (lastAuto.overview || []).reduce((a, r) => Math.max(a, r.cols.length), 0);
+    if (f > 0.45 && n < MAXC.overview) { ovColK[k] = f * 0.8; const ks = Object.keys(ovColK); if (ks.length > 100) delete ovColK[ks[0]]; app.classList.remove('fitting'); fitNoEven = false; buildView(); updateView(true, true); autofit(); return; }
+  }   // (compact cards before scrolling, 11-13)
   fitOkNow = ok;
   if (window.__fitLog && !preview) __fitLog.push({ k: mkey, memo: memo || 0, memoOk, fb, lo: +lo.toFixed(3), ok, still });   // (the stress test reads how each fit went)
   lastFit[S.screen] = lo / target;
@@ -3353,7 +4172,7 @@ function autofit(preview) {
   if (!preview) rememberFit(mkey, lo);
   app.classList.remove('fitting'); fitNoEven = false; layoutPass();
   if (v.querySelector('.lrow[data-fill]') && sectionsEl.scrollHeight > sectionsEl.clientHeight) { fitNoEven = true; layoutPass(); }   // (even rows don't fit: as All fit)
-  growPass(); markSlots(); if (!preview) rememberPacks();
+  growPass(); if (!preview) ovGrow(); markSlots(); if (!preview) rememberPacks();
   const sbw = sectionsEl.offsetWidth - sectionsEl.clientWidth;   // (read before the captions are measured: it lays the page out with the Fill rows' growth, see capRefit)
   capRefit();
   document.querySelector('.panes').style.setProperty('--sbw', sbw + 'px');   // the right tab sits left of the scrollbar
@@ -3385,16 +4204,220 @@ function inspCatFlush() {
   setTimeout(() => { if (!inspCatLater) return; const a = document.activeElement; if (dselOpen || (a && a.closest && a.closest('#insp input, #insp select, #insp textarea'))) return; inspCatLater = false; renderInsp(); }, 0);
 }
 function refit() {
+  app.classList.remove('wdrag'); wd = null; unscale($('view'));   // (a window drag over: see winFit)
   if ((drag && drag.started) || rs) { refitLater = true; return; }   // (a rebuild would move the view under the drag)
   if (S.screen !== 'grid' && !isCustom(S.screen) && lastAuto[S.screen] && JSON.stringify(autoRows(S.screen)) !== JSON.stringify(lastAuto[S.screen])) { renderView(false); inspAfterFit(); return; }   // (a category's or the view's settings follow the new arrangement)
   if (S.screen === 'grid' && !isCustom('grid') && $('view') && gridN[fitKey(cssScale())] !== ($('view').querySelectorAll('.gtable').length > 1 ? 2 : 1)) { renderView(false); inspAfterFit(); return; }
   autofit(); updateView(true, true); pxFresh(); inspAfterFit();   // (a category's Column width and Level, or the view's outline, follow the new split, 11-08 audit 0204)
 }
+// while the window's edge is dragged (his 11-13 "stuff also snaps, not smooth at all", then "it still kinda snaps"):
+// each frame shows the view fitted, in one layout most frames (a full fit is 3 to 6 at about 15 ms each: 14 frames a
+// second), drawn again the moment the new size takes other columns:
+// - the text scaled by as much as the view, as it was, can be bigger or has to be smaller in the room now (its width
+//   against the room's width, its height against the room's height, the smaller of the two): the same tiles in the
+//   same rows, a little smaller or bigger, so it fits and nothing flows elsewhere. Scaled from the
+//   last size that was measured (the anchor), a 0.3% margin taken once: taken at every frame it added up, 11% in a
+//   second. (Before: the size kept until the view ran over, then 3% down, a stair of jumps about every 120 ms at three
+//   layouts each, and in places two sizes swapping on alternate frames);
+// - room left under the view (over 1%): the next frame tries the size that fills it (in a window getting smaller only a
+//   gain of 2% or more: tiles flowing into more rows to use the height, a jump that glides; a hair more each frame
+//   would wobble); one that runs over (tiles flow into another row there, Overview's cards into one sub-column, about
+//   40% taller) goes back in the same frame, and the next tries go half way between the size that fits and the one
+//   that ran over, four misses at most; then no more until the room has changed enough for the nearest miss to fit
+//   (by how far over it was) or 4% in a side;
+// - a jump that has to be (over 2% in a frame: other rows, other sub-columns, to or from scrolling) glides from where
+//   things were the frame before, as an edit's refit does;
+// - too big all the same: down by its height, 3% a layout at most;
+// - nothing fitting even at the smallest size: it scrolls at the full size, as the fit has it, the smallest size tried
+//   again once the window is 2% bigger in a side;
+// - Overview's grown rows (ovGrow) set aside while the size is worked out, then grown again the quick way (they change
+//   heights only, a few ms a layout), so the view reaches the window's bottom at every frame;
+// - edit mode and Fill rows fitted as autofit fits them ('fitting', fitNoEven, the last pass, growPass).
+// No layout is read before the frame's size is set (the room's change comes from the window's own size): a read
+// before it lays the whole page out once more. The view's bottom is clipped, no scrollbar, while it moves.
+let wd = null;   // (this drag: shown, the size on screen; vw, H, A, iw, ih: the view's width and height, its room's height and the window's size then; f0, vw0, H0: the anchor, the last size measured and the view's size at it; up: the size the next frame tries; hi: the smallest size that ran over at about this room, as a share of the window's text size; fails: tries up that ran over since; rmin: how far over the nearest was; gq, w, h: the room when the tries began; none: scrolling at the full size; was: where things were)
+function winFit() {
+  let v = $('view');
+  const root = document.documentElement;
+  // (not fitted here: the text follows the window as it did before winFit, the fit comes after the drag)
+  if ((drag && drag.started) || rs || !S.L.cats.length || document.hidden || !v || v.classList.contains('empty') || v.classList.contains('setup')) { if (S.L.cats.length) { unscale(v); root.style.fontSize = (cssScale() * fitRatio) + 'px'; } return; }
+  let rebuilt = false;
+  if (S.screen !== 'grid' && !isCustom(S.screen) && lastAuto[S.screen] && JSON.stringify(autoRows(S.screen)) !== JSON.stringify(lastAuto[S.screen])) { TINT.clear(); buildView(); updateView(true, true); v = $('view'); rebuilt = true; }   // (a new #view: measured, not the old one; review 11-13)
+  const target = cssScale(), ovw = S.screen === 'overview', floor = Math.max(ovw ? 6 : 9, target * (ovw ? 0.5 : 0.6)), iw = innerWidth, ih = innerHeight;
+  // (a drag that starts on a view scrolling at the full size starts there: it went down size by size, clipped, then back)
+  // (the text's size no longer the one the drag is scaled from: something else fitted the view meanwhile, a new start)
+  if (!wd || wd.scr !== S.screen || (wd.F && Math.abs((parseFloat(root.style.fontSize) || 0) - wd.F) > 1e-3)) wd = { F: 0, padX: (parseFloat(getComputedStyle(sectionsEl).paddingLeft) || 0) + (parseFloat(getComputedStyle(sectionsEl).paddingRight) || 0), scr: S.screen, none: !fitOkNow, hi: Infinity, fails: 0, rmin: Infinity, gq: 0, w: 0, h: 0, ciw: 0, cih: 0, shown: 0, up: 0, vw: 0, A: 0, H: 0, f0: 0, vw0: 0, H0: 0, iw, ih, was: null, pb: parseFloat(getComputedStyle(sectionsEl).paddingBottom) || 0 };
+  const pb = wd.pb, was = wd.was, noneWas = wd.none;
+  app.classList.toggle('wdrag', !wd.none);   // (no scrollbar coming and going while it is worked out; scrolling at the full size: its scrollbar there all along, the tiles laid out beside it)
+  const fillRows = !!v.querySelector('.lrow[data-fill]');
+  const clamp = f => Math.min(target, Math.max(floor, f));
+  // (over: by the view's own height. The scroll area's counts what is gliding from where it was, far down after
+  // scrolling: the frame after a glide began read as over and went back to scrolling, then out again)
+  // Scaled (out of edit mode, no Fill rows): the text keeps the size it had (wd.F) for the whole drag and the view is
+  // drawn bigger or smaller (a transform), laid out that much narrower or wider so it spans the room: the same picture
+  // as the text at F x scale, to a pixel's rounding. A layout with the text as it is takes about 1 ms where one at a new
+  // text size takes 16 (every line of text measured again): the one cost that held a drag near 30 frames a second, his
+  // 11-13 "Choppy motion". The real size is set once the drag stops (refit), or when the scale is 25% off (graphs are
+  // drawn at the layout's size and would blur). Sizes below are the ones on screen: f is F x scale, H the height drawn
+  const sc = !S.edit && !fillRows;
+  if (!sc || wd.none) { unscale(v); wd.F = 0; }
+  if (sc && !wd.none && !wd.F) wd.F = parseFloat(root.style.fontSize) || target;
+  // (Overview's grown rows: kept through a scaled drag and stepped once a frame, ovStep; else set aside while the size
+  // is worked out and grown again after, ovGrow)
+  const ovs = sc && ovw && !!wd.F && !wd.none;
+  if (rebuilt || !ovs) wd.ov = null;
+  if (ovs) ovLine(v); else v.style.removeProperty('--ovx');
+  const atFont = f => { root.style.fontSize = f + 'px'; layoutPass(); const A = sectionsEl.clientHeight - v.offsetTop - pb, H = Math.max(1, v.offsetHeight); return { f, A, H, over: H > A + 0.5 }; };
+  const Wc = sc ? sectionsEl.clientWidth - wd.padX : 0;
+  // (layGen: layoutPass keeps each row's width for a window size, and here it changes with every size tried)
+  const atScale = f => { const s = f / wd.F; viewScale = s; v.style.transformOrigin = '0 0'; v.style.transform = 'scale(' + s.toFixed(5) + ')'; v.style.width = (Wc / s).toFixed(2) + 'px'; layGen++; layoutPass(); const A = sectionsEl.clientHeight - v.offsetTop - pb, H = Math.max(1, (v.offsetHeight - (wd.ov ? wd.ov.S * wd.ov.x : 0)) * s); return { f, A, H, over: H > A + 0.5 }; };   // (H: without the rows' growth)
+  const at = f => sc && wd.F ? atScale(f) : atFont(f);
+  const prop = m => m.f * m.A / m.H - 0.05, ran = f => { wd.hi = Math.min(wd.hi, f / target); };
+  // (how much bigger the view as it was can be drawn in the room now: its width against the new width, its height
+  // against the new room's height, the smaller of the two. Its own height, not the room's: a view with room under it
+  // grows with the width till that room is used, and keeps its size while only the height shrinks into that room.
+  // Against the frame before, k (0: none before), and against the anchor, r0)
+  const k = wd.shown && wd.vw > 0 && wd.H > 0 ? Math.min((wd.vw + iw - wd.iw) / wd.vw, (wd.A + ih - wd.ih) / wd.H) : 0;
+  const r0 = k > 0 && wd.f0 ? Math.min((wd.vw + iw - wd.iw) / wd.vw0, (wd.A + ih - wd.ih) / wd.H0) : 0;
+  let shown, m = null, base = 0;
+  app.classList.toggle('fitting', S.edit); fitNoEven = true;
+  try {
+    if (wd.none) {
+      const mf = iw > wd.ciw * 1.02 || ih > wd.cih * 1.02 ? at(floor) : null;
+      if (mf && !mf.over) {   // (it fits again: at the size that fills the room, not the smallest first)
+        wd.none = false; app.classList.add('wdrag'); m = mf;
+        const u = Math.min(target, prop(mf));
+        if (u > floor * 1.004) { const m2 = at(u); if (m2.over) { ran(u); m = at(floor); } else m = m2; }
+        shown = m.f;
+      } else { if (mf) { wd.ciw = iw; wd.cih = ih; } at(target); shown = target; }   // (still nothing fits: scrolling at the full size)
+    } else {
+      base = r0 > 0 ? clamp(wd.f0 * r0 * 0.997) : clamp(sc && wd.F ? wd.F : cssScale() * fitRatio);
+      const cand = k > 0 && wd.up ? Math.min(target, wd.up * Math.min(k, 1)) : 0, up0 = cand > base * (k < 1 ? 1.02 : 1.004) ? cand : 0;
+      // (a small gain, under 2%, comes 1% a frame: his 11-13 "smaller snap are still snaps"; a bigger one is other rows, and glides)
+      const up = up0 && up0 < base * 1.02 ? Math.min(up0, base * 1.01) : up0;
+      // (a try up, or a size that runs over, may be other rows or other sub-columns, and Overview's growth there another
+      // line: measured with the growth off, the line taken again after. Judged by the old line, a try that put the cards
+      // in one sub-column read 200 px too tall and was turned down: the text stayed 10% small till the drag stopped)
+      const ovOff = () => { const o = wd.ov; if (o) { wd.ov = null; if (o.x) v.style.removeProperty('--ovx'); } return o; };
+      const ovBack = o => { if (o) { wd.ov = o; if (o.x) v.style.setProperty('--ovx', (o.x / wd.F).toFixed(4) + 'rem'); } };
+      if (up) {
+        const o = ovOff(); m = at(up);
+        if (m.over) { ran(up); wd.fails++; wd.rmin = Math.min(wd.rmin, m.H / m.A); ovBack(o); m = at(base); }   // (a try up that ran over: back in this frame)
+        else wd.fails = 0;
+      } else m = at(base);
+      if (m.over && wd.ov) { ovOff(); m = at(m.f); }
+      for (let i = 0; i < 2 && m.over && m.f > floor + 1e-3; i++) { ran(m.f); m = at(Math.max(floor, Math.min(m.f - 0.05, Math.max(prop(m), m.f * 0.97)))); }
+      if (ovs && !wd.ov && !(m.over && m.f <= floor + 1e-3)) ovLine(v);
+      if (m.over && m.f <= floor + 1e-3) { wd.none = true; wd.ciw = iw; wd.cih = ih; app.classList.remove('wdrag'); unscale(v); wd.F = 0; wd.ov = null; v.style.removeProperty('--ovx'); atFont(target); shown = target; m = null; }
+      else shown = m.f;
+    }
+  } finally { app.classList.remove('fitting'); fitNoEven = false; }
+  if (S.edit || fillRows) { layoutPass(); if (fillRows && sectionsEl.scrollHeight > sectionsEl.clientHeight) { fitNoEven = true; layoutPass(); } }   // (as autofit: even rows that don't fit stay as All fit)
+  growPass();
+  app.classList.toggle('wdrag', !wd.none);
+  if (sc && !wd.none && !wd.F) wd.F = parseFloat(root.style.fontSize) || shown;   // (out of scrolling: scaled from here on)
+  // (25% off the text's own size: the real size once, one slow frame, and scaled from there)
+  if (sc && wd.F && !wd.none && Math.abs(shown / wd.F - 1) > 0.25) { unscale(v); wd.F = shown; root.style.fontSize = shown + 'px'; if (wd.ov) { wd.ov = null; ovLine(v); } m = at(shown); }   // (--ovx is in rem: its px are other at the new size)
+  const sNow = sc && wd.F && !wd.none ? shown / wd.F : 1;
+  if (!wd.none) { if (wd.ov) ovStep(v, sNow, pb); else ovGrow(true, sNow); }
+  // (the anchor: a size that came from a measure, not from scaling the anchor)
+  if (wd.none) wd.f0 = 0; else if (m && (!wd.f0 || Math.abs(shown - base) > 1e-3)) { wd.f0 = shown; wd.vw0 = v.offsetWidth * sNow; wd.H0 = m.H; }
+  // (tries up again: the room 4% other in a side, or narrower for its height by as much as the nearest miss was over)
+  const W = sectionsEl.clientWidth, Hc = sectionsEl.clientHeight, q = m ? v.offsetWidth * sNow / m.A : 0;
+  if (Math.abs(wd.w - W) > 0.04 * W || Math.abs(wd.h - Hc) > 0.04 * Hc || (q > 0 && wd.rmin < Infinity && q <= wd.gq / (1 + (wd.rmin - 1) * 0.8))) { wd.w = W; wd.h = Hc; wd.gq = q; wd.hi = Infinity; wd.fails = 0; wd.rmin = Infinity; }
+  // the next frame's try up: the size that fills the room left, or half way to the one that ran over
+  wd.up = 0;
+  if (m && !m.over && m.A - m.H > 0.01 * m.A && wd.fails < 4 && shown < target - 0.02) { const u = wd.hi < Infinity ? (shown + wd.hi * target) / 2 : Math.min(target, prop(m)); if (u > shown * 1.004) wd.up = u; }
+  // a jump that has to be: not what the scaling says and 2% other than the size on screen (a quick drag of a side edge
+  // with the text at the full size is the first without the second: a glide began at every frame of it, review 11-13).
+  // It glides from where things were drawn the frame before; a glide still running ends first, its offset left would
+  // count against the new one, which then started from the far side
+  if (was && (rebuilt || noneWas !== wd.none || (k > 0 && !wd.none && Math.abs(shown / (wd.shown * k) - 1) > 0.02 && Math.abs(shown / wd.shown - 1) > 0.02))) { endGlides(v); winFlip(was, sNow); }
+  wd.was = catRects();   // (as drawn in this frame: read after its glide has started, its first step is where things were)
+  wd.shown = wd.none ? 0 : shown; wd.vw = v.offsetWidth * sNow; wd.A = m ? m.A : 0; wd.H = m ? m.H : 0; wd.iw = iw; wd.ih = ih;
+  fitRatio = shown / target; lastFit[S.screen] = fitRatio;
+  armSettle();   // (every frame of a drag is followed by its stop: one that ran with no resize behind it, a window shown again, left the scrollbar off)
+}
+// (the glides playFlip started and not over yet: ended where they are; the fans' spin and the like, the page's own
+// CSS, stay)
+const endGlides = v => { for (const a of v.getAnimations({ subtree: true })) if (!(a instanceof CSSAnimation) && !(a instanceof CSSTransition)) a.cancel(); };
+// Overview's grown rows in a scaled drag. ovGrow's quick way sets --ovx three times a frame, and each time every style
+// under the view is worked out again (the property is inherited) and the view laid out: 10 ms a frame. The view's
+// bottom is a straight line of --ovx (rows grow in height only): ovLine measures it once (S, px of bottom a px of
+// --ovx: 4 px more, and back), ovStep goes one step along it to the room's bottom; a miss over 2 px (other rows since)
+// gives the line again and one more step. The fit goes by the height without the growth: the height less S x --ovx
+function ovLine(v) {
+  if (wd.ov && wd.ov.S > 0) return;
+  const fs = parseFloat(document.documentElement.style.fontSize) || 13, x0 = (parseFloat(v.style.getPropertyValue('--ovx')) || 0) * fs, b0 = v.offsetHeight;
+  v.style.setProperty('--ovx', ((x0 + 4) / fs).toFixed(4) + 'rem');
+  const S = (v.offsetHeight - b0) / 4;
+  if (x0 < 0.5) v.style.removeProperty('--ovx'); else v.style.setProperty('--ovx', (x0 / fs).toFixed(4) + 'rem');
+  wd.ov = S > 0 ? { x: x0 < 0.5 ? 0 : x0, S } : null;
+  if (!wd.ov) v.style.removeProperty('--ovx');
+}
+function ovStep(v, s, pb) {
+  const o = wd.ov, fs = parseFloat(document.documentElement.style.fontSize) || 13, cap = 3 * fs;
+  const lim = v.offsetTop + (sectionsEl.clientHeight - pb - 2 - v.offsetTop) / s, bot = () => v.offsetTop + v.offsetHeight;
+  const put = x => { if (x < 0.5) { o.x = 0; v.style.removeProperty('--ovx'); } else { o.x = x; v.style.setProperty('--ovx', (x / fs).toFixed(4) + 'rem'); } };
+  let b = bot();
+  if (!o.x && lim - b < 6) return;   // (under 6 px to give: as ovGrow)
+  for (let i = 0; i < 2; i++) {
+    const x1 = o.x, want = Math.max(0, Math.min(cap, x1 + (lim - b) / o.S - 0.3));
+    if (Math.abs(want - x1) < 0.4) break;
+    put(want);
+    const b2 = bot();
+    if (Math.abs(o.x - x1) > 0.5 && b2 !== b && (b2 - b) / (o.x - x1) > 0) o.S = (b2 - b) / (o.x - x1);
+    b = b2;
+    if (b <= lim && lim - b < 2.5) break;
+  }
+  if (b > lim + 0.5 && o.x > 0) put(Math.max(0, o.x - (b - lim) / o.S - 0.5));   // (never past the room's bottom)
+}
+// (the view as it is laid out again: a drag's scale off it, see winFit)
+// (layGen: layoutPass keeps each row's width for a window size, and the scaled frames laid the rows out at other widths;
+// review 11-13: the fit after the drag balanced its rows for the last of those)
+function unscale(v) { viewScale = 1; if (v && (v.style.transform || v.style.width)) { v.style.transform = ''; v.style.width = ''; v.style.transformOrigin = ''; layGen++; } }
+// a drag's glides: each category from where it was drawn to where it is, its size too when it is near (a stretch; far
+// off, from its old middle), no fades. s: the scale the view is drawn at, the moves are measured on screen and made
+// inside it. (playFlip, an edit's, takes the text's size for the view's and fades what changed size)
+function winFlip(was, s) {
+  const mode = motionMode(), dur = mode === 'full' ? 240 : mode === 'minimal' ? 160 : 0;
+  if (!dur || !was) return;
+  for (const el of document.querySelectorAll('#view .dcat')) {
+    const a = was.get(flipKey(el)), b = el.getBoundingClientRect();
+    if (!a || !b.width || !b.height || !a.width || !a.height) continue;
+    if (Math.abs(a.left - b.left) + Math.abs(a.top - b.top) < 1.5 && Math.abs(a.width - b.width) + Math.abs(a.height - b.height) < 1.5) continue;
+    const sx = a.width / b.width, sy = a.height / b.height, near = sx > 0.75 && sx < 1.34 && sy > 0.75 && sy < 1.34;
+    const from = near ? 'translate(' + ((a.left - b.left) / s) + 'px, ' + ((a.top - b.top) / s) + 'px) scale(' + sx + ', ' + sy + ')' : 'translate(' + ((a.left + a.width / 2 - b.left - b.width / 2) / s) + 'px, ' + ((a.top + a.height / 2 - b.top - b.height / 2) / s) + 'px)';
+    el.animate([{ transformOrigin: near ? '0 0' : '50% 50%', transform: from }, { transformOrigin: near ? '0 0' : '50% 50%', transform: 'none' }], { duration: dur, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  }
+}
+// the drag is over 100 ms after its last move, as seen from a frame: moves still waiting behind a slow frame are
+// delivered before a frame's callbacks, so they count (a plain timer fired between two slow frames, mid-drag, and the
+// full fit froze the drag for up to a second under load). Then the full fit, what it changes gliding there (tiles that
+// flow into other rows at the size it finds); a hidden window has no frames: fitted at once
+let winLast = 0, winPrev = 0;
+function armSettle() {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(() => {
+    if (document.hidden) { cancelAnimationFrame(resizeRaf); resizeRaf = 0; refit(); return; }   // (its frame would run on show, after this fit; review 11-13)
+    requestAnimationFrame(() => { if (performance.now() - winLast < 100) armSettle(); else winSettle(); });
+  }, 100);
+}
+function winSettle() {
+  const was = catRects(), v = $('view');
+  // (the drag's glides still running end here, from where they are: the full fit reads the scroll area's height, which
+  // counts them)
+  if (v && wd) endGlides(v);
+  clearTimeout(fitTimer); refit(); winFlip(was, 1);
+  titleRest();
+  if (nameFitQ) { cancelAnimationFrame(nameFitQ); nameFitQ = 0; }
+  nameFit(); placeTabInd(true); drawRows();
+}
 window.addEventListener('resize', () => {
-  layGen++;
-  if (S.L.cats.length) document.documentElement.style.fontSize = (cssScale() * fitRatio) + 'px';
-  clearTimeout(fitTimer); fitTimer = setTimeout(refit, 250);
-  if (!resizeRaf) resizeRaf = requestAnimationFrame(() => { resizeRaf = 0; placeTabInd(true); drawRows(); });   // (once a frame, after the size: two layouts an event before, 11-06)
+  layGen++; winPrev = winLast; winLast = performance.now();   // (the text's size: winFit's, in this frame; a drag keeps it and scales the view)
+  armSettle();
+  // (the names, the PC's in the title bar too, at the size drawn, in this frame: none cut for one)
+  if (!resizeRaf) resizeRaf = requestAnimationFrame(() => { resizeRaf = 0; winFit(); if (nameFitQ) { cancelAnimationFrame(nameFitQ); nameFitQ = 0; } nameFit(); placeTabInd(true); drawRows(); });   // (once a frame, after the size: two layouts an event before, 11-06)
 });
 let resizeRaf = 0;
 
@@ -3469,7 +4492,7 @@ let storGlide = null;   // (a fold or a type chip: drawRows glides the rows, 11-
 const collapsedGroups = new Set();
 function passes(r, toks, iv) {
   if (typeFilter === 'hidden' ? !hidOf(r) : hidOf(r)) return false;
-  if (typeFilter !== 'all' && typeFilter !== 'hidden' && r.t !== typeFilter) return false;
+  if (typeFilter === 'own' ? !ownR(r) : typeFilter !== 'all' && typeFilter !== 'hidden' && chipT(r) !== typeFilter) return false;
   if (hideIn && iv.has(r.key)) return false;
   for (const t of toks) if (!r.hay.includes(t)) return false;
   return true;
@@ -3482,8 +4505,8 @@ function computeRows() {
   for (const r of READ) {
     if ((hideIn && iv.has(r.key)) || toks.some(t => !r.hay.includes(t))) continue;   // the chips count what the search leaves
     if (hidOf(r)) { chipCounts.hidden++; if (typeFilter === 'hidden') { hits.push(r); counts.set(r.s, (counts.get(r.s) || 0) + 1); } continue; }
-    chipCounts.all++; chipCounts[r.t] = (chipCounts[r.t] || 0) + 1;
-    if (typeFilter === 'all' || r.t === typeFilter) { hits.push(r); counts.set(r.s, (counts.get(r.s) || 0) + 1); }
+    const ct = chipT(r); chipCounts.all++; chipCounts[ct] = (chipCounts[ct] || 0) + 1; if (ownR(r)) chipCounts.own = (chipCounts.own || 0) + 1;
+    if (typeFilter === 'all' || ct === typeFilter || (typeFilter === 'own' && ownR(r))) { hits.push(r); counts.set(r.s, (counts.get(r.s) || 0) + 1); }
   }
   rows = [];
   let cur = -1, gi = -1;
@@ -3515,6 +4538,7 @@ function drawRows(pre) {   // (pre: its scroll read already, before the tick wro
   let html = '';
   for (let i = a; i < b; i++) {
     const row = rows[i];
+    if (!row || (row.g ? !SENS[row.s] : !row.r)) continue;   // (a sensor gone since the list was made: skipped until it is made again, not a page error; seen by the internet mock 11-12)
     if (row.g) {
       const sn = SENS[row.s];
       html += '<div class="vrow g' + (collapsedGroups.has(sn.key) ? ' collapsed' : '') + '" style="top:' + i * ROWH + 'px" data-gs="' + row.s + '"><button class="tw" title="' + (collapsedGroups.has(sn.key) ? 'Expand' : 'Collapse') + '" aria-expanded="' + !collapsedGroups.has(sn.key) + '">' + ICONS.chev + '</button><span class="gn" title="' + esc(sn.name) + '">' + esc(sn.name) + '</span><span class="gc">' + row.n + '</span>' + (relinkFor ? '' : typeFilter === 'hidden' ? '<button class="hid on" data-act="unhides" title="Show this sensor in Storage again" aria-label="Show ' + esc(sn.name) + '">' + ICONS.eye + '</button>' : '<button class="hid" data-act="hides" title="Hide this sensor from Storage" aria-label="Hide ' + esc(sn.name) + '">' + ICONS.eyeOff + '</button><button class="addall" title="Add these as a new category" aria-label="Add all of ' + esc(sn.name) + '">+ all</button>') + '</div>';
@@ -3548,7 +4572,7 @@ function drawRows(pre) {   // (pre: its scroll read already, before the tick wro
 }
 function renderChips() {
   const counts = chipCounts;
-  const ts = ['all', 'temp', 'volt', 'fan', 'power', 'current', 'clock', 'usage', 'other', 'hidden'].filter(t => counts[t] || t === typeFilter), ch = $('chips');
+  const ts = ['all', 'own', 'fps', 'temp', 'volt', 'fan', 'power', 'clock', 'usage', 'other', 'hidden'].filter(t => counts[t] || t === typeFilter), ch = $('chips');
   // (the same chips: in place, so the lit one's fade plays; one that comes or goes draws them anew, 11-08)
   if (ch._t === ts.join() && ch.children.length === ts.length) {
     ts.forEach((t, i) => { const b = ch.children[i], on = typeFilter === t, tx = (t === 'all' ? 'All' : t === 'hidden' ? 'Hidden' : TYPE_NAME[t]) + ' ' + (counts[t] || 0).toLocaleString('en-US'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); if (b.textContent !== tx) b.textContent = tx; });
@@ -3564,6 +4588,7 @@ function newCell(key) {
   const r = BYKEY.get(key), c = { key, match: r ? matchOf(r) : undefined, u: r ? r.unit : undefined, graph: true };
   if (key === CONN) c.gates = Object.assign({}, CONN_LINES);   // a connector is only worth a cell with its lines
   if (key === NETD) c.name = 'Internet';   // (2.4.8)
+  if (key === HSK_HEAD) c.name = 'Headset';   // (11-13)
   return c;
 }
 function addKeys(keys, catId, index, newCatName, nlFrom) {   // (nlFrom: the New row tile it goes in front of, which hands it its New row, 11-08)
@@ -4957,7 +5982,7 @@ $('vspace').addEventListener('click', e => {
       const toks = query.toLowerCase().split(/\s+/).filter(Boolean), iv = inView();
       const keys = READ.filter(r => r.s === s && passes(r, toks, iv) && !iv.has(r.key)).map(r => r.key);
       if (!keys.length) { toast('Everything there is already in the view'); return; }
-      addKeys(keys, null, null, SENS[s].short + (typeFilter !== 'all' ? ' ' + TYPE_NAME[typeFilter].toLowerCase() : ''));
+      addKeys(keys, null, null, SENS[s].short + (typeFilter !== 'all' && typeFilter !== 'own' && TYPE_NAME[typeFilter] ? ' ' + TYPE_NAME[typeFilter].toLowerCase() : ''));
       return;
     }
     if (collapsedGroups.has(sk)) collapsedGroups.delete(sk); else collapsedGroups.add(sk);
@@ -5016,12 +6041,20 @@ $('relinkCancel').onclick = () => { endRelink(); renderView(false); };
 // its pick and opens the menu; a pick sets it and sends its change ----------
 function dselClose(refocus) {
   const d = dselOpen; if (!d) return; dselOpen = null;
-  d.m.remove(); d.b.classList.remove('on'); d.b.setAttribute('aria-expanded', 'false');
+  dselGo(d.m); d.b.classList.remove('on'); d.b.setAttribute('aria-expanded', 'false');
   if (refocus && d.b.isConnected) d.b.focus({ preventScroll: true });
   // (the pointer left the drawer through the menu, which hangs from the page: the drawer's leave never came, 11-06)
   const dr = ['L', 'R'].map(k => DR[k]).find(x => x.el.contains(d.b));
   if (dr && dr.hover && !dr.el.matches(':hover')) { clearTimeout(dr.t); dr.t = setTimeout(() => { dr.hover = false; syncDrawers(); }, 380); }
   inspCatFlush();   // (new readings came while it was open, 11-08 audit)
+}
+// (a list closing fades out and shrinks back toward its button as it came in, his 11-14 pick: the motion audit found it
+// gone the next frame; not with animations Off. Clicks go through it while it fades)
+function dselGo(m) {
+  if (motionMode() === 'off' || !m.isConnected) { m.remove(); return; }
+  m.style.pointerEvents = 'none'; m.removeAttribute('role'); m.setAttribute('aria-hidden', 'true'); m.inert = true;   // (out of the Tab order too while it fades, the release checks 11-14)
+  const a = m.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(0.97)' }], { duration: 140, easing: 'ease-in', fill: 'forwards' });
+  a.onfinish = a.oncancel = () => m.remove();
 }
 // (an option's text, and its colours as small squares when it has them: data-sq, the palettes', 11-09)
 const dselLab = o => { const q = o && o.dataset.sq ? o.dataset.sq.split(',').filter(c => /^#[0-9a-f]{6}$/i.test(c)) : []; return q.length ? '<span class="dsel-t">' + esc(o.textContent) + '</span><span class="lk-sq">' + q.map(c => '<i style="--c:' + c + '"></i>').join('') + '</span>' : esc(o ? o.textContent : ''); };
@@ -5051,6 +6084,9 @@ function dselShow(b) {
   m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + 'px';
   m.style.top = (up ? r.top - 4 - m.offsetHeight : r.bottom + 4) + 'px';
   b.classList.add('on'); b.setAttribute('aria-expanded', 'true'); dselOpen = { s, b, m };
+  // (it comes in as the app's floating editors do, a fade and a small scale from its button: his 11-13 recording, the lists
+  // popped open at once; not with animations Off)
+  if (motionMode() !== 'off') { m.style.transformOrigin = up ? 'bottom left' : 'top left'; m.animate([{ opacity: 0, transform: 'scale(0.97)' }, { opacity: 1, transform: 'none' }], { duration: 140, easing: 'ease-out' }); }
   const on = m.querySelector('.on') || m.querySelector('button:not(:disabled)'); if (on) { on.scrollIntoView({ block: 'nearest' }); on.focus({ preventScroll: true }); }
 }
 function dselPick(n) {
@@ -6850,6 +7886,12 @@ const NOTES = [
   ['2.4.8', '2.4.8', ['Internet: what this PC downloads and uploads right now, two readings under HW Deck, and the Internet cell.',
     'A speed test, off until you turn it on in Settings: download, upload and ping, on Test now in the Internet cell and every few hours.',
     'The Starter adds the Internet cell, in its own category.']],
+  ['2.5.0', '2.5', ['Customize: a new window beside the gear for how HW Deck looks. Look moved there from Settings.',
+    'SteelSeries Arctis Nova Pro Wireless: the headset\'s and the spare\'s batteries as readings, and a Headset cell, once its base station is found.',
+    'The base station\'s screen can show pages of your own: the clock, the batteries, the volume, temperatures or any reading, as numbers, bars, rings, knobs or graphs. Pick Custom for Screen in Customize, under Headset.',
+    'Ready-made headset themes and pages, themes of your own to save, export and import, and an editor for its icons.',
+    'Overview fits the window at any size, without scrolling.',
+    'One slider style everywhere, and lists fade out as they close.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
@@ -6867,27 +7909,23 @@ function notesCheck() {
   else { if (!el.classList.contains('swap')) notesDraw(due); el.classList.add('show'); }
   upLock();
 }
-// (his 11-07 "the popups were SUPER WEIRD": the sessions note came alone, then the update cards, each as tall as its
-// own text, so every X moved the card's top and its X away from the pointer.) Starter's note, the sessions note and
-// the update cards are one pile now, the next ones peeking out behind, all as tall as the tallest of them: each X sits
-// where the last one was. Measured when the pile comes up (again only for a card that joins it, or a resize)
-let upH = 0, upHas = new Set();
+// (his 11-07 "the popups were SUPER WEIRD": each X has to stay where the last one was.) Starter's note, the sessions
+// note and the update cards are one pile, the next ones peeking out under it. Until 11-13 every card was stretched to
+// the tallest and the pile sat in the bottom right; closing the last card dropped the stretch while it faded, so it
+// snapped back to its own size (his "it briefly displays the normal size"). Now each card is its own size and the pile
+// sits in the top left: the X, at a card's top right, stays put whatever its height (his "display it on the top left
+// corner instead so the X doesnt move"). The pile's box is as tall as the card on top, for the ones peeking out
 function upLock() {
   const w = $('upw'), cs = [$('notice'), $('estNotice'), $('upn')], st = cs[0].classList.contains('show'), es = (feed.estNote || 0) > 0 && !estGone, due = notesDue();
   const total = (st ? 1 : 0) + (es ? 1 : 0) + due.length, more = total > 1 ? (total - 1) + ' more' : '';
   w.dataset.n = Math.min(3, total); setText($('noticeC'), more); setText($('estC'), more);
-  if (!total) { upH = 0; upHas = new Set(); w.style.height = ''; for (const c of cs) c.style.minHeight = ''; return; }
-  const want = (st ? ['s'] : []).concat(es ? ['e'] : [], due.map(n => n[0]));
-  if (upH && want.every(k => upHas.has(k))) return;
   for (const c of cs) c.style.minHeight = '';
-  let h = 0;
-  if (st) h = cs[0].offsetHeight;
-  if (es) { estFill(); h = Math.max(h, cs[1].offsetHeight); }
-  if (due.length && !cs[2].classList.contains('swap')) { for (let i = 0; i < due.length; i++) { notesDraw(due.slice(i)); h = Math.max(h, cs[2].offsetHeight); } notesDraw(due); }
-  upH = Math.max(upH, Math.ceil(h)); want.forEach(k => upHas.add(k));
-  w.style.height = upH + 'px'; for (const c of cs) c.style.minHeight = upH + 'px';
+  if (!total) return;   // (the box keeps its height while the last card fades: nothing moves)
+  if (es) estFill();
+  const top = cs.find(c => c.classList.contains('show'));
+  if (top) w.style.height = top.offsetHeight + 'px';
 }
-addEventListener('resize', () => { if (upH) { upH = 0; upHas = new Set(); upLock(); } });
+addEventListener('resize', () => upLock());
 // seen up to v; next: the card after it comes up in its place
 function notesSeen(v, next) {
   feed.notesSeen = v; send({ t: 'notesSeen', v });
@@ -8813,6 +9851,323 @@ function showGame() {
 
 // ---------- settings ----------
 const setmodal = $('setmodal');
+// ---- Customize (11-13, his pick of the mock, then "go, i want undo and redo buttons here"): Look, the headset's pages and a
+// build's own things (the PC screen) in a window of their own, opened by its button beside the gear. It is Settings'
+// window in another dress (.cz: wider, tabs in its head, one thing on show, undo and redo), so everything those editors
+// lean on stays where it was. One thing only (no headset, no build): no tabs, the window is "Look" ----
+const czTabs = () => [{ key: 'look', name: 'Look' }].concat(feed.hs ? [{ key: 'hs', name: 'Headset', nw: hsHelloDue() }] : [], CZ_EXT.filter(t => !t.has || t.has()));
+// (a headset found, his 11-15 "both": the Customize button gets the app's dot (as Settings' for an update) and the
+// Headset tab a dot after its name until that tab is opened once; and once ever a message at the bottom. Not for a
+// headset already showing pages of its own (Custom): that one was found long ago. Kept with the view: hsTab, hsToast)
+let hsHelloOk = false, hsHelloT = 0;   // (the view's state read: before it, nothing is known about what was said)
+function hsHelloDue() { const H = feed.hs; return !!(hsHelloOk && H && !H.on && !S.hsTab); }
+function hsHello() {
+  const b = $('czBtn'); if (!b) return;
+  let d = $('czDot'); const due = hsHelloDue();
+  if (!d && due) { b.insertAdjacentHTML('beforeend', '<i class="bdot upd" id="czDot"></i>'); d = $('czDot'); void d.offsetWidth; }
+  if (d && d.classList.contains('on') !== due) { d.classList.toggle('on', due); b.title = due ? 'Customize: the headset screen' : 'Customize'; }
+  if (due && !S.hsToast && !hsHelloT && !$('toast').classList.contains('show')) hsHelloT = setTimeout(() => { hsHelloT = 0; if (!hsHelloDue() || S.hsToast || $('toast').classList.contains('show')) return; S.hsToast = true; saveState(); toast('Headset found: you can customize its screen in Customize', false, 8000); }, 1200);   // (never over another message: said once one is not up, the review 11-15)
+}
+const czExt = () => CZ_EXT.find(t => t.key === czTab) || null;
+function czHead() {
+  if (czOn && czTab === 'hs' && feed.hs && !S.hsTab) { S.hsTab = true; saveState(); hsHello(); }   // (the Headset tab opened: its dot and the button's go, 11-15)
+  const tabs = czTabs(); if (!tabs.some(t => t.key === czTab)) czTab = 'look';
+  setmodal.classList.toggle('cz', czOn);
+  $('settitle').textContent = !czOn ? 'Settings' : tabs.length > 1 ? 'Customize' : 'Look';
+  // (its tabs: a pill that slides to the picked one, as Settings' own segments; 11-13 "customization is missing animations")
+  const hd = $('czTabs').parentNode; let sw = null; try { sw = czOn && setmodal.classList.contains('open') ? segSnap(hd) : null; } catch (e) { }
+  // (the same tabs: changed in place, the release checks 11-14: built again two frames after a click, a second click
+  // pressed on the old button and let go on the new one was lost)
+  const ct = $('czTabs'), want = czOn && tabs.length > 1 ? tabs : [], have = [...ct.querySelectorAll(':scope > button')];
+  if (want.length && have.length === want.length && have.every((b, i) => b.dataset.cz === want[i].key && b.textContent === want[i].name)) have.forEach((b, i) => { const on = want[i].key === czTab; b.classList.toggle('on', on); b.classList.toggle('nw', !!want[i].nw); b.setAttribute('aria-pressed', String(on)); });
+  else { ct.className = 'seg seg3 cz-tabs'; ct.innerHTML = want.map(t => '<button data-cz="' + esc(t.key) + '"' + (t.key === czTab || t.nw ? ' class="' + (t.key === czTab ? 'on' : '') + (t.nw ? (t.key === czTab ? ' ' : '') + 'nw' : '') + '"' : '') + ' aria-pressed="' + (t.key === czTab) + '">' + esc(t.name) + '</button>').join(''); }
+  if (czOn && tabs.length > 1) try { segPills(hd, sw); czPillGpu(sw); } catch (e) { }
+  czSync();
+}
+// (its pill glides on the GPU, 11-14: the first PC screen of an opening holds the page ~50 ms twice in the glide (the
+// tab's small picture of the screen loading, the host's first pictures), and the pill's width, a page-side motion,
+// stopped with it: on screen it jumped 62% at once. Here the glide is a transform only, its place and a stretch from its
+// left edge for its width, which the GPU carries on while the page is busy; same length and curve as the other pills)
+function czPillGpu(sw) {
+  const s = $('czTabs'), ind = s.querySelector(':scope > .ind'), w = sw && sw[segKey(s)]; if (!ind || !w || motionMode() === 'off') return;
+  const m = /translateX\(([-\d.]+)px\)/.exec(ind.style.transform), x = m ? +m[1] : 0, wd = parseFloat(ind.style.width) || 0;
+  if (!wd || (Math.abs(w.x - x) <= 0.1 && Math.abs(w.w - wd) <= 0.1)) return;
+  for (const a of ind.getAnimations()) if (a.transitionProperty) a.cancel();   // (segPills' own glide: the width part runs on the page)
+  ind.classList.add('still'); ind.style.transformOrigin = '0 0';
+  ind.animate([{ transform: 'translateX(' + w.x + 'px) scaleX(' + (w.w / wd) + ')' }, { transform: 'translateX(' + x + 'px) scaleX(1)' }], { duration: 300, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', id: 'czpill' });
+}
+// its undo and redo: the app's own history, held to the steps taken since the window opened (not the layout's behind it)
+function czSync() { const u = $('undoC'), r = $('redoC'); if (!u || !r) return; u.disabled = !(czOn && undoStack.length > czBase); r.disabled = !(czOn && czRedoN > 0 && redoStack.length > 0); }
+// (a step is undone and redone where it shows: the window goes to the step's tab first, the review 11-13)
+// (another tab, 11-14: the first PC screen of an opening is painted the first time, which holds the GPU ~40 ms; the pill's
+// glide sent with it came out late with a jump. The new tab is drawn first and held painted but unseen (1%: a layer at 0
+// is not painted, and would be at the fade's start); the pill and the page's fade start two frames later, together. A
+// switch that comes before then takes over. Off, or the window shut: at once)
+let czSwN = 0, czSwF = null;
+function czSwitch(want, fade) {
+  const x = czExt(); if (x && x.shut) x.shut(); lkPick = null; czTab = want;
+  const sb = $('setbody'), k = ++czSwN; sb.style.opacity = ''; if (czSwF) { czSwF.cancel(); czSwF = null; }   // (a fade still on its way would cover the hold, the review 11-14)
+  if (motionMode() === 'off' || !setmodal.classList.contains('open')) { czHead(); renderSettings(); return; }
+  renderSettings(); if (fade) sb.style.opacity = '0.01';
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (k !== czSwN) return; czHead(); if (fade) { sb.style.opacity = ''; const a = czSwF = sb.animate([{ opacity: 0.01 }, { opacity: 1 }], { duration: 200, easing: 'ease-out' }); a.onfinish = () => { if (czSwF === a) czSwF = null; }; } }));
+}
+function czGo(e) { const h = hostStep(e), want = h && h.cz ? h.cz : 'look'; if (want === czTab || !czTabs().some(t => t.key === want)) return; czSwitch(want, false); }
+function czUndo() { if (!czOn) return; lkFlush(); if (undoStack.length <= czBase) return; czGo(undoStack[undoStack.length - 1]); undo(); czRedoN++; czSync(); }
+function czRedo() { if (!czOn || czRedoN <= 0 || !redoStack.length) return; czGo(redoStack[redoStack.length - 1]); redo(); czRedoN--; czSync(); }
+// a step the host keeps (the headset's pages, a build's own things): undone and redone by sending the host the state as
+// it was; its editor is told (czStepped) so it draws that state. These leave the history when the window shuts: out of
+// sight, an undo of one would look like it did nothing
+function czStep(what, undoMsg, redoMsg) { undoStack.push(JSON.stringify({ host: undoMsg, redo: redoMsg, cz: what })); undoSeq++; if (undoStack.length > 80) { undoStack.shift(); czBase = Math.max(0, czBase - 1); } redoStack = []; czRedoN = 0; toastStale(); syncUndo(); }
+function czStepped(what, msg) { if (what === 'hs') HSX.stepped(msg); else { const t = CZ_EXT.find(x => x.key === what); if (t && t.stepped) t.stepped(msg); } }
+function czDrop() { const mine = e => { const h = hostStep(e); return !!(h && h.cz); }; undoStack = undoStack.filter(e => !mine(e)); redoStack = redoStack.filter(e => !mine(e)); czRedoN = 0; czBase = Math.min(czBase, undoStack.length); syncUndo(); }
+function czOpen(tab) {
+  if (modalCid != null) closeDetail();
+  const was = czOn && setmodal.classList.contains('open');
+  lkPick = null; czOn = true; if (tab && czTabs().some(t => t.key === tab)) czTab = tab;
+  if (!was) { czBase = undoStack.length; czRedoN = 0; czScrollKey = null; lkBg = lkCells = false; window.czSession = (window.czSession || 0) + 1; }   // (11-14 his "everything in every tab is collapsed" each time it opens; kept while moving between its tabs: the Headset and PC screen tabs fold theirs at their first drawing of this opening)
+  S.setFold.hs = S.setFold.look = false;   // (their fold was Settings': here each has the window to itself)
+  czHead(); feed.setSig = null; renderSettings();
+  // (11-14 his "opening customization ... had some delay": the fade and the card's rise started before the window's first
+  // painting and came out late with a jump. Drawn first, held painted at 1% for two frames, then they start)
+  if (!was && !setmodal.classList.contains('open') && motionMode() !== 'off') {
+    const k = ++czOpN; Object.assign(setmodal.style, { transition: 'none', visibility: 'visible', opacity: '0.01' });
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (k !== czOpN) return; setmodal.style.transition = setmodal.style.visibility = setmodal.style.opacity = ''; setmodal.classList.add('open'); }));
+  } else { czOpN++; setmodal.style.transition = setmodal.style.visibility = setmodal.style.opacity = ''; setmodal.classList.add('open'); }
+}
+let czOpN = 0;
+function czBody() {
+  if (czTab === 'look') { const T = lookTheme(); return '<div class="setbox cz-box cz-look"><div class="cz-l"><div class="cz-rows">' + lookRows() + '</div></div><div class="cz-r">' + T.l + T.r + '</div></div>'; }   // (11-14 his layout: the picture above the tiles, the controls the whole left column)
+  if (czTab === 'hs') return '<div class="setbox cz-box cz-hs"><div id="hsxAt"></div></div>';
+  return '<div class="setbox cz-box cz-x"><div id="czExt"></div></div>';
+}
+// (a row brought into view, by a key or a focus, stops under the pinned part of its column, not behind it)
+// ---- the colour editor floats (11-14, his "the color picker is not a pop up ... it doesnt make a new window jsut shifts
+// everything down"): any .lk-pop in Customize (Look's, the PC screen tab's) is lifted out of the flow, under its open chip
+// (above it when there is no room below), inside the column that scrolls; a click outside or Esc closes it (its chip
+// clicked again, so each editor closes its own way) ----
+// (a gallery under its pinned group title, 11-14 release checks: a row whose picture has gone under the title hides
+// its name too, so no name shows without its picture)
+function lkUnder(l) {
+  const L = l.getBoundingClientRect(); let hb = L.top;
+  for (const h of l.querySelectorAll('.lk-fh')) { const r = h.getBoundingClientRect(); if (Math.abs(r.top - L.top) < 1.5) hb = Math.max(hb, r.bottom); }
+  for (const t of l.querySelectorAll('.lk-t')) { const r = t.getBoundingClientRect(); if (r.bottom < L.top - 40 || r.top > hb + 40) { if (t.classList.contains('lk-uh')) t.classList.remove('lk-uh'); continue; }
+    const sw = t.querySelector('.lk-sw'); t.classList.toggle('lk-uh', !!sw && sw.getBoundingClientRect().bottom <= hb + 1); }
+}
+document.addEventListener('scroll', e => { const l = e.target; if (l && l.classList && l.classList.contains('lk-th-l')) lkUnder(l); }, true);
+function lkFloat() {
+  const pop = [...$('setbody').querySelectorAll('.lk-pop')].find(p => !p.hasAttribute('aria-hidden') && !p.closest('.lk-fl') && !p.closest('.lk-gh')); if (!pop) return;   // (not a closing copy, the release review 11-15)   // (the category / accent editors float already: .lk-fl)
+  const chip = $('setbody').querySelector('.lk-chip.on, .lk-chip[aria-expanded="true"]') || pop.previousElementSibling; if (!chip) return;
+  let cont = pop.parentElement; while (cont && cont !== document.body && !/(auto|scroll)/.test(getComputedStyle(cont).overflowY)) cont = cont.parentElement;
+  if (!cont || cont === document.body) return;
+  if (getComputedStyle(cont).position === 'static') cont.style.position = 'relative';
+  if (pop.parentElement !== cont) cont.appendChild(pop);
+  pop.classList.add('lk-float');
+  const cr = cont.getBoundingClientRect(), br = chip.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+  const top = br.bottom - cr.top + cont.scrollTop + 6;   // (always under its own row, his 11-14: never over half of the row above)
+  const left = Math.max(8, Math.min(cont.clientWidth - pw - 8, br.right - cr.left - pw));
+  pop.style.top = top + 'px'; pop.style.left = left + 'px';
+  const over = br.bottom + 6 + ph - (cr.bottom - 8);   // (no room in sight: the column glides down to show it)
+  if (over > 0) { const to = cont.scrollTop + over; if (motionMode() === 'off') cont.scrollTop = to; else if (cont.classList.contains('cz-l') && typeof czScrollTo === 'function') czScrollTo(cont, to); else cont.scrollTo({ top: to, behavior: 'smooth' }); }
+}
+new MutationObserver(() => { if (czOn && setmodal.classList.contains('open') && [...$('setbody').querySelectorAll('.lk-pop:not(.lk-float)')].some(p => !p.hasAttribute('aria-hidden') && !p.closest('.lk-fl') && !p.closest('.lk-gh'))) lkFloat(); }).observe($('setbody'), { childList: true, subtree: true });
+const lkFloatClose = () => { const c = $('setbody').querySelector('.lk-chip.on, .lk-chip[aria-expanded="true"]'); if (c) c.click(); };
+let lkOut = false;   // (decided at the press: a click's own work may draw the window anew before it ends)
+addEventListener('pointerdown', e => { const pop = $('setbody').querySelector('.lk-pop.lk-float'), t = e.target; lkOut = !!(pop && t && t.closest && !pop.contains(t) && !t.closest('.lk-chip') && t.closest('#setmodal')); }, true);
+addEventListener('click', () => { if (!lkOut) return; lkOut = false; if ($('setbody').querySelector('.lk-pop.lk-float')) lkFloatClose(); });   // (after the click did its own work: the editor closes)
+addEventListener('keydown', e => { if (e.key !== 'Escape') return; const pop = $('setbody').querySelector('.lk-pop.lk-float'); if (!pop || !setmodal.classList.contains('open')) return; e.preventDefault(); e.stopImmediatePropagation(); lkFloatClose(); }, true);
+// (11-14 a piece picked in an editor's picture: the settings scrolled to its panel, under what is pinned at the top)
+function czToPiece() {   // (by layout, not by what is seen: the panel may still be growing open, 11-14)
+  const pc = $('setbody').querySelector('.cz-l .cz-pc:not(.cz-ghost)'), l = pc && pc.closest('.cz-l'); if (!pc || !l) return;
+  const docY = el => { let y = 0; for (let e = el; e; e = e.offsetParent) y += e.offsetTop; return y; };
+  requestAnimationFrame(() => {
+    // (never past what the column holds once the panel is done: the panel's height and margins when its motion ends)
+    const cs = getComputedStyle(pc), now = pc.getBoundingClientRect().height + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
+    const more = pc._czEnd != null ? pc._czEnd - now : 0;
+    czScrollTo(l, Math.max(0, Math.min(docY(pc) - docY(l) - (parseFloat(getComputedStyle(l).scrollPaddingTop) || 0), czHeld(l) + more - l.clientHeight)));
+  });
+}
+// (what the column's content takes, by layout (scrollHeight never reads less than the window): the bottom of its last
+// part from the top of what it scrolls, the room kept on the way left out, its padding under it)
+function czHeld(l) {
+  const top = l.getBoundingClientRect().top - l.scrollTop; let b = 0;
+  for (const c of l.children) if (!c.classList.contains('cz-sp')) b = Math.max(b, c.getBoundingClientRect().bottom + (parseFloat(getComputedStyle(c).marginBottom) || 0) - top);
+  return b + (parseFloat(getComputedStyle(l).paddingBottom) || 0);
+}
+// (11-14 his "SMOOTH ANIMATIONS": a pick's motion, gentle at both ends (the app's quick ease-out did two thirds of the
+// way in its first frames, close to a snap at this size), as a CSS easing and as a function of time for what a frame
+// sets itself)
+const CZ_E = 'cubic-bezier(0.3, 0, 0.15, 1)', CZ_D = 380, czDur = () => motionMode() === 'minimal' ? 240 : CZ_D;   // (Minimal, a game on: shorter, as the app's other motion)
+const czEase = (() => { const B = (t, a, b) => 3 * a * t * (1 - t) * (1 - t) + 3 * b * t * t * (1 - t) + t * t * t;
+  return x => { let t = x; for (let i = 0; i < 10; i++) { const d = B(t, 0.3, 0.15) - x, dt = (B(t + 1e-4, 0.3, 0.15) - B(t, 0.3, 0.15)) / 1e-4; if (Math.abs(d) < 1e-5 || !dt) break; t = Math.min(1, Math.max(0, t - d / dt)); } return B(t, 0, 1); }; })();
+// (the column eased to a place in step with the panel's own motion: each frame from where the layout is then, so a panel
+// still growing doesn't cut the way short as a browser's smooth scroll would; his wheel or a drag on the way lets it go)
+// (room is kept under the last section on the way, so a column still growing or folding never stops it short; the
+// place asked for is one the column holds when its motion is done, so the room goes at the end without a jump)
+function czScrollTo(l, top, from) {
+  const y0 = from != null ? from : l.scrollTop;   // (where it is, read before the room of one on its way goes: the browser cuts it then; or where it was before a drawing cut it, 11-14)
+  if (l._czs) { cancelAnimationFrame(l._czs.raf); if (l._czs.end) l._czs.end(); }   // (one already on its way: ended, its listeners too)
+  l._czs = null; l.querySelectorAll(':scope > .cz-sp').forEach(e => e.remove());
+  if (motionMode() === 'off') { l.scrollTop = top; return; }
+  const t0 = performance.now(), S = { raf: 0, user: false }, far = Math.max(y0, top), D = czDur();
+  if (Math.abs(top - y0) < 1) { if (Math.abs(l.scrollTop - y0) > 1) l.scrollTop = y0; return; }
+  const sp = document.createElement('div'); sp.className = 'cz-sp'; sp.setAttribute('aria-hidden', 'true'); sp.style.cssText = 'height: 0; flex: none; pointer-events: none'; l.append(sp);
+  sp.style.height = Math.max(0, Math.ceil(far + l.clientHeight - czHeld(l))) + 'px'; l.scrollTop = y0;   // (its room at once, and the column back where it was, before anything is drawn)
+  // (his own scrolling lets it go: his wheel, a touch, a press on the column's bar; not a changed number, which the
+  // browser's own cut between two frames also makes)
+  const mine = e => { if (e.type === 'pointerdown' ? e.target === l : e.type === 'keydown' ? ['PageUp', 'PageDown', 'Home', 'End'].includes(e.key) : true) S.user = true; };
+  const EV = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+  for (const t of EV) l.addEventListener(t, mine, { passive: true });
+  const end = () => { for (const t of EV) l.removeEventListener(t, mine, { passive: true }); if (l._czs === S) l._czs = null; sp.remove(); };
+  const step = now => {
+    if (l._czs !== S || !sp.isConnected || S.user) { end(); return; }
+    const k = Math.min(1, (now - t0) / D), y = y0 + (top - y0) * czEase(k);
+    sp.style.height = Math.max(0, Math.ceil(far + l.clientHeight - czHeld(l))) + 'px'; l.scrollTop = y;   // (room for the farthest place of the way: nothing for the browser to cut)
+    if (k < 1) S.raf = requestAnimationFrame(step); else end();
+  };
+  S.end = end; l._czs = S; S.raf = requestAnimationFrame(step);
+}
+window.czToPiece = czToPiece;
+function czPin() { const l = $('setbody').querySelector('.cz-l'), pin = l && l.querySelector('.cz-pin, .hs-stick, .tz-stick'); if (l) l.style.scrollPaddingTop = pin ? (pin.offsetHeight + 6) + 'px' : ''; }
+addEventListener('resize', () => { if (czOn && setmodal.classList.contains('open')) czPin(); });
+// ---- its motion (11-13 his "customization is missing animations"): the app's own, none with animations Off. What a
+// drawing of an editor changed: a row or a tile that moved glides to its place (rowGlide, as a sort in Sessions), a new
+// one fades in, switches and segments' pills slide, the page
+// tabs' pill slides from where it was. czSnap before the drawing, czGlide after it ----
+const czTileKey = t => { const b = t.matches('[data-hid], [data-tid]') ? t : t.querySelector('[data-hid], [data-tid]') || t; return (b.dataset.hk || b.dataset.tk || '') + ':' + (b.dataset.hid || b.dataset.tid || t.className); };
+function* czParts(root) {
+  const n = {}; let sec = '';
+  for (const r of root.querySelectorAll('.cz-rows .setrow, .cz-rows .msec, .cz-rows .th-grid, .cz-r .lk-t')) {
+    if (r.closest('.cz-ghost')) continue;   // (a panel on its way out: not the editor's)
+    if (r.matches('.hs-fold, .tz-fold, .msec')) sec = r.dataset.f || r.textContent.trim().slice(0, 24);   // (11-14 the PC screen tab's heads too: rows of one name in two sections glided from each other's places)
+    // (a row goes by its name alone: the small line under it says its values, and a new value is not a new row)
+    const c = r.firstElementChild, t0 = c && c.firstChild, lab = !c || r.matches('.th-grid') ? r.className : t0 && t0.nodeType === 3 ? t0.nodeValue : c.textContent;
+    const k = r.matches('.lk-t') ? 't|' + czTileKey(r) : sec + '|' + lab.trim().slice(0, 40);
+    n[k] = (n[k] || 0) + 1; yield [r, k + '#' + n[k]];
+  }
+}
+// (the picked piece's panel as it is seen, mid-motion too: its height, margins, padding, border and opacity, a copy
+// with each part at the opacity it shows (the old settings' ghost inside it left out), where it sits, the column's scroll)
+function czPcSnap(pc) {
+  const cs = getComputedStyle(pc), at = {}; for (const k of CZ_PCF) at[k] = cs[k];
+  const h = pc.getBoundingClientRect().height; at.height = h + 'px';
+  const el = pc.cloneNode(true), ks = [...pc.children], kc = [...el.children];
+  ks.forEach((c, i) => { if (c.classList.contains('cz-ghost')) kc[i].remove(); else { const o = +getComputedStyle(c).opacity; kc[i].style.opacity = o < 0.999 ? String(o) : ''; } });
+  el.removeAttribute('style'); el.classList.remove('cz-ghost'); el.removeAttribute('aria-hidden'); el.inert = false;
+  const nx = pc.nextElementSibling;
+  return { el, h, at, next: nx && nx.dataset.f ? nx.dataset.f : null, i: [...pc.parentNode.children].indexOf(pc), st: pc.closest('.cz-l').scrollTop };
+}
+function czSnap(root) {
+  if (!root || !root.isConnected || !czOn || !setmodal.classList.contains('open') || motionMode() === 'off') return null;
+  const at = new Map(); for (const [r, k] of czParts(root)) { const q = r.getBoundingClientRect(); at.set(k, [q.top, q.left]); }
+  const ri = root.querySelector('.rng .ri'), pc = root.querySelector('.cz-l .cz-pc:not(.cz-ghost)') || root.querySelector('.cz-l .cz-rows > .cz-pc.cz-ghost');   // (a panel still folding away counts)
+  return { at, sel: root.dataset.czSel || '', tog: togSnap(root), seg: segSnap(root), ri: ri && ri.offsetWidth ? { t: ri.style.transform, w: ri.style.width } : null, pc: pc ? czPcSnap(pc) : null };   // (the picked piece's panel, as it is seen: mid-motion too)
+}
+// (sel: what the editor's rows are about, its page and its picked piece. Another one's switches and segments are other
+// controls: they are drawn as they are, not slid from the last one's values, the review 11-13)
+// (11-14 his "ANIMATIONS, SMOOTH ANIMATIONS, IT STILL LOOKS LIKE A SNAP": the picked piece's panel grows open from
+// nothing, folds away into nothing (what was there, kept for its way out), or with another piece eases from the last
+// one's height to its own while the old settings fade out and the new fade in. The sections under it slide with it)
+const CZ_PCF = ['height', 'marginTop', 'marginBottom', 'paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth', 'opacity'];
+const CZ_AUTO = typeof CSS !== 'undefined' && !!CSS.supports && CSS.supports('interpolate-size', 'allow-keywords');   // (11-14: the motion can end on the panel's natural height, whatever settles in it on the way)
+const CZ_PC0 = { height: '0px', marginTop: '0px', marginBottom: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px', opacity: 0 };
+function czPcMove(root, w) {
+  const pc = root.querySelector('.cz-l .cz-pc:not(.cz-ghost)'), D = czDur();
+  if (!pc && !w) return;
+  const full = el => { const cs = getComputedStyle(el), o = {}; for (const k of CZ_PCF) o[k] = cs[k]; return o; };
+  // (the drawing put the column's scroll back before this, cut short by a column without the panel: put back again now
+  // that the panel is there, so the column doesn't jump; as the panel folds the column follows it frame by frame)
+  const keepAt = el => { const l = el.closest('.cz-l'); if (l && w.st != null && Math.abs(l.scrollTop - w.st) > 1) l.scrollTop = w.st; };
+  const ghost = g => { g.classList.add('cz-ghost'); g.inert = true; g.setAttribute('aria-hidden', 'true'); for (const e of [g, ...g.querySelectorAll('*')]) { e.removeAttribute('id'); e.style.pointerEvents = 'none'; } return g; };
+  if (pc && !w) {   // (picked: grows open)
+    pc.style.overflow = 'hidden';
+    const f = full(pc); pc._czEnd = parseFloat(f.height) + parseFloat(f.marginTop) + parseFloat(f.marginBottom);
+    if (CZ_AUTO) { pc.style.interpolateSize = 'allow-keywords'; f.height = 'auto'; }
+    const a = pc.animate([CZ_PC0, f], { duration: D, easing: CZ_E, id: 'pcmove' }); a.onfinish = a.oncancel = () => { pc.style.overflow = ''; pc.style.interpolateSize = ''; pc._czEnd = null; };
+    return;
+  }
+  if (!pc) {   // (unpicked: what was there folds away where it was)
+    const rows = root.querySelector('.cz-l .cz-rows'); if (!rows) return;
+    const g = ghost(w.el), nx = w.next ? rows.querySelector('.lk-head[data-f="' + w.next + '"]') : null;
+    if (nx) nx.before(g); else if (rows.children[w.i]) rows.children[w.i].before(g); else rows.append(g);
+    g.style.overflow = 'hidden';
+    const a = g.animate([w.at, CZ_PC0], { duration: D, easing: CZ_E, id: 'pcmove' }); a.onfinish = a.oncancel = () => g.remove();   // (from all of what was seen: mid-motion too)
+    keepAt(g);
+    // (the column scrolled: eased to where it ends, a frame at a time, with room kept under the last section on the way;
+    // left to the browser its top dropped all at once when the column got shorter than the window)
+    const l = g.closest('.cz-l'), st0 = l ? l.scrollTop : 0;
+    if (l && st0 > 1) {
+      const T = Math.max(0, Math.min(st0, czHeld(l) - w.h - parseFloat(w.at.marginTop) - parseFloat(w.at.marginBottom) - l.clientHeight));   // (where it ends, measured with the panel in place: taking it out cut the scroll short for a frame)
+      if (T < st0 - 1 || l._czs) czScrollTo(l, Math.min(T, st0));   // (a pick's scroll still on its way ends here too, its room with it)
+    } else if (l && l._czs) czScrollTo(l, l.scrollTop);
+    return;
+  }
+  // (another piece: from the last one's height to its own; the old settings over it fading out first, the new fading in)
+  const h1 = pc.getBoundingClientRect().height, g = ghost(w.el);
+  const bcs = getComputedStyle(pc), bl = parseFloat(bcs.borderLeftWidth) || 0, br = parseFloat(bcs.borderRightWidth) || 0, bt = parseFloat(bcs.borderTopWidth) || 0;   // (on the panel's own border, whatever it is: pick A has none, its line is an outline)
+  Object.assign(g.style, { position: 'absolute', left: -bl + 'px', right: -br + 'px', top: -bt + 'px', height: w.h + 'px', margin: '0', background: 'transparent', borderColor: 'transparent', outlineColor: 'transparent', boxShadow: 'none' });
+  pc.style.position = 'relative'; pc.style.overflow = 'hidden'; pc.append(g);
+  for (const c of pc.children) if (c !== g) c.animate([{ opacity: 0, offset: 0 }, { opacity: 0, offset: 0.25, easing: 'ease-out' }, { opacity: 1, offset: 0.75 }, { opacity: 1, offset: 1 }], { duration: D, easing: 'linear' });
+  g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: Math.round(D * 0.24), easing: 'ease-in', fill: 'forwards' });   // (the old gone by a quarter of the way, the new from there: never both, never long blank)
+  const f = full(pc); pc._czEnd = h1 + parseFloat(f.marginTop) + parseFloat(f.marginBottom);
+  f.height = CZ_AUTO ? 'auto' : h1 + 'px'; f.opacity = '1'; if (CZ_AUTO) pc.style.interpolateSize = 'allow-keywords';
+  const a = pc.animate([w.at, f], { duration: D, easing: CZ_E, id: 'pcmove' });   // (from all of what was seen: a panel caught growing or folding goes on from there)
+  a.onfinish = a.oncancel = () => { g.remove(); pc.style.position = ''; pc.style.overflow = ''; pc.style.interpolateSize = ''; pc._czEnd = null; };
+  keepAt(pc);
+}
+// (and the picked cell's outline over an editor's picture: glides there from the cell picked before on that page, comes
+// in with a fade when none was, fades away when none is; drawn again for anything else, it stays where it is)
+const czOvWas = {};
+function czOvGlide(ov, slot, key) {
+  if (!ov) return;
+  const on = ov.querySelector(':scope > .on'), was = czOvWas[slot];
+  const now = on ? { key, pg: String(key).split(':')[0], l: on.style.left, t: on.style.top, w: on.style.width, h: on.style.height, html: on.outerHTML } : null;
+  czOvWas[slot] = now;
+  if (motionMode() === 'off' || (!was && !now) || (was && now && was.key === now.key)) return;
+  if (was && now && was.pg === now.pg) { on.animate([{ left: was.l, top: was.t, width: was.w, height: was.h }, { left: now.l, top: now.t, width: now.w, height: now.h }], { duration: czDur() - 40, easing: CZ_E, id: 'ovglide' }); return; }
+  if (now) on.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out', id: 'ovglide' });
+  if (was) {
+    const tp = document.createElement('template'); tp.innerHTML = was.html; const g = tp.content.firstElementChild; if (!g) return;
+    g.classList.add('cz-ghost'); for (const e of [g, ...g.querySelectorAll('*')]) { e.removeAttribute('data-tzx'); e.removeAttribute('data-hsx'); e.style.pointerEvents = 'none'; }
+    ov.append(g); g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: 'ease-out', fill: 'forwards' }).onfinish = () => g.remove();
+  }
+}
+function czGlide(root, was, sel) {
+  if (!root) return;
+  const same = !!was && was.sel === (sel || ''); root.dataset.czSel = sel || '';
+  segPills(root, same ? was.seg : null);   // (the pills are drawn by it, slid or not)
+  if (!was || motionMode() === 'off') return;
+  // (11-14 his "the select animation on the controls is still bugged": another piece picked, or none: no row glides from
+  // the last pick's places (they crossed the new ones); his "IT STILL LOOKS LIKE A SNAP": the piece's panel opens, folds
+  // away or changes size instead, the rows under it sliding with it)
+  if (!same) czPcMove(root, was.pc);
+  // (a switch is drawn in its new state by now, the editor's drawing has read sizes since: put back with its transition
+  // off, then let go, so it slides; togSlide's way would only turn a transition around at its start)
+  if (same) { const now = [...root.querySelectorAll('.tog2')], moved = now.length === was.tog.length ? now.filter((t, i) => t.classList.contains('on') !== was.tog[i]) : [];
+    if (moved.length) { for (const t of moved) { t.classList.add('still'); t.classList.toggle('on'); } void moved[0].offsetWidth; for (const t of moved) { t.classList.remove('still'); t.classList.toggle('on'); } } }
+  if (same && was.at.size) for (const [r, k] of czParts(root)) {
+    const a = was.at.get(k);
+    if (!a) { r.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' }); continue; }
+    const q = r.getBoundingClientRect(), dy = a[0] - q.top, dx = r.matches('.lk-t') ? a[1] - q.left : 0;   // (a tile may change column too)
+    if (Math.abs(dy) >= 1500 || (Math.abs(dy) < 1 && Math.abs(dx) < 1)) continue;
+    if (Math.abs(dx) >= 1) r.animate([{ transform: 'translate(' + dx.toFixed(1) + 'px, ' + dy.toFixed(1) + 'px)' }, { transform: 'none' }], { duration: 340, easing: SUM_E, id: 'glide' });
+    else rowGlide(r, dy);
+  }
+  // (a picked tile's ring is there at once, as in Look: an inner line to an outer ring is not a change a transition can cross)
+  // (the page tabs' pill is a new element on each drawing: from where the last one was when the pick changed, else at
+  // its place at once, not grown again from the left edge)
+  const ri = root.querySelector('.rng .ri');
+  if (ri) { const t1 = ri.style.transform, w1 = ri.style.width, moved = !!was.ri && (was.ri.t !== t1 || was.ri.w !== w1); ri.classList.add('still'); if (moved) { ri.style.transform = was.ri.t; ri.style.width = was.ri.w; } void ri.offsetWidth; ri.classList.remove('still'); if (moved) { ri.style.transform = t1; ri.style.width = w1; } }
+}
+$('czBtn').onclick = () => czOpen();
+$('czTabs').addEventListener('click', e => { const b = e.target.closest('[data-cz]'); if (!b || b.dataset.cz === czTab) return; lkFlush(); czSwitch(b.dataset.cz, true); });
+$('undoC').onclick = czUndo; $('redoC').onclick = czRedo;
+// (the window shut: its tab's own part let go, its steps dropped. Only on the window going from open to shut: in the
+// opening's hold (two frames painted at 1%, not open yet) its class changes too, and the PC screen tab was shut as it
+// opened, the release checks 11-14)
+let czWasOpen = false;
+new MutationObserver(() => { const o = setmodal.classList.contains('open'), was = czWasOpen; czWasOpen = o; if (czOn && was && !o) { const x = czExt(); if (x && x.shut) x.shut(); if (undoStack.concat(redoStack).some(e => { const h = hostStep(e); return h && h.cz; })) czDrop(); } }).observe(setmodal, { attributes: true, attributeFilter: ['class'] });
+// (for a build: CZ.add({ key, name, has(), mount(el), shut(), stepped(msg) }), CZ.open(key), CZ.step(key, undoMsg, redoMsg))
+const CZ = window.CZ = { add(t) { if (!CZ_EXT.some(x => x.key === t.key)) CZ_EXT.push(t); if (czOn && setmodal.classList.contains('open')) czHead(); }, open: czOpen, step: czStep, on: () => czOn && setmodal.classList.contains('open'), tab: () => czTab };
 // (what Settings shows from the host: drawn again only when it changed, 11-06)
 const setSigOf = () => JSON.stringify([feed.autostart, feed.hwinfo, feed.keepBusy, feed.keepWait, feed.keep, feed.keepNote, feed.fpsBusy, feed.fpsWait, feed.fps, feed.fpsState, feed.updates, feed.latest, feed.canUpdate, feed.estNote, feed.gameDays, feed.warnDays, feed.gameMerge]);
 // (a slider of the look let go by a redraw or a pick, not by the pointer: its change kept as one step and saved first, so a
@@ -8826,11 +10181,23 @@ function renderSettings() {
   const rng = fa && fa.type === 'range' && fa.id && $('setbody').contains(fa) ? fa.id : null;   // (a slider in focus keeps it, its value as drawn)
   const tw = togSnap($('setbody')), sw = setmodal.classList.contains('open') ? segSnap($('setbody')) : null, pw = sw && pickSnap($('setbody')), aw = sw ? accSnap($('setbody')) : null, spT = spinAt();
   if (lkPick === 'acc' && S.look.tint === 'none') lkPick = null;   // (Mono by an undo or a look picked with the accent's editor open: no box to hang it on)
-  const fa0 = document.activeElement, fk = fa0 && fa0.closest && fa0.closest('#setbody [data-lk]') && fa0.matches(':focus-visible') ? [fa0.dataset.lk, fa0.dataset.k || ''] : null;   // (a key on a pick: the focus comes back to it, 11-09 review)
+  const fa0 = document.activeElement, fk = fa0 && fa0.closest && fa0.closest('#setbody [data-lk]') && fa0.matches(':focus-visible') ? [fa0.dataset.lk, fa0.dataset.k || '', fa0.dataset.f || ''] : null;   // (a key on a pick: the focus comes back to it, 11-09 review)
   const pvEl = $('lkPv'), thL = $('lkThL'), hadSave = !!$('setbody').querySelector('.lk-save'); if (thL && setmodal.classList.contains('open')) lkThTop = thL.scrollTop;   // (the Look page, 11-09: a list from the last time it was open says nothing)
+  // (Customize: its left column keeps its place through a drawing; another tab, or the window just opened: from the top)
+  const czl0 = czOn ? $('setbody').querySelector('.cz-l') : null, czy = czl0 && czScrollKey === czTab ? czl0.scrollTop : 0;
   renderSettings0(); feed.setSig = setSigOf();
-  togSlide($('setbody'), tw); segPills($('setbody'), sw); pickSlide($('setbody'), pw); accSlide($('setbody'), aw); spinOn(spT); dselUp($('setbody')); lkAfter(pvEl, hadSave); lkPopAnchor();
-  if (fk) { const b0 = $('setbody').querySelector('[data-lk="' + fk[0] + '"]' + (fk[1] ? '[data-k="' + CSS.escape(fk[1]) + '"]' : '')), b = b0 && b0.disabled ? $('setbody').querySelector('#sTint button.on') : b0; if (b) b.focus({ preventScroll: true }); }   // (the accent's box folded away under Mono: the control beside it, not the page, 11-10)
+  if ($('hsxAt')) HSX.mount($('hsxAt'));   // (the headset's part: kept, not drawn anew)
+  if ($('czExt')) { const x = czExt(); if (x) x.mount($('czExt')); }   // (a build's own tab, the same way)
+  togSlide($('setbody'), tw); segPills($('setbody'), sw); pickSlide($('setbody'), pw); accSlide($('setbody'), aw); spinOn(spT); dselUp($('setbody')); lkAfter(pvEl, hadSave);
+  // (Look's picture is the one kept from the drawing before, put back by lkAfter: it takes this drawing's size, smaller
+  // while a colour's editor is open)
+  if (czOn && czTab === 'look') { const pv = $('lkPv'), mw = lkPick ? Math.round(200 * innerWidth / innerHeight) + 'px' : ''; if (pv && pv.style.maxWidth !== mw) { pv.style.maxWidth = mw; pv.classList.toggle('cz-sm', !!lkPick); lkPvAsk(lkHovLook() || S.look); } }
+  if (czOn) czPin();
+  { const czl1 = czOn ? $('setbody').querySelector('.cz-l') : null; if (czl1 && czy) { czl1.scrollTop = czy; const mx = Math.max(0, czl1.scrollHeight - czl1.clientHeight); if (czy > mx + 1 && !czl1._czs && motionMode() !== 'off') czScrollTo(czl1, mx, czy); } czScrollKey = czOn ? czTab : null; }   // (a shorter column, a colour editor gone: it glides back to its end, no jump, 11-14)
+  // (a colour's editor just opened in the left column: brought into view once, under the pinned picture)
+  if (czOn && lkPick !== czPickWas) { czPickWas = lkPick; if (lkPick) requestAnimationFrame(() => { const fl = $('setbody').querySelector('.cz-l .lk-fl'); if (fl) fl.scrollIntoView({ block: 'nearest' }); }); }
+  lkPopAnchor();
+  if (fk) { const b0 = $('setbody').querySelector('[data-lk="' + fk[0] + '"]' + (fk[1] ? '[data-k="' + CSS.escape(fk[1]) + '"]' : '') + (fk[2] ? '[data-f="' + CSS.escape(fk[2]) + '"]' : '')), b = b0 && b0.disabled ? $('setbody').querySelector('#sTint button.on') : b0; if (b) b.focus({ preventScroll: true }); }   // (the accent's box folded away under Mono: the control beside it, not the page, 11-10)
   if (rng && $(rng)) $(rng).focus({ preventScroll: true });
   const fi = typing && $(typing.id);
   if (fi) { if (fi.value !== typing.v) fi.dataset.dirty = '1'; fi.value = typing.v; fi.focus(); try { fi.setSelectionRange(typing.a, typing.b); } catch (e) { } }
@@ -8936,9 +10303,14 @@ function lkPickSet(k) {
   const nf = k && !LK_OWN.has(k) && document.querySelector('#setbody .lk-fl:not(.lk-gh)'); if (nf && motionMode() !== 'off') nf.animate([{ opacity: 0, transform: 'scale(0.97)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 140, easing: 'ease-out' });   // (the floating editor: a fade and a small scale from its swatch, 11-09)
   if (ghost) {
     const ch = document.querySelector('#setbody .lk-chip[data-k="' + CSS.escape(ok) + '"]'), row = ch && ch.closest('.lk-row');
-    if (row) { ghost.querySelectorAll('[id]').forEach(x => x.removeAttribute('id')); row.after(ghost); lkPopIO(ghost, false); }
+    if (row) {
+      ghost.querySelectorAll('[id]').forEach(x => x.removeAttribute('id'));
+      const gl = ghost.classList.contains('lk-float') && document.querySelector('#setbody .cz-l');   // (a floating one: where it was, over the rows; its place holds, the column's scroll is put back. The release review 11-15)
+      if (gl) { if (getComputedStyle(gl).position === 'static') gl.style.position = 'relative'; gl.append(ghost); } else row.after(ghost);
+      lkPopIO(ghost, false);
+    }
   }
-  const nw = k && LK_OWN.has(k) && document.querySelector('#setbody .lk-pop:not([aria-hidden])'); if (nw) lkPopIO(nw, true);
+  const nw = k && LK_OWN.has(k) && document.querySelector('#setbody .lk-pop:not([aria-hidden])'); if (nw) { if (czOn) lkFloat(); lkPopIO(nw, true); }   // (floated at its full height first: measured while it grew, the column never glided for one low in it, the release review 11-15)
 }
 // the floating editor (11-09): over the rows under the one it opened from, at its right; its scale from that swatch
 function lkPopAnchor() {
@@ -8964,14 +10336,23 @@ const DARK = [['#000000', '#0b0b0b', '#101010', '#151515', '#1a1a1a', '#202020',
 const LK_OWN = new Set(['base', 'cell', 'fade']), LK_DARK = new Set(['base', 'cell']);
 // a colour's chip (its dot, and its hex beside a name, or the name alone in a row of chips) and, open, its tones
 const lkBtn = (key, cur, name, txt, cls) => '<button class="lk-chip' + (cls ? ' ' + cls : '') + (lkPick === key ? ' on' : '') + '" data-lk="chip" data-k="' + esc(key) + '" aria-label="' + esc(name) + ', ' + (cur || 'grey') + '" aria-expanded="' + (lkPick === key) + '" style="--c:' + (cur || '#5a5a5a') + '"><i></i>' + esc(txt) + '</button>';
+// (his saved colours in the editor, at most two rows: the + keeps the colour it is on now, the x on one takes it out)
+// (the + is always there while there is room, so the way to save is always in sight; dim when the colour the editor is on
+// is saved already: his 11-13 "how do u save colors tho?", it used to go away then)
+const lkSavedCols = (key, cur) => { const sv = savedCols(), room = sv.length < SAVED_N, add = room && isHex(cur) && !sv.includes(cur.toLowerCase());
+  return '<div class="lk-rl">Saved</div><div class="lk-g lk-svg">' + sv.map(c => '<span class="lk-sc"><button data-lk="c" data-k="' + esc(key) + '" data-c="' + c + '" style="--c:' + c + '" aria-label="' + c + '" title="' + c + '" aria-pressed="' + (c === cur) + '"' + (c === cur ? ' class="on"' : '') + '></button><button class="lk-x lk-scx" data-lk="svdel" data-c="' + c + '" title="Remove" aria-label="Remove ' + c + '">' + LK_X + '</button></span>').join('') +
+    (room ? '<button class="lk-es lk-sca" data-lk="svadd" data-c="' + (isHex(cur) ? cur.toLowerCase() : '') + '" title="' + (add ? 'Save this colour' : 'This colour is saved') + '" aria-label="Save this colour"' + (add ? '' : ' disabled') + '>' + LK_PLUS + '</button>' : '') + '</div>'; };
 const lkPop = (key, cur) =>
   (lkPick === key ? '<div class="lk-pop"><div class="lk-g">' + (LK_DARK.has(key) ? DARK : TONES).flat().map(c => '<button data-lk="c" data-k="' + esc(key) + '" data-c="' + c + '" style="--c:' + c + '" aria-label="' + c + '" aria-pressed="' + (c === cur) + '"' + (c === cur ? ' class="on"' : '') + '></button>').join('') + '</div>' +
+    lkSavedCols(key, cur) +
+    // (the colours picked last, in any colour picker: recentList, 11-13; one he saved shows in its own row only)
+    (recentShown().length ? '<div class="lk-rl">Recent</div><div class="lk-g lk-rec">' + recentShown().map(c => '<button data-lk="c" data-rec="1" data-k="' + esc(key) + '" data-c="' + c + '" style="--c:' + c + '" aria-label="' + c + '" title="' + c + '" aria-pressed="' + (c === cur) + '"' + (c === cur ? ' class="on"' : '') + '></button>').join('') + '</div>' : '') +
     '<div class="lk-f"><input class="lk-hex" id="lkHex" data-k="' + esc(key) + '" value="' + (cur || '') + '" maxlength="7" spellcheck="false" placeholder="#rrggbb" title="Hex" aria-label="Hex">' +
     '<label class="lk-any" title="Any colour"><input type="color" id="lkAny" data-k="' + esc(key) + '" value="' + (isHex(cur) ? cur : ACC0) + '" aria-label="Any colour"></label>' +
     (key !== 'acc' && !LK_OWN.has(key) ? '<button class="lk-auto' + (S.L.cats.some(c => c.id === key && !c.col) ? ' on' : '') + '" data-lk="c" data-k="' + esc(key) + '" data-c="" title="Part\'s colour">Auto</button>' : '') + '</div></div>' : '');
 const lkChip = (key, cur, name, tag) => '<div class="lk-row"><span class="lk-name">' + esc(name) + '</span><span class="lk-tag">' + tag + '</span><span class="sp"></span>' + lkBtn(key, cur, name, cur || 'grey') + '</div>' + lkPop(key, cur);
 // ---- the theme, the background and the cells (11-05) ----
-const lkFold = (f, open, name, small, dots) => '<div class="setrow lk-head' + (open ? ' open' : '') + '" data-lk="fold" data-f="' + f + '" role="button" aria-expanded="' + !!open + '"><div>' + name + '<small>' + small + '</small></div><span class="lk-prev">' +
+const lkFold = (f, open, name, small, dots) => '<div class="setrow lk-head' + (open ? ' open' : '') + '" data-lk="fold" data-f="' + f + '" role="button" tabindex="0" aria-expanded="' + !!open + '"><div>' + name + '<small>' + small + '</small></div><span class="lk-prev">' +
   dots.map(c => '<i class="dk" style="--c:' + c + '"></i>').join('') + '<svg class="lk-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg></span></div>';
 const lkRange = (k, name, v, lo, hi) => '<div class="lk-row"><span class="lk-name">' + name + '</span><span class="sp"></span><input type="range" class="lk-rng" id="lkr-' + k + '" data-k="' + k + '" aria-label="' + name + '" aria-valuetext="' + v + '%" min="' + lo + '" max="' + hi + '" step="1" value="' + v + '" style="--v:' + ((v - lo) / (hi - lo) * 100) + '%"><span class="lk-v">' + v + '%</span></div>';
 // ---- the Look page (11-09, his OK 04:55 of the round 5 mockups): a live miniature of his window on the left, every theme
@@ -9008,12 +10389,16 @@ const lkSec = (f, tiles) => '<section data-f="' + esc(f) + '"><div class="lk-fh"
 function lookTheme() {
   const L = S.look, sv = lkSaved(), dirty = lookDirty(), fams = famsOn();
   if (!lkJf || (lkJf !== 'Saved' && !fams.includes(lkJf))) lkJf = sv ? 'Saved' : themeFam(L.theme);
-  return '<div class="setrow th-row lk-th"><div class="lk-th-h"><div>Theme<small>' + esc(sv ? sv.name : THEME_PRESETS[L.theme].name) + (dirty ? ', changed' : '') + '</small></div><span class="lk-th-r">' +
-    (dirty && (sv || S.lookSaved.length < 12) ? '<button class="btn lk-save" data-lk="save">Save</button>' : '') +
-    '<span class="lk-dd"><select id="lkJump" aria-label="Theme colours">' + ['Saved'].concat(fams).map(f => '<option value="' + esc(f) + '"' + (f === lkJf ? ' selected' : '') + '>' + esc(f) + '</option>').join('') + '</select></span></span></div>' +
-    '<div class="lk-th-w"><div class="lk-pv" id="lkPv" aria-hidden="true" style="aspect-ratio:' + innerWidth + ' / ' + innerHeight + '"></div><div class="lk-th-rc"><div class="lk-th-l" id="lkThL">' +
-    lkSec('Saved', S.lookSaved.map(lkSavedTile).join('') + (S.lookSaved.length < 12 ? '<button class="lk-t lk-add" data-lk="saveadd" title="Save" aria-label="Save the look"><span class="lk-sw lk-es">' + LK_PLUS + '</span><span class="lk-tn">&nbsp;</span></button>' : '')) +
-    fams.map(f => lkSec(f, Object.keys(THEME_PRESETS).filter(id => themeFam(id) === f).map(lkThemeTile).join(''))).join('') + '</div></div></div></div>';
+  // (Customize, 11-13: the theme's name and the window's picture at the left, pinned; its tiles at the right in a column of their own)
+  return {
+    l: '<div class="cz-pin"><div class="lk-th-h cz-th"><div class="cz-nm">Theme<small>' + esc(sv ? sv.name : THEME_PRESETS[L.theme].name) + (dirty ? ', changed' : '') + '</small></div><span class="lk-th-r">' +
+      (dirty && (sv || S.lookSaved.length < 12) ? '<button class="btn lk-save" data-lk="save">Save</button>' : '') + '</span></div>' +
+      '<div class="lk-pv' + (lkPick ? ' cz-sm' : '') + '" id="lkPv" aria-hidden="true" style="aspect-ratio:' + innerWidth + ' / ' + innerHeight + (lkPick ? ';max-width:' + Math.round(200 * innerWidth / innerHeight) + 'px' : '') + '"></div></div>',   // (a colour's editor open: the picture smaller, the editor has the room)
+    r: '<span class="lk-dd"><select id="lkJump" aria-label="Theme colours">' + ['Saved'].concat(fams).map(f => '<option value="' + esc(f) + '"' + (f === lkJf ? ' selected' : '') + '>' + esc(f) + '</option>').join('') + '</select></span>' +
+      '<div class="lk-th-l" id="lkThL">' +
+      lkSec('Saved', S.lookSaved.map(lkSavedTile).join('') + (S.lookSaved.length < 12 ? '<button class="lk-t lk-add" data-lk="saveadd" title="Save" aria-label="Save the look"><span class="lk-sw lk-es">' + LK_PLUS + '</span><span class="lk-tn">&nbsp;</span></button>' : '')) +
+      fams.map(f => lkSec(f, Object.keys(THEME_PRESETS).filter(id => themeFam(id) === f).map(lkThemeTile).join(''))).join('') + '</div>'
+  };
 }
 // the accent's box, beside the control under Accent and Spectrum; its editor floats under the row. Under Mono, where the
 // accent shows nowhere, it is folded away behind the control (off: no width, not seen, not for the keys; 11-10)
@@ -9063,7 +10448,7 @@ function pvCanvas(s, d, L, tints) {
   x.globalCompositeOperation = 'source-in'; x.fillStyle = want; x.fillRect(0, 0, d.width, d.height);
 }
 async function lkPvDraw(L) {
-  const box = $('lkPv'), sm = document.getElementById('setmodal'); if (!L || !box || !sm.classList.contains('open') || !box.clientWidth) return;
+  const box = $('lkPv'), sm = document.getElementById('setmodal'); if (!L || !box || !sm.classList.contains('open') || !box.clientWidth || S.setFold.look) return;   // (Look folded away: no preview made)
   const key = JSON.stringify(L) + JSON.stringify(lkCols()) + '|' + innerWidth + 'x' + innerHeight + '|' + box.clientWidth; if (key === pvKey && box.querySelector('.lk-pvh')) return;
   const sheet = await pvSheet(); if (!sheet || !box.isConnected || pvWant !== L || !sm.classList.contains('open')) return;
   pvKey = key;
@@ -9222,8 +10607,9 @@ function lookEdit(fn) {
 const newFade = () => S.look.tint !== 'none' && hueOf(S.look.acc)[1] >= 15 ? S.look.acc : '#6c5ce0';   // (a white or grey accent: the violet, not a white haze, 11-09)
 // a colour picked: the accent's ('acc'), the look's own (the base, the fill, the fade picked), or a category's ('' its
 // part's again: undo takes it back like any change)
-function pickColour(key, c) {
+function pickColour(key, c, fromRecent) {
   lkFlush();
+  recentAdd(c, fromRecent);   // (a colour picked goes to the front of the colours picked last; '' = Auto is none)
   if (LK_OWN.has(key)) { if (!isHex(c)) return; c = c.toLowerCase(); lookEdit(L => { if (key === 'fade') { const f = L.fades.find(x => x.at === bgSel); if (f) f.c = c; } else L[key] = c; }); return; }
   if (key === 'acc') { if (!isHex(c) || S.look.acc === c.toLowerCase()) return; snap(); S.look = Object.assign({}, S.look, { acc: c.toLowerCase(), changed: true }); applyLook(); saveState(); syncUndo(); }
   else {
@@ -9249,7 +10635,37 @@ function pickPalette(k) {
 $('setbody').addEventListener('mousedown', e => { if (e.target.closest('.lk-pop button')) e.preventDefault(); });
 $('setbody').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.lk-hex')) e.target.blur(); });   // (Enter uses the hex, as its tip says: the blur's change applies it)   // (a typed hex keeps its focus: the tone's click isn't lost to a redraw)
 const setSec = (name, rows) => '<section class="setsec"><h3>' + name + '</h3><div class="setbox">' + rows + '</div></section>';
+// a whole section that folds away to its name (11-13, his "make the WHOLE category (headset) and the theme category be able
+// to collapse on settings so it stays clean"): its name is its header, a chevron at its right; open to start, remembered
+// (13:55 "the collapse feature should fall under the first setting not the tittle": the fold is the section's FIRST ROW, which
+// stays (.setfold-h, data-setfold: Headset's "Show on the base station" with its switch, Look's "Theme"); everything after it
+// sits in .setsec-b and folds away. bodyOpen: the rows left that .setsec-b open, closed here)
+const setSecFold = (key, name, rows, cls, bodyOpen) => '<section class="setsec setsec-f' + (cls ? ' ' + cls : '') + (S.setFold[key] === true ? ' shut' : '') + '"><h3>' + name + '</h3><div class="setbox">' + rows + (bodyOpen ? '</div></div>' : '') + '</div></section>';
+function setFoldToggle(h) {
+  const k = h.dataset.setfold, sec = h.closest('.setsec-f'); if (!sec || !(k in S.setFold)) return;
+  const shut = !S.setFold[k]; S.setFold[k] = shut; saveState();
+  clearTimeout(sec._ft); sec.classList.add('anim'); sec._ft = setTimeout(() => sec.classList.remove('anim'), motionMode() === 'off' ? 0 : 330);   // (cut to its box while it glides; open, nothing is cut: the headset's picture stays pinned)
+  sec.classList.toggle('shut', shut); h.setAttribute('aria-expanded', !shut); sec.querySelector('.setsec-b').inert = shut;   // (folded: not for the keys either)
+  if (shut) return;
+  if (k === 'look') requestAnimationFrame(() => { const l = $('lkThL'); if (l) lkThHome(l); lkPvAsk(lkHovLook() || S.look); });   // (its list at his theme, its preview drawn: nothing was while it was folded)
+  else if (k === 'hs') HSX.shown();
+}
+// (Customize's section heads by the keys, 11-14 release checks: Enter / Space open and shut them, as the PC screen tab's
+// own, which keeps its handler)
+$('setbody').addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && !e.defaultPrevented && !e.repeat && e.target.matches && e.target.matches('.lk-head[role="button"][tabindex]:not(.tz-fold)')) { e.preventDefault(); e.target.click(); } });
+$('setbody').addEventListener('click', e => { const h = e.target.closest && e.target.closest('[data-setfold]'); if (h && !e.target.closest('button, input, select, a, .dsel, .dsel-m')) setFoldToggle(h); });   // (its switch, its Save, its jump list: theirs, not the fold's)
+$('setbody').addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[data-setfold]')) { e.preventDefault(); setFoldToggle(e.target); } });
+// Look's rows under its theme (Customize, 11-13: they were Settings' Look section)
+function lookRows() {
+  return lookBg() + lookCells() +
+    '<div class="setrow lk-colr"><div>Colour<small>' + ({ none: 'Greys only: colour is kept for warnings.', accent: 'One colour on what you pick.', spectrum: 'A colour for each category, and the accent.' })[S.look.tint] + '</small></div><span class="lk-cw">' + lkAccBox() + '<span class="seg seg3" id="sTint">' +
+      [['none', 'Mono'], ['accent', 'Accent'], ['spectrum', 'Spectrum']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.tint === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></span>' + (lkPick === 'acc' && S.look.tint !== 'none' ? '<div class="lk-fl" data-for="acc">' + lkPop('acc', S.look.acc) + '</div>' : '') + '</div>' +
+    (S.look.tint === 'spectrum' ? lookPalette() : '') +
+    '<div class="setrow"><div>Popups</div><span class="seg seg3" id="sPops">' +
+      [['view', 'View'], ['cells', 'Cells']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.pops === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>';
+}
 function renderSettings0() {
+  if (czOn) { $('setbody').innerHTML = czBody(); return; }   // (Customize: one thing on show)
   $('setbody').innerHTML =
     setSec('Window',
     '<div class="setrow"><div>Title<small>Shown in the title bar. Empty: the name of this PC' + (feed.pc ? ', ' + esc(feed.pc) : '') + '.</small></div><input class="setin" id="sTitle" maxlength="60" spellcheck="false" placeholder="' + esc(feed.pc || 'HW Deck') + '" value="' + esc(S.title || '') + '"></div>' +
@@ -9258,13 +10674,6 @@ function renderSettings0() {
       (!MOTIONS.includes(S.motion) && reducedMotion.matches ? ' Windows asks apps for less motion.' : '') + (motionMode() !== motionPicked() ? (feed.game && feed.front ? ' Minimal for now: a game is in front.' : ' Minimal for now: your session is recording.') : '') + '</small></div><span class="seg seg3" id="sMotion">' +
       [['full', 'Full'], ['minimal', 'Minimal'], ['off', 'Off']].map(([v, t]) => '<button data-m="' + v + '" class="' + (motionPicked() === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' +
     '<div class="setrow"><div>Calmer during games<small>Full animations switch to Minimal while a game is in front or a session you started records, and back after. Saves CPU for the game.</small></div><button class="tog2' + (S.gameCalm !== false ? ' on' : '') + '" id="sCalm" aria-pressed="' + (S.gameCalm !== false) + '" title="Minimal animations while a game is in front"></button></div>') +
-    setSec('Look',
-    lookTheme() + lookBg() + lookCells() +
-    '<div class="setrow lk-colr"><div>Colour<small>' + ({ none: 'Greys only: colour is kept for warnings.', accent: 'One colour on what you pick.', spectrum: 'A colour for each category, and the accent.' })[S.look.tint] + '</small></div><span class="lk-cw">' + lkAccBox() + '<span class="seg seg3" id="sTint">' +
-      [['none', 'Mono'], ['accent', 'Accent'], ['spectrum', 'Spectrum']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.tint === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></span>' + (lkPick === 'acc' && S.look.tint !== 'none' ? '<div class="lk-fl" data-for="acc">' + lkPop('acc', S.look.acc) + '</div>' : '') + '</div>' +
-    (S.look.tint === 'spectrum' ? lookPalette() : '') +
-    '<div class="setrow"><div>Popups</div><span class="seg seg3" id="sPops">' +
-      [['view', 'View'], ['cells', 'Cells']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.pops === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>') +
     setSec('Startup',
     '<div class="setrow"><div>Start with Windows<small>Opens in the tray when you sign in.</small></div><button class="tog2' + (feed.autostart ? ' on' : '') + '" id="sAuto" aria-pressed="' + feed.autostart + '" title="Start with Windows"></button></div>' +
     (feed.updatable === false ? '' : '<div class="setrow"><div>Updates<small>' + (feed.latest ? 'HW Deck ' + esc(feed.latest) + ' is out.' : 'Asks GitHub if there is a new version when HW Deck starts, then once a day. Nothing else is sent.') + '</small></div>' +
@@ -9294,7 +10703,7 @@ function renderSettings0() {
     setSec('About',
     '<div class="setrow"><div>' + (feed.brand && feed.brand !== 'HW Deck' ? esc(feed.brand) + ', built on HW Deck ' : 'HW Deck ') + esc(feed.version) + '<small>Reads HWiNFO\'s shared memory on this PC.</small></div></div>');
 }
-$('setBtn').onclick = () => { lkPick = null; keepPend.gameDays = keepPend.warnDays = false; feed.setSig = null; renderSettings(); setmodal.classList.add('open'); send({ t: 'getSettings' });
+$('setBtn').onclick = () => { czOn = false; czHead(); lkPick = null; keepPend.gameDays = keepPend.warnDays = false; feed.setSig = null; renderSettings(); setmodal.classList.add('open'); send({ t: 'getSettings' });
   // (an update waiting: its row in sight, what the dot on the gear was about; else from the top, 11-06)
   if (feed.latest && $('sGet')) $('sGet').scrollIntoView({ block: 'nearest' }); else setmodal.querySelector('.mcard').scrollTop = 0; };   // (the host's answer: Start with Windows and the task as they are now)
 document.addEventListener('click', e => {   // (the internet's Test now and Test every, in its popup and in Settings, 2.4.8)
@@ -9305,6 +10714,8 @@ document.addEventListener('click', e => {   // (the internet's Test now and Test
   for (const x of b.parentElement.children) x.classList.toggle('on', x === b);
   if (setmodal.classList.contains('open')) renderSettings();
 });
+// Settings at its Headset section (the Headset cell's popup, HW Dashboard's Controls card)
+function hsOpenSettings() { czOpen('hs'); }
 function syncUpd() { const d = $('setDot'); d.classList.toggle('on', !!feed.latest); $('setBtn').title = feed.latest ? 'Settings: HW Deck ' + feed.latest + ' is out' : 'Settings'; }
 $('setbody').addEventListener('click', e => {
   if (e.target.closest('#sAuto')) { feed.autostart = !feed.autostart; send({ t: 'autostart', on: feed.autostart }); renderSettings(); }
@@ -9341,7 +10752,8 @@ $('setbody').addEventListener('click', e => {
     lkPick = null; lookEdit(L => { L.fades = L.fades.filter(f => f.at !== at); }); bgSel = null; renderSettings(); return; }
   if (lw === 'line') { lookEdit(L => { L.line = !L.line; }); return; }
   if (lw === 'chip') { lkPickSet(lkPick === lq.dataset.k ? null : lq.dataset.k); return; }
-  if (lw === 'c') { pickColour(lq.dataset.k, lq.dataset.c); return; }
+  if (lw === 'c') { pickColour(lq.dataset.k, lq.dataset.c, lq.dataset.rec === '1'); return; }
+  if (lw === 'svadd' || lw === 'svdel') { if (lw === 'svadd') savedColAdd(lq.dataset.c); else savedColDel(lq.dataset.c); renderSettings(); return; }   // (his saved colours: the + keeps the editor's colour, the x takes one out, 11-13)
   if (lw === 'pal') { pickPalette(lq.dataset.k); return; }
   if (lkPick && !e.target.closest('.lk-pop') && !e.target.closest('.dsel')) lkPickSet(null);   // (a click anywhere else closes the open chip; a dropdown's opens its menu)
 });
@@ -9350,7 +10762,7 @@ document.addEventListener('pointerup', () => { lkUpAt = performance.now(); }, tr
 setmodal.addEventListener('mousedown', () => { setPress = true; setTimeout(() => { setPress = false; }); }, true);
 // (a slider of the look: seen at once while dragged, one undo step and a save when let go)
 $('setbody').addEventListener('input', e => {
-  const r = e.target.closest('.lk-rng'); if (!r) return;
+  const r = e.target.closest('.lk-rng'); if (!r || !r.dataset.k) return;   // (Look's own sliders only: the Headset tab's have their own handlers, 11-14)
   if (lkDrag == null) lkDrag = snapOf();
   const v = +r.value, k = r.dataset.k;
   if (k === 'op') S.look.op = v; else if (k === 'rad') { const d = lkRadPtr && Object.values(LK_RAD).find(x => Math.abs(x - v) <= 1); if (d != null && d !== false && d !== v) { r.value = d; return r.dispatchEvent(new Event('input', { bubbles: true })); } S.look.rad = v; } else if (k === 'lineA') { if (v === 100) delete S.look.lineA; else S.look.lineA = v; } else { const f = S.look.fades.find(x => x.at === bgSel); if (!f) return; f[k] = v; }   // (corners: held at the old presets within 1 px, 11-09)
@@ -9360,7 +10772,7 @@ $('setbody').addEventListener('input', e => {
   const mi = $('setbody').querySelector('.bg-mini'); if (mi) { mi.style.background = bgiOf(S.look); const gh = mi.querySelector('.bg-gh'); if (gh) { gh.style.setProperty('--t', tileOf(S.look)); gh.style.setProperty('--l', S.look.line ? lineOf(S.look) : 'transparent'); } }
 });
 $('setbody').addEventListener('change', e => {
-  if (e.target.matches('.lk-rng')) {
+  if (e.target.matches('.lk-rng[data-k]')) {   // (Look's own: a Headset slider let go must not redraw the window under it, his 11-14 "brightness doesnt work")
     // (by the keys, a change each press: one step once they stop, 11-06; let go of by the pointer: now)
     if (performance.now() - lkUpAt > 150) { clearTimeout(lkIdle); lkIdle = setTimeout(() => { if (lkDrag == null) return; if (setmodal.classList.contains('open')) renderSettings(); else { const b = lkDrag; lkDrag = null; if (snapOf() !== b) { S.look.changed = true; pushUndo(b); saveState(); syncUndo(); } } }, 600); return; }
     const b = lkDrag; lkDrag = null; if (b != null && snapOf() !== b) { S.look.changed = true; pushUndo(b); saveState(); syncUndo(); } renderSettings(); return;
@@ -9555,7 +10967,8 @@ document.addEventListener('keydown', ev => {
   // (a list keeps the focus after a pick, for its arrows and letters; it has no undo of its own, so Ctrl+Z / Ctrl+Y go through)
   if (typing && !(ctrl && ev.key.startsWith('Arrow') && ev.target.dataset && ev.target.dataset.sz) && !(ctrl && (k === 'z' || k === 'y') && ev.target.tagName === 'SELECT') && !(ctrl && (k === 'z' || k === 'y') && !ev.target._typed && ev.target.closest('#insp'))) return;   // (a settings field with nothing typed: the layout's undo)
   if (ctrl && (k === 'z' || k === 'y')) {
-    ev.preventDefault(); if (cmodal.classList.contains('open') || modalCid != null) return;   // (a cell popup has nothing of its own to undo: not the layout behind it, 11-06)
+    ev.preventDefault(); if (cmodal.classList.contains('open') || modalCid != null) return;
+    if (czOn && setmodal.classList.contains('open')) { k === 'y' || ev.shiftKey ? czRedo() : czUndo(); return; }   // (Customize: the steps taken in it, no further back)   // (a cell popup has nothing of its own to undo: not the layout behind it, 11-06)
     // (the warning log or Sessions: only their own steps, a bin move or a restore; a layout step waits for them to close)
     if (wmodal.classList.contains('open') || gmodal.classList.contains('open')) { const st = k === 'y' || ev.shiftKey ? redoStack : undoStack; if (!st.length || !hostStep(st[st.length - 1])) return; }
     k === 'y' || ev.shiftKey ? redo() : undo(); return;
@@ -9726,7 +11139,10 @@ function onHost(m) {
     else { S.L = emptyLayout(); S.active = null; S.edit = true; S.screen = 'tiles'; }   // first run: nothing, edit mode on
     S.gameCalm = !st || st.gameCalm !== false;
     S.lookSaved = cleanSaved(st && st.lookSaved); lkFromCheck();   // (your own looks, the Look page's Saved, 11-09)
+    S.recent = cleanRecent(st && st.recent);   // (the colours picked last, for every colour picker, 11-13)
+    S.savedCols = cleanSavedCols(st && st.savedCols);   // (his saved colours, for every colour picker, 11-13)
     { const f = st && st.listFilt && typeof st.listFilt === 'object' ? st.listFilt : {}; S.listFilt = { g: f.g === true, w: f.w === true }; }
+    { const f = st && st.setFold && typeof st.setFold === 'object' ? st.setFold : {}; S.setFold = { hs: f.hs === true, look: f.look === true }; }
     // (a view that came in late, state.json held at the start: the readings are known already, so its cells are linked
     // by sensor name here, as a Load does, 11-06)
     if (READ.length) { const n = relinkByName(); if (ynFixAll()) saveState(); if (n) toast('Re-linked ' + plural(n, 'cell') + ' by sensor name'); }
@@ -9738,6 +11154,7 @@ function onHost(m) {
     S.title = st && typeof st.title === 'string' && st.title.trim() ? st.title.slice(0, 60) : undefined; S.clock = !st || st.clock !== false;
     S.hide = cleanHide(st && st.hide); hideSets();
     feed.noStarter = !!m.noStarter; S.starterSeen = !!(st && st.starter === true); S.starterNoted = !!(st && st.starterNoted === true); feed.stateIn = !m.stateHeld;
+    S.hsToast = !!(st && st.hsToast === true); S.hsTab = !!(st && st.hsTab === true); hsHelloOk = !m.stateHeld;   // (a view file held by another program: not known yet, its own message comes when it is free)   // (the headset's dot and message, said once: 11-15)
     // (a new user: the view came with nothing in it. A view set aside as unreadable, or one emptied later, is not)
     feed.starterFresh = !m.stateBad && !(st && st.L && Array.isArray(st.L.cats) && st.L.cats.length);
     renderTitle(); $('rstBtn').disabled = feed.fake; if (feed.fake) $('rstBtn').title = 'Demo data: there is no HWiNFO to restart';
@@ -9806,6 +11223,8 @@ function onHost(m) {
     feed.gs = m.gs && typeof m.gs === 'object' ? m.gs : null;   // this game session's min, average, max of the game's own readings
     feed.sf = Array.isArray(m.sf) ? m.sf : null;   // this game session's average fps and 1% low so far
     feed.bnl = m.bnl;   // the bottleneck's call this second, game or not
+    feed.hs = m.hs || null;   // (the headset, once found: its state for the cell and the popup, 11-13)
+    hsHello();
     if (m.net) { const was = feed.net; feed.net = m.net; if (was && (was.on !== m.net.on || was.every !== m.net.every) && setmodal.classList.contains('open')) renderSettings(); }   // (the internet, 2.4.8: a change in the popup shows in Settings)
     feed.bnb = +m.bnb || 0;   // (a game in front whose frames aren't counted: 1 only vsync caps show, 2 none)
     if (lastTick && m.ts - lastTick > 2) resetSeen();   // seconds we didn't see (hidden): holds and episodes start again
@@ -9834,7 +11253,9 @@ function onHost(m) {
     if (!boot.tick) { boot.tick = true; if (m.status !== 'ok') boot.cat = boot.x = true; bootCheck(m.status !== 'ok' && !READ.length); }   // (no HWiNFO: nothing more to wait for)
     if (modalCid) { refreshModal(); if (bigRange !== '15m' && !modalOwn && Date.now() - histAsked > 60000) askHist(); }
     if (HP.shown) { if ((HP.ext ? prevBlocked(HP.el) : anyModalOpen()) || !cellAt(HP.cid)) hidePrev(); else { fillPrev(); if (!HP.rev0) drawPrev(); } }
-  } else if (m.t === 'hist' && !wxTake(m)) {   // (a warning row's chart asked for it: only it, unless the cell popup asked for the same)
+  } else if (m.t === 'hsv') HSX.msg(m);   // (the Headset popup's page, 11-13)
+  else if (m.t === 'hsimp') HSX.imp(m);   // (a headset theme from a file, 11-14)
+  else if (m.t === 'hist' && !wxTake(m)) {   // (a warning row's chart asked for it: only it, unless the cell popup asked for the same)
     { const c0 = modalCid != null && cellAt(modalCid); if (!c0 || m.range !== bigRange || m.key !== histKey(c0)) return; }   // (for a range or cell no longer shown: dropped, 11-06)
     const again = bigHist && bigHist.key === m.key && bigHist.range === m.range;   // (the same graph a minute on: no new draw-in, one under way goes on)
     bigHist = m;

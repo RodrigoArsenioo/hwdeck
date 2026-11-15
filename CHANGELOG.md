@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.5.0 (2026-11-15)
+
+- SteelSeries Arctis Nova Pro Wireless: with its base station connected, HW Deck reads the headset's battery and the spare battery's, as two readings under HW Deck in Storage ("Headset battery", "Spare headset battery"). They are listed only once the base station is found, so nothing changes for anyone without one. SteelSeries GG is not needed.
+- The Headset cell: the headset's battery as its value, the spare's under it, "charging" while it charges.
+- The base station's screen can show a page of your own: pick Custom for Screen in Customize, under its Headset tab, which is there only once the base station is found (the Headset cell's popup has a button to it). Original gives the base station its own screen, Off keeps it dark. SteelSeries GG has to be closed while it does: GG owns the screen otherwise. The page moves by a pixel every minute and goes dark while the PC is locked or idle, against burn-in.
+- A page is built from rows of pieces: the clock, the batteries, the volume, the CPU and GPU temperatures or any reading in your cells, each drawn as a number, a bar, a ring, a knob or a graph. Up to six pages, in turn every few seconds if you like, with a start up and a shut down animation to pick from eight. Customize shows the page as the base station draws it at the top of its right column; the settings take the left column, folded away under bars that say what is in them.
+- Pages are picked the way Look's themes are: ready-made pages by kind (Essentials, Clock, Temperatures, Graphs), every one showing the headset, its spare and the volume. Point at one to see it on the big picture, click it to start from it (Undo gives yours back). Once you change it, Save keeps it as a page of your own under Saved: pick it again any time, double-click its name to rename it, its x deletes it.
+- Customize: a new window, opened by its button beside the gear, for everything about how HW Deck looks. Look (the theme and its colours) moved there from Settings, and so did the headset's pages, each under its own tab. The picture sits at the top of the right column with the themes or ready-made pages under it, and the settings take the whole left column. Its undo and redo buttons take back and repeat the changes made in it, and so do Ctrl+Z and Ctrl+Shift+Z while it is open.
+- Dropdown lists fade in as they open and out as they close, instead of appearing and vanishing at once (not with animations Off).
+- Numbers, rings and knobs side by side share one text size, picked for the widest value they can show, so a 100% is as big as the 62% beside it and a number keeps its size as it changes. A number's label sits beside it, or above it if you pick that under Text. A ring's or knob's number sits in its middle, its icon under it. While a battery charges, its bolt takes its icon's place every other second. A number that shares its row with another piece keeps its label and its value together in the middle of its place; alone in its row, the label sits at the left and the value at the right.
+- A page of the base station's screen has Shows: Always, While gaming or Not while gaming. The pages that fit take turns. A page is removed with the x on its tab, and its settings sit right under the picture, before the picked piece's.
+- The lists of themes and of ready-made pages show a scrollbar.
+- Each piece has its own settings: label text, text size, alignment, decimals, unit, and a yellow and a red level (past yellow the piece turns over, past red it blinks). A graph can be a line, a smoothed line, steps, a filled area, bars or dots, with its own low and high, and a second reading dotted beside it. A level or a low and high is a number of its own or None / Auto, as Keep sessions' Days or Forever.
+- On the page's picture, drag a piece to another place, or onto another piece to swap the two, and drag the picked piece's corner to change its width and its row's height. A click on the picked piece, or beside the pieces, lets it go.
+- The update notes after an update sit at the top left, under the title bar, each at its own size, so the close button stays in the same place from one note to the next.
+- Overview fits the window at any size: it fills it to the bottom, its rows and graphs taking the spare room, and makes its text smaller before it would scroll. On a narrow window the computer's name stays in the title bar.
+- Storage has an HW Deck chip (the readings HW Deck makes itself: game fps, internet, the headset) and an FPS chip (every frame rate in one place), and Volt and Current are one chip, Volt & amps.
+- A speed test's row shows where the test server was as soon as the test ends.
+- A popup's list of readings skips one whose sensor is gone instead of stopping there.
+- Every section of Customize starts folded each time it opens; what you open stays as it is while you move between its tabs.
+- Clicking a piece on the picture picks it: its settings open in one panel, the column scrolls to them and the outline on the picture glides to the piece. Click it again, beside the pieces, or press Esc to let it go.
+- Colours are picked in a small editor that opens under the colour you click, with tones, your saved colours, the recent ones, a hex box and any colour.
+- Moving between Customize's tabs, opening the window and picking a piece glide instead of jumping (shorter with Minimal, none with animations Off).
+- Every slider in HW Deck has the same thin look, its value beside it.
+- The headset: ready-made themes (Everyday, Big numbers, Round, Gauges, Compact, Time first, Graphs, Night clock, Spotlight, Gamer, Digital, Load watch, Dotted, Steps, Bold) and up to 12 of your own, saved, exported and imported as .headset.json files. A new install starts on Everyday.
+- The headset's pages sit in tabs like a browser's: + adds an empty page and opens it (six at most), and a page can be duplicated, copied and pasted. A page is a grid of up to six rows and six columns, with its gap and its lines.
+- Icons: draw your own for the headset, the spare, the speaker, mute, charging, the CPU, the GPU or a reading, on a zoomed grid with mirror, flip, nudge, invert and clear.
+- A battery piece says what it shows while the battery is off or empty (a word, your own word, a dash or nothing) and while it charges (blinking, steady or hidden).
+- Screen in Customize > Headset: Off, Original (the base station's own screen) or Custom. Refresh beside it restarts the base station's screen if it gets stuck. A Brightness slider sits under it.
+- Faster volume wheel (Experimental, with Custom): the volume shows on your page sooner as you turn the wheel. Needs the PC base station with firmware 1.29.27.
+- When the base station is found for the first time, a dot on Customize's button and on its Headset tab, and a short message, point to it. Both go once the Headset tab is opened.
+- The Xbox base stations (USB 1038:12E5 and 1038:225D) are recognised too. Only the PC base station (1038:12E0) has been tested.
+
 ## 2.4.8 (2026-11-12)
 
 - Internet: what this PC downloads and uploads right now, in Mbit/s, as two readings under HW Deck in Storage ("Download now", "Upload now"). They come from Windows' own counters for the network adapter the internet goes through, so reading them sends nothing.

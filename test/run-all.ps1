@@ -151,6 +151,26 @@ $p = Start-Deck 'data-net' 9242 300
 Run 'internet' test/e2e-net.mjs 9242 test/data-net
 Quit-Deck $p 9242
 
+# the headset (port 9243, 2.5): a made-up base station (HWDECK_FAKEHS), its readings, cell, popup and Customize tab; the
+# same folder again for what survives a restart; then a copy without one (nothing of it shows)
+foreach ($f in 'data-hs', 'data-hs0') { if (Test-Path "$d\test\$f") { Remove-Item -Recurse -Force -LiteralPath "$d\test\$f" } }
+foreach ($i in 1, 2) {
+  $env:HWDECK_FAKEHS = '1'
+  $p = Start-Deck 'data-hs' 9243 300
+  Remove-Item Env:HWDECK_FAKEHS
+  Run "headset (run $i)" test/e2e-headset.mjs 9243 test/data-hs
+  Quit-Deck $p 9243
+}
+$p = Start-Deck 'data-hs0' 9243 300
+Run 'no headset' test/e2e-headset.mjs 9243 test/data-hs0
+Quit-Deck $p 9243
+
+# Overview fits the window at any size (port 9245, 2.5), on the Starter layout
+if (Test-Path "$d\test\data-ovfit") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-ovfit" }
+$p = Start-Deck 'data-ovfit' 9245 300 -starter
+Run 'Overview fit' test/e2e-ovfit.mjs 9245 ''
+Quit-Deck $p 9245
+
 # the bottleneck with a made-up game (port 9236): the test quits the app itself, to check the saved history
 if (Test-Path "$d\test\data-bn") { Remove-Item -Recurse -Force -LiteralPath "$d\test\data-bn" }
 $p = Start-Deck 'data-bn' 9236 300

@@ -67,14 +67,15 @@ const sweep = async (label, rootSel, prep, max = 60) => {
 };
 const shut = async () => { await ev(`(document.querySelectorAll('.modal.open').forEach(m => m.classList.remove('open')), 1)`); await sleep(400); };
 
-// one highlight on a pick: in Settings (Graph) and in the edit panel (a cell's Lines, his recording)
-await ev(`$('setBtn').click(), 1`); await sleep(900);
+// one highlight on a pick: in Customize (Look's Colour or Popups; Settings has no such segment of its own any more) and in
+// the edit panel (a cell's Lines, his recording)
+await ev(`$('czBtn').click(), 1`); await sleep(1200);
 const oneLit = sel => J(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); if (!s) return null; const b = [...s.querySelectorAll(':scope > button')].find(x => !x.classList.contains('on')); if (!b) return null; b.click();
   const s2 = document.querySelector(${JSON.stringify(sel)}), on = s2.querySelector(':scope > button.on'), ind = s2.querySelector(':scope > .ind');
   return { bg: getComputedStyle(on).backgroundColor, sh: getComputedStyle(on).boxShadow, fades: on.getAnimations().filter(a => a.transitionProperty === 'background-color').length, ind: !!ind && ind.offsetWidth > 0 }; })()`);
 const segSel = await ev(`(() => { const s = [...document.querySelectorAll('#setbody .seg.pill')].find(x => x.id && x.id !== 'sMotion' && x.querySelectorAll(':scope > button').length >= 2 && x.getClientRects().length); return s ? '#' + s.id : ''; })()`);
 const g1 = segSel && await oneLit(segSel);
-ok('Settings: a pick has one highlight, the pill (the picked button no fill of its own, none fading)', !!g1 && g1.ind && g1.fades === 0 && /rgba\(0, 0, 0, 0\)|transparent/.test(g1.bg), [segSel, g1]);
+ok('Customize: a pick has one highlight, the pill (the picked button no fill of its own, none fading)', !!g1 && g1.ind && g1.fades === 0 && /rgba\(0, 0, 0, 0\)|transparent/.test(g1.bg), [segSel, g1]);
 await shut();
 await ev(`(() => { setEdit(true); const t = [...document.querySelectorAll('.tile[data-cid]')].find(x => /temperature|hotspot/i.test(x.textContent)) || document.querySelector('.tile[data-cid]'); t.click(); return 1; })()`); await sleep(700);
 const hasMode = await ev(`!!document.querySelector('#iMode button[data-v="y"]')`);
@@ -105,6 +106,8 @@ await ev(`(setEdit(false), 1)`); await sleep(500);
 await shut();
 await sweep('Settings', '#setbody', `($('setBtn').click(), 1)`, 200);
 await shut();
+await sweep('Customize', '#setbody', `($('czBtn').click(), 1)`, 200);   // (Look's controls live there since 11-13)
+await shut();
 await sweep('Edit: view', '#insp', `(setEdit(true), 1)`);
 await sweep('Edit: cell', '#insp', `(() => { const t = [...document.querySelectorAll('.tile[data-cid]')].find(x => /hotspot/i.test(x.textContent)) || document.querySelector('.tile[data-cid]'); t.click(); return 1; })()`);
 await sweep('Edit: category', '#insp', `(() => { const h = document.querySelector('.cat .ch, .cathead, .ch'); if (h) h.click(); return 1; })()`);
@@ -116,7 +119,7 @@ for (const [label, id, btn] of [['Sessions', '#gmodal', 'gamesBtn'], ['Warning h
   if (there) { await sleep(800); await sweep(label, id, null, 40); }
   await shut();
 }
-ok('the sweep reached every place (Settings, the edit panel\'s view, cell and category, a cell\'s popup)', counts['Settings'] >= 60 && counts['Edit: view'] >= 5 && counts['Edit: cell'] >= 5 && counts['Edit: category'] >= 1 && counts['Cell popup'] >= 3, counts);
+ok('the sweep reached every place (Settings, Customize, the edit panel\'s view, cell and category, a cell\'s popup)', counts['Settings'] >= 5 && counts['Customize'] >= 60 && counts['Edit: view'] >= 5 && counts['Edit: cell'] >= 5 && counts['Edit: category'] >= 1 && counts['Cell popup'] >= 3, counts);
 ok('no flash: nothing freshly drawn fades from one look to another, apart from the intended ones', flashes.length === 0, flashes.slice(0, 25));
 ok('no page errors (a graph colour the canvas refused, among others)', errs.length === 0, errs.slice(0, 5));
 console.log('clicked', JSON.stringify(counts));

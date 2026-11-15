@@ -32,6 +32,8 @@ const reload = async () => {
   return until('feed.got && READ.length > 0 && S.L.cats.length > 0', 10000);
 };
 const css = (sel, prop, pseudo) => ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? getComputedStyle(e${pseudo ? ', ' + JSON.stringify(pseudo) : ''})[${JSON.stringify(prop)}] : null; })()`);
+// (a switch that is on, as the page draws one: Customize has none of its own, and Settings is not drawn while it is open)
+const swOn = pseudo => ev(`(() => { const b = document.createElement('button'); b.className = 'tog2 on'; b.style.transition = 'none'; document.getElementById('setbody').appendChild(b); const v = getComputedStyle(b${pseudo ? ', ' + JSON.stringify(pseudo) : ''}).backgroundColor; b.remove(); return v; })()`);
 // (a colour the way the page computes it: color-mix and all)
 const asColour = c => ev(`(() => { const d = document.createElement('div'); d.style.backgroundColor = ${JSON.stringify(c)}; document.body.appendChild(d); const v = getComputedStyle(d).backgroundColor; d.remove(); return v; })()`);
 const rgb = h => 'rgb(' + [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).join(', ') + ')';
@@ -40,8 +42,10 @@ const look = () => ev('S.look.theme + "/" + document.documentElement.dataset.tin
 const th = k => '#setbody .lk-t[data-lk="theme"][data-k="' + k + '"]';
 const thOn = () => ev('(() => { const b = document.querySelector("#setbody .lk-t[data-lk=theme].on"); return b ? b.dataset.k : ""; })()');
 const foldsShut = () => ev('(() => { lkBg = lkCells = false; renderSettings(); return 1; })()');
-// Spectrum's colours, by Starter's categories: the game, the GPU, the CPU, memory, drives, fans
-const WANT = ['#a99bdc', '#74c69d', '#7fa6e8', '#4fb8ad', '#8fa0c8', '#6cc8d8'];
+// Spectrum's colours, by Starter's categories: the game, the GPU, the CPU, memory, drives, the network (no part of its
+// own in any palette: it stays grey, '' here), fans
+const WANT = ['#a99bdc', '#74c69d', '#7fa6e8', '#4fb8ad', '#8fa0c8', '', '#6cc8d8'];
+const WRGB = WANT.map(c => c ? rgb(c) : null), WCHIP = WANT.map(c => c || '#7a7a7a');
 const ccs = () => ev('S.L.cats.map(c => { const e = document.querySelector("#view .dcat[data-cat=\\"" + c.id + "\\"]"); return e ? e.style.getPropertyValue("--cc") : "?"; }).join()');
 const ccOf = i => ev(`(() => { const c = S.L.cats[${i}], e = c && document.querySelector('#view .dcat[data-cat="' + c.id + '"]'); return e ? e.style.getPropertyValue('--cc') : '?'; })()`);
 const graphsIn = `S.L.cats.map((c, i) => [...document.querySelectorAll('#view .dcat[data-cat="' + c.id + '"] canvas')].map(cv => graphs.get(cv)).filter(G => G && G.col).map(G => G.col))`;
@@ -50,21 +54,21 @@ const graphsOf = (i, col) => until(`(${graphsIn})[${i}].length === 0 || (${graph
 const chip = k => 'document.querySelector(' + JSON.stringify(k === 'acc' ? '#setbody .lk-acc' : ['base', 'cell', 'fade'].includes(k) ? '#setbody .lk-chip[data-k="' + k + '"]' : '#setbody .lk-hx[data-k="' + k + '"]') + ')';   // (11-09: the accent's box, a category's swatch on its row)
 const chipC = k => ev('(() => { const c = ' + chip(k) + ', i = c && (c.classList.contains("lk-chip") ? c : c.querySelector("i")); return i ? i.style.getPropertyValue("--c") : null; })()');
 const openChip = async k => { await clickAt(chip(k)); return until('!!document.querySelector("#setbody .lk-pop")', 2000); };
-const tonesIn = 'document.querySelectorAll("#setbody .lk-pop .lk-g button")';
+const tonesIn = 'document.querySelectorAll("#setbody .lk-pop .lk-g:not(.lk-svg):not(.lk-rec) button")';   // (the tones: not the saved and the recent colours' rows under them, 11-13)
 const ccList = 'S.L.cats.map(c => { const e = document.querySelector(\'#view .dcat[data-cat="\' + c.id + \'"]\'); return e ? e.style.getPropertyValue("--cc") : "?"; }).join()';
 const clickAt = async expr => { const c = await p.centerOf(expr); if (!c) return false; await p.click(c.x, c.y); await p.sleep(350); return true; };
 
 ok('the readings come', await until('READ.length > 300 && feed.got', 10000), await ev('READ.length'));
 await ev('(() => { loadStarter(); setEdit(false); return 1; })()'); await p.sleep(800);
-ok('(Starter loaded: six categories, in view mode)', await ev('S.L.cats.length === 6 && !S.edit'), await ev('S.L.cats.map(c => c.name).join()'));
+ok('(Starter loaded: seven categories, in view mode)', await ev('S.L.cats.length === 7 && !S.edit'), await ev('S.L.cats.map(c => c.name).join()'));
 ok('a new view: Classic, Mono, nothing saved for it', await look() === 'classic/none' && await css('#view .tile', 'backgroundColor') === 'rgb(21, 21, 21)' && !!state() && state().look === undefined);
 const r0 = parseFloat(await css('#view .tile', 'borderTopLeftRadius'));
 
 // ---- Settings: Look, its rows ----
-await click('#setBtn');
+await click('#czBtn');
 ok('Settings has Look: Theme (every one there is, Classic on), Background and Cells folded, Colour (Mono, Accent, Spectrum), no Cards', await ev('[...document.querySelectorAll("#setbody .lk-t[data-lk=theme] .lk-tn")].map(b => b.textContent).sort().join() === Object.values(THEME_PRESETS).map(x => x.name).sort().join() && !!THEME_PRESETS.classic && !!document.querySelector("#setbody .lk-head[data-f=bg]:not(.open)") && !!document.querySelector("#setbody .lk-head[data-f=cells]:not(.open)") && [...document.querySelectorAll("#sTint button")].map(b => b.textContent).join() === "Mono,Accent,Spectrum" && $("sTint").querySelector(".on").dataset.v === "none" && !document.getElementById("sCards")') && await thOn() === 'classic');
 ok('Mono: the accent\'s box folded away (no width, not seen, off for the keys), no palette', await ev('(() => { const a = document.querySelector("#setbody .lk-acc"); return !!a && a.disabled && a.getBoundingClientRect().width < 0.5 && getComputedStyle(a).visibility === "hidden" && a.getAnimations().length === 0 && !document.querySelector("#setbody .lk-rows") && !document.getElementById("lkPal"); })()'));
-ok('Mono: a switch that is on is light on dark, no blue', await css('#sClock', 'backgroundColor') === 'rgb(208, 208, 208)' && await css('#sClock', 'backgroundColor', '::after') === 'rgb(22, 22, 22)', await css('#sClock', 'backgroundColor') + ' ' + await css('#sClock', 'backgroundColor', '::after'));
+ok('Mono: a switch that is on is light on dark, no blue', await swOn() === 'rgb(208, 208, 208)' && await swOn('::after') === 'rgb(22, 22, 22)', await swOn() + ' ' + await swOn('::after'));
 
 // ---- the themes ----
 await click(th('oled'));
@@ -73,7 +77,7 @@ await p.key('z', 'KeyZ', 90, 2); await p.sleep(300);
 ok('Ctrl+Z with Settings open: Classic again, its card marked', await look() === 'classic/none' && await thOn() === 'classic', await look());
 await p.key('y', 'KeyY', 89, 2); await p.sleep(300);
 ok('Ctrl+Y: OLED again', await look() === 'oled/none' && await thOn() === 'oled');
-ok('OLED: the Theme row says it', await ev('/OLED/.test(document.querySelector("#setbody .th-row small").textContent)'));
+ok('OLED: the Theme row says it', await ev('/OLED/.test(document.querySelector("#setbody .lk-th-h small").textContent)'));
 await p.sleep(700);
 ok('saved with the view', !!state() && state().look && state().look.theme === 'oled' && state().look.tint === 'none', JSON.stringify(state() && state().look));
 ok('a look saved before the themes opens as its theme with its colour (Outline as OLED, Soft, Standard as Classic)', await ev('cleanLook({ cards: "outline", tint: "accent" }).theme === "oled" && cleanLook({ cards: "outline", tint: "accent" }).tint === "accent" && cleanLook({ cards: "soft" }).theme === "soft" && cleanLook({ cards: "nope" }).theme === "classic" && cleanLook({ acc: "red" }).acc === ACC0 && (l => l.theme === "classic" && l.base === "#0d0d0d" && l.cell === "#151515" && l.op === 100 && l.acc === "#82664a" && l.pal === "fire" && !l.changed)(cleanLook({ cards: "standard", tint: "none", acc: "#82664a", pal: "fire" }))'));
@@ -90,7 +94,7 @@ await click(th('classic'));
 await click('#setbody .lk-head[data-f="bg"]');
 ok('Background opens: a small screen with a point on each edge and corner, the base on its chip, no fade yet', await until('!!document.querySelector("#setbody .lk-head[data-f=bg].open")', 2000) && await ev('document.querySelectorAll("#setbody .bg-h").length === 8 && !document.querySelector("#setbody .bg-h.f") && !document.querySelector("#setbody .bg-fh")') && await chipC('base') === '#0d0d0d');
 await click('#setbody .bg-h[data-at="b"]');
-ok('a point clicked: a fade there, picked, on the view at once, the theme now changed', await ev('S.look.fades.length === 1 && S.look.fades[0].at === "b" && S.look.changed && document.querySelector("#setbody .bg-h[data-at=b]").classList.contains("on") && !!document.querySelector("#setbody .bg-fh")') && /radial-gradient/.test(await css('body', 'backgroundImage')) && await ev('/Classic, changed/.test(document.querySelector("#setbody .th-row small").textContent)'), await css('body', 'backgroundImage'));
+ok('a point clicked: a fade there, picked, on the view at once, the theme now changed', await ev('S.look.fades.length === 1 && S.look.fades[0].at === "b" && S.look.changed && document.querySelector("#setbody .bg-h[data-at=b]").classList.contains("on") && !!document.querySelector("#setbody .bg-fh")') && /radial-gradient/.test(await css('body', 'backgroundImage')) && await ev('/Classic, changed/.test(document.querySelector("#setbody .lk-th-h small").textContent)'), await css('body', 'backgroundImage'));
 const u1 = await ev('undoStack.length');
 await ev('(() => { const r = document.querySelector("#setbody .lk-rng[data-k=a]"); r.value = 60; r.dispatchEvent(new Event("input", { bubbles: true })); r.value = 62; r.dispatchEvent(new Event("input", { bubbles: true })); r.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); r.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()'); await p.sleep(300);
 ok('its strength dragged: taken, one undo step for the whole drag', await ev('S.look.fades[0].a === 62') && await ev('undoStack.length') === u1 + 1, await ev('S.look.fades[0].a'));
@@ -116,7 +120,7 @@ ok('outline off: no line', await css('#view .tile', 'borderTopColor') === 'rgba(
 await ev('(() => { const r = $("lkr-rad"); r.value = 3; r.dispatchEvent(new Event("input", { bubbles: true })); r.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()'); await p.sleep(400);   // (corners: a slider in px since 11-09)
 ok('sharp corners', parseFloat(await css('#view .tile', 'borderTopLeftRadius')) < r0, await css('#view .tile', 'borderTopLeftRadius'));
 await openChip('cell');
-ok('the fill\'s chip: dark tones (greys first), no Auto', await ev(tonesIn + '.length === 24 && ' + tonesIn + '[0].dataset.c === "#000000" && !document.querySelector("#setbody .lk-pop .lk-auto")'));
+ok('the fill\'s chip: dark tones (greys first), no Auto', await ev(tonesIn + '.length === 24 && ' + tonesIn + '[0].dataset.c === "#000000" && !document.querySelector("#setbody .lk-pop .lk-auto")'), await ev('JSON.stringify((() => { const ps = [...document.querySelectorAll("#setbody .lk-pop")]; return { pops: ps.length, tones: ' + tonesIn + '.length, first: ' + tonesIn + '[0] ? ' + tonesIn + '[0].dataset.c : null, auto: !!document.querySelector("#setbody .lk-pop .lk-auto"), hex: !!document.querySelector("#setbody .lk-pop .lk-hex"), any: !!document.querySelector("#setbody .lk-pop .lk-any input[type=color]"), kids: ps.map(q => [...q.children].map(c => c.className + ":" + c.querySelectorAll("button").length).join(" | ")) }; })())'));
 await clickAt(tonesIn + '[9]');
 ok('a dark tone picked: the fill', await ev('S.look.cell === DARK.flat()[9]'), await ev('S.look.cell'));
 ok('the same tone again: no undo step (the review 11-05)', await ev('(() => { const u = undoStack.length; pickColour("cell", S.look.cell); return undoStack.length === u; })()'));
@@ -130,16 +134,16 @@ ok('Classic again: as it was', await look() === 'classic/none' && await css('#vi
 // ---- Accent: one colour, yours ----
 await pick('sTint', 'accent');
 ok('Accent: the view tabs\' pill and the picked buttons in its colour (white to start), the cells as they were', await look() === 'classic/accent' && await css('#tabind', 'backgroundColor') === await asColour('color-mix(in srgb, #ffffff 22%, transparent)') && await css('#sTint .ind', 'backgroundColor') === await asColour('color-mix(in srgb, #ffffff 22%, transparent)') && await css('#view .tile', 'backgroundColor') === 'rgb(21, 21, 21)', await css('#tabind', 'backgroundColor'));
-ok('Accent: the switches in it too', await css('#sClock', 'backgroundColor', '::after') === rgb('#ffffff'), await css('#sClock', 'backgroundColor', '::after'));
+ok('Accent: the switches in it too', await swOn('::after') === rgb('#ffffff'), await swOn('::after'));
 ok('Accent with the white accent: the popups\' graph tones stay apart, the 1% low its own', await ev('(() => { const s = document.documentElement.style, g = ["--gc", "--gc-gpu", "--gc-cpu", "--gc-lo"].map(n => s.getPropertyValue(n)); return g[0] === "#ffffff" && new Set(g).size === 4 && g.every(x => /^#[0-9a-f]{6}$/.test(x)); })()'), await ev('["--gc", "--gc-gpu", "--gc-cpu", "--gc-lo"].map(n => document.documentElement.style.getPropertyValue(n)).join()'));
 ok('a saved state on the old blue: Classic and OLED white as they load (Mono, Accent, from before themes), not a saved look\'s, another palette\'s or another theme\'s; 2.4.3\'s OLED on its own palette', await ev('lookUp({ theme: "classic", acc: "#7fa6e8", pal: "muted", changed: true, tint: "accent" }).acc === "#ffffff" && lookUp({ theme: "oled", acc: "#9cb0f4", pal: "t_oled" }).acc === "#ffffff" && lookUp({ cards: "standard", acc: "#7fa6e8" }).acc === "#ffffff" && lookUp({ theme: "classic", acc: "#7fa6e8", pal: "muted", from: "s1" }).acc === "#7fa6e8" && lookUp({ theme: "classic", acc: "#7fa6e8", pal: "fire" }).acc === "#7fa6e8" && lookUp({ theme: "stone", acc: "#7fa6e8", pal: "muted" }).acc === "#7fa6e8" && lookUp({ theme: "oled", acc: "#7fa6e8", pal: "muted", tint: "none" }).pal === "t_oled" && lookUp({ theme: "oled", acc: "#7fa6e8", pal: "muted", tint: "spectrum" }).pal === "muted" && cleanLook({ theme: "classic", acc: "#7fa6e8", pal: "muted" }).acc === "#7fa6e8"'));
 ok('Accent: no category colours', (await ccs()).replace(/,/g, '') === '');
 ok('Accent: its box beside the control (no fold), White to start, no palette, no Auto', await ev('!document.querySelector("#setbody .lk-head[data-f=col]") && !document.querySelector("#setbody .lk-rows") && !document.querySelector("#setbody .lk-auto")') && await chipC('acc') === '#ffffff', await chipC('acc'));
 ok('Accent: its box right before the control, as tall as it, no text on it', await ev('(() => { const a = document.querySelector("#setbody .lk-acc"), s = $("sTint"); return !!a && a.nextElementSibling === s && Math.abs(a.getBoundingClientRect().height - s.getBoundingClientRect().height) < 0.5 && a.textContent === ""; })()'));
-ok('its chip opens the tones (24), a hex field and the full picker', await openChip('acc') && await ev(tonesIn + '.length === 24 && !!document.querySelector("#setbody .lk-pop .lk-hex") && !!document.querySelector("#setbody .lk-pop .lk-any input[type=color]")'));
+ok('its chip opens the tones (24), a hex field and the full picker', await openChip('acc') && await ev(tonesIn + '.length === 24 && !!document.querySelector("#setbody .lk-pop .lk-hex") && !!document.querySelector("#setbody .lk-pop .lk-any input[type=color]")'), await ev('JSON.stringify((() => { const ps = [...document.querySelectorAll("#setbody .lk-pop")]; return { pops: ps.length, tones: ' + tonesIn + '.length, first: ' + tonesIn + '[0] ? ' + tonesIn + '[0].dataset.c : null, auto: !!document.querySelector("#setbody .lk-pop .lk-auto"), hex: !!document.querySelector("#setbody .lk-pop .lk-hex"), any: !!document.querySelector("#setbody .lk-pop .lk-any input[type=color]"), kids: ps.map(q => [...q.children].map(c => c.className + ":" + c.querySelectorAll("button").length).join(" | ")) }; })())'));
 const tone = await ev(tonesIn + '[1].dataset.c');
 await clickAt(tonesIn + '[1]');
-ok('a tone picked: the pill, the switches, at once, marked on its chip', await css('#tabind', 'backgroundColor') === await asColour('color-mix(in srgb, ' + tone + ' 22%, transparent)') && await css('#sClock', 'backgroundColor', '::after') === rgb(tone) && await chipC('acc') === tone && await ev(tonesIn + '[1].classList.contains("on")'), tone + ' ' + await css('#tabind', 'backgroundColor'));
+ok('a tone picked: the pill, the switches, at once, marked on its chip', await css('#tabind', 'backgroundColor') === await asColour('color-mix(in srgb, ' + tone + ' 22%, transparent)') && await swOn('::after') === rgb(tone) && await chipC('acc') === tone && await ev(tonesIn + '[1].classList.contains("on")'), tone + ' ' + await css('#tabind', 'backgroundColor'));
 await p.sleep(700);
 ok('saved', !!state() && state().look && state().look.acc === tone, JSON.stringify(state() && state().look));
 await ev('(() => { const i = document.querySelector("#setbody .lk-any input"); i.value = "#55aa77"; i.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()'); await p.sleep(300);
@@ -160,9 +164,9 @@ ok('a click elsewhere shuts the open chip', await until('!document.querySelector
 // ---- Spectrum: each category its part's colour, or yours ----
 await pick('sTint', 'spectrum');
 ok('Spectrum: each category its part\'s colour (game, GPU, CPU, memory, drives, fans)', await until(`(${JSON.stringify(WANT)}).join() === S.L.cats.map(c => { const e = document.querySelector('#view .dcat[data-cat="' + c.id + '"]'); return e ? e.style.getPropertyValue('--cc') : '?'; }).join()`, 3000), await ccs());
-ok('Spectrum: the names in it', await ev(`S.L.cats.every((c, i) => getComputedStyle(document.querySelector('#view .dcat[data-cat="' + c.id + '"] h2')).color === ${JSON.stringify(WANT.map(rgb))}[i])`));
-ok('Spectrum: the tiles\' icons in it', await ev(`S.L.cats.every((c, i) => { const s = document.querySelector('#view .dcat[data-cat="' + c.id + '"] .tn svg'); return !s || getComputedStyle(s).stroke === ${JSON.stringify(WANT.map(rgb))}[i]; })`));
-ok('Spectrum: the graphs in it', await until(`${graphsIn}.every((cols, i) => cols.length === 0 || cols.some(x => x === ${JSON.stringify(WANT)}[i]))`, 4000) && await ev(`${graphsIn}.flat().every(x => ${JSON.stringify(WANT)}.includes(x) || !['#7c7c7c', '#8f8f8f'].includes(x))`), await ev(`JSON.stringify(${graphsIn})`));
+ok('Spectrum: the names in it', await ev(`S.L.cats.every((c, i) => (${JSON.stringify(WRGB)}[i] === null || getComputedStyle(document.querySelector('#view .dcat[data-cat="' + c.id + '"] h2')).color === ${JSON.stringify(WRGB)}[i]))`));
+ok('Spectrum: the tiles\' icons in it', await ev(`S.L.cats.every((c, i) => { const s = document.querySelector('#view .dcat[data-cat="' + c.id + '"] .tn svg'); return !s || (${JSON.stringify(WRGB)}[i] === null || getComputedStyle(s).stroke === ${JSON.stringify(WRGB)}[i]); })`));
+ok('Spectrum: the graphs in it', await until(`${graphsIn}.every((cols, i) => cols.length === 0 || !${JSON.stringify(WANT)}[i] || cols.some(x => x === ${JSON.stringify(WANT)}[i]))`, 4000) && await ev(`${graphsIn}.every((cols, i) => !${JSON.stringify(WANT)}[i] || cols.every(x => ${JSON.stringify(WANT)}.includes(x) || !['#7c7c7c', '#8f8f8f'].includes(x)))`), await ev(`JSON.stringify(${graphsIn})`));
 // (Spectrum beyond the view: a warning's dot, a session's readings and its fps line, in their cells' colours)
 const wcell = await ev('(() => { const id = S.L.cats[1].cells.find(c => S.L.cells[c].key && BYKEY.get(S.L.cells[c].key)); return cellName(S.L.cells[id]); })()');
 await ev('(() => { const d = new Date(Date.now() - 120000), p2 = n => String(n).padStart(2, "0"), o = -d.getTimezoneOffset(); const st = d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate()) + " " + p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds()) + (o < 0 ? "-" : "+") + p2(Math.abs(o) / 60 | 0) + ":" + p2(Math.abs(o) % 60); $("wmodal").classList.add("open"); renderWarnings(st + "  YELLOW  " + ' + JSON.stringify(wcell) + ' + ": 99 (over its line)"); return 1; })()');
@@ -170,15 +174,18 @@ ok('Spectrum in Warning history: the row\'s dot in its cell\'s colour', await ev
 await ev('(() => { $("wmodal").classList.remove("open"); const now = Math.floor(Date.now() / 1000), id = S.L.cats[1].cells.find(c => S.L.cells[c].key && BYKEY.get(S.L.cells[c].key)), x = S.L.cells[id], r = BYKEY.get(x.key); const s = { game: "Tint Game", start: now - 7200, end: now - 3600, from: now - 7200, secs: 3600, front: 3600, fps: 200, low: 150, items: [["GPU temp", "\u00b0C", 60, 70, null, null, 1, null, 0, x.key, 0]], warns: 0, tf: Array(60).fill(200), tl: Array(60).fill(150), p: 1 }; $("gmodal").classList.add("open"); renderGames(JSON.stringify(s)); document.querySelector("#glist .gx-sess .gx-row").click(); return 1; })()');
 ok('Spectrum in Sessions: a reading\'s dot in its cell\'s colour, the fps line in the game\'s', await until('(() => { const rw = document.querySelector("#glist .gx-rw[style*=\'--cc\']"), tl = document.querySelector("#glist .gx-tl"); return !!rw && rw.style.getPropertyValue("--cc") === ' + JSON.stringify(WANT[1]) + ' && !!tl && tl.style.getPropertyValue("--fc") === ' + JSON.stringify(WANT[0]) + '; })()', 3000), await ev('[document.querySelector("#glist .gx-rw[style*=\'--cc\']") && document.querySelector("#glist .gx-rw[style*=\'--cc\']").getAttribute("style"), document.querySelector("#glist .gx-tl") && document.querySelector("#glist .gx-tl").getAttribute("style")]'));
 await ev('$("gmodal").classList.remove("open"); 1'); await p.sleep(300);
-ok('Spectrum: the pills and switches in the accent', await css('#tabind', 'backgroundColor') === await asColour('color-mix(in srgb, #ffffff 22%, transparent)') && await css('#sClock', 'backgroundColor', '::after') === rgb('#ffffff'), await css('#tabind', 'backgroundColor'));
+ok('Spectrum: the pills and switches in the accent', await css('#tabind', 'backgroundColor') === await asColour('color-mix(in srgb, #ffffff 22%, transparent)') && await swOn('::after') === rgb('#ffffff'), await css('#tabind', 'backgroundColor'));
 const ids = await ev('S.L.cats.map(c => c.id)');
 const chipCs = async () => { const o = []; for (const k of ids) o.push(await chipC(k)); return o; };
-ok('Spectrum: the palette dropdown (Muted for Classic), then a row per category with cells, in its colour, with its hex', await ev('$("lkPal").value === "muted" && document.querySelectorAll("#setbody .lk-cr").length === S.L.cats.filter(c => c.cells.length).length && [...document.querySelectorAll("#setbody .lk-cr .lk-hx")].every(b => /^#[0-9A-F]{6}$/.test(b.textContent))') && JSON.stringify(await chipCs()) === JSON.stringify(WANT), JSON.stringify(await chipCs()));
+ok('Spectrum: the palette dropdown (Muted for Classic), then a row per category with cells, in its colour, with its hex', await ev('$("lkPal").value === "muted" && document.querySelectorAll("#setbody .lk-cr").length === S.L.cats.filter(c => c.cells.length).length && [...document.querySelectorAll("#setbody .lk-cr .lk-hx")].every(b => /^#[0-9A-F]{6}$/.test(b.textContent))') && JSON.stringify(await chipCs()) === JSON.stringify(WCHIP), JSON.stringify(await chipCs()));
 ok('the palette dropdown: the theme\'s own first, every theme\'s by colour, the others last, each with its colours as squares', await ev('(() => { const s = $("lkPal"), g = [...s.querySelectorAll("optgroup")].map(x => x.label), f = s.querySelector("option[value=fire]"); return s.options[0].value === "t_classic" && g[g.length - 1] === "Others" && g[0] === "Greys" && !!f && f.dataset.sq.split(",")[1] === PALETTES.fire[1].gpu; })()'));
 const rowTops = () => ev('JSON.stringify([...document.querySelectorAll("#setbody .lk-cr")].map(r => Math.round(r.getBoundingClientRect().top)))');
 const rows0 = await rowTops();
+// (in Customize a colour's editor makes the pinned picture smaller: the rows move up together, so they are compared by
+// where they stand to one another, a pixel of rounding allowed)
+const rowsSame = (a, b) => { const x = JSON.parse(a), y = JSON.parse(b); return x.length === y.length && x.every((v, i) => Math.abs((v - x[0]) - (y[i] - y[0])) <= 1); };
 await openChip(ids[1]); await p.sleep(250);
-ok('a category\'s editor floats under its row, at the right, nothing moves', await ev('(() => { const f = document.querySelector("#setbody .lk-fl"), r = document.querySelector("#setbody .lk-cr[data-k=\'' + ids[1] + '\']"), rs = document.querySelector("#setbody .lk-rows"); if (!f || !r) return false; const fr = f.getBoundingClientRect(), rr = r.getBoundingClientRect(), sr = rs.getBoundingClientRect(); return getComputedStyle(f).position === "absolute" && Math.abs(fr.top - (rr.bottom + 4)) < 1.5 && Math.abs(fr.right - sr.right) < 1.5; })()') && await rowTops() === rows0, rows0 + ' ' + await rowTops());
+ok('a category\'s editor floats under its row, at the right, the rows keep their places to one another', await ev('(() => { const f = document.querySelector("#setbody .lk-fl"), r = document.querySelector("#setbody .lk-cr[data-k=\'' + ids[1] + '\']"), rs = document.querySelector("#setbody .lk-rows"); if (!f || !r) return false; const fr = f.getBoundingClientRect(), rr = r.getBoundingClientRect(), sr = rs.getBoundingClientRect(); return getComputedStyle(f).position === "absolute" && Math.abs(fr.top - (rr.bottom + 4)) < 1.5 && Math.abs(fr.right - sr.right) < 1.5; })()') && rowsSame(await rowTops(), rows0), rows0 + ' ' + await rowTops());
 const rose = await ev(tonesIn + '[7].dataset.c');
 await clickAt(tonesIn + '[7]');
 ok('the GPU\'s colour picked: its name, its graphs, its chip, kept with the layout', await until('S.L.cats[1].col === ' + JSON.stringify(rose), 2000) && await ccOf(1) === rose && await graphsOf(1, rose) && await chipC(ids[1]) === rose, await ev('JSON.stringify(S.L.cats.map(c => c.col || ""))'));
@@ -193,7 +200,7 @@ ok('any colour for the CPU: taken, on its chip', await ev('S.L.cats[2].col === "
 await clickAt('document.querySelector("#setbody .lk-pop .lk-auto")');
 ok('Auto: its part\'s colour back', await ev('!S.L.cats[2].col') && await ccOf(2) === WANT[2]);
 // a palette: each category's part colour from it, and its accent; undo brings the last one back
-const FIRE = ['#ff7a5c', '#ff9f43', '#ffc15e', '#f6d06f', '#e8735a', '#ff5d73'];
+const FIRE = ['#ff7a5c', '#ff9f43', '#ffc15e', '#f6d06f', '#e8735a', '', '#ff5d73'];   // (the network: none)
 const u0 = await ev('undoStack.length');
 await ev('(() => { const s = $("lkPal"); s.value = "muted"; s.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()'); await p.sleep(300);
 ok('the palette in use, nothing of yours on it: no undo step', await ev('undoStack.length') === u0, u0 + ' / ' + await ev('undoStack.length'));
@@ -208,10 +215,10 @@ ok('undo: Muted and white again', await ev('S.look.pal === "muted" && S.look.acc
 // ---- the other views ----
 await ev('$("setmodal").classList.remove("open"); 1');
 await click('nav#screens button[data-s="overview"]'); await p.sleep(700);
-ok('Overview: each card\'s name and icon in its colour', await until(`S.L.cats.every((c, i) => { const e = document.querySelector('#view .dcat[data-cat="' + c.id + '"]'); if (!e) return false; const n = e.querySelector('.ch .cn'); return n && getComputedStyle(n).color === ${JSON.stringify(WANT.map(rgb))}[i]; })`, 3000));
-ok('Overview: its graphs too', await until(`${graphsIn}.every((cols, i) => cols.length === 0 || cols.some(x => x === ${JSON.stringify(WANT)}[i]))`, 4000), await ev(`JSON.stringify(${graphsIn})`));
+ok('Overview: each card\'s name and icon in its colour', await until(`S.L.cats.every((c, i) => { const e = document.querySelector('#view .dcat[data-cat="' + c.id + '"]'); if (!e) return false; const n = e.querySelector('.ch .cn'); return n && (${JSON.stringify(WRGB)}[i] === null || getComputedStyle(n).color === ${JSON.stringify(WRGB)}[i]); })`, 3000));
+ok('Overview: its graphs too', await until(`${graphsIn}.every((cols, i) => cols.length === 0 || !${JSON.stringify(WANT)}[i] || cols.some(x => x === ${JSON.stringify(WANT)}[i]))`, 4000), await ev(`JSON.stringify(${graphsIn})`));
 await click('nav#screens button[data-s="grid"]'); await p.sleep(700);
-ok('Grid: each category\'s header in its colour', await until(`S.L.cats.every((c, i) => { const h = document.querySelector('#view tbody[data-cat="' + c.id + '"] tr.ghdr td'); return h && getComputedStyle(h).color === ${JSON.stringify(WANT.map(rgb))}[i]; })`, 3000));
+ok('Grid: each category\'s header in its colour', await until(`S.L.cats.every((c, i) => { const h = document.querySelector('#view tbody[data-cat="' + c.id + '"] tr.ghdr td'); return h && (${JSON.stringify(WRGB)}[i] === null || getComputedStyle(h).color === ${JSON.stringify(WRGB)}[i]); })`, 3000));
 await click('nav#screens button[data-s="tiles"]'); await p.sleep(700);
 
 // ---- what a category is: by most of its cells ----
@@ -229,7 +236,7 @@ ok('after a reload: OLED and Spectrum, the colours back on, the one picked kept'
 await ev('(() => { delete S.L.cats[0].col; afterChange(); return 1; })()'); await p.sleep(400);
 
 // ---- back to Mono and Standard: as before, nothing left behind ----
-await click('#setBtn');
+await click('#czBtn');
 await pick('sTint', 'none');
 await click(th('classic'));
 ok('Mono again: no category colours, the names grey', await look() === 'classic/none' && (await ccs()).replace(/,/g, '') === '' && await ev('getComputedStyle(document.querySelector("#view .blk h2")).color === "rgb(116, 116, 116)"'));
@@ -266,7 +273,7 @@ const accBox = `(() => { const a = document.querySelector('#setbody .lk-acc'), s
     edit: document.documentElement.style.getPropertyValue('--edit'), acc: S.look.acc, pop: !!document.querySelector('#setbody .lk-fl') }; })()`;
 const AJ = async x => JSON.parse(await ev(`JSON.stringify(${x})`));
 const tintTo = v => AJ(`(() => { document.querySelector('#sTint button[data-v="${v}"]').click(); return ${accBox}; })()`);
-await ev(`(() => { window.__lk0 = JSON.stringify(S.look); window.__mo0 = S.motion; S.motion = 'full'; applyMotion(); S.look = Object.assign({}, S.look, { tint: 'none', acc: '#55aa77', changed: true }); lkPick = null; applyLook(); $('setBtn').click(); return 1; })()`); await p.sleep(900);
+await ev(`(() => { window.__lk0 = JSON.stringify(S.look); window.__mo0 = S.motion; S.motion = 'full'; applyMotion(); S.look = Object.assign({}, S.look, { tint: 'none', acc: '#55aa77', changed: true }); lkPick = null; applyLook(); $('czBtn').click(); return 1; })()`); await p.sleep(900);
 const mb0 = await AJ(accBox);
 ok('Mono with an accent kept: its box folded away as Settings opens, nothing slides, edit mode in the plain white', !!mb0 && mb0.w < 0.5 && mb0.vis === 'hidden' && mb0.dis && mb0.anims === 0 && mb0.edit === '#ffffff' && mb0.acc === '#55aa77', JSON.stringify(mb0));
 const ab0 = await tintTo('accent'); await p.sleep(700); const ab1 = await AJ(accBox);

@@ -12,7 +12,8 @@ const errs = await p.errors();
 const { ok, done } = checks();
 const until = async (expr, ms = 3000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await ev(expr).catch(() => false)) return true; await sleep(100); } return false; };
 const J = async expr => JSON.parse(await ev('JSON.stringify(' + expr + ')'));
-const center = expr => ev(`(() => { const e = ${expr}; if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 22) }; })()`);
+// (a row low in Customize's left column is scrolled into sight first, as a person would)
+const center = expr => ev(`(() => { const e = ${expr}; if (!e) return null; if (e.closest('.cz-rows')) e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 22) }; })()`);
 const move = (x, y) => p.cmd('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
 const tile = id => `document.querySelector('#lkThL [data-lk="theme"][data-k="${id}"]')`;
 const intoView = async expr => { await ev(`(() => { const e = ${expr}, l = $('lkThL'); if (!e) return 0; const r = e.getBoundingClientRect(), lr = l.getBoundingClientRect(); l.scrollTop += r.top - lr.top - 40; return 1; })()`); await sleep(250); };
@@ -20,16 +21,23 @@ const clickOn = async expr => { const c = await center(expr); if (!c) return fal
 const head = () => ev(`document.querySelector('.lk-th-h small').textContent`);
 const jumpBtn = () => ev(`$('lkJump').nextElementSibling.textContent`);
 const savedN = () => ev(`S.lookSaved.length`);
+// (rows by where they stand to one another: a colour's editor makes the pinned picture smaller, so all of them move up together)
+const rel = async sel => { const r = (await rects(sel)).map(x => x.split(',').map(Number)); return r.map(x => [x[0], x[1] - r[0][1], x[2], x[3]]); };
+const relSame = (a, b) => a.length === b.length && a.every((x, i) => x.every((v, k) => Math.abs(v - b[i][k]) <= 1));   // (a pixel of rounding allowed)
 const rects = sel => J(`[...document.querySelectorAll(${JSON.stringify(sel)})].map(e => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)].join(); })`);
 
 ok('the readings come', await until('READ.length > 100 && feed.got', 10000));
 await ev(`(() => { loadStarter(); setEdit(false); S.motion = 'full'; applyMotion(); S.lookSaved = []; return 1; })()`); await sleep(800);
-await ev(`$('setBtn').click(), 1`); await sleep(1300);
+await ev(`$('czBtn').click(), 1`); await sleep(1300);
 
 // ---- the theme row ----
-const g = await J(`(() => { const pv = $('lkPv').getBoundingClientRect(), l = $('lkThL').getBoundingClientRect(), dd = document.querySelector('.lk-th-h .lk-dd').getBoundingClientRect(), tg = [...document.querySelectorAll('#lkThL .lk-tg')].map(x => x.getBoundingClientRect().right);
-  return { pt: pv.top, pb: pv.bottom, lt: l.top, lb: l.bottom, dr: dd.right, gr: Math.max(...tg), dw: dd.width, sb: getComputedStyle($('lkThL')).scrollbarWidth, ar: pv.width / pv.height, win: innerWidth / innerHeight }; })()`);
-ok('preview and list: top and bottom flush, the tiles end at the dropdown\'s right edge, the dropdown 300 px, no bar, the preview the window\'s shape', Math.abs(g.pt - g.lt) < 0.2 && Math.abs(g.pb - g.lb) < 0.2 && Math.abs(g.dr - g.gr) < 0.6 && Math.abs(g.dw - 300) < 0.6 && g.sb === 'none' && Math.abs(g.ar - g.win) < 0.02, g);
+// (layout A, 11-14 03:24: the picture at the top of the right column, the dropdown and the tiles under it; the rows the
+// whole left column. The tiles scroll in a list of their own, so the picture stays where it is)
+const g = await J(`(() => { const pv = $('lkPv').getBoundingClientRect(), l = $('lkThL').getBoundingClientRect(), dd = document.querySelector('#setbody .cz-r > .lk-dd').getBoundingClientRect(), tg = [...document.querySelectorAll('#lkThL .lk-tg')].map(x => x.getBoundingClientRect()), col = document.querySelector('#setbody .cz-r').getBoundingClientRect(), lc = document.querySelector('#setbody .cz-l').getBoundingClientRect(), pin = document.querySelector('#setbody .cz-pin');
+  return { pl: pv.left, pr: pv.right, pt: pv.top, pb: pv.bottom, cl: col.left, cr: col.right, ct: col.top, lcr: lc.right, ll: l.left, lt: l.top, lb: l.bottom, dt: dd.top, db: dd.bottom, dl: dd.left, dr: dd.right, gl: Math.min(...tg.map(x => x.left)), gr: Math.max(...tg.map(x => x.right)), cb: col.bottom, inPin: pin.contains($('lkPv')), inR: !!pin.closest('.cz-r'), sb: getComputedStyle($('lkThL')).scrollbarWidth, ar: pv.width / pv.height, win: innerWidth / innerHeight }; })()`);
+ok('layout A: the picture at the top of the right column, the window\'s shape, over the dropdown; the dropdown over the tiles, the tiles as wide as it, down to the end of the column, with a scrollbar of their own; the rows at the left', g.inPin && g.inR && g.lcr <= g.cl + 0.6 && g.pl >= g.cl - 0.6 && g.pr <= g.cr + 0.6 && g.pt - g.ct < 80 && g.pb <= g.dt + 0.6 && g.lt >= g.db && Math.abs(g.dl - g.gl) < 1.5 && g.gr <= g.dr + 0.6 && Math.abs(g.lb - g.cb) < 1.5 && g.sb === 'auto' && Math.abs(g.ar - g.win) < 0.02, g);
+{ const t0 = await ev(`$('lkPv').getBoundingClientRect().top`); await ev(`(() => { $('lkThL').scrollTop = 400; return 1; })()`); await sleep(300); const t1 = await ev(`$('lkPv').getBoundingClientRect().top`), s1 = await ev(`$('lkThL').scrollTop`); await ev(`(() => { $('lkThL').scrollTop = 0; return 1; })()`); await sleep(200);
+  ok('the tiles scrolled: the picture stays where it is', s1 > 0 && Math.abs(t1 - t0) < 0.6, { t0, t1, s1 }); }
 ok('the preview: his window in his look (Classic), nothing under it', await until(`$('lkPv').querySelectorAll('.lk-pvh').length === 1 && pvKey.includes('"theme":"classic"')`, 3000) && await ev(`!document.querySelector('.lk-th-w + small, .lk-pv + small, .lk-pv figcaption')`));
 ok('the preview is a copy of the view in a shadow root: none of its ids reach the page', await ev(`(() => { const h = $('lkPv').querySelector('.lk-pvh'); return !!h && !!h.shadowRoot && !!h.shadowRoot.querySelector('#view .tile') && document.querySelectorAll('#view').length === 1; })()`));
 const fams = await J(`[...$('lkThL').querySelectorAll('section')].map(s => s.dataset.f)`);
@@ -42,9 +50,9 @@ const bl = await center(`[...document.querySelectorAll('.dsel-m button')].find(b
 ok('Blues: the list glides there, every theme still in it, the dropdown says Blues', await until(`Math.abs($('lkThL').scrollTop - $('lkThL').querySelector('section[data-f="Blues"]').offsetTop) < 1.5`, 2500) && await jumpBtn() === 'Blues' && await ev(`document.querySelectorAll('#lkThL [data-lk="theme"]').length === Object.keys(THEME_PRESETS).length`), await ev(`$('lkThL').scrollTop`));
 await ev(`(() => { const l = $('lkThL'); l.scrollTop = l.querySelector('section[data-f="Greens"]').offsetTop + 30; return 1; })()`); await sleep(400);
 ok('scrolled by hand: the dropdown follows the colour at the top', await jumpBtn() === 'Greens', await jumpBtn());
-ok('more below: the list\'s bottom edge fades', await ev(`$('lkThL').classList.contains('lk-more') && getComputedStyle($('lkThL')).maskImage !== 'none'`));
+ok('more below: marked so, and no faded edge here (the list has its own scrollbar)', await ev(`$('lkThL').classList.contains('lk-more') && getComputedStyle($('lkThL')).maskImage === 'none'`));
 await ev(`(() => { const l = $('lkThL'); l.scrollTop = l.scrollHeight; return 1; })()`); await sleep(300);
-ok('at the very bottom: no fade', await ev(`!$('lkThL').classList.contains('lk-more')`));
+ok('at the very bottom: not marked', await ev(`!$('lkThL').classList.contains('lk-more')`));
 await ev(`(() => { S.motion = 'off'; applyMotion(); const s = $('lkJump'); s.value = 'Pinks'; s.dispatchEvent(new Event('change', { bubbles: true })); return 1; })()`);
 ok('animations Off: the jump at once', await ev(`Math.abs($('lkThL').scrollTop - $('lkThL').querySelector('section[data-f="Pinks"]').offsetTop) < 1.5`));
 await ev(`(() => { S.motion = 'full'; applyMotion(); return 1; })()`);
@@ -61,9 +69,9 @@ ok('a theme clicked: picked, marked, the head says it', await ev(`S.look.theme =
 
 // ---- Save, your own looks ----
 ok('as it comes: no Save', await ev(`!document.querySelector('.lk-save')`));
-const before = await rects('.lk-th-h .lk-dd, #lkPv, #lkThL, .lk-colr, #sTint');
+const before = await rects('#setbody .cz-r > .lk-dd, #lkPv, #lkThL, .lk-colr, #sTint');
 await ev(`(() => { $('sTint').querySelector('[data-v="accent"]').click(); return 1; })()`); await sleep(400);
-ok('changed: Save beside the dropdown, the head says "changed", nothing moved', await ev(`!!document.querySelector('.lk-th-r > .lk-save + .lk-dd')`) && await head() === 'Graphite, changed' && JSON.stringify(await rects('.lk-th-h .lk-dd, #lkPv, #lkThL, .lk-colr, #sTint')) === JSON.stringify(before), await head());
+ok('changed: Save at the right of the theme\'s name, the head says "changed", nothing moved', await ev(`!!document.querySelector('.cz-pin .lk-th-r > .lk-save')`) && await head() === 'Graphite, changed' && JSON.stringify(await rects('#setbody .cz-r > .lk-dd, #lkPv, #lkThL, .lk-colr, #sTint')) === JSON.stringify(before), await head());
 await clickOn(`document.querySelector('.lk-save')`);
 ok('Save: in Saved, as "Graphite", picked, the head says its name, no Save', await savedN() === 1 && await ev(`S.lookSaved[0].name === 'Graphite' && S.look.from === S.lookSaved[0].id && !S.look.changed && !document.querySelector('.lk-save') && document.querySelector('#lkThL .lk-sv').classList.contains('on')`) && await head() === 'Graphite', await head());
 // rename: a double-click on its name, Enter keeps, Escape leaves
@@ -76,7 +84,7 @@ await p.type('Desk'); await p.key('Enter', 'Enter', 13); await sleep(400);
 ok('Enter keeps it: "Desk", in the head too', await ev(`S.lookSaved[0].name === 'Desk'`) && await head() === 'Desk', await head());
 c = await center(nm); await p.cmd('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'left', clickCount: 2 }); await p.cmd('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', clickCount: 2 }); await sleep(300);
 await p.type('Nope'); await p.key('Escape', 'Escape', 27); await sleep(400);
-ok('Escape leaves it as it was, and Settings stays open', await ev(`S.lookSaved[0].name === 'Desk' && !document.querySelector('#lkThL .lk-rn') && $('setmodal').classList.contains('open')`));
+ok('Escape leaves it as it was, and the window stays open', await ev(`S.lookSaved[0].name === 'Desk' && !document.querySelector('#lkThL .lk-rn') && $('setmodal').classList.contains('open')`));
 // changed again: Save updates that one, no new one
 await ev(`(() => { $('sTint').querySelector('[data-v="spectrum"]').click(); return 1; })()`); await sleep(400);
 ok('changed again: "Desk, changed"', await head() === 'Desk, changed');
@@ -110,14 +118,14 @@ ok('up to 12: the + slot goes', await savedN() === 12 && await ev(`!document.que
 await ev(`(() => { S.lookSaved = S.lookSaved.slice(0, 1); lookApplySaved(S.lookSaved[0].id); renderSettings(); return 1; })()`); await sleep(300);
 
 // ---- the colours ----
-await ev(`(() => { const c = $('setmodal').querySelector('.mcard'), r = document.querySelector('.lk-colr'); c.scrollTop += r.getBoundingClientRect().top - c.getBoundingClientRect().top - 40; return 1; })()`); await sleep(300);
+await ev(`(() => { document.querySelector('.lk-colr').scrollIntoView({ block: 'nearest' }); return 1; })()`); await sleep(300);
 const g2 = await J(`(() => { const a = document.querySelector('.lk-acc').getBoundingClientRect(), s = $('sTint').getBoundingClientRect(), i = document.querySelector('.lk-acc i').getBoundingClientRect(); return { h: a.height - s.height, gap: s.left - a.right, w: a.width, il: i.left - a.left, ir: a.right - i.right, it: i.top - a.top, ib: a.bottom - i.bottom }; })()`);
 ok('the accent\'s box: as tall as the control, 10 px before it, 30 wide, its swatch in the middle', Math.abs(g2.h) < 0.5 && Math.abs(g2.gap - 10) < 0.6 && Math.abs(g2.w - 30) < 0.6 && Math.abs(g2.il - g2.ir) < 0.6 && Math.abs(g2.it - g2.ib) < 0.6, g2);
-const rowsBefore = await rects('.lk-cr, .lk-palh');
+const rowsBefore = await rel('.lk-cr, .lk-palh');
 await clickOn(`document.querySelector('.lk-acc')`);
-ok('the accent\'s editor floats under its row, at the right; nothing under it moves', await ev(`(() => { const f = document.querySelector('.lk-colr > .lk-fl'), r = document.querySelector('.lk-colr').getBoundingClientRect(); if (!f) return false; const fr = f.getBoundingClientRect(); return getComputedStyle(f).position === 'absolute' && Math.abs(fr.right - r.right) < 1.5 && fr.top >= r.bottom; })()`) && JSON.stringify(await rects('.lk-cr, .lk-palh')) === JSON.stringify(rowsBefore));
+ok('the accent\'s editor floats under its row, at the right; the rows under it keep their places to one another', await ev(`(() => { const f = document.querySelector('.lk-colr > .lk-fl'), r = document.querySelector('.lk-colr').getBoundingClientRect(); if (!f) return false; const fr = f.getBoundingClientRect(); return getComputedStyle(f).position === 'absolute' && Math.abs(fr.right - r.right) < 1.5 && fr.top >= r.bottom; })()`) && relSame(await rel('.lk-cr, .lk-palh'), rowsBefore));
 await p.key('Escape', 'Escape', 27); await sleep(300);
-ok('Escape shuts it, Settings stays', await until(`!document.querySelector('.lk-fl')`, 1000) && await ev(`$('setmodal').classList.contains('open')`));
+ok('Escape shuts it, the window stays', await until(`!document.querySelector('.lk-fl')`, 1000) && await ev(`$('setmodal').classList.contains('open')`));
 // the palette list (11-10, his "the colors are WAY too close to the name, place them on the right"): an option's colours
 // at the right end of its row; the plain menu's `display: block` had won over the list's own row rule
 await ev(`(() => { $('lkPal').nextElementSibling.click(); return 1; })()`); await sleep(400);
@@ -126,16 +134,19 @@ const pm = await J(`(() => { const m = document.querySelector('.dsel-m'); if (!m
   return { n: rows.length, minGap: Math.min(...rows.map(r => r.gap)), maxEnd: Math.max(...rows.map(r => Math.abs(r.end))), maxMid: Math.max(...rows.map(r => r.mid)), hs: [...new Set(rows.map(r => r.h))], mw: m.getBoundingClientRect().width, bw: $('lkPal').nextElementSibling.getBoundingClientRect().width }; })()`);
 ok('the palette list: every option\'s colours at the right end of its row, well clear of its name, level with it, all rows one height', !!pm && pm.n > 20 && pm.minGap >= 18 && pm.maxEnd < 0.6 && pm.maxMid < 1.5 && pm.hs.length === 1 && pm.mw >= pm.bw - 0.5, pm);
 await ev(`(() => { const b = document.querySelector('.dsel-m button.on'); if (b) b.click(); return 1; })()`); await sleep(300);
-ok('the option that is on, picked again: the list shuts, nothing changes', await ev(`!document.querySelector('.dsel-m') && $('setmodal').classList.contains('open')`) && JSON.stringify(await rects('.lk-cr, .lk-palh')) === JSON.stringify(rowsBefore));
+ok('the option that is on, picked again: the list shuts, nothing changes', await ev(`!document.querySelector('.dsel-m') && $('setmodal').classList.contains('open')`) && relSame(await rel('.lk-cr, .lk-palh'), rowsBefore));
 // a category's own colour: Custom, from the palette it was; Save keeps it with the look
 const cat1 = await ev(`lkCats()[1].id`);
 await clickOn(`document.querySelector('.lk-hx[data-k="${cat1}"]')`);
-ok('a category\'s swatch: its editor floats under its row; nothing moves', await ev(`!!document.querySelector('.lk-rows > .lk-fl')`) && JSON.stringify(await rects('.lk-cr, .lk-palh')) === JSON.stringify(rowsBefore));
-const tone = await ev(`document.querySelectorAll('.lk-fl .lk-pop .lk-g button')[7].dataset.c`);
-await clickOn(`document.querySelectorAll('.lk-fl .lk-pop .lk-g button')[7]`);
-ok('a tone picked: Custom, from its palette, the squares its colours, Save comes; nothing moves', await ev(`$('lkPal').value === '__custom' && $('lkPal').nextElementSibling.textContent.startsWith('Custom') && /^Custom, from /.test(document.querySelector('.lk-palh small').textContent) && !!document.querySelector('.lk-save') && lkCats()[1].col === ${JSON.stringify(tone)}`) && JSON.stringify(await rects('.lk-cr, .lk-palh')) === JSON.stringify(rowsBefore), await ev(`document.querySelector('.lk-palh small').textContent`));
+ok('a category\'s swatch: its editor floats under its row; the rows keep their places to one another', await ev(`!!document.querySelector('.lk-rows > .lk-fl')`) && relSame(await rel('.lk-cr, .lk-palh'), rowsBefore));
+const tone = await ev(`document.querySelectorAll('.lk-fl .lk-pop .lk-g:not(.lk-svg):not(.lk-rec) button')[7].dataset.c`);
+await clickOn(`document.querySelectorAll('.lk-fl .lk-pop .lk-g:not(.lk-svg):not(.lk-rec) button')[7]`);
+// (told apart 11-14: the release run failed the whole line with the palette's text right; each part now says for itself)
+ok('a tone picked: Custom, from its palette, the squares its colours', await ev(`$('lkPal').value === '__custom' && $('lkPal').nextElementSibling.textContent.startsWith('Custom') && /^Custom, from /.test(document.querySelector('.lk-palh small').textContent) && lkCats()[1].col === ${JSON.stringify(tone)}`), await J(`({ pal: $('lkPal').value, dd: $('lkPal').nextElementSibling.textContent, small: document.querySelector('.lk-palh small').textContent, col: lkCats()[1].col, tone: ${JSON.stringify(tone)} })`));
+ok('a tone picked: Save comes', await ev(`!!document.querySelector('.lk-save')`), await J(`[...document.querySelectorAll('#setmodal .lk-save, #setmodal [data-lk="save"]')].map(b => b.className)`));
+{ const now = await rel('.lk-cr, .lk-palh'); ok('a tone picked: the rows keep their places to one another', relSame(now, rowsBefore), { before: rowsBefore, now }); }
 await ev(`lkPickSet(null), 1`); await sleep(300);
-await ev(`(() => { const c = $('setmodal').querySelector('.mcard'); c.scrollTop = 0; return 1; })()`); await sleep(200);
+await ev(`(() => { document.querySelector('#setbody .cz-l').scrollTop = 0; return 1; })()`); await sleep(200);
 await clickOn(`document.querySelector('.lk-save')`);
 ok('Save: the saved look keeps the category\'s colour', await ev(`S.lookSaved[0].cols[${JSON.stringify(cat1)}] === ${JSON.stringify(tone)} && !document.querySelector('.lk-save')`));
 await ev(`(() => { pickTheme('classic'); for (const c of S.L.cats) delete c.col; renderSettings(); return 1; })()`); await sleep(300);
@@ -156,7 +167,7 @@ await ev(`pickTheme('classic'), 1`); await sleep(300);
 ok('a theme picked: its own corners and outline again, Classic plain', await ev(`S.look.rad === undefined && S.look.lineA === undefined && lookPlain() === true`), await ev(`JSON.stringify(S.look)`));
 await ev(`(() => { const l = $('lkThL'); l.scrollTop = l.querySelector('section[data-f="Pinks"]').offsetTop; return 1; })()`); await sleep(300);
 await ev(`(() => { $('setmodal').classList.remove('open'); return 1; })()`); await sleep(700);
-await ev(`$('setBtn').click(), 1`); await sleep(1000);
+await ev(`$('czBtn').click(), 1`); await sleep(1000);
 ok('shut and opened again: at his theme\'s colour, his theme in view, not where the list was left', await jumpBtn() === 'Greys' && await ev(`(() => { const t = ${tile('classic')}, l = $('lkThL').getBoundingClientRect(), r = t.getBoundingClientRect(); return r.top >= l.top - 1 && r.bottom <= l.bottom + 1; })()`), await jumpBtn());
 ok('no page errors', errs.length === 0, errs);
 p.close();
