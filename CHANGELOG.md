@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.1 (2026-11-17)
+
+- The headset's clock has an icon of its own, so its Label on Icon draws a small clock instead of the word TIME. It can be redrawn in the icon editor like the others.
+- The clock on every ready-made page starts with its Label Off.
+
 ## 2.6.0 (2026-11-17)
 
 - Customize > Headset has the headset's own settings: Volume, Noise control (with Transparency), Equalizer and its Gain, Mic volume, Sidetone, Mute light and Auto Off. They are read from the base station and sent to it as you change them; with SteelSeries GG open they show read only.

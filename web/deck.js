@@ -291,7 +291,7 @@ const HSX = (() => {
     const HS_OWN = () => [['Time', [['clock', 'Clock']]], [feed.hs && feed.hs.mouse ? 'Headset and mouse' : 'Headset', [['head', 'Headset battery'], ['spare', 'Spare battery']].concat(feed.hs && feed.hs.mouse ? [['mouse', 'Mouse battery']] : [], [['vol', 'Volume']])], ['Temperatures', [['cpu', 'CPU temperature'], ['gpu', 'GPU temperature']]]];   // (the mouse: HW Dashboard only, 11-13)
     // (11-14, his "logo editor") the icons a theme can have of its own: the built-in ones, then any reading's
     const HS_ICONS = () => [['head', 'Headset'], ['spare', 'Spare battery'], ['vol', 'Speaker'], ['mute', 'Mute']].concat(feed.hs && feed.hs.mouse ? [['mouse', 'Mouse']] : [], [['bolt', 'Charging']]);
-    const HS_ICOK = { head: 1, spare: 1, vol: 1, mute: 1, mouse: 1, bolt: 1 };
+    const HS_ICOK = { head: 1, spare: 1, vol: 1, mute: 1, mouse: 1, bolt: 1, clock: 1 };
     const hsIcoName = k => { const b = HS_ICONS().find(x => x[0] === k); if (b) return b[1]; const own = HS_OWN().flatMap(g => g[1]).find(x => x[0] === k); return own ? own[1] : (BYKEY.get(k) || {}).label || k; };
     const hsIcoRows = k => { const T = hsT(); return (T && T.icons && T.icons[k]) || (HS.icodef || {})[k] || null; };
     const hsHasIco = k => HS_ICO.includes(k) || !!hsIcoRows(k);

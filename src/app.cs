@@ -33,7 +33,7 @@ using HwHeadset;   // (the headset, at the end of this file)
 
 static class AppInfo
 {
-    public const string Version = "2.6.0";
+    public const string Version = "2.6.1";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;
@@ -7355,6 +7355,15 @@ static class Geo
 // small pictures
 static class Ico
 {
+    public static readonly string[] Clock = {   // (11-17: the clock's own icon; Label Icon showed its name, TIME)
+        "..XXX..",
+        ".X.X.X.",
+        "X..X..X",
+        "X..XX.X",
+        "X.....X",
+        ".X...X.",
+        "..XXX..",
+    };
     public static readonly string[] Headset = {
         "..XXXXX..",
         ".X.....X.",
@@ -8516,7 +8525,7 @@ static class Hs
         var ic = CultureInfo.InvariantCulture;
         string hh = p.H12 ? i.Now.ToString("%h", ic) : i.Now.ToString("HH", ic), mm = i.Now.ToString("mm", ic), ss = i.Now.ToString("ss", ic);
         string ap = p.H12 ? (i.Now.Hour < 12 ? "AM" : "PM") : null, date = p.Date ? ClockDate(i.Now, p.DateFmt) : null;
-        var src = new Src { Key = "clock", Name = "TIME", Icon = IconFor("clock", null) };
+        var src = new Src { Key = "clock", Name = "TIME", Icon = IconFor("clock", Ico.Clock) };
         var lab = Label(p, src, p.Bw, p.Bh);
         for (int t = 0; t < 4; t++)
         {
@@ -9730,7 +9739,7 @@ static class HsPage
         var l = new List<HsPreset>();
         Func<int, HsPiece[], HsRow> R = (h, ps) => { var r = new HsRow { H = h }; r.Pieces.AddRange(ps); return r; };
         Action<string, string, string, int, bool, HsRow[]> add = (grp, key, name, cols, lines, rs) => { var pg = new HsRowPage { Cols = cols, Lines = lines, From = "p:" + key }; pg.Rows.AddRange(rs); l.Add(new HsPreset { Key = key, Name = name, Group = grp, G = FromRows(pg, name), Page = pg }); };
-        Func<int, string, bool, HsPiece> Ck = (w, size, date) => { var c = P("clock", "number", w); c.Date = date; c.Size = size; return c; };
+        Func<int, string, bool, HsPiece> Ck = (w, size, date) => { var c = P("clock", "number", w, "off"); c.Date = date; c.Size = size; return c; };   // (no label: his 11-17 "off by default in all the theme pages")
         Func<string, string, string, HsPiece> Gr = (src, src2, kind) => { var g = P(src, "graph", 1, "name"); g.Src2 = src2; g.Graph = kind; g.Over = 120; return g; };
         Func<HsPiece, int, HsPiece> W = (q, w) => { q.W = w; return q; };
         // the three alone
@@ -9806,20 +9815,20 @@ static class HsPage
         };
         addF("watch", "Watch", 10, 1, "blocks", new[] {
             FP("Watch face", 3, 2, new[] {
-                Px(new HsPiece { Src = "clock", Date = false, Size = "l" }, new[] { 0, 12, 126, 38, 0, 1, 2, 1 }),
+                Px(new HsPiece { Src = "clock", Label = "off", Date = false, Size = "l" }, new[] { 0, 12, 126, 38, 0, 1, 2, 1 }),
                 Px(new HsPiece { Src = "head", Align = "left" }, new[] { 0, 0, 42, 11, 0, 0, 1, 1 }),
                 Px(new HsPiece { Src = "spare", Align = "right" }, new[] { 78, 0, 48, 11, 1, 0, 1, 1 }),
                 Px(new HsPiece { Src = "vol", Align = "left" }, new[] { 0, 51, 42, 11, 0, 2, 1, 1 }),
                 Px(new HsPiece { Src = "cpu", Label = "name", Align = "right" }, new[] { 84, 51, 42, 11, 1, 2, 1, 1 }) }),
             FP("Headset watch", 3, 2, new[] {
                 Px(new HsPiece { Src = "head", IK = 2, Size = "l" }, new[] { 0, 12, 126, 38, 0, 1, 2, 1 }),
-                Px(new HsPiece { Src = "clock", Date = false, Align = "left" }, new[] { 0, 0, 42, 11, 0, 0, 1, 1 }),
+                Px(new HsPiece { Src = "clock", Label = "off", Date = false, Align = "left" }, new[] { 0, 0, 42, 11, 0, 0, 1, 1 }),
                 Px(new HsPiece { Src = "spare", Align = "right" }, new[] { 78, 0, 48, 11, 1, 0, 1, 1 }),
                 Px(new HsPiece { Src = "vol", Align = "left" }, new[] { 0, 51, 42, 11, 0, 2, 1, 1 }),
                 Px(new HsPiece { Src = "gpu", Label = "name", Align = "right" }, new[] { 84, 51, 42, 11, 1, 2, 1, 1 }) }) });
         addF("sidebar", "Sidebar", 10, 0, "solid", new[] {
             FP("Clock and column", 6, 3, new[] {
-                Px(new HsPiece { Src = "clock", Size = "l" }, new[] { 0, 0, 88, 62, 0, 0, 2, 6 }),
+                Px(new HsPiece { Src = "clock", Label = "off", Size = "l" }, new[] { 0, 0, 88, 62, 0, 0, 2, 6 }),
                 Px(new HsPiece { Src = "head", At = "above" }, new[] { 92, 0, 34, 17, 2, 0, 1, 2 }),
                 Px(new HsPiece { Src = "spare", At = "above" }, new[] { 92, 22, 34, 17, 2, 2, 1, 2 }),
                 Px(new HsPiece { Src = "vol", At = "above" }, new[] { 92, 45, 34, 17, 2, 4, 1, 2 }) }),
@@ -10043,7 +10052,7 @@ static class HsPage
     static Dictionary<string, object> IconDefaults()
     {
         Func<string[], object> L = a => new List<object>(a);
-        return new Dictionary<string, object> { { "head", L(Ico.Headset) }, { "spare", L(SpareRows) }, { "vol", L(Ico.Speaker) }, { "mute", L(Ico.Mute) }, { "mouse", L(Ico.Mouse) }, { "bolt", L(Ico.Bolt) } };
+        return new Dictionary<string, object> { { "head", L(Ico.Headset) }, { "spare", L(SpareRows) }, { "vol", L(Ico.Speaker) }, { "mute", L(Ico.Mute) }, { "mouse", L(Ico.Mouse) }, { "bolt", L(Ico.Bolt) }, { "clock", L(Ico.Clock) } };
     }
     // a v3 page: its grid, each piece at its cell inside it; one that would cover another's cell is left out
     static HsGPage PageOf(Dictionary<string, object> pd)
