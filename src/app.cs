@@ -33,7 +33,7 @@ using HwHeadset;   // (the headset, at the end of this file)
 
 static class AppInfo
 {
-    public const string Version = "2.5.1";
+    public const string Version = "2.6.0";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;
@@ -4050,7 +4050,7 @@ partial class DeckForm : Form
         HsPage.Load();   // (after the build's start: it may turn the mouse on, which the default page goes by)
         bool hsCheck = Environment.GetEnvironmentVariable("HWDECK_BATT") == "1" || Environment.GetEnvironmentVariable("HWDASH_BATT") == "1";
         if (((!fake && !customData) && !Batt.Blocked()) || hsCheck) Batt.Start();
-        else if (fake && Environment.GetEnvironmentVariable("HWDECK_FAKEHS") == "1") Batt.FakeHeadset();
+        else if (fake && (Environment.GetEnvironmentVariable("HWDECK_FAKEHS") ?? "0") != "0" && Environment.GetEnvironmentVariable("HWDECK_FAKEHS") != "") Batt.FakeHeadset(Environment.GetEnvironmentVariable("HWDECK_FAKEHS"));
         Log("start " + AppInfo.Run + " (pid " + Process.GetCurrentProcess().Id + (fake ? ", fake " + fakeN : "") + ", data " + dataDir + ")");
     }
 
@@ -4336,6 +4336,8 @@ partial class DeckForm : Form
                     { var hr = HsPage.Message(t.Substring(3), m); if (t == "hs.set") Batt.Redraw(); if (hr != null) { var hv = Msg("hsv"); foreach (var kv in hr) hv[kv.Key] = kv.Value; Post(hv); } break; }
                 case "hs.power": if (!fake && !customData) Batt.SetScreen(true.Equals(m["on"])); break;
                 case "hs.screen": { var sm = m.ContainsKey("m") ? m["m"] as string : null; if (!fake && !customData) Batt.SetScreen(sm, true); else if (fake) Batt.SetScreen(sm, false); break; }   // (the Headset tab's Screen: Off, Original, Custom, his 11-14 pick; a --fake copy has no base station: kept in memory only)
+                case "hs.setting": Batt.Setting(m, !fake && !customData); break;   // (the headset's own settings, the Headset tab; a --fake copy keeps them in memory)
+                case "hs.setlook": Batt.SettingsLook(); break;
                 case "hs.refresh": if (!fake && !customData) Batt.Refresh(); break;   // (his 11-14 "add a refresh button to unbug in case it happens")
                 case "hs.export": HsExport(m); break;   // (a headset theme to a file, for another PC; 11-14)
                 case "hs.import": HsImport(m); break;
@@ -7058,6 +7060,7 @@ class Cv
     public readonly bool[,] Px = new bool[128, 64];
     public readonly int Ox, Oy;
     public int Tone;        // 0 solid, 1 half (every other pixel: looks dimmer on the OLED)
+    public bool Hush;       // (11-15) nothing drawn: a part hidden for its blink, its room kept
     public int Outside; public static int Spill;   // pixels a design asked for outside its box (the check counts them)
     public Cv(int dx, int dy) { Ox = dx; Oy = dy; }
     public int Cx0 = 0, Cy0 = 0, Cx1 = W - 1, Cy1 = H - 1, Clipped;   // a piece's own box: pixels past it are counted, not drawn
@@ -7068,6 +7071,7 @@ class Cv
     {
         if (x < 0 || y < 0 || x >= W || y >= H) { Outside++; Spill++; return; }
         if (x < Cx0 || y < Cy0 || x > Cx1 || y > Cy1) { Clipped++; return; }
+        if (Hush) return;
         if (Tone == 1 && ((x + y) & 1) != 0) return;
         Px[x + Ox, y + Oy] = true;
     }
@@ -7281,7 +7285,7 @@ static class Seg
         switch (ch) { case '0': case 'O': return "abcdef"; case '1': return "bc"; case '2': return "abged"; case '3': return "abgcd"; case '4': return "fgbc"; case '5': return "afgcd";
             case '6': return "afgedc"; case '7': return "abc"; case '8': return "abcdefg"; case '9': return "abcdfg"; case '-': return "g"; case 'F': return "aefg"; default: return ""; }
     }
-    public static int CharW(char ch, int w, int t) { return ch == '.' ? t : w; }
+    public static int CharW(char ch, int w, int t) { return ch == '.' || ch == '1' ? t : w; }   // (a 1 only its pen wide: "2 1:32", 11-15)
     public static int Width(string s, int w, int t) { int x = 0; for (int i = 0; i < s.Length; i++) x += CharW(s[i], w, t) + (i > 0 ? t + 1 : 0); return x; }
     public static void Draw(Cv c, int x, int y, int w, int h, int t, string s)
     {
@@ -7291,17 +7295,17 @@ static class Seg
             if (ch == '.') c.Block(x, y + h - t, t, t);
             else
             {
-                string g = Of(ch); int hh = (h - t) / 2;
+                string g = Of(ch); int hh = (h - t) / 2, rx = x + CharW(ch, w, t) - t;   // (the right side: a 1's at its left)
                 foreach (char k in g)
                     switch (k)
                     {
                         case 'a': c.Block(x + 1, y, w - 2, t); break;
                         case 'g': c.Block(x + 1, y + hh, w - 2, t); break;
                         case 'd': c.Block(x + 1, y + h - t, w - 2, t); break;
-                        case 'f': c.Block(x, y + 1, t, hh); break;
-                        case 'b': c.Block(x + w - t, y + 1, t, hh); break;
-                        case 'e': c.Block(x, y + hh + t - 1, t, h - hh - t); break;
-                        case 'c': c.Block(x + w - t, y + hh + t - 1, t, h - hh - t); break;
+                        case 'f': c.Block(x, y + 1, t, hh - 1); break;
+                        case 'b': c.Block(rx, y + 1, t, hh - 1); break;
+                        case 'e': c.Block(x, y + hh + t, t, h - hh - 2 * t); break;
+                        case 'c': c.Block(rx, y + hh + t, t, h - hh - 2 * t); break;
                     }
             }
             x += CharW(ch, w, t) + t + 1;
@@ -7453,6 +7457,8 @@ static class G
 
 class HsPiece
 {
+    public bool AsNum;                  // (11-15: a ring or knob too small for its dial, drawn as a number this time)
+    public bool LabCut;                 // (11-16: its label left out, no room for it inside its dial)
     public string Src = "cpu";          // clock, cpu, gpu, head, spare, mouse, vol, or one of his readings
     public string Style = "number";     // number, bar, ring, knob, graph
     public string Label = "icon";       // icon, name, off (no icon for this reading: its name)
@@ -7470,6 +7476,9 @@ class HsPiece
     public bool? Below;                 // the levels count downwards (null: a battery's do, the rest upwards)
     public double Lo = double.NaN, Hi = double.NaN;       // graph: its own low and high (NaN: from what it shows)
     public bool Seconds, Date = true;   // clock
+    public bool H12;                    // (11-17) clock: 12 hours, AM / PM small after it
+    public string DateAt = "under", DateFmt = "day";   // (11-17) clock: its date under the time or beside it; day (MON 17 NOV), short (17 NOV), num (17/11), wday (MON)
+    public bool DateCut, SecCut;        // (11-17) clock: its date / seconds left out this time, no room in its cell
     public int W = 1, H = 1;            // size in grid cells
     public int X = -1, Y = -1, Bx, By, Bw, Bh;   // where it landed (cells; box in pixels)
     public int AtX = -1, AtY = -1;     // a fixed place in the grid (his rows, x-hspage.cs); -1: the first free one
@@ -7477,9 +7486,15 @@ class HsPiece
     public int Harm;                    // the text height its row shares (0: its own), set by Hs.Harmony
     public bool NoNum;                  // its number hidden (bar, ring, knob, graph; his 11-13 "a digit hider (keeping only bar)")
     public string NameSz = "auto";      // (11-14) its name's size: auto, small, tiny
-    public string OffAs = "word", OffTxt, ChgAs = "blink";   // (11-14) a battery off / empty: its word, his own word (OffTxt), a dash or nothing; charging: the bolt blinking, steady or hidden
+    public string OffAs = "word", OffTxt, ChgAs = "blink";
+    public string LowAs = "icon";       // (11-15) a battery under its low level (Crit; 12 when none): what blinks, none / icon / num / both   // (11-14) a battery off / empty: its word, his own word (OffTxt), a dash or nothing; charging: the bolt blinking, steady or hidden
     public int Dig = -1;                // (11-14) its own big digits (0 to 3); -1: the theme's
     public bool Inv;                    // (11-14) turned over: lit box, dark text (a warning still blinks)
+    // (11-16 his "give people freedom, just how you do in PC screen") the number (V), its unit (U) and its label (I: icon
+    // or name) each sized (K; 0: as before) and nudged (X, Y in screen pixels) on their own; the unit at the number's
+    // bottom (as before), middle, top or under it; FX..FH: its place on a free page (page pixels; FX -1: none)
+    public int VH, WK, BK, UK, IK = 1, VX, VY, UX, UY, IX, IY; public string UAt = "bottom";   // (11-16 round 2: VH the number's height in pixels, WK a word's size, BK the bolt's / zZ's)
+    public int FX = -1, FY, FW, FH;
     public HsPiece Copy() { return (HsPiece)MemberwiseClone(); }
 }
 
@@ -7492,6 +7507,7 @@ class HsLayout
     public int Digits = 1;              // (v3) the theme's big digit design: 0 strokes, 1 pixels, 2 thick strokes, 3 segments
     public Dictionary<string, string[]> Icons;   // (v3, 11-14) the theme's own icons by key; null: the built-in ones
     public List<HsPiece> Pieces = new List<HsPiece>();
+    public bool Free;                   // (11-16) every piece at its own place (FX..FH), no lines
     public int[,] Own; public int[] ColX, ColW, RowY, RowH;   // (set by Place)
 }
 
@@ -7526,7 +7542,7 @@ static class Hs
             default: { string u, n; double mx; Units.TryGetValue(k, out u); Names.TryGetValue(k, out n); return new Src { Key = k, Name = n ?? k.ToUpperInvariant(), Unit = u ?? "", Max = Maxes.TryGetValue(k, out mx) ? mx : 100 }; }
         }
     }
-    class Val { public double V = double.NaN; public string T = "-", U = ""; public bool Chg, ChgSteady, Low, Sleep, Empty, Off; public double Frac { get { return double.IsNaN(V) ? 0 : V; } } }
+    class Val { public double V = double.NaN; public string T = "-", U = ""; public bool Chg, ChgSteady, Low, Sleep, Empty, Off, HideIco, HideNum; public double Frac { get { return double.IsNaN(V) ? 0 : V; } } }
     static Val Get(HsInfo i, string k)
     {
         var v = new Val(); var s = Info(k);
@@ -7559,6 +7575,14 @@ static class Hs
         // (11-14 his "when it's empty, when its off, when its charging the blinking thunder, all this should be customizable")
         if (v.Off || v.Empty) { if (p.OffAs == "dash") v.T = "-"; else if (p.OffAs == "blank") v.T = " "; else if (!string.IsNullOrEmpty(p.OffTxt)) v.T = p.OffTxt; }
         if (v.Chg) { if (p.ChgAs == "none") v.Chg = false; else if (p.ChgAs == "steady") v.ChgSteady = true; }
+        // (11-15 his Battery section: under its low level its label, its number or both are hidden every other second)
+        if (Info(k).Batt && !double.IsNaN(v.V) && v.V <= (double.IsNaN(p.Crit) ? (k == "mouse" ? 15 : 12) : p.Crit) && !HsSt.On(i))
+        {
+            string la = p.LowAs; bool lab = p.Label != "off", num = !p.NoNum || p.Style == "number";   // (a part it doesn't show: the other one blinks instead)
+            if (la == "icon" && !lab) la = "num"; else if (la == "num" && !num) la = "icon";
+            v.HideIco = (la == "icon" || la == "both") && !(v.Chg && p.Style != "graph");   // (charging: its bolt has the label's place every other second; a graph has no bolt)
+            v.HideNum = la == "num" || la == "both";
+        }
         return v;
     }
     static Val Get(HsInfo i, HsPiece p) { return Get(i, p, p.Src); }
@@ -7567,7 +7591,7 @@ static class Hs
     // past its levels: 0 no, 1 yellow, 2 red
     public static int Level(HsInfo i, HsPiece p)
     {
-        if (p.Src == "clock" || (double.IsNaN(p.Warn) && double.IsNaN(p.Crit))) return 0;
+        if (p.Src == "clock" || (double.IsNaN(p.Warn) && double.IsNaN(p.Crit)) || Info(p.Src).Batt) return 0;   // (11-15 a battery: its Battery section blinks a part, it never turns over)
         double v = Get(i, p.Src).V; if (double.IsNaN(v)) return 0;
         bool down = p.Below ?? Info(p.Src).Batt;
         Func<double, bool> past = t => !double.IsNaN(t) && (down ? v <= t : v >= t);
@@ -7581,22 +7605,47 @@ static class Hs
     class NF
     {
         public int K, W, H, T, St;  // K 0 big, 1 small, 2 tiny; St the big ones' design: 0 strokes, 1 pixels, 2 thick strokes, 3 segments
+        public bool Bold;           // (thick strokes at 7 px: the 1 px strokes twice, a pixel apart; a 2 px pen there made blobs, 11-15)
         static readonly int[][] Sizes = { new[] { 23, 43, 3 }, new[] { 18, 34, 2 }, new[] { 16, 30, 2 }, new[] { 14, 26, 2 }, new[] { 12, 22, 2 }, new[] { 10, 18, 2 }, new[] { 8, 14, 2 } };
         public static IEnumerable<NF> All(bool big)
         {
             if (big && BigStyle == 1) foreach (int k in new[] { 6, 5, 4, 3, 2 }) yield return new NF { K = 0, St = 1, W = 5 * k, H = 7 * k, T = k };
-            else if (big) foreach (var s in Sizes) yield return new NF { K = 0, St = BigStyle, W = s[0], H = s[1], T = BigStyle == 2 ? Math.Max(s[2], (s[1] + 4) / 8) : BigStyle == 3 ? Math.Max(2, s[1] / 9) : s[2] };
+            else if (big)
+            {
+                for (int h = 43; h >= 8; h--) yield return At(h, true);   // (every height, as his own size: the Sizes rows alone left Auto 22, 18, 14 or 7, his 11-17 "auto sizing ... pretty bad")
+                yield return new NF { K = 0, St = BigStyle, W = 5, H = 7, T = 1, Bold = BigStyle == 2 };   // (a 7 px step of its design: a tight box keeps the theme's digits, not the plain 5 x 7 font, 11-15)
+            }
             yield return new NF { K = 1 }; yield return new NF { K = 2 };
         }
+        // (11-16 his "isn't there more steps we can put?") the digits at a height of his own: Blocky (the 5 x 7 font scaled) in
+        // steps of 7, the other designs at any height from 7 to 43, their width and pen between the Sizes rows (as the rows
+        // at a row's height); 5 or 6: the 3 x 5 font; a word in a design with no letters: the 5 x 7 font
+        public static NF At(int vh, bool big)
+        {
+            if (vh <= 6) return new NF { K = 2 };
+            if (!big) return new NF { K = 1 };
+            if (BigStyle == 1) { int k = Math.Min(6, vh / 7); return k <= 1 ? new NF { K = 1 } : new NF { K = 0, St = 1, W = 5 * k, H = 7 * k, T = k }; }
+            int h = Math.Min(43, vh);
+            if (h <= 7) return new NF { K = 0, St = BigStyle, W = 5, H = 7, T = 1, Bold = BigStyle == 2 };
+            int[] a = { 5, 7, 1 }, b = Sizes[0];
+            foreach (var r in Sizes) { if (r[1] <= h && r[1] > a[1]) a = r; if (r[1] >= h && r[1] < b[1]) b = r; }
+            int w = b[1] == a[1] ? a[0] : (int)Math.Round(a[0] + (b[0] - a[0]) * (h - a[1]) / (double)(b[1] - a[1])), t0 = h == b[1] ? b[2] : a[2];
+            int t = BigStyle == 2 ? Math.Max(t0 + 1, (h + 3) / 7) : BigStyle == 3 ? (h < 14 ? 1 : Math.Max(2, h / 9)) : t0;   // (segments under 14: a 1 px pen, a 2 px one turned the 1 into a colon)
+            return new NF { K = 0, St = BigStyle, W = w, H = h, T = t };
+        }
+        // a word (EMPTY, OFF, his own) at his own size: the 5 x 7 font times k, whatever the digits' design
+        public static NF Word(int k) { return k <= 1 ? new NF { K = 1 } : new NF { K = 0, St = 1, W = 5 * k, H = 7 * k, T = k }; }
         public int Ht { get { return K == 0 ? H : K == 1 ? 7 : 5; } }
         Fnt F { get { return K == 1 ? Fnt.Small : Fnt.Tiny; } }
         public int Gap { get { return K == 0 ? (St == 1 ? T : T + 1) : 1; } }   // (the pixel digits: their % as far as a digit, 11-13)
-        public int TextW(string s) { return K != 0 ? F.Width(s) : St == 1 ? Fnt.Small.Width(s, T) : St == 3 ? Seg.Width(s, W, T) : Geo.Width(s, W, T); }
+        public int TextW(string s) { return K != 0 ? F.Width(s) : St == 1 ? Fnt.Small.Width(s, T) : St == 3 ? Seg.Width(s, W, T) : Bold ? BoldW(s) : Geo.Width(s, W, T); }
+        int BoldW(string s) { int x = 0; for (int i = 0; i < s.Length; i++) x += Geo.CharW(s[i], W, T) + 1 + (i > 0 ? T + 1 : 0); return x; }
         public void Text(Cv c, int x, int y, string s)
         {
             if (K != 0) F.Draw(c, x, y, s);
             else if (St == 1) Fnt.Small.Draw(c, x, y, s, T);
             else if (St == 3) Seg.Draw(c, x, y, W, H, T, s);
+            else if (Bold) foreach (char ch in s) { Geo.Char(c, x, y, W, H, T, ch); Geo.Char(c, x + 1, y, W, H, T, ch); x += Geo.CharW(ch, W, T) + 1 + T + 1; }
             else Geo.Draw(c, x, y, W, H, T, s);
         }
         int PW { get { return Math.Max(7, W * 2 / 3); } }
@@ -7609,7 +7658,7 @@ static class Hs
         {
             if (u == "") return 0;
             if (K != 0) return F.Width(u);
-            if (u == "%") return H >= 14 ? Fnt.Small.Width("%", PK) : Geo.CharW('%', PW, PT);
+            if (u == "%") return H >= 14 ? Fnt.Small.Width("%", PK) : H < 14 ? Fnt.Small.Width("%") : Geo.CharW('%', PW, PT);   // (the 7 px step: the 5 x 7 font's %)
             if (u == DG) return DS;
             return UF.Width(u);
         }
@@ -7617,14 +7666,20 @@ static class Hs
         {
             if (u == "") return;
             if (K != 0) { F.Draw(c, x, y, u); return; }
-            if (u == "%") { if (H >= 14) Fnt.Small.Draw(c, x, y + H - 7 * PK, "%", PK); else Geo.Char(c, x, y + H - PH, PW, PH, PT, '%'); }
+            if (u == "%") { if (H >= 14) Fnt.Small.Draw(c, x, y + H - 7 * PK, "%", PK); else if (H < 14) Fnt.Small.Draw(c, x, y + H - 7, "%"); else Geo.Char(c, x, y + H - PH, PW, PH, PT, '%'); }
             else if (u == DG) { c.Rect(x, y, DS, DS); if (T >= 3) c.Rect(x + 1, y + 1, DS - 2, DS - 2); }
             else UF.Draw(c, x, y + H - UF.H, u);
         }
         public int ValueW(string s, string u) { return TextW(s) + (u == "" ? 0 : Gap + UnitW(u)); }
+        // (11-16) the unit's height, and how far under the number's top Unit draws it
+        public int UnitH(string u) { if (u == "") return 0; if (K != 0) return F.H; if (u == "%") return H >= 14 ? 7 * PK : H < 14 ? 7 : PH; if (u == DG) return DS; return UF.H; }
+        public int UnitOff(string u) { if (u == "" || K != 0) return 0; if (u == "%") return H >= 14 ? H - 7 * PK : H < 14 ? H - 7 : H - PH; if (u == DG) return 0; return H - UF.H; }
+        // the theme's digits at 7 px (a bar's number); Blocky: none, its 7 px step is the 5 x 7 font itself
+        public static NF Seven() { if (BigStyle == 1) return null; foreach (var f in All(true)) if (f.K == 0 && f.H == 7) return f; return null; }
         public void Value(Cv c, int x, int y, string s, string u) { Text(c, x, y, s); if (u != "") Unit(c, x + TextW(s) + Gap, y, u); }
     }
-    static bool BigOk(string s) { foreach (char ch in s) if (!char.IsDigit(ch) && ch != 'O' && ch != 'F' && ch != '-' && ch != '.') return false; return true; }
+    static bool Letters(string s) { bool a = false; foreach (char ch in s) { if (ch >= 'A' && ch <= 'Z') a = true; else if (!char.IsDigit(ch) && ch != '-' && ch != '.' && ch != ' ') return false; } return a; }
+    static bool BigOk(string s) { if (BigStyle == 1 && Letters(s)) return true; foreach (char ch in s) if (!char.IsDigit(ch) && ch != 'O' && ch != 'F' && ch != '-' && ch != '.') return false; return true; }
     static NF Fit(int maxW, int maxH, string s, string u)
     {
         NF last = null;
@@ -7652,6 +7707,7 @@ static class Hs
     }
     static void DrawLabel(Cv c, HsInfo i, Lab l, Src s, Val v, int x, int y)
     {
+        if (v.HideIco) return;   // (its low blink)
         if (l.Kind == 1)
         {
             if (l.Batt && l.Mini) { int t = c.Tone; if (v.Empty) c.Tone = 1; c.Rect(x, y, 10, 5); c.Set(x + 10, y + 2); c.Tone = t; if (!v.Empty && v.Frac > 0) c.HLine(x + 2, x + 2 + Math.Max(0, (int)Math.Round(5 * Math.Min(100, v.Frac) / 100)), y + 2); }
@@ -7671,6 +7727,15 @@ static class Hs
         c.Block(x + 2, y + 2, Math.Max(1, (inner * Math.Min(100, pct) + 50) / 100), h - 4);
     }
     // a bolt while charging, "zZ" while asleep, beside the value (2x next to big numbers)
+    // (11-16) the mark at his own size k (bk), 0: the bolt 2x by a big number as before, zZ always 1x as before
+    static int MarkK(Val v, int vh, int bk) { return bk > 0 ? bk : v.Chg && vh >= 26 ? 2 : 1; }
+    static int MarkW(Val v, int vh, int bk) { int k = MarkK(v, vh, bk); return v.Chg ? G.W(IconFor("bolt", Ico.Bolt)) * k + 2 * k : v.Sleep ? 9 * k : 0; }
+    static void Mark(Cv c, Val v, int x, int y, int vh, int bk)
+    {
+        int k = MarkK(v, vh, bk);
+        if (v.Chg) { var bo = IconFor("bolt", Ico.Bolt); G.BmpK(c, x, y + (vh - bo.Length * k) / 2, bo, k); }
+        else if (v.Sleep) { if (k <= 1) G.Zz(c, x, y + (vh - 7) / 2); else { int y0 = y + (vh - 7 * k) / 2; Fnt.Tiny.Draw(c, x, y0 + 2 * k, "Z", k); Fnt.Tiny.Draw(c, x + 4 * k, y0, "Z", k); } }
+    }
     static int MarkW(Val v, int vh) { int k = vh >= 26 ? 2 : 1; return v.Chg ? G.W(IconFor("bolt", Ico.Bolt)) * k + 2 * k : v.Sleep ? 9 : 0; }
     static void Mark(Cv c, Val v, int x, int y, int vh)
     {
@@ -7691,6 +7756,7 @@ static class Hs
         for (int k = 0; k < L.Pieces.Count; k++)
         {
             var p = L.Pieces[k]; p.X = p.Y = -1;
+            if (L.Free && p.FX >= 0 && p.FW > 0) { p.X = p.Y = 0; p.Bx = Math.Min(p.FX, Cv.W - 1); p.By = Math.Max(0, Math.Min(p.FY, Cv.H - 1)); p.Bw = Math.Max(1, Math.Min(p.FW, Cv.W - p.Bx)); p.Bh = Math.Max(1, Math.Min(p.FH, Cv.H - p.By)); continue; }   // (11-16 a free page: its own place)
             int w = Math.Min(p.W, L.Cols), h = Math.Min(p.H, L.Rows);
             if (p.AtX >= 0 && p.AtY >= 0)
             {
@@ -7721,7 +7787,7 @@ static class Hs
         L.Own = own; L.ColX = cx; L.ColW = cw; L.RowY = ry; L.RowH = rh;
         foreach (var p in L.Pieces)
         {
-            p.Shared = false;
+            p.Shared = false; if (L.Free) { p.Shared = p.X >= 0; continue; }
             foreach (var q in L.Pieces)
                 if (q != p && q.X >= 0 && p.X >= 0 && q.Y < p.Y + Math.Min(p.H, L.Rows) && p.Y < q.Y + Math.Min(q.H, L.Rows)) p.Shared = true;   // (any piece, not only a number: beside a bar or the clock too, his 11-13 "auto is broken in the mouse")
         }
@@ -7749,7 +7815,7 @@ static class Hs
             c.ClipTo(p.Bx, p.By, p.Bw, p.Bh);
             Piece(c, i, p);
             p.Bx = x0; p.By = y0; p.Bw = w0; p.Bh = h0;
-            if (lv == 1 || (lv == 2 && HsSt.On(i))) c.Invert(p.Bx, p.By, p.Bw, p.Bh);   // (yellow: turned over; red: blinking so)
+            int raw = Level(i, p); if (p.Inv ^ (raw == 1) ^ (raw == 2 && HsSt.On(i))) c.Invert(p.Bx, p.By, p.Bw, p.Bh);   // (yellow: turned over, red: blinking so; on a piece turned over by his pick a warning flips it back, the tester's F15 11-15)
         }
         BigStyle = L.Digits;
         c.NoClip();
@@ -7768,11 +7834,14 @@ static class Hs
     static int LvOf(HsInfo i, HsPiece p) { int lv = Level(i, p); return p.Inv && lv == 0 ? 1 : lv; }   // (turned over by his pick: drawn as a yellow level is)
     public static void Harmony(HsLayout L, HsInfo i)
     {
-        var groups = new Dictionary<string, List<HsPiece>>(); var mins = new Dictionary<string, int>();
+        // (11-17 his "auto sizing ... pretty bad": a row shared one size, but cells of one size in another row had their own
+        // (18 px over 22 px on his page). Now a row, and cells of one size anywhere on the page (3 px either way), are one
+        // group: the smallest size of them all; decimals still never pull a group down)
+        var ps = new List<HsPiece>(); var hs = new List<int>(); var ks = new List<string>(); var rk = new List<string>(); var ws = new List<int>(); var hh = new List<int>(); var dec = new List<bool>();
         foreach (var p in L.Pieces)
         {
             p.Harm = 0;
-            if (p.X < 0 || p.Src == "clock") continue;
+            if (p.X < 0 || p.Src == "clock" || p.VH > 0) continue;   // (11-16: his own height sizes on its own; a word at his size measures 0, so skips while it shows)
             bool dial = p.Style == "ring" || p.Style == "knob"; if (!dial && p.Style != "number") continue;
             int x0 = p.Bx, y0 = p.By, w0 = p.Bw, h0 = p.Bh;
             Inset(L, p, LvOf(i, p)); BigStyle = p.Dig >= 0 ? p.Dig : L.Digits;
@@ -7781,11 +7850,15 @@ static class Hs
             if (h < 0) { kind = "n"; h = Number(null, i, p, true); }   // (a ring too small for its number is drawn as a number: sized with the numbers beside it)
             p.Bx = x0; p.By = y0; p.Bw = w0; p.Bh = h0;
             if (h <= 0) continue;   // (an empty spare's ring: no number to size)
-            string key = kind + p.Y + "/" + Math.Min(p.H, L.Rows);
-            List<HsPiece> g; if (!groups.TryGetValue(key, out g)) { groups[key] = g = new List<HsPiece>(); mins[key] = h; }
-            g.Add(p); mins[key] = Math.Min(mins[key], h);
+            ps.Add(p); hs.Add(h); ks.Add(kind); rk.Add(L.Free ? kind + "f" + y0 + "/" + h0 : kind + p.Y + "/" + Math.Min(p.H, L.Rows)); ws.Add(w0); hh.Add(h0); dec.Add(p.Dec > 0);
         }
-        foreach (var kv in groups) if (kv.Value.Count >= 2) foreach (var p in kv.Value) p.Harm = mins[kv.Key];
+        int n = ps.Count; var up = new int[n]; for (int k = 0; k < n; k++) up[k] = k;
+        Func<int, int> root = null; root = k => up[k] == k ? k : (up[k] = root(up[k]));
+        for (int a = 0; a < n; a++) for (int b = a + 1; b < n; b++)
+            if (ks[a] == ks[b] && (rk[a] == rk[b] || (Math.Abs(ws[a] - ws[b]) <= 3 && Math.Abs(hh[a] - hh[b]) <= 3))) up[root(a)] = root(b);
+        var min = new Dictionary<int, int>(); var cnt = new Dictionary<int, int>();
+        for (int k = 0; k < n; k++) { int r = root(k); int c; cnt.TryGetValue(r, out c); cnt[r] = c + 1; if (dec[k]) continue; int m; min[r] = min.TryGetValue(r, out m) ? Math.Min(m, hs[k]) : hs[k]; }
+        for (int k = 0; k < n; k++) { int r = root(k), m; if (cnt[r] >= 2 && min.TryGetValue(r, out m)) ps[k].Harm = m; }   // (a decimals piece takes its group's size, never sets it)
     }
     // the widest value a piece shows: a percentage 100, else its digits as 0s (the widest digit). Drawn at that one's
     // size, a number keeps its size as it changes (62 to 100, 9 to 10)
@@ -7849,6 +7922,8 @@ static class Hs
     // widest value it shows fits, at most its row's (measure: only that size) ----
     static int Number(Cv c, HsInfo i, HsPiece p, bool measure = false)
     {
+        if (!measure && PartLog != null && p.Src != "clock") { WkLog(i, p); FitLog(i, p); }   // (11-16 F50 / F51: vhmax, bkmax for the editor)   // (11-16 review: wkmax for the editor)
+        if (ForceX || Opt(p) || (!measure && WordCase(i, p))) return NumberX(c, i, p, measure);   // (11-16)
         int bx = p.Bx, by = p.By, bw = p.Bw, bh = p.Bh;
         var s = Info(p.Src); var v = Get(i, p); bool on = HsSt.On(i);
         var l = Label(p, s, bw, bh);
@@ -7860,7 +7935,7 @@ static class Hs
         // changes no size)
         bool swap = v.Chg && l.Kind > 0;
         int lw = !above && l.Kind > 0 ? l.W + 3 : 0, lh = above ? l.H + 2 : 0, room = bw - lw - Math.Max(s.Key == "mouse" ? 9 : 0, swap ? 0 : MarkW(v, 26));
-        var f = Fit(room, Math.Min(bh - lh, cap), Widest(p, s, v), v.U);
+        var f = Fit(room - AutoEdge(), Math.Min(bh - lh, cap), Widest(p, s, v), v.U);   // (2 px clear at each side, the three designs, 11-17)
         if (measure) return f.Ht;
         if (f.ValueW(v.T, v.U) > room || (f.K == 0 && !BigOk(v.T))) f = Fit(room, Math.Min(bh - lh, f.Ht), v.T, v.U);   // (OFF, EMPTY: in letters)
         int vw = f.ValueW(v.T, v.U), mw = swap ? 0 : MarkW(v, f.Ht);
@@ -7872,10 +7947,12 @@ static class Hs
             int lx = p.Align == "middle" ? bx + (bw - l.W) / 2 : p.Align == "right" ? bx + bw - l.W : bx;
             int vx = p.Align == "middle" ? bx + (bw - rw) / 2 : p.Align == "right" ? bx + bw - rw : bx;
             if (markNow) Mark(c, v, lx + Math.Max(0, (l.W - (v.Chg ? G.W(IconFor("bolt", Ico.Bolt)) : 7)) / 2), by, l.H);
-            else if (!(dim && f.K != 0)) DrawLabel(c, i, l, s, v, lx, by);
+            else if (!(dim && !(f.K == 0 && f.H > 7))) DrawLabel(c, i, l, s, v, lx, by);
+            if (l.Kind > 0) PartBox(p, "icon", lx, by, l.W, l.H);
             int vy = by + lh + (bh - lh - f.Ht) / 2;
-            if (dim && f.K == 0) c.Tone = 1;
-            f.Value(c, vx, vy, v.T, v.U); c.Tone = 0;
+            if (dim && f.K == 0 && f.H > 7) c.Tone = 1;   // (the 7 px step dims as the small font, review 11-15)
+            c.Hush = v.HideNum; f.Value(c, vx, vy, v.T, v.U); c.Hush = false; c.Tone = 0;
+            PartsOf(p, f, vx, vy, v);
             if (!swap) Mark(c, v, vx + vw + gap, vy, f.Ht);
         }
         else
@@ -7887,28 +7964,288 @@ static class Hs
             int lx = middle || p.Align != "auto" ? gx : bx;
             int vy = by + (bh - f.Ht) / 2;
             if (markNow) Mark(c, v, lx + Math.Max(0, (l.W - (v.Chg ? G.W(IconFor("bolt", Ico.Bolt)) : 7)) / 2), by + (bh - l.H) / 2, l.H);
-            else if (!(dim && f.K != 0)) DrawLabel(c, i, l, s, v, lx, by + (bh - l.H) / 2);
+            else if (!(dim && !(f.K == 0 && f.H > 7))) DrawLabel(c, i, l, s, v, lx, by + (bh - l.H) / 2);
+            if (l.Kind > 0) PartBox(p, "icon", lx, by + (bh - l.H) / 2, l.W, l.H);
             if (!swap) Mark(c, v, vx - mw, vy, f.Ht);
-            if (dim && f.K == 0) c.Tone = 1;
-            f.Value(c, vx, vy, v.T, v.U); c.Tone = 0;
+            if (dim && f.K == 0 && f.H > 7) c.Tone = 1;   // (the 7 px step dims as the small font, review 11-15)
+            c.Hush = v.HideNum; f.Value(c, vx, vy, v.T, v.U); c.Hush = false; c.Tone = 0;
+            PartsOf(p, f, vx, vy, v);
         }
         return f.Ht;
     }
 
     // ---- bar: label, bar, value on one line; label and value over the bar when the box is tall ----
+    // ======== 11-16 the number in parts (his "give people freedom, just how you do in PC screen") ========
+    // the number, its unit and its label (icon or name) each sized and nudged on their own; the unit at the number's
+    // bottom (as before), middle, top or under it; the label beside it (left, as before), above, right or below. Nothing
+    // set: the old Number draws; NumberX with every option at its default draws the same pixels (ForceX, the checks)
+    internal static bool ForceX;
+    public static List<object[]> PartLog;   // (the editor's picture only: each part's box in page pixels, while set)
+    static void PartBox(HsPiece p, string part, int x, int y, int w, int h) { if (PartLog != null && w > 0 && h > 0) PartLog.Add(new object[] { p, part, x, y, w, h }); }
+    static void PartsOf(HsPiece p, NF f, int vx, int vy, Val v)
+    {
+        if (PartLog == null) return;
+        int tw = f.TextW(v.T); PartBox(p, "value", vx, vy, tw, f.Ht);
+        if (v.U != "") PartBox(p, "unit", vx + tw + f.Gap, vy + f.UnitOff(v.U), f.UnitW(v.U), f.UnitH(v.U));
+    }
+    // the reply's "parts": a piece each, in the page's order: null (not a number) or {icon, value, unit: [x, y, w, h]} in
+    // the rects' fractions
+    public static List<object> PartsReply(List<HsPiece> ps, List<object[]> log)
+    {
+        Func<double, double> F = d => Math.Round(d, 5);
+        var l = new List<object>();
+        foreach (var p in ps)
+        {
+            Dictionary<string, object> d = null;
+            if (p.X >= 0 && log != null) foreach (var e in log) if (e[0] == p && e.Length == 6) { if (d == null) d = new Dictionary<string, object>(); d[(string)e[1]] = new object[] { F(((int)e[2] + 1) / 128.0), F(((int)e[3] + 1) / 64.0), F((int)e[4] / 128.0), F((int)e[5] / 64.0) }; }
+            l.Add(d);
+        }
+        return l;
+    }
+    static int AutoEdge() { return BigStyle == 1 ? 0 : 4; }   // (Auto's room kept clear at a cell's sides: Strokes, Thick strokes, Seven segments filled their cells edge to edge, his 11-17)
+    static bool Opt(HsPiece p) { return p.VH > 0 || p.WK > 0 || p.BK > 0 || p.UK > 0 || p.IK > 1 || p.VX != 0 || p.VY != 0 || p.UX != 0 || p.UY != 0 || p.IX != 0 || p.IY != 0 || p.UAt != "bottom" || p.At != "beside"; }   // (above too: centred as beside is in a big box, his mock 11-16)
+    // EMPTY, OFF or his own word (in letters): drawn the new way, which may put the label above to draw it bigger
+    static bool WordCase(HsInfo i, HsPiece p) { if (p.At != "beside" || p.Label == "off" || BigStyle != 1) return false; var v = Get(i, p); return (v.Empty || v.Off) && Letters(v.T); }
+    // the label above when that draws the word bigger than beside it (his "make it default as well")
+    // (11-16 review) a word at his size: the largest k from k0 down that fits beside its label (or alone), or above it when
+    // its label is beside (NumberX's own gaps and mark room); 0: none fits. up: it fits only above
+    static int WordFitK(HsPiece p, Src s, Val v, int kind, int LW, int LH, int bw, int bh, int k0, string t, out bool up)
+    {
+        int ik = Math.Max(1, p.IK), sg = ik > 1 ? 4 : 3, vg = ik > 1 ? 4 : 2;
+        int mk = Math.Max(s.Key == "mouse" ? 9 * Math.Max(1, p.BK) : 0, v.Chg && kind > 0 ? 0 : MarkW(v, 26, p.BK));
+        bool vertAt = (p.At == "above" || p.At == "below") && kind > 0 && bh - (LH + vg) >= 5, canUp = p.At == "beside" && kind > 0 && bh - (LH + vg) >= 5;
+        up = false;
+        for (int k = k0; k >= 1; k--)
+        {
+            var w = NF.Word(k); int ww = w.TextW(t), wh = w.Ht;
+            if (vertAt) { if (ww <= bw - mk && wh <= bh - (LH + vg)) return k; continue; }
+            if (ww <= bw - (kind > 0 ? LW + sg : 0) - mk && wh <= bh) return k;
+            if (canUp && ww <= bw - mk && wh <= bh - (LH + vg)) { up = true; return k; }
+        }
+        return 0;
+    }
+    // the largest word size that fits this piece now (its word: the one showing, else EMPTY / OFF / his own), for the editor
+    static void WkLog(HsInfo i, HsPiece p)
+    {
+        var s = Info(p.Src); var v = Get(i, p);
+        bool shows = (v.Empty || v.Off) && Letters(v.T);
+        string t = shows ? v.T : p.OffAs == "word" && (p.Src == "spare" || p.Src == "head") ? (p.OffTxt ?? (p.Src == "spare" ? "EMPTY" : "OFF")) : null;
+        if (t == null || !Letters(t)) return;
+        var v2 = shows ? v : new Val { T = t, Empty = p.Src == "spare", Off = p.Src != "spare" };
+        var l = Label(p, s, p.Bw, p.Bh); int ik = Math.Max(1, p.IK); bool up;
+        PartLog.Add(new object[] { p, "#wkmax", WordFitK(p, s, v2, l.Kind, l.W * ik, l.H * ik, p.Bw, p.Bh, 4, t, out up) });
+    }
+    // (11-16 the tester's F50) the tallest set height this number piece's widest value, unit and label fit its box at, as it
+    // is set now (label place and size, unit place and size; the nudges left out): the heights the Size slider offers. And
+    // (F51) the largest bolt / zZ size that draws differently from the one under it, where it shows now
+    // (11-16 the tester's F52) the tallest of his own heights this number fits its box at, as FitLog measures it for the
+    // Size slider (0: none fits): a height set in another digit design is drawn at this one
+    static int VhBest(HsInfo i, HsPiece p)
+    {
+        int bw = p.Bw, bh = p.Bh;
+        var s = Info(p.Src); var v = Get(i, p);
+        var l = Label(p, s, bw, bh);
+        int ik = Math.Max(1, p.IK), LW = l.W * ik, LH = l.H * ik, sg = ik > 1 ? 4 : 3, vg = ik > 1 ? 4 : 2;
+        bool vert = (p.At == "above" || p.At == "below") && l.Kind > 0 && bh - (LH + vg) >= 5;
+        bool swap = v.Chg && l.Kind > 0;
+        string u = v.U, t = Widest(p, s, v); bool under = p.UAt == "under" && u != "";
+        int res = s.Key == "mouse" ? 9 * Math.Max(1, p.BK) : 0;   // (the room a mouse keeps for its zZ)
+        int[] hs = BigStyle == 1 ? new[] { 42, 35, 28, 21, 14, 7, 5 } : new[] { 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5 };
+        int best = 0;
+        foreach (int h in hs)
+        {
+            var f = NF.At(h, BigOk(t));
+            int tw = f.TextW(t), th = f.Ht, uw = u == "" ? 0 : p.UK > 0 ? Fnt.Small.Width(u, p.UK) : f.UnitW(u), uh = u == "" ? 0 : p.UK > 0 ? 7 * p.UK : f.UnitH(u), bw0, bh0;
+            if (u == "") { bw0 = tw; bh0 = th; }
+            else
+            {
+                int ux, uy;
+                if (under) { ux = tw - uw; uy = th + 2; } else { ux = tw + f.Gap; uy = p.UAt == "top" ? 0 : p.UAt == "middle" ? (th - uh) / 2 : p.UK > 0 ? th - uh : f.UnitOff(u); }
+                bw0 = Math.Max(tw, ux + uw) - Math.Min(0, ux); bh0 = Math.Max(th, uy + uh) - Math.Min(0, uy);
+            }
+            int mw = Math.Max(res, swap ? 0 : MarkW(v, f.Ht, p.BK)), w, ht;
+            if (vert) { w = Math.Max(LW, bw0 + (mw > 0 ? (f.K == 0 ? 4 : 2) + mw : 0)); ht = LH + vg + bh0; }
+            else { w = (l.Kind > 0 ? LW + sg : 0) + mw + bw0; ht = Math.Max(bh0, l.Kind > 0 ? LH : 0); }
+            if (w <= bw && ht <= bh) { best = h; break; }
+        }
+        return best;
+    }
+    static void FitLog(HsInfo i, HsPiece p)
+    {
+        int bw = p.Bw, bh = p.Bh;
+        var s = Info(p.Src); var v = Get(i, p);
+        var l = Label(p, s, bw, bh);
+        int ik = Math.Max(1, p.IK), LW = l.W * ik, LH = l.H * ik, sg = ik > 1 ? 4 : 3, vg = ik > 1 ? 4 : 2;
+        bool vert = (p.At == "above" || p.At == "below") && l.Kind > 0 && bh - (LH + vg) >= 5;
+        bool swap = v.Chg && l.Kind > 0;
+        string u = v.U, t = Widest(p, s, v); bool under = p.UAt == "under" && u != "";
+        int res = s.Key == "mouse" ? 9 * Math.Max(1, p.BK) : 0;   // (the room a mouse keeps for its zZ)
+        int[] hs = BigStyle == 1 ? new[] { 42, 35, 28, 21, 14, 7, 5 } : new[] { 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5 };
+        int best = 0;
+        foreach (int h in hs)
+        {
+            var f = NF.At(h, BigOk(t));
+            int tw = f.TextW(t), th = f.Ht, uw = u == "" ? 0 : p.UK > 0 ? Fnt.Small.Width(u, p.UK) : f.UnitW(u), uh = u == "" ? 0 : p.UK > 0 ? 7 * p.UK : f.UnitH(u), bw0, bh0;
+            if (u == "") { bw0 = tw; bh0 = th; }
+            else
+            {
+                int ux, uy;
+                if (under) { ux = tw - uw; uy = th + 2; } else { ux = tw + f.Gap; uy = p.UAt == "top" ? 0 : p.UAt == "middle" ? (th - uh) / 2 : p.UK > 0 ? th - uh : f.UnitOff(u); }
+                bw0 = Math.Max(tw, ux + uw) - Math.Min(0, ux); bh0 = Math.Max(th, uy + uh) - Math.Min(0, uy);
+            }
+            int mw = Math.Max(res, swap ? 0 : MarkW(v, f.Ht, p.BK)), w, ht;
+            if (vert) { w = Math.Max(LW, bw0 + (mw > 0 ? (f.K == 0 ? 4 : 2) + mw : 0)); ht = LH + vg + bh0; }
+            else { w = (l.Kind > 0 ? LW + sg : 0) + mw + bw0; ht = Math.Max(bh0, l.Kind > 0 ? LH : 0); }
+            if (w <= bw && ht <= bh) { best = h; break; }
+        }
+        PartLog.Add(new object[] { p, "#vhmax", best });
+        if (!v.Chg && !v.Sleep) return;
+        // the k each bk (0 auto, 1..3) draws: in the label's place capped as NumberX draws it, beside the number as Mark does
+        int cap = Math.Max(1, Math.Min((LW + sg) / 5, (vert ? LH + vg - 1 : bh) / 7));
+        var kOf = new int[4];
+        for (int b = 0; b <= 3; b++)
+        {
+            if (swap) kOf[b] = Math.Max(1, Math.Min(MarkK(v, LH, b), cap));
+            else kOf[b] = MarkK(v, NumberHt(i, p), b);
+        }
+        int bk = 0; for (int b = 3; b >= 1; b--) if (kOf[b] != kOf[b - 1]) { bk = b; break; }
+        PartLog.Add(new object[] { p, "#bkmax", bk });
+    }
+    // the number's height as it draws now (the bolt's auto size beside it follows it)
+    static int NumberHt(HsInfo i, HsPiece p)
+    {
+        var c0 = PartLog; PartLog = null;
+        try { var t = new Cv(0, 0); t.ClipTo(p.Bx, p.By, p.Bw, p.Bh); return NumberX(t, i, p, false); }   // (on a scratch page: NumberX at its defaults draws as the old code)
+        finally { PartLog = c0; }
+    }
+    public static List<object> TagReply(List<HsPiece> ps, List<object[]> log, string tag)
+    {
+        var l = new List<object>();
+        foreach (var p in ps) { object k = null; if (log != null) foreach (var e in log) if (e[0] == p && e.Length == 3 && (string)e[1] == tag) k = e[2]; l.Add(k); }
+        return l;
+    }
+    public static List<object> WkReply(List<HsPiece> ps, List<object[]> log)
+    {
+        var l = new List<object>();
+        foreach (var p in ps) { object k = null; if (log != null) foreach (var e in log) if (e[0] == p && e.Length == 3 && (string)e[1] == "#wkmax") k = e[2]; l.Add(k); }
+        return l;
+    }
+    static bool WordUp(HsPiece p, Src s, Val v, int kind, int lw0, int lh0, int bw, int bh, int cap)
+    {
+        if (p.At != "beside" || kind == 0 || !(v.Empty || v.Off) || !Letters(v.T) || bh - (lh0 + 2) < 5) return false;
+        int mk = Math.Max(s.Key == "mouse" ? 9 * Math.Max(1, p.BK) : 0, v.Chg ? 0 : MarkW(v, 26, p.BK));
+        if (p.WK > 0) { bool up; WordFitK(p, s, v, kind, lw0, lh0, bw, bh, p.WK, v.T, out up); return up; }   // (his own word size: above when only there it fits, the size stepped down to what fits)
+        if (BigStyle != 1) return false;
+        Func<int, int, int> word = (room, h) =>
+        {
+            var f = Fit(room, Math.Min(h, cap), Widest(p, s, v), v.U);
+            if (f.ValueW(v.T, v.U) > room || (f.K == 0 && !BigOk(v.T))) f = Fit(room, Math.Min(h, f.Ht), v.T, v.U);
+            return f.ValueW(v.T, v.U) <= room ? f.Ht : 0;
+        };
+        int ik0 = Math.Max(1, p.IK); return word(bw - mk, bh - (lh0 + (ik0 > 1 ? 4 : 2))) > word(bw - (lw0 + (ik0 > 1 ? 4 : 3)) - mk, bh);   // (NumberX's own gaps, the review 11-16)
+    }
+    // a label drawn k times bigger: drawn once on a scratch page, each lit pixel then a k x k block
+    static void LabelK(Cv c, HsInfo i, Lab l, Src s, Val v, int x, int y, int k)
+    {
+        if (k <= 1) { DrawLabel(c, i, l, s, v, x, y); return; }
+        var t = new Cv(0, 0); DrawLabel(t, i, l, s, v, 0, 0);
+        for (int a = 0; a < l.W && a < 128; a++) for (int b = 0; b < l.H && b < 64; b++) if (t.Px[a, b]) c.Block(x + a * k, y + b * k, k, k);
+    }
+    static int NumberX(Cv c, HsInfo i, HsPiece p, bool measure)
+    {
+        int bx = p.Bx, by = p.By, bw = p.Bw, bh = p.Bh;
+        var s = Info(p.Src); var v = Get(i, p); bool on = HsSt.On(i);
+        var l = Label(p, s, bw, bh);
+        int k = Math.Max(1, p.IK), LW = l.W * k, LH = l.H * k, sg = k > 1 ? 4 : 3, vg = k > 1 ? 4 : 2;
+        int cap = Cap(p); if (p.Harm > 0) cap = Math.Min(cap, p.Harm);
+        bool vert = (p.At == "above" || p.At == "below") && l.Kind > 0 && bh - (LH + vg) >= 5;
+        bool wordUp = !measure && !vert && WordUp(p, s, v, l.Kind, LW, LH, bw, bh, cap); if (wordUp) vert = true;
+        bool below = vert && p.At == "below", after = !vert && p.At == "right" && l.Kind > 0;
+        bool swap = v.Chg && l.Kind > 0;
+        string u = v.U; bool under = p.UAt == "under" && u != "";
+        int lw = !vert && l.Kind > 0 ? LW + sg : 0, lh = vert ? LH + vg : 0;
+        int room = bw - lw - Math.Max(s.Key == "mouse" ? 9 * Math.Max(1, p.BK) : 0, swap ? 0 : MarkW(v, 26, p.BK)), roomH = bh - lh;
+        Func<NF, int> UW = q => u == "" ? 0 : p.UK > 0 ? Fnt.Small.Width(u, p.UK) : q.UnitW(u);
+        Func<NF, int> UH = q => u == "" ? 0 : p.UK > 0 ? 7 * p.UK : q.UnitH(u);
+        // the number and its unit as one block: {width, height, the number's x, y in it, the unit's x, y}
+        Func<NF, string, int[]> Blk = (q, t) =>
+        {
+            int tw = q.TextW(t), th = q.Ht, uw = UW(q), uh = UH(q), ux, uy;
+            if (u == "") return new[] { tw, th, 0, 0, 0, 0 };
+            if (under) { ux = tw - uw; uy = th + 2; }
+            else { ux = tw + q.Gap; uy = p.UAt == "top" ? 0 : p.UAt == "middle" ? (th - uh) / 2 : p.UK > 0 ? th - uh : q.UnitOff(u); }
+            int x0 = Math.Min(0, ux), y0 = Math.Min(0, uy), x1 = Math.Max(tw, ux + uw), y1 = Math.Max(th, uy + uh);
+            return new[] { x1 - x0, y1 - y0, -x0, -y0, ux - x0, uy - y0 };
+        };
+        int edge = AutoEdge();   // (Auto: 2 px clear at each side, the three designs, 11-17)
+        Func<string, int, NF> fit = (t, maxH) => { NF last = null; foreach (var q in NF.All(BigOk(t))) { last = q; var b = Blk(q, t); if (q.Ht <= maxH && b[0] <= room - edge && b[1] <= roomH) return q; } return last; };
+        NF f;
+        bool word = (v.Empty || v.Off) && Letters(v.T);
+        if (word && p.WK > 0) { bool up0; f = NF.Word(Math.Max(1, WordFitK(p, s, v, l.Kind, LW, LH, bw, bh, p.WK, v.T, out up0))); if (measure) return 0; }   // (11-16 his "the size of ONLY the empty": the word's own size, the number's untouched)
+        else if (p.VH > 0 && !word) { int vb = VhBest(i, p); f = NF.At(vb > 0 ? Math.Min(p.VH, vb) : p.VH, BigOk(v.T)); if (measure) return 0; }   // (never past what fits: a height kept from another digit design, the tester's F52 11-16)   // (his own height in pixels; not shared with its row)
+        else
+        {
+            f = fit(Widest(p, s, v), Math.Min(roomH, cap));
+            if (measure) return f.Ht;
+            if (Blk(f, v.T)[0] > room || (f.K == 0 && !BigOk(v.T))) f = fit(v.T, Math.Min(roomH, f.Ht));   // (OFF, EMPTY: in letters)
+        }
+        var B = Blk(f, v.T); int bw0 = B[0], bh0 = B[1];
+        int mw = swap ? 0 : MarkW(v, f.Ht, p.BK);
+        bool markNow = swap && (v.ChgSteady || i.Now.Second % 2 == 0);
+        bool dim = v.Low && !on;
+        string al = wordUp && p.Align == "auto" ? "middle" : p.Align;
+        int X, Y, LX, LY, MX, MY;   // the block's top left, the label's, the mark's
+        if (vert)
+        {
+            int gap = f.K == 0 ? 4 : 2, rw = bw0 + (mw > 0 ? gap + mw : 0);
+            bool mid = al == "middle" || (al == "auto" && (bh >= 20 || p.Shared));   // (11-16: auto as beside: together in the middle of a big box; was always left)
+            LX = mid ? bx + (bw - LW) / 2 : al == "right" ? bx + bw - LW : bx;
+            X = mid ? bx + (bw - rw) / 2 : al == "right" ? bx + bw - rw : bx;
+            if (below) { Y = by + (bh - lh - bh0) / 2; LY = by + bh - LH; } else { LY = by; Y = by + lh + (bh - lh - bh0) / 2; }
+            if (wordUp) { int gh = LH + vg + bh0; LY = by + (bh - gh) / 2; Y = LY + LH + vg; }   // (the word and its label together in the middle)
+            MX = X + bw0 + gap; MY = Y + B[3];
+        }
+        else
+        {
+            int group = lw + mw + bw0;
+            bool middle = al == "middle" || (al == "auto" && (bh >= 20 || p.Shared)), together = middle || al != "auto";
+            int gx = al == "left" ? bx : al == "right" ? bx + bw - group : bx + (bw - group) / 2;
+            if (!after) { X = together ? gx + lw + mw : bx + bw - bw0; LX = together ? gx : bx; }
+            else if (together) { X = gx + mw; LX = gx + mw + bw0 + sg; }
+            else { LX = bx + bw - LW; X = LX - sg - bw0; }
+            Y = by + (bh - bh0) / 2; LY = by + (bh - LH) / 2;
+            MX = X - mw; MY = Y + B[3];
+        }
+        X += p.VX; Y += p.VY; MX += p.VX; MY += p.VY; LX += p.IX; LY += p.IY;
+        int nx = X + B[2], ny = Y + B[3], ux0 = X + B[4] + p.UX, uy0 = Y + B[5] + p.UY;
+        if (markNow) { var bo = IconFor("bolt", Ico.Bolt); int kb = Math.Max(1, Math.Min(MarkK(v, LH, p.BK), Math.Min((LW + sg) / 5, (vert ? LH + vg - 1 : bh) / 7))); G.BmpK(c, LX + Math.Max(0, (LW - G.W(bo) * kb) / 2), LY + (LH - bo.Length * kb) / 2, bo, kb); }   // (his bolt size, no bigger than the label's place holds: the review 11-16)
+        else if (!(dim && !(f.K == 0 && f.H > 7))) LabelK(c, i, l, s, v, LX, LY, k);
+        if (l.Kind > 0) PartBox(p, "icon", LX, LY, LW, LH);
+        if (!swap && !vert) Mark(c, v, MX, MY, f.Ht, p.BK);
+        if (dim && f.K == 0 && f.H > 7) c.Tone = 1;   // (the 7 px step dims as the small font, review 11-15)
+        c.Hush = v.HideNum; f.Text(c, nx, ny, v.T);
+        if (u != "") { if (p.UK > 0) Fnt.Small.Draw(c, ux0, uy0, u, p.UK); else f.Unit(c, ux0, uy0 - f.UnitOff(u), u); }
+        c.Hush = false; c.Tone = 0;
+        if (!swap && vert) Mark(c, v, MX, MY, f.Ht, p.BK);
+        PartBox(p, "value", nx, ny, f.TextW(v.T), f.Ht); if (u != "") PartBox(p, "unit", ux0, uy0, UW(f), UH(f));
+        return f.Ht;
+    }
+
     static void Bar(Cv c, HsInfo i, HsPiece p)
     {
         int bx = p.Bx, by = p.By, bw = p.Bw, bh = p.Bh;
         var s = Info(p.Src); var v = Get(i, p); bool on = HsSt.On(i);
         var l = Label(p, s, bw, bh);
         var vf = bh >= 7 && p.Size != "s" ? Fnt.Small : Fnt.Tiny;
-        string vt = v.T + v.U; int vw = vf.Width(vt), mw = v.Chg ? 7 : v.Sleep ? 9 : 0;
+        string vt = v.T + v.U; var nf = vf == Fnt.Small && BigOk(v.T) ? NF.Seven() : null;   // (the theme's digits, 11-15; Blocky and words: the 5 x 7 font)
+        int vw = nf != null ? nf.ValueW(v.T, v.U) : vf.Width(vt), mw = v.Chg ? 7 : v.Sleep ? 9 : 0;
+        Action<int, int> num = (x, y) => { if (nf != null) nf.Value(c, x, y, v.T, v.U); else vf.Draw(c, x, y, vt); };
         bool hideLab = v.Low && !on;
         if (bh >= 16)
         {
             int ly = by + (bh - 7 - 3 - Math.Min(5, bh - 10)) / 2;
             if (!hideLab) DrawLabel(c, i, l, s, v, bx, ly + (7 - l.H) / 2);
-            if (!p.NoNum) { vf.Draw(c, bx + bw - vw, ly, vt); Mark(c, v, bx + bw - vw - mw, ly, 7); }
+            if (!p.NoNum) { c.Hush = v.HideNum; num(bx + bw - vw, ly); c.Hush = false; Mark(c, v, bx + bw - vw - mw, ly, 7); }
             int barH = Math.Min(5, bh - 10);
             DrawBar(c, i, s, v, bx, bx + bw - 1, ly + 10 + barH / 2, barH);
         }
@@ -7917,8 +8254,8 @@ static class Hs
             int ly = by + (bh - l.H) / 2, vy = by + (bh - vf.H) / 2;
             if (!hideLab) DrawLabel(c, i, l, s, v, bx, ly);
             int lw = l.Kind == 1 ? 13 : l.Kind == 2 ? l.W : 0;
-            if (!p.NoNum) { vf.Draw(c, bx + bw - vw, vy, vt); Mark(c, v, bx + bw - vw - mw, vy, vf.H); }
-            int x0 = bx + (lw > 0 ? lw + 5 : 0), x1 = p.NoNum ? bx + bw - 1 : bx + bw - Math.Max(vw + mw, Fnt.Small.Width("100%")) - 6;   // (number hidden: the bar takes its room)
+            if (!p.NoNum) { c.Hush = v.HideNum; num(bx + bw - vw, vy); c.Hush = false; Mark(c, v, bx + bw - vw - mw, vy, vf.H); }
+            int x0 = bx + (lw > 0 ? lw + 5 : 0), x1 = p.NoNum ? bx + bw - 1 : bx + bw - Math.Max(vw + mw, nf != null ? nf.ValueW("100", "%") : Fnt.Small.Width("100%")) - 6;   // (number hidden: the bar takes its room)
             DrawBar(c, i, s, v, x0, x1, by + bh / 2, Math.Min(p.NoNum ? 5 : 3, bh));
         }
     }
@@ -7961,7 +8298,7 @@ static class Hs
         bool below = false;   // (inside, under the number, as the knob's: a ring and a knob side by side alike, 11-13)
         int d = below ? Math.Min(bw, bh - l.H - 2) : Math.Min(bw, bh);
         double r = Math.Floor((d - 2) / 2.0);
-        if (r < 11) { if (p.NoNum) { if (!measure) LabelOnly(c, i, p); return 0; } if (measure) return -1; Number(c, i, p); return 0; }   // (too small to read: as a number, his 11-12; its number hidden: its label alone, v3)
+        if (r < 11) { if (p.NoNum) { if (!measure) LabelOnly(c, i, p); return 0; } if (measure) return -1; p.AsNum = true; Number(c, i, p); return 0; }   // (too small to read: as a number, his 11-12; its number hidden: its label alone, v3)
         int band = r >= 11 ? 2 : 1;
         double rb = r - 5, tb = r >= 18 ? 3 : 2;                                  // (the knob's own band)
         double lim = knob ? rb - tb - 1 : r - band + 0.5 - 1;                     // pixel centres stay inside this (a pixel of air; the knob a little more)
@@ -7981,10 +8318,15 @@ static class Hs
         if (dial)
         {
             f = DialFit(tw, cap, sw, sh, lim, knob, r, out slotY);   // (the size for the widest value it shows)
-            if (f == null && sw > 0) { sw = sh = 0; labIn = false; hasMark = showMark = false; f = DialFit(tw, cap, 0, 0, lim, knob, r, out slotY); }
+            if (f == null && sw > 0 && l.Kind == 2 && !hasMark && l.Word != null && l.Word.Trim().IndexOf(' ') > 0)   // (a name too long for inside the dial: its first word, "CPU" of "CPU TEMPERATURE", before none at all; the tester's F7 11-16)
+            {
+                var w1 = l.Word.Trim().Split(' ')[0]; l.Word = w1; l.W = l.F.Width(w1); sw = l.W;
+                f = DialFit(tw, cap, sw, sh, lim, knob, r, out slotY);
+            }
+            if (f == null && sw > 0) { sw = sh = 0; labIn = false; hasMark = showMark = false; p.LabCut = l.Kind > 0; f = DialFit(tw, cap, 0, 0, lim, knob, r, out slotY); }
         }
         else f = RingFit(tw, cap, sw, sh, lim, out gap);
-        if (f == null && t != "") { if (measure) return -1; Number(c, i, p); return 0; }   // (its number doesn't fit inside: as a number)
+        if (f == null && t != "") { if (measure) return -1; p.AsNum = true; Number(c, i, p); return 0; }   // (its number doesn't fit inside: as a number)
         if (measure) return t == "" ? 0 : f.Ht;
         if (dial) { int y2; var fa = DialFit(t, f.Ht, sw, sh, lim, knob, r, out y2); if (fa != null) { f = fa; slotY = y2; } }   // (the value itself: OFF in its letters)
         int nw = t == "" || f == null ? 0 : f.TextW(t), nh = t == "" || f == null ? 0 : f.Ht;
@@ -8012,7 +8354,7 @@ static class Hs
             c.RingDots(cx, cy, mid, from, 359.9, step, 0, 1);
             if (A > 0 && !(v.Low && !on)) { if (v.Sleep) c.Band(cx, cy, r, 1, 0, A); else c.Band(cx, cy, r, band, 0, A); }
         }
-        if (nw > 0) f.Text(c, nx, ty, t);
+        if (nw > 0) { c.Hush = v.HideNum; f.Text(c, nx, ty, t); c.Hush = false; }
         int sy = dial ? (int)Math.Floor(cy + 0.5) + slotY : ty + (nh > 0 ? nh + gap : 0);
         if (showMark) { int mx = (int)Math.Floor(cx - (mW - 1) / 2.0 + 0.5), my = sy + (sh - mH) / 2; if (v.Chg) c.Bmp(mx, my, bolt); else G.Zz(c, mx, my); }
         else if (labIn) DrawLabel(c, i, l, s, v, (int)Math.Floor(cx - (l.W - 1) / 2.0 + 0.5), sy + (sh - l.H) / 2);
@@ -8078,7 +8420,7 @@ static class Hs
         if (p.Src2 != null) { c.HLine(x, x + 4, by + F.H / 2); x += 8; }
         if (x + F.Width(t1) > bx + bw && !p.NoNum) t1 = (v.T + v.U).Trim();   // (alone and still too wide: its number, else nothing past its place)
         if (x + F.Width(t1) > bx + bw) t1 = "";
-        F.Draw(c, x, by, t1);
+        c.Hush = v.HideNum || v.HideIco; F.Draw(c, x, by, t1); c.Hush = false;   // (a battery's low blink: its name and number are one text here)
         if (t2 != null)
         {
             int x2 = bx + bw - F.Width(t2);
@@ -8159,33 +8501,63 @@ static class Hs
     }
 
     // ---- clock: hours and minutes as big as the box allows, seconds small, the day under ----
+    // (11-17 his "it shouldn't allow if it doesnt fit, or just try to fit": a clock in a cell too small for all of it drew
+    // nothing. It tries as set, then without the date, then without the seconds (and AM / PM), then without its label; the
+    // editor is told what it left out. And its own settings as a number cell's: label, 12 hours, the date beside or under,
+    // the date's words)
+    static string ClockDate(DateTime t, string fmt)
+    {
+        var ic = CultureInfo.InvariantCulture;
+        string s = fmt == "short" ? t.ToString("d MMM", ic) : fmt == "num" ? t.ToString("dd/MM", ic) : fmt == "wday" ? t.ToString("ddd", ic) : t.ToString("ddd d MMM", ic);
+        return s.ToUpperInvariant();
+    }
     static void Clock(Cv c, HsInfo i, HsPiece p)
     {
+        var ic = CultureInfo.InvariantCulture;
+        string hh = p.H12 ? i.Now.ToString("%h", ic) : i.Now.ToString("HH", ic), mm = i.Now.ToString("mm", ic), ss = i.Now.ToString("ss", ic);
+        string ap = p.H12 ? (i.Now.Hour < 12 ? "AM" : "PM") : null, date = p.Date ? ClockDate(i.Now, p.DateFmt) : null;
+        var src = new Src { Key = "clock", Name = "TIME", Icon = IconFor("clock", null) };
+        var lab = Label(p, src, p.Bw, p.Bh);
+        for (int t = 0; t < 4; t++)
+        {
+            bool wD = date != null && t < 1, wS = (p.Seconds || ap != null) && t < 2, wL = lab.Kind > 0 && t < 3;
+            if (t > 0 && wD == (date != null && t - 1 < 1) && wS == ((p.Seconds || ap != null) && t - 1 < 2) && wL == (lab.Kind > 0 && t - 1 < 3)) continue;   // (nothing new left out at this step)
+            if (ClockAt(c, i, p, hh, mm, wS && p.Seconds ? ss : null, wS ? ap : null, wD ? date : null, wL ? lab : null, src))
+            { p.DateCut = date != null && !wD; p.SecCut = (p.Seconds || ap != null) && !wS; p.LabCut = lab.Kind > 0 && !wL; return; }
+        }
+        p.DateCut = date != null; p.SecCut = p.Seconds || ap != null; p.LabCut = lab.Kind > 0;   // (not even the time fits: nothing drawn, all of it said)
+    }
+    static bool ClockAt(Cv c, HsInfo i, HsPiece p, string hh, string mm, string ss, string ap, string date, Lab lab, Src src)
+    {
         int bx = p.Bx, by = p.By, bw = p.Bw, bh = p.Bh;
-        string hh = i.Now.ToString("HH", CultureInfo.InvariantCulture), mm = i.Now.ToString("mm", CultureInfo.InvariantCulture), ss = i.Now.ToString("ss", CultureInfo.InvariantCulture);
-        string date = p.Date ? i.Now.ToString("ddd d MMM", CultureInfo.InvariantCulture).ToUpperInvariant() : null;
-        var df = date != null && bh >= 44 ? Fnt.Small : Fnt.Tiny;
-        int dh = date != null ? df.H + 3 : 0;
+        bool beside = date != null && p.DateAt == "beside";
+        var df = date != null && !beside && bh >= 44 ? Fnt.Small : Fnt.Tiny;
+        int dh = date != null && !beside ? df.H + 3 : 0, lw = lab != null ? lab.W + 3 : 0;
+        if (date != null && !beside && df.Width(date) > bw) return false;   // (the date under, wider than the cell at any size)
+        if (lab != null && lab.H > bh) return false;
         int cap = Cap(p);
         foreach (var f in NF.All(true))
         {
             if (f.Ht > cap && f.K != 2) continue;   // (his text size; the tiny font always, as the last resort)
-            int colon = f.K == 0 ? f.T : 1, cg = f.K == 0 ? f.T + 1 : 1;
-            int w = f.TextW(hh) + cg + colon + cg + f.TextW(mm);
+            int colon = f.K == 0 ? f.T : 1, cg = f.K == 0 ? f.T + 1 : 1, sgap = f.K == 0 ? f.T + 2 : 2;
             var sf = f.K == 0 && f.H >= 22 ? Fnt.Small : Fnt.Tiny;
-            if (p.Seconds) w += (f.K == 0 ? f.T + 2 : 2) + sf.Width(ss);
-            if (f.Ht + dh > bh || w > bw) continue;
-            if (date != null && df.Width(date) > bw) { date = null; dh = 0; }
-            int x = p.Align == "left" ? bx : p.Align == "right" ? bx + bw - w : bx + (bw - w) / 2, y = by + (bh - f.Ht - dh) / 2;
+            int w = f.TextW(hh) + cg + colon + cg + f.TextW(mm), sw = (ss != null ? sgap + sf.Width(ss) : 0) + (ap != null ? sgap + sf.Width(ap) : 0), dw = beside ? 4 + df.Width(date) : 0;
+            int all = lw + w + sw + dw;
+            if (f.Ht + dh > bh || all > bw) continue;
+            int x = p.Align == "left" ? bx : p.Align == "right" ? bx + bw - all : bx + (bw - all) / 2, y = by + (bh - f.Ht - dh) / 2, x0 = x;
+            if (lab != null) { DrawLabel(c, i, lab, src, new Val(), x, y + (f.Ht - lab.H) / 2); x += lw; }
             f.Text(c, x, y, hh); x += f.TextW(hh) + cg;
             if (f.K == 0) { c.Block(x, y + f.H * 3 / 10, colon, colon); c.Block(x, y + f.H * 7 / 10 - colon + 1, colon, colon); }
             else (f.K == 1 ? Fnt.Small : Fnt.Tiny).Draw(c, x, y, ":");
             x += colon + cg;
             f.Text(c, x, y, mm); x += f.TextW(mm);
-            if (p.Seconds) sf.Draw(c, x + (f.K == 0 ? f.T + 2 : 2), y + f.Ht - sf.H, ss);
-            if (date != null) { int dw = df.Width(date); df.Draw(c, p.Align == "left" ? bx : p.Align == "right" ? bx + bw - dw : bx + (bw - dw) / 2, y + f.Ht + 3, date); }
-            return;
+            if (ss != null) { sf.Draw(c, x + sgap, y + f.Ht - sf.H, ss); x += sgap + sf.Width(ss); }
+            if (ap != null) { sf.Draw(c, x + sgap, y + f.Ht - sf.H, ap); x += sgap + sf.Width(ap); }
+            if (beside) df.Draw(c, x + 4, y + f.Ht - df.H, date);
+            else if (date != null) { int dw2 = df.Width(date); df.Draw(c, p.Align == "left" ? bx : p.Align == "right" ? bx + bw - dw2 : bx + (bw - dw2) / 2, y + f.Ht + 3, date); }
+            return true;
         }
+        return false;
     }
 }
 
@@ -9176,10 +9548,10 @@ class HsInfo
 class HsRow { public int H = 1; public List<HsPiece> Pieces = new List<HsPiece>(); }
 class HsRowPage { public int Cols = 2; public bool Lines = true; public int Gap = -1; public string From, When = "always"; public List<HsRow> Rows = new List<HsRow>(); }   // (From: the ready-made "p:<key>" or saved "s:<id>" page it started as; When: it shows always, only while a game runs ("game") or only while none does ("idle"), 11-13)
 class HsSaved { public string Id, Name; public HsGPage Page; }                 // a page of his own kept under a name, as a saved look
-class HsPreset { public string Key, Name, Group; public HsRowPage Page; public HsGPage G; }   // a ready-made page (G: on the grid)
+class HsPreset { public string Key, Name, Group; public HsRowPage Page; public HsGPage G; public int Dig = 1; public string BarLook = "blocks"; public Dictionary<string, string[]> Icons; }   // a ready-made page (G: on the grid)
 // v3 (11-13, the Customize revamp, his "split in 2, 3, 4, 5 and 6"): a page on a grid of 1 to 6 rows and columns, each
 // piece at a cell (AtX, AtY) spanning W x H; its own name, gap and lines
-class HsGPage { public string Name = "Page", When = "always", From; public int Rows = 2, Cols = 2, Gap = -1; public string Lines = "none"; public List<HsPiece> Pieces = new List<HsPiece>(); }
+class HsGPage { public bool Free; public int Dig = -1; public string Bar = ""; public string Name = "Page", When = "always", From; public int Rows = 2, Cols = 2, Gap = -1; public string Lines = "none"; public List<HsPiece> Pieces = new List<HsPiece>(); }
 // a theme (his "keep my current setup and make them actual themes"): its pages, page change, start up / shut down, look
 class HsTheme { public Dictionary<string, string[]> Icons; public string Id, Name; public List<HsGPage> Pages = new List<HsGPage>(); public int Every; public string Start = "", Stop = "", Bar = "blocks"; public int Digits = 1; }
 
@@ -9204,13 +9576,15 @@ static class HsPage
     static readonly string[] Whens = { "always", "game", "idle" };
 
     public static readonly HsAnim[] Anims = { new Anim_tv(), new Anim_scan(), new Anim_fade(), new Anim_sand(), new Anim_iris(), new Anim_blinds(), new Anim_glitch(), new Anim_logo() };
-    static readonly string[] Styles = { "number", "bar", "ring", "knob", "graph" }, Labels = { "icon", "name", "off" }, Ats = { "beside", "above" }, Graphs = { "line", "smooth", "steps", "area", "bars", "dots" }, Sizes = { "auto", "s", "m", "l" }, Aligns = { "auto", "left", "middle", "right" };
+    static readonly string[] Styles = { "number", "bar", "ring", "knob", "graph" }, Labels = { "icon", "name", "off" }, Ats = { "beside", "above", "right", "below" }, Graphs = { "line", "smooth", "steps", "area", "bars", "dots" }, Sizes = { "auto", "s", "m", "l" }, Aligns = { "auto", "left", "middle", "right" };
     static readonly int[] Overs = { 60, 120, 600, 1800 }, Everys = { 0, 5, 10, 20, 30, 60 };
-    static readonly string[] NameSizes = { "auto", "small", "tiny" }, OffAses = { "word", "dash", "blank" }, ChgAses = { "blink", "steady", "none" };
+    static readonly string[] UAts = { "bottom", "middle", "top", "under" };   // (11-16 the unit: under the number's bottom as before, its middle, its top, under it)
+    static readonly string[] DateAts = { "under", "beside" }, DateFmts = { "day", "short", "num", "wday" };   // (11-17 the clock's date)
+    static readonly string[] NameSizes = { "auto", "small", "tiny" }, OffAses = { "word", "dash", "blank" }, ChgAses = { "blink", "steady", "none" }, LowAses = { "icon", "none", "num", "both" };
     const int MaxGrid = 6, MaxThemes = 12;   // (v3: rows and columns 1 to 6)
-    const int MaxPages = 6, MaxUnits = 5, MaxSaved = 12, Keep = 1800;   // (5 units: the screen's 62 rows of pixels; a graph: up to 30 min, a value a second)
+    const int MaxPages = 6, MaxUnits = 5, MaxSaved = 100, Keep = 1800;   // (100 saved pages: every theme's pages moved in, 12 x 6 + 12 at most, 11-15)   // (5 units: the screen's 62 rows of pixels; a graph: up to 30 min, a value a second)
 
-    static HsPiece P(string src, string style = "number", int w = 1, string label = "icon") { return new HsPiece { Src = src, Style = style, W = w, Label = label, Crit = src == "head" ? 12 : src == "mouse" ? 15 : double.NaN }; }   // (11-14 a battery's low warning as a level he sees: red at 12 / 15, counting down)
+    static HsPiece P(string src, string style = "number", int w = 1, string label = "icon") { return new HsPiece { Src = src, Style = style == "ring" || style == "knob" ? "number" : style, At = style == "ring" || style == "knob" ? "above" : "beside", Unit = style != "ring" && style != "knob", W = w, Label = label }; }   // (11-15: a battery's low level is Auto, 12 / the mouse 15, its Battery section)   // (11-14 a battery's low warning as a level he sees: red at 12 / 15, counting down)
     // the page it starts with: the ready-made Overview (the CPU's temperature as a graph with the GPU's dotted, under it
     // the headset and its spare, then the volume and the clock). No mouse, in HW Dashboard neither (his 11-13: "NOBODY
     // ELSE can see the mouse"): he adds it himself
@@ -9220,7 +9594,7 @@ static class HsPage
     static HsLayout Grid(HsGPage pg) { return Grid(pg, digits, bar); }
     static HsLayout Grid(HsGPage pg, int dig, string barLook)
     {
-        var L = new HsLayout { Rows = pg.Rows, Cols = pg.Cols, Gap = pg.Gap, Lines = pg.Lines != "none", SolidLines = pg.Lines == "solid", Digits = dig, SolidBar = barLook == "solid", Icons = icons };
+        var L = new HsLayout { Rows = pg.Rows, Cols = pg.Cols, Gap = pg.Gap, Lines = pg.Lines != "none" && !pg.Free, SolidLines = pg.Lines == "solid", Digits = pg.Dig >= 0 ? pg.Dig : dig, SolidBar = (pg.Bar != "" ? pg.Bar : barLook) == "solid", Free = pg.Free, Icons = icons };
         L.Pieces.AddRange(pg.Pieces);
         return L;
     }
@@ -9241,7 +9615,7 @@ static class HsPage
     }
     static HsGPage CopyPage(HsGPage g)
     {
-        var c = new HsGPage { Name = g.Name, When = g.When, From = g.From, Rows = g.Rows, Cols = g.Cols, Gap = g.Gap, Lines = g.Lines };
+        var c = new HsGPage { Name = g.Name, When = g.When, From = g.From, Rows = g.Rows, Cols = g.Cols, Gap = g.Gap, Lines = g.Lines, Free = g.Free, Dig = g.Dig, Bar = g.Bar };
         foreach (var p in g.Pieces) c.Pieces.Add(p.Copy());
         return c;
     }
@@ -9255,7 +9629,7 @@ static class HsPage
         int n = ps.Count; if (n == 0 || n > MaxGrid) return l;   // (more than 6: no presets, none would keep them all)
         Action<string, int, int, Func<int, int[]>> add = (name, rows, cols, at) =>
         {
-            var g = new HsGPage { Name = pg.Name, When = pg.When, Rows = rows, Cols = cols, Gap = pg.Gap, Lines = pg.Lines };
+            var g = new HsGPage { Name = pg.Name, When = pg.When, Rows = rows, Cols = cols, Gap = pg.Gap, Lines = pg.Lines, Dig = pg.Dig, Bar = pg.Bar };
             for (int k = 0; k < n; k++) { var q = ps[k].Copy(); var a2 = at(k); q.AtX = a2[0]; q.AtY = a2[1]; q.W = a2[2]; q.H = a2[3]; g.Pieces.Add(q); }
             l.Add(new KeyValuePair<string, HsGPage>(name, g));
         };
@@ -9276,15 +9650,22 @@ static class HsPage
             var t = Ready()[0];
             pages = t.Pages; themeName = t.Name; themeFrom = "r:" + t.Id; every = t.Every; digits = t.Digits; bar = t.Bar; icons = t.Icons;
         }
-        try { if (File_ != null && File.Exists(File_)) { var d = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(File_)) as Dictionary<string, object>; lock (gate) { if (d != null) fileV = Int(d, "v", 1, 0, 999); Take(d); }
-            if (fileV == 3) try { File.Copy(File_, Path.Combine(Path.GetDirectoryName(File_), "hs-layout.v3-start.json"), true); } catch { } } }   // (v3 as it was at this start: an older build writing over hs-layout.json loses nothing for good)
+        try { if (File_ != null && File.Exists(File_)) { var d = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(File_)) as Dictionary<string, object>; lock (gate) { if (d != null) fileV = Int(d, "v", 1, 0, 999); lowMig = true; folded = false; try { Take(d); } finally { lowMig = false; } }
+            if (fileV == 3) try { var v3s = Path.Combine(Path.GetDirectoryName(File_), "hs-layout.v3-start.json"); if (!File.Exists(v3s)) File.Copy(File_, v3s, false); } catch { }   // (the file as v3 began: written once, never over itself at each start (it took a renamed page over his copy at a restart, the tester's F48 11-16)
+            if (folded)   // (his themes moved into saved pages: the file as it was kept first, never over an older copy; no copy, no save now, review 11-15)
+            {
+                folded = false; string keep = null;
+                try { var dir = Path.GetDirectoryName(File_); keep = Path.Combine(dir, "hs-layout.v3-themes.json"); if (File.Exists(keep)) keep = Path.Combine(dir, "hs-layout.v3-themes-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".json"); File.Copy(File_, keep); }
+                catch (Exception ex) { Log("headset page: his themes not moved on disk yet, no copy: " + ex.Message); keep = null; }
+                if (keep != null) { Save(); Log("headset page: his themes moved into saved pages (the file before: " + Path.GetFileName(keep) + ")"); }
+            } } }   // (v3 as it was at this start: an older build writing over hs-layout.json loses nothing for good)
         catch (Exception ex)
         {
             Log("headset page: hs-layout.json unreadable, the default page instead (kept as hs-layout.json.bad): " + ex.Message);
             try { File.Copy(File_, File_ + ".bad", true); } catch { }   // (the next change writes a new file over it: his saved pages are in the copy)
         }
     }
-    static bool newerSaid;
+    static bool newerSaid, lowMig, folded;   // (lowMig: the file being read at a start, 11-15: an old written battery default reads as Auto then, not on each change)
     static void Save()
     {
         if (File_ == null) return;
@@ -9331,9 +9712,10 @@ static class HsPage
         {
             Func<double, object> N = d => double.IsNaN(d) ? null : (object)d;
             pcs.Add(new Dictionary<string, object> { { "x", p.AtX }, { "y", p.AtY }, { "w", p.W }, { "h", p.H }, { "src", p.Src }, { "style", p.Style }, { "label", p.Label }, { "at", p.At }, { "name", p.Name }, { "src2", p.Src2 }, { "graph", p.Graph }, { "over", p.Over }, { "seconds", p.Seconds },
-                { "date", p.Date }, { "size", p.Size }, { "align", p.Align }, { "dec", p.Dec }, { "unit", p.Unit }, { "warn", N(p.Warn) }, { "crit", N(p.Crit) }, { "below", p.Below }, { "lo", N(p.Lo) }, { "hi", N(p.Hi) }, { "num", !p.NoNum }, { "nsize", p.NameSz }, { "dig", p.Dig }, { "inv", p.Inv }, { "offas", p.OffAs }, { "offtxt", p.OffTxt }, { "chgas", p.ChgAs } });
+                { "date", p.Date }, { "h12", p.H12 }, { "dateat", p.DateAt }, { "datefmt", p.DateFmt }, { "size", p.Size }, { "align", p.Align }, { "dec", p.Dec }, { "unit", p.Unit }, { "warn", N(p.Warn) }, { "crit", N(p.Crit) }, { "below", p.Below }, { "lo", N(p.Lo) }, { "hi", N(p.Hi) }, { "num", !p.NoNum }, { "nsize", p.NameSz }, { "dig", p.Dig }, { "inv", p.Inv }, { "offas", p.OffAs }, { "offtxt", p.OffTxt }, { "chgas", p.ChgAs }, { "lowas", p.LowAs },
+                { "vh", p.VH }, { "wk", p.WK }, { "bk", p.BK }, { "uk", p.UK }, { "ik", p.IK }, { "vx", p.VX }, { "vy", p.VY }, { "ux", p.UX }, { "uy", p.UY }, { "ix", p.IX }, { "iy", p.IY }, { "uat", p.UAt }, { "fx", p.FX }, { "fy", p.FY }, { "fw", p.FW }, { "fh", p.FH } });
         }
-        var page = new Dictionary<string, object> { { "name", pg.Name }, { "when", pg.When }, { "rows", pg.Rows }, { "cols", pg.Cols }, { "gap", pg.Gap }, { "lines", pg.Lines }, { "pieces", pcs } };
+        var page = new Dictionary<string, object> { { "name", pg.Name }, { "when", pg.When }, { "rows", pg.Rows }, { "cols", pg.Cols }, { "gap", pg.Gap }, { "lines", pg.Lines }, { "free", pg.Free }, { "dig", pg.Dig }, { "bar", pg.Bar }, { "pieces", pcs } };
         if (pg.From != null) page["from"] = pg.From;
         return page;
     }
@@ -9353,22 +9735,22 @@ static class HsPage
         Func<HsPiece, int, HsPiece> W = (q, w) => { q.W = w; return q; };
         // the three alone
         add("Essentials", "bars", "Bars", 1, false, new[] { R(1, new[] { P("head", "bar") }), R(1, new[] { P("spare", "bar") }), R(1, new[] { P("vol", "bar") }) });
-        add("Essentials", "rings", "Rings", 2, true, new[] { R(3, new[] { P("head", "ring"), P("spare", "ring") }), R(1, new[] { P("vol", "bar", 2) }) });
-        add("Essentials", "dials", "Dials", 3, true, new[] { R(1, new[] { P("head", "ring"), P("spare", "ring"), P("vol", "knob") }) });
+        add("Essentials", "rings", "Pair", 2, true, new[] { R(3, new[] { P("head", "ring"), P("spare", "ring") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Essentials", "dials", "Three across", 3, true, new[] { R(1, new[] { P("head", "ring"), P("spare", "ring"), P("vol", "knob") }) });
         add("Essentials", "large", "Large", 1, false, new[] { R(2, new[] { P("head") }), R(2, new[] { P("spare") }), R(1, new[] { P("vol", "bar") }) });
         add("Essentials", "list", "List", 1, true, new[] { R(1, new[] { P("head") }), R(1, new[] { P("spare") }), R(1, new[] { P("vol") }) });
         // with the time
         add("Clock", "clock", "Clock", 2, true, new[] { R(3, new[] { Ck(2, "auto", true) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
         add("Clock", "clockbars", "Clock and bars", 1, true, new[] { R(2, new[] { Ck(1, "auto", true) }), R(1, new[] { P("head", "bar") }), R(1, new[] { P("spare", "bar") }), R(1, new[] { P("vol", "bar") }) });
-        add("Clock", "clockrings", "Clock and rings", 3, true, new[] { R(2, new[] { Ck(3, "auto", false) }), R(3, new[] { P("head", "ring"), P("spare", "ring"), P("vol", "knob") }) });
+        add("Clock", "clockrings", "Clock and three", 3, true, new[] { R(2, new[] { Ck(3, "auto", false) }), R(3, new[] { P("head", "ring"), P("spare", "ring"), P("vol", "knob") }) });
         // with the CPU's and the GPU's temperatures
         add("Temperatures", "temps", "Temperatures", 2, true, new[] { R(2, new[] { P("cpu", "number", 1, "name"), P("gpu", "number", 1, "name") }), R(2, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
-        add("Temperatures", "gauges", "Gauges", 2, true, new[] { R(3, new[] { P("cpu", "knob", 1, "name"), P("gpu", "knob", 1, "name") }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
+        add("Temperatures", "gauges", "Big temperatures", 2, true, new[] { R(3, new[] { P("cpu", "knob", 1, "name"), P("gpu", "knob", 1, "name") }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
         add("Temperatures", "tempbars", "Temperature bars", 2, true, new[] { R(1, new[] { P("cpu", "bar", 2, "name") }), R(1, new[] { P("gpu", "bar", 2, "name") }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
         // with a graph of them
         add("Graphs", "overview", "Overview", 2, true, new[] { R(2, new[] { W(Gr("cpu", "gpu", "line"), 2) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol"), Ck(1, "auto", false) }) });
         add("Graphs", "graph", "Graph", 2, true, new[] { R(3, new[] { W(Gr("cpu", "gpu", "area"), 2) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
-        add("Graphs", "graphrings", "Graph and rings", 3, true, new[] { R(2, new[] { W(Gr("gpu", null, "smooth"), 3) }), R(3, new[] { P("head", "ring"), P("spare", "ring"), P("vol", "knob") }) });
+        add("Graphs", "graphrings", "Graph and three", 3, true, new[] { R(2, new[] { W(Gr("gpu", null, "smooth"), 3) }), R(3, new[] { P("head", "ring"), P("spare", "ring"), P("vol", "knob") }) });
         // (11-14 his "draft some more themes and pages for headset too": ten more, each with the headset, the spare and the volume)
         Func<HsPiece, HsPiece> Inv = q => { q.Inv = true; return q; };
         Func<HsPiece, string, HsPiece> Nm = (q, n) => { q.Name = n; return q; };   // (a short name that fits a small ring)
@@ -9377,7 +9759,7 @@ static class HsPage
         add("Clock", "spotlight", "Spotlight", 2, false, new[] { R(2, new[] { Inv(P("head", "number", 2)) }), R(2, new[] { P("spare"), P("vol") }), R(1, new[] { Ck(2, "auto", false) }) });
         add("Load", "power", "Power", 2, true, new[] { R(3, new[] { Nm(P("cpuuse", "knob", 1, "name"), "CPU"), Nm(P("gpupow", "knob", 1, "name"), "GPU") }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
         add("Load", "loadbars", "Load bars", 2, true, new[] { R(1, new[] { P("cpuuse", "bar", 2, "name") }), R(1, new[] { P("gpupow", "bar", 2, "name") }), R(2, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
-        add("Load", "loadrings", "Load rings", 3, true, new[] { R(3, new[] { Nm(P("cpuuse", "ring", 1, "name"), "CPU"), Nm(P("gpupow", "ring", 1, "name"), "GPU"), P("head", "ring") }), R(2, new[] { P("spare"), P("vol", "bar", 2) }) });
+        add("Load", "loadrings", "Load and headset", 3, true, new[] { R(3, new[] { Nm(P("cpuuse", "ring", 1, "name"), "CPU"), Nm(P("gpupow", "ring", 1, "name"), "GPU"), P("head", "ring") }), R(2, new[] { P("spare"), P("vol", "bar", 2) }) });
         add("Graphs", "dots", "Dots", 2, true, new[] { R(3, new[] { W(Gr("cpu", "gpu", "dots"), 2) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
         add("Graphs", "steps", "Steps", 2, true, new[] { R(3, new[] { W(Gr("gpupow", null, "steps"), 2) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol"), Ck(1, "auto", false) }) });
         add("Graphs", "loadgraph", "Load graph", 2, true, new[] { R(3, new[] { W(Gr("cpuuse", null, "bars"), 2) }), R(1, new[] { P("head"), P("spare") }), R(1, new[] { P("vol", "bar", 2) }) });
@@ -9388,17 +9770,17 @@ static class HsPage
     // lines. Every page has the headset, the spare and the volume; none has the mouse (his 11-13 rules)
     static List<HsTheme> Ready()
     {
-        var pre = Presets(); var l = new List<HsTheme>();
+        var pre = Presets(); var l = new List<HsTheme>(); var old = new Dictionary<string, string>(); var plain = new HashSet<string>();
         Action<string, string, int, int, string, string, string[]> add = (key, name, ev, dig, barLook, lines, keys) =>
         {
             var t = new HsTheme { Id = key, Name = name, Every = ev, Digits = dig, Bar = barLook };
-            foreach (var k in keys) foreach (var x in pre) if (x.Key == k) { var pg = CopyPage(x.G); pg.Name = x.Name; pg.When = "always"; pg.From = "p:" + k; if (lines != null) pg.Lines = lines; t.Pages.Add(pg); }
+            foreach (var k in keys) foreach (var x in pre) if (x.Key == k) { var pg = CopyPage(x.G); pg.Name = x.Name; pg.When = "always"; pg.Dig = dig; pg.Bar = barLook; pg.From = "p:" + key + t.Pages.Count; if (lines != null) pg.Lines = lines; if (!old.ContainsKey(k) || (lines == null && !plain.Contains(k))) { old[k] = key + t.Pages.Count; if (lines == null) plain.Add(k); } t.Pages.Add(pg); }   // (its key in the Pages gallery, 11-15)
             l.Add(t);
         };
         add("everyday", "Everyday", 10, 1, "blocks", null, new[] { "overview", "clockbars" });
         add("bignumbers", "Big numbers", 10, 2, "solid", "none", new[] { "large", "temps" });
-        add("round", "Round", 10, 1, "solid", null, new[] { "rings", "clockrings" });
-        add("gauges", "Gauges", 10, 0, "blocks", null, new[] { "dials", "gauges" });
+        add("round", "Stacked", 10, 1, "solid", null, new[] { "rings", "clockrings" });
+        add("gauges", "Columns", 10, 0, "blocks", null, new[] { "dials", "gauges" });
         add("compact", "Compact", 20, 1, "solid", "solid", new[] { "list", "tempbars" });
         add("timefirst", "Time first", 20, 1, "blocks", null, new[] { "clock", "clockbars" });
         add("graphs", "Graphs", 10, 1, "blocks", null, new[] { "graph", "graphrings" });
@@ -9411,7 +9793,122 @@ static class HsPage
         add("dotted", "Dotted", 10, 1, "blocks", "dotted", new[] { "dots", "clockside" });
         add("steps", "Steps", 20, 2, "blocks", null, new[] { "steps", "rings" });
         add("bold", "Bold", 10, 2, "solid", "none", new[] { "inverted", "tempbars" });
+        // (11-16 his "we could also use some more themes using the free layout just like in pc screen": themes whose pages
+        // are Free, every piece at its own pixels of the 126 x 62 page as the PC screen's ready-made pages are, its cell kept
+        // for Grid too (no two in one cell). Each page has the headset, the spare and the volume, none the mouse)
+        Func<HsPiece, int[], HsPiece> Px = (q, a) => { q.FX = a[0]; q.FY = a[1]; q.FW = a[2]; q.FH = a[3]; q.AtX = a[4]; q.AtY = a[5]; q.W = a[6]; q.H = a[7]; return q; };   // (its pixels, then its cell)
+        Func<string, int, int, HsPiece[], HsGPage> FP = (name, rows, cols, ps) => { var g = new HsGPage { Name = name, Rows = rows, Cols = cols, Free = true, Lines = "none" }; g.Pieces.AddRange(ps); return g; };
+        Action<string, string, int, int, string, HsGPage[]> addF = (key, name, ev, dig, barLook, pgs) =>
+        {
+            var t = new HsTheme { Id = key, Name = name, Every = ev, Digits = dig, Bar = barLook };
+            foreach (var pg in pgs) { pg.When = "always"; pg.Dig = dig; pg.Bar = barLook; pg.From = "p:" + key + t.Pages.Count; t.Pages.Add(pg); }
+            l.Add(t);
+        };
+        addF("watch", "Watch", 10, 1, "blocks", new[] {
+            FP("Watch face", 3, 2, new[] {
+                Px(new HsPiece { Src = "clock", Date = false, Size = "l" }, new[] { 0, 12, 126, 38, 0, 1, 2, 1 }),
+                Px(new HsPiece { Src = "head", Align = "left" }, new[] { 0, 0, 42, 11, 0, 0, 1, 1 }),
+                Px(new HsPiece { Src = "spare", Align = "right" }, new[] { 78, 0, 48, 11, 1, 0, 1, 1 }),
+                Px(new HsPiece { Src = "vol", Align = "left" }, new[] { 0, 51, 42, 11, 0, 2, 1, 1 }),
+                Px(new HsPiece { Src = "cpu", Label = "name", Align = "right" }, new[] { 84, 51, 42, 11, 1, 2, 1, 1 }) }),
+            FP("Headset watch", 3, 2, new[] {
+                Px(new HsPiece { Src = "head", IK = 2, Size = "l" }, new[] { 0, 12, 126, 38, 0, 1, 2, 1 }),
+                Px(new HsPiece { Src = "clock", Date = false, Align = "left" }, new[] { 0, 0, 42, 11, 0, 0, 1, 1 }),
+                Px(new HsPiece { Src = "spare", Align = "right" }, new[] { 78, 0, 48, 11, 1, 0, 1, 1 }),
+                Px(new HsPiece { Src = "vol", Align = "left" }, new[] { 0, 51, 42, 11, 0, 2, 1, 1 }),
+                Px(new HsPiece { Src = "gpu", Label = "name", Align = "right" }, new[] { 84, 51, 42, 11, 1, 2, 1, 1 }) }) });
+        addF("sidebar", "Sidebar", 10, 0, "solid", new[] {
+            FP("Clock and column", 6, 3, new[] {
+                Px(new HsPiece { Src = "clock", Size = "l" }, new[] { 0, 0, 88, 62, 0, 0, 2, 6 }),
+                Px(new HsPiece { Src = "head", At = "above" }, new[] { 92, 0, 34, 17, 2, 0, 1, 2 }),
+                Px(new HsPiece { Src = "spare", At = "above" }, new[] { 92, 22, 34, 17, 2, 2, 1, 2 }),
+                Px(new HsPiece { Src = "vol", At = "above" }, new[] { 92, 45, 34, 17, 2, 4, 1, 2 }) }),
+            FP("Temps and column", 6, 3, new[] {
+                Px(new HsPiece { Src = "cpu", Label = "name" }, new[] { 0, 0, 88, 30, 0, 0, 2, 3 }),
+                Px(new HsPiece { Src = "gpu", Label = "name" }, new[] { 0, 32, 88, 30, 0, 3, 2, 3 }),
+                Px(new HsPiece { Src = "head", At = "above" }, new[] { 92, 0, 34, 17, 2, 0, 1, 2 }),
+                Px(new HsPiece { Src = "spare", At = "above" }, new[] { 92, 22, 34, 17, 2, 2, 1, 2 }),
+                Px(new HsPiece { Src = "vol", At = "above" }, new[] { 92, 45, 34, 17, 2, 4, 1, 2 }) }) });
+        addF("hero", "Hero", 10, 1, "blocks", new[] {
+            FP("Headset hero", 2, 3, new[] {
+                Px(new HsPiece { Src = "head", At = "above", IK = 2, Size = "l" }, new[] { 0, 5, 90, 52, 0, 0, 2, 2 }),
+                Px(new HsPiece { Src = "spare", At = "above" }, new[] { 94, 6, 32, 24, 2, 0, 1, 1 }),
+                Px(new HsPiece { Src = "vol", At = "above" }, new[] { 94, 32, 32, 24, 2, 1, 1, 1 }) }),
+            FP("Volume hero", 2, 3, new[] {
+                Px(new HsPiece { Src = "vol", At = "above", IK = 2, Size = "l" }, new[] { 0, 5, 90, 52, 0, 0, 2, 2 }),
+                Px(new HsPiece { Src = "head", At = "above" }, new[] { 94, 6, 32, 24, 2, 0, 1, 1 }),
+                Px(new HsPiece { Src = "spare", At = "above" }, new[] { 94, 32, 32, 24, 2, 1, 1, 1 }) }) });
+        addF("twin", "Twin", 10, 3, "solid", new[] {
+            FP("Twin graphs", 2, 6, new[] {
+                Px(new HsPiece { Src = "cpu", Style = "graph", Label = "name", Graph = "line" }, new[] { 0, 0, 59, 44, 0, 0, 3, 1 }),
+                Px(new HsPiece { Src = "gpu", Style = "graph", Label = "name", Graph = "line" }, new[] { 67, 0, 59, 44, 3, 0, 3, 1 }),
+                Px(new HsPiece { Src = "head", Dig = 1 }, new[] { 0, 48, 36, 14, 0, 1, 2, 1 }),
+                Px(new HsPiece { Src = "spare", Dig = 1 }, new[] { 39, 48, 48, 14, 2, 1, 2, 1 }),
+                Px(new HsPiece { Src = "vol", Dig = 1 }, new[] { 90, 48, 36, 14, 4, 1, 2, 1 }) }),
+            FP("Twin temps", 2, 6, new[] {
+                Px(new HsPiece { Src = "cpu", Label = "name", At = "above", Size = "l" }, new[] { 0, 0, 61, 42, 0, 0, 3, 1 }),
+                Px(new HsPiece { Src = "gpu", Label = "name", At = "above", Size = "l" }, new[] { 65, 0, 61, 42, 3, 0, 3, 1 }),
+                Px(new HsPiece { Src = "head", Dig = 1 }, new[] { 0, 47, 36, 15, 0, 1, 2, 1 }),
+                Px(new HsPiece { Src = "spare", Dig = 1 }, new[] { 39, 47, 48, 15, 2, 1, 2, 1 }),
+                Px(new HsPiece { Src = "vol", Dig = 1 }, new[] { 90, 47, 36, 15, 4, 1, 2, 1 }) }) });
+        addF("ticker", "Ticker", 0, 2, "blocks", new[] {
+            FP("Graph and bars", 5, 1, new[] {
+                Px(new HsPiece { Src = "cpu", Style = "graph", Label = "name", Src2 = "gpu", Graph = "line" }, new[] { 0, 0, 126, 30, 0, 0, 1, 2 }),
+                Px(new HsPiece { Src = "head", Style = "bar" }, new[] { 0, 33, 126, 9, 0, 2, 1, 1 }),
+                Px(new HsPiece { Src = "spare", Style = "bar" }, new[] { 0, 43, 126, 9, 0, 3, 1, 1 }),
+                Px(new HsPiece { Src = "vol", Style = "bar" }, new[] { 0, 53, 126, 9, 0, 4, 1, 1 }) }) });
+        prePage = old;
         return l;
+    }
+    // the Pages gallery (11-15 his "the pages templates should ONLY be the sames as the ones in the themes and vice versa"):
+    // every ready-made theme's pages, a group a theme, each as it is in that theme and drawn in its digits, bars and icons
+    static List<HsPreset> Templates()
+    {
+        var l = new List<HsPreset>();
+        foreach (var t in Ready()) for (int k = 0; k < t.Pages.Count; k++) l.Add(new HsPreset { Key = t.Id + k, Name = t.Pages[k].Name, Group = t.Name, G = t.Pages[k], Dig = t.Digits, BarLook = t.Bar, Icons = t.Icons });
+        return l;
+    }
+    // a page from an older ready-made page ("p:overview"): from the first theme page made of it now ("p:everyday0")
+    static Dictionary<string, string> prePage;
+    static string FromFix(string f)
+    {
+        if (f == null || !f.StartsWith("p:")) return f;
+        if (prePage == null) Ready();
+        string to; return prePage.TryGetValue(f.Substring(2), out to) ? "p:" + to : f;
+    }
+    // his own themes into saved pages, once (11-15 his "saving themes makes no sense, you should only be able to save
+    // pages ... fix my saves accordingly (and fix for other users)"): each theme page not saved already becomes one (a
+    // one-page theme's under the theme's name, else "<page> (<theme>)"); the list is left empty; a page on the screen the
+    // same as a saved one is from it. True when it moved something (the start then keeps a copy of the file and saves)
+    static bool FoldThemes()
+    {
+        if (themes.Count == 0) { if (themeFrom != null && themeFrom.StartsWith("t:")) themeFrom = null; return false; }   // (nothing to move: the page's every change comes through here)
+        bool moved = true;
+        var js = new JavaScriptSerializer();
+        Func<HsGPage, string> core = pg => { var d = PageDict(pg); d.Remove("name"); d.Remove("from"); d.Remove("when"); return js.Serialize(d); };
+        var ids = new HashSet<string>(); foreach (var x in saved) ids.Add(x.Id);
+        var have = new HashSet<string>(); foreach (var x in saved) have.Add(core(x.Page));
+        foreach (var t in themes)
+            for (int k = 0; k < t.Pages.Count; k++)
+            {
+                var pg = t.Pages[k]; if (pg.Pieces.Count == 0 || saved.Count >= MaxSaved) continue;
+                string c = core(pg); if (!have.Add(c)) continue;
+                string nm = t.Pages.Count == 1 ? t.Name : (pg.Name ?? "Page " + (k + 1)) + " (" + t.Name + ")"; if (nm.Length > 36) nm = nm.Substring(0, 36).TrimEnd();
+                var names = new HashSet<string>(); foreach (var x in saved) names.Add(x.Name); string n1 = nm; int q = 2; while (names.Contains(n1)) n1 = nm + " " + q++;
+                var cp = CopyPage(pg); cp.From = null; cp.Name = n1.Length > 24 ? n1.Substring(0, 24).TrimEnd() : n1;
+                string id = NewId(z => ids.Contains(z)); ids.Add(id);
+                saved.Add(new HsSaved { Id = id, Name = n1, Page = cp });
+            }
+        themes = new List<HsTheme>();
+        if (themeFrom != null && themeFrom.StartsWith("t:")) themeFrom = null;
+        if (moved)
+            foreach (var pg in pages)
+            {
+                bool linked = false; if (pg.From != null && pg.From.StartsWith("s:")) foreach (var x in saved) if ("s:" + x.Id == pg.From) linked = true;
+                if (linked || (pg.From != null && pg.From.StartsWith("p:"))) continue;
+                string c = core(pg); foreach (var x in saved) if (core(x.Page) == c) { pg.From = "s:" + x.Id; break; }
+            }
+        return moved;
     }
     // what came in, checked: anything out of range takes its default; a row past the 5 units, or a piece past its row's
     // columns, is left out; no page: his pick 6. The first saves (11-12 23:00, a grid with pieces 1 to 5 cells tall) are
@@ -9458,6 +9955,7 @@ static class HsPage
             foreach (var pg in pages) t.Pages.Add(CopyPage(pg));
             themes.Add(t); themeName = t.Name; themeFrom = "t:" + t.Id;
         }
+        if (FoldThemes()) folded = true;
         if (focus >= pages.Count) focus = -1;
     }
     static void TakeV3(Dictionary<string, object> d)
@@ -9502,6 +10000,7 @@ static class HsPage
             saved = sv;
         }
         if (d.ContainsKey("wheelfast")) wheelFast = true.Equals(d["wheelfast"]);
+        if (FoldThemes()) folded = true;
         if (focus >= pages.Count) focus = -1;
     }
     static int IntC(Dictionary<string, object> d, string k, int def, int lo, int hi) { object o; if (!d.TryGetValue(k, out o) || o == null) return def; double v; try { v = Convert.ToDouble(o); } catch { return def; } if (double.IsNaN(v)) return def; return (int)Math.Max(lo, Math.Min(hi, Math.Round(v))); }
@@ -9554,13 +10053,14 @@ static class HsPage
         if (ro is IEnumerable && !(ro is string)) { var r = Rows(pd); return r.Rows.Count > 0 ? FromRows(r, Str(pd, "name") ?? "Page") : null; }   // (a v2 page inside: moved over)
         var g = new HsGPage { Rows = Int(pd, "rows", 2, 1, MaxGrid), Cols = Int(pd, "cols", 2, 1, MaxGrid), Gap = Int(pd, "gap", -1, -1, 6), Lines = Pick(pd, "lines", LineKinds), When = Pick(pd, "when", Whens) };
         var nm = Str(pd, "name"); g.Name = nm == null ? "Page" : nm.Length > 24 ? nm.Substring(0, 24).TrimEnd() : nm;
-        string from = Str(pd, "from"); if (from != null && from.Length > 2 && (from.StartsWith("p:") || from.StartsWith("s:")) && IdOk(from.Substring(2))) g.From = from;
+        g.Free = Bool(pd, "free", false); g.Dig = Int(pd, "dig", -1, -1, 3); var br = Str(pd, "bar"); g.Bar = br != null && Array.IndexOf(Bars, br) >= 0 ? br : "";   // (11-16)
+        string from = Str(pd, "from"); if (from != null && from.Length > 2 && (from.StartsWith("p:") || from.StartsWith("s:")) && IdOk(from.Substring(2))) g.From = FromFix(from);
         var own = new bool[g.Rows, g.Cols];
         foreach (var q in List(pd, "pieces"))
         {
             var qd = q as Dictionary<string, object>; var p = Piece(qd); if (p == null) continue;
             int x = IntC(qd, "x", 0, 0, g.Cols - 1), y = IntC(qd, "y", 0, 0, g.Rows - 1), w = IntC(qd, "w", 1, 1, g.Cols - x), h = IntC(qd, "h", 1, 1, g.Rows - y);   // (clamped: a hand-edited place stays near where it was)
-            bool free = true; for (int a2 = 0; a2 < h; a2++) for (int b2 = 0; b2 < w; b2++) if (own[y + a2, x + b2]) free = false;
+            bool free = true; for (int a2 = 0; a2 < h; a2++) for (int b2 = 0; b2 < w; b2++) if (own[y + a2, x + b2] && !g.Free) free = false;
             if (!free) continue;
             for (int a2 = 0; a2 < h; a2++) for (int b2 = 0; b2 < w; b2++) own[y + a2, x + b2] = true;
             p.AtX = x; p.AtY = y; p.W = w; p.H = h; g.Pieces.Add(p);
@@ -9571,7 +10071,7 @@ static class HsPage
     {
         var pg = new HsRowPage { Cols = Int(pd, "cols", 2, 1, 3), Lines = Bool(pd, "lines", true) };   // (no "gap": the setting went, his 11-13 "bad fix")
         pg.When = Pick(pd, "when", Whens);
-        string from = Str(pd, "from"); if (from != null && from.Length > 2 && (from.StartsWith("p:") || from.StartsWith("s:")) && IdOk(from.Substring(2))) pg.From = from;
+        string from = Str(pd, "from"); if (from != null && from.Length > 2 && (from.StartsWith("p:") || from.StartsWith("s:")) && IdOk(from.Substring(2))) pg.From = FromFix(from);
         int units = 0;
         foreach (var r in List(pd, "rows"))
         {
@@ -9621,13 +10121,20 @@ static class HsPage
         string src = Str(qd, "src"); if (src == null) return null;
         var p = new HsPiece { Src = src, Style = Pick(qd, "style", Styles), Label = Pick(qd, "label", Labels), At = Pick(qd, "at", Ats), W = Int(qd, "w", 1, 1, MaxGrid), Src2 = Str(qd, "src2"), Graph = Pick(qd, "graph", Graphs), Seconds = Bool(qd, "seconds", false), Date = Bool(qd, "date", true),
             Size = Pick(qd, "size", Sizes), Align = Pick(qd, "align", Aligns), Dec = Int(qd, "dec", 0, 0, 2), Unit = Bool(qd, "unit", true), Warn = Num(qd, "warn"), Crit = Num(qd, "crit"), Lo = Num(qd, "lo"), Hi = Num(qd, "hi") };
+        if (lowMig && double.IsNaN(p.Warn) && (p.Src == "head" || p.Src == "spare" ? p.Crit == 12 : p.Src == "mouse" && p.Crit == 15)) p.Crit = double.NaN;   // (11-15: the old written default of a battery's low level is its Auto)
         object bo; if (qd.TryGetValue("below", out bo) && bo is bool) p.Below = (bool)bo;
         object nb; if (qd.TryGetValue("num", out nb) && nb is bool) p.NoNum = !(bool)nb;   // (v3)
         p.NameSz = Pick(qd, "nsize", NameSizes); p.Dig = Int(qd, "dig", -1, -1, 3); p.Inv = Bool(qd, "inv", false);   // (11-14)
-        p.OffAs = Pick(qd, "offas", OffAses); p.ChgAs = Pick(qd, "chgas", ChgAses); var ot = Str(qd, "offtxt"); if (ot != null) { ot = Caps(ot).Trim(); if (ot.Length > 6) ot = ot.Substring(0, 6).TrimEnd(); p.OffTxt = ot.Length > 0 ? ot : null; }   // (11-14 his battery states)
+        p.H12 = Bool(qd, "h12", false); p.DateAt = Pick(qd, "dateat", DateAts); p.DateFmt = Pick(qd, "datefmt", DateFmts);   // (11-17 the clock's own)
+        if (p.Src == "clock" && !qd.ContainsKey("label")) p.Label = "off";   // (a clock from before 11-17: no label, as it was drawn)
+        p.OffAs = Pick(qd, "offas", OffAses); p.ChgAs = Pick(qd, "chgas", ChgAses); p.LowAs = Pick(qd, "lowas", LowAses); var ot = Str(qd, "offtxt"); if (ot != null) { ot = Caps(ot).Trim(); if (ot.Length > 6) ot = ot.Substring(0, 6).TrimEnd(); p.OffTxt = ot.Length > 0 ? ot : null; }   // (11-14 his battery states)
         var nm = Str(qd, "name"); if (nm != null) { nm = Caps(nm); if (nm.Length > 16) nm = nm.Substring(0, 16).TrimEnd(); p.Name = nm.Length > 0 ? nm : null; }   // (his own label words, in the screen's letters)
         int over = Int(qd, "over", 120, 1, Keep); p.Over = Array.IndexOf(Overs, over) >= 0 ? over : 120;
         if (p.Src2 == "clock" || p.Src2 == p.Src) p.Src2 = null;
+        if (p.Style == "ring" || p.Style == "knob") p.Style = "number";   // (11-16 his "all dials look bad ... just build without it")
+        p.VH = qd.ContainsKey("vh") ? Int(qd, "vh", 0, 0, 43) : 7 * Int(qd, "vk", 0, 0, 6); if (p.VH > 0 && p.VH < 5) p.VH = 5; p.WK = Int(qd, "wk", 0, 0, 4); p.BK = Int(qd, "bk", 0, 0, 3); p.UK = Int(qd, "uk", 0, 0, 3); p.IK = Math.Max(1, Int(qd, "ik", 1, 0, 3)); p.UAt = Pick(qd, "uat", UAts);
+        p.VX = Int(qd, "vx", 0, -40, 40); p.VY = Int(qd, "vy", 0, -40, 40); p.UX = Int(qd, "ux", 0, -40, 40); p.UY = Int(qd, "uy", 0, -40, 40); p.IX = Int(qd, "ix", 0, -40, 40); p.IY = Int(qd, "iy", 0, -40, 40);
+        p.FX = Int(qd, "fx", -1, -1, Cv.W - 1); p.FY = Int(qd, "fy", 0, 0, Cv.H - 1); p.FW = Int(qd, "fw", 0, 0, Cv.W); p.FH = Int(qd, "fh", 0, 0, Cv.H); if (p.FW < 1 || p.FH < 1) p.FX = -1;
         return p;
     }
     static IEnumerable List(Dictionary<string, object> d, string k) { object o; return d.TryGetValue(k, out o) && o is IEnumerable && !(o is string) ? (IEnumerable)o : new object[0]; }
@@ -9753,13 +10260,15 @@ static class HsPage
                 if (n >= pages.Count) n = pages.Count - 1;
                 focus = n; focusTill = DateTime.UtcNow.AddSeconds(3);
                 var pg = pages[n]; var L = Grid(pg);
-                var px = Hs.Draw(L, i).Px;
+                foreach (var q in L.Pieces) { q.AsNum = false; q.LabCut = false; q.DateCut = false; q.SecCut = false; }
+                var plog = new List<object[]>(); bool[,] px; Hs.PartLog = plog; try { px = Hs.Draw(L, i).Px; } finally { Hs.PartLog = null; }   // (11-16 its parts' boxes)
                 Func<double, double> F = v => Math.Round(v, 5);
                 var rects = new List<object>();   // (each piece, in the page's own order: null when it found no room)
                 foreach (var p in L.Pieces) rects.Add(p.X < 0 ? null : new object[] { F((p.Bx + 1) / 128.0), F((p.By + 1) / 64.0), F(p.Bw / 128.0), F(p.Bh / 64.0) });
                 var colx = new List<object>(); for (int c = 0; c < L.Cols; c++) colx.Add(new object[] { F((L.ColX[c] + 1) / 128.0), F(L.ColW[c] / 128.0) });
                 var rowy = new List<object>(); for (int rr = 0; rr < L.Rows; rr++) rowy.Add(new object[] { F((L.RowY[rr] + 1) / 64.0), F(L.RowH[rr] / 64.0) });
-                r["img"] = Bits(px); r["rects"] = rects; r["colx"] = colx; r["rowy"] = rowy;
+                r["parts"] = Hs.PartsReply(L.Pieces, plog); r["wkmax"] = Hs.WkReply(L.Pieces, plog); r["vhmax"] = Hs.TagReply(L.Pieces, plog, "#vhmax"); r["bkmax"] = Hs.TagReply(L.Pieces, plog, "#bkmax"); r["img"] = Bits(px); r["rects"] = rects; r["colx"] = colx; r["rowy"] = rowy;
+                var asnum = new List<object>(); foreach (var p in L.Pieces) asnum.Add(p.AsNum); r["asnum"] = asnum; var labcut = new List<object>(); foreach (var p in L.Pieces) labcut.Add(p.LabCut); r["labcut"] = labcut; var ccut = new List<object>(); foreach (var p in L.Pieces) ccut.Add(p.Src != "clock" ? "" : (p.DateCut ? "d" : "") + (p.SecCut ? "s" : "") + (p.LabCut ? "l" : "")); r["clockcut"] = ccut;   // (11-17 what a clock left out, no room)   // (dials drawn as numbers: the panel shows them a number's options, 11-15)
                 r["readonly"] = fileV > 3;
                 // (the page's layout presets, its digits in the four designs, the bar looks, the tiles: pictures for Customize's
                 // galleries; not every second, the base's knob waits on this lock: on a change, another page, and each 5th ask)
@@ -9769,7 +10278,8 @@ static class HsPage
                 var lay = new List<object>();
                 foreach (var kv in Layouts(pg)) lay.Add(new Dictionary<string, object> { { "name", kv.Key }, { "img", Bits(Hs.Draw(Grid(kv.Value), i).Px) }, { "page", PageDict(kv.Value) } });
                 r["lay"] = lay;
-                var dig = new List<object>(); for (int k = 0; k < 4; k++) dig.Add(Bits(Hs.Draw(Grid(pg, k, bar), i).Px));
+                var dpg = new HsGPage { Rows = 1, Cols = 1 }; dpg.Pieces.Add(P("head", "number", 1, "off")); var di = new HsInfo { Now = i.Now, Dx = 1, Dy = 1, Head = 62 };   // (11-15 his "they shouldn't look the same": each design as one big number, not his page shrunk)
+                var dig = new List<object>(); for (int k = 0; k < 4; k++) dig.Add(Bits(Zoom2(Hs.Draw(Grid(dpg, k, bar), di).Px)));
                 r["dig"] = dig;
                 HsGPage bp = null; foreach (var x in Presets()) if (x.Key == "bars") bp = x.G;
                 if (bp != null) r["bars"] = new List<object> { Bits(Hs.Draw(Grid(bp, digits, "blocks"), i).Px), Bits(Hs.Draw(Grid(bp, digits, "solid"), i).Px) };
@@ -9777,9 +10287,9 @@ static class HsPage
                 r["what"] = what; r["setup"] = Setup(); r["page"] = n;
                 var an = new List<object>(); foreach (var a in Anims) an.Add(new Dictionary<string, object> { { "key", a.Key }, { "name", a.Name } });
                 r["anims"] = an;
-                var pre = Presets();
+                var pre = Templates();   // (the Pages gallery: the ready-made themes' pages, 11-15)
                 if (gal) {
-                var pimg = new Dictionary<string, object>(); foreach (var x in pre) pimg[x.Key] = Bits(Hs.Draw(Grid(x.G), i).Px);
+                var pimg = new Dictionary<string, object>(); foreach (var x in pre) { var gl = Grid(x.G, x.Dig, x.BarLook); gl.Icons = x.Icons; pimg[x.Key] = Bits(Hs.Draw(gl, i).Px); }   // (in its theme's look)
                 var simg = new Dictionary<string, object>(); foreach (var x in saved) simg[x.Id] = Bits(Hs.Draw(Grid(x.Page), i).Px);
                 var timg = new Dictionary<string, object>(); foreach (var t in themes) { var tl = Grid(t.Pages[0], t.Digits, t.Bar); tl.Icons = t.Icons; timg[t.Id] = Bits(Hs.Draw(tl, i).Px); }   // (his themes: their first page in their own look)
                 var rimg = new Dictionary<string, object>(); foreach (var t in Ready()) { var rl0 = Grid(t.Pages[0], t.Digits, t.Bar); rl0.Icons = t.Icons; rimg[t.Id] = Bits(Hs.Draw(rl0, i).Px); }
@@ -9804,7 +10314,7 @@ static class HsPage
         {
             var a = Find(Str(m, "key")); if (a == null) return null;
             bool start = Str(m, "which") != "stop";
-            Batt.Preview(a, start);   // (the base plays it too, when it shows his page: his 11-12 "no animations")
+            if (!Bool(m, "here", false)) Batt.Preview(a, start);   // (here: the Headset tab's picture as the screen switches, 11-15; else the base plays it too, when it shows his page: his 11-12 "no animations")
             var i = Batt.Info(DateTime.Now); i.Dx = i.Dy = 1;
             var frames = new List<object>();
             lock (gate)
@@ -9816,11 +10326,22 @@ static class HsPage
                 frames.Add(Bits(start ? a.Start(len, px) : a.Stop(len, px)));
                 if (!start) { frames.Add(Bits(new bool[128, 64])); frames.Add(Bits(new bool[128, 64])); }   // (a moment of black, then the card's own picture)
             }
-            return new Dictionary<string, object> { { "play", new Dictionary<string, object> { { "key", a.Key }, { "which", start ? "start" : "stop" }, { "ms", 40 }, { "frames", frames } } } };
+            return new Dictionary<string, object> { { "play", new Dictionary<string, object> { { "key", a.Key }, { "which", start ? "start" : "stop" }, { "ms", 40 }, { "frames", frames }, { "here", Bool(m, "here", false) } } } };
         }
         return null;
     }
     // a picture for the page: 128 x 64 bits, row by row, the first pixel the highest bit, as base64
+    // (11-15: a picture's lit part twice as big, the middle 64 x 32 pixels around it each drawn 2 x 2; as it is when it doesn't fit)
+    static bool[,] Zoom2(bool[,] px)
+    {
+        int x0 = 128, y0 = 64, x1 = -1, y1 = -1;
+        for (int y = 0; y < 64; y++) for (int x = 0; x < 128; x++) if (px[x, y]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        if (x1 < 0 || x1 - x0 > 61 || y1 - y0 > 29) return px;
+        int cx = Math.Max(0, Math.Min(64, (x0 + x1 + 1) / 2 - 32)), cy = Math.Max(0, Math.Min(32, (y0 + y1 + 1) / 2 - 16));
+        var o = new bool[128, 64];
+        for (int y = 0; y < 64; y++) for (int x = 0; x < 128; x++) o[x, y] = px[cx + x / 2, cy + y / 2];
+        return o;
+    }
     static string Bits(bool[,] px)
     {
         var b = new byte[128 * 64 / 8];
@@ -9995,15 +10516,139 @@ static class Batt
         if (mouseDone && mouse != null) { try { mouse.Dispose(); } catch { } mouse = null; }   // (still in a call: left to the exit, not freed under it, the review 11-12)
     }
 
-    public static void FakeHeadset()
+    public static void FakeHeadset(string how = "1")
     {
         HeadSeen = HeadThere = true; HeadLevel = 5; SpareLevel = 8; HeadPower = 0;
+        foreach (var w in (how ?? "").Split(',')) { var t = w.Trim(); if (t == "spare0") SpareLevel = 0; else if (t == "off") HeadPower = 1; else if (t == "chg") HeadPower = 2; }   // (a test copy's states, 11-16: an empty spare slot, the headset off or charging)
         if (MouseOn) { MouseSeen = MouseThere = true; MousePct = 87; MouseCharging = 0; }
-        volume = 45; Brightness = 3; knobFw = true;   // (a --fake copy's Headset tab shows the wheel switch, as on his base)
+        SetFake();         volume = 45; Brightness = 3; knobFw = true;   // (a --fake copy's Headset tab shows the wheel switch, as on his base)
+    }
+
+    // ---- the headset's own settings (11-15, hwdeck\local\hs-settings-1115\findings.md; his "allow control of the headset
+    // settings (the basic ones, like timeouts, simple eq, volume, mic, etc.)", pick A + save): read from the 06 b0 and 06 20
+    // answers ([8] transparency, [9] mic muted, [10] noise control, [11] mute light, [12] auto off; [4] gain, [6] EQ preset,
+    // [7..16] the custom bands, [17] mic volume, [18] sidetone). A change is queued and sent between the knob's work, 50 ms
+    // apart (GG's gap), read back, and kept in the base's storage with one 06 09 2 s after the last one (the base saves
+    // by itself only after a wheel or menu change). None of them draws on the base's screen (each redraws only when the
+    // base's own menu is open on it); the volume does, so it goes through the knob's own way. GG running: nothing sent ----
+    sealed class HsSet { public int nc, tr, eq, gain, mic, st, light, off, muted; public int[] bands = new int[10]; }
+    static HsSet hset;                                   // what the base said, or what he set since; null: not known
+    static readonly object setLk = new object();
+    static readonly List<byte[]> setQ = new List<byte[]>();   // his changes still to send (the newest of each wins)
+    static volatile int volWant = -1;                    // the volume slider: a level 0..56
+    static long setNext, setReadAt, setSaveAt, setLook = -100000, setWrote = -100000; static bool setDirty, setOwed;
+    static volatile bool setRo;                          // a base whose firmware was not read (the Xbox ones): shown, not changed
+    static int setLvlMem = -1;                           // a copy with no base (--fake): the volume set here, the knob's own level untouched
+
+    // the Headset tab: a setting changed (real false: a --fake copy's, kept in memory only)
+    public static void Setting(Dictionary<string, object> m, bool real)
+    {
+        object ko, vo, io; int v, i = 0;
+        if (m == null || !m.TryGetValue("k", out ko) || !m.TryGetValue("v", out vo) || !int.TryParse(Convert.ToString(vo, System.Globalization.CultureInfo.InvariantCulture), out v)) return;
+        string k = ko as string;
+        if (k == "band" && (!m.TryGetValue("i", out io) || !int.TryParse(Convert.ToString(io, System.Globalization.CultureInfo.InvariantCulture), out i))) return;
+        lock (setLk)
+        {
+            var s = hset; if (s == null) return;
+            if (real && (gg || mode == "gg" || setRo)) return;   // (GG has the base, or a base not read: shown only)
+            byte[] r;
+            if (k == "vol") { if (v < 0 || v > 0x38) return; if (real) volWant = v; else setLvlMem = v; }
+            else if (k == "nc" && v >= 0 && v <= 2) { s.nc = v; r = new byte[] { 0x06, 0xBD, (byte)v }; if (real) SetQueue(r); }
+            else if (k == "tr" && v >= 1 && v <= 10) { s.tr = v; r = new byte[] { 0x06, 0xB9, (byte)v }; if (real) SetQueue(r); }
+            else if (k == "eq" && v >= 0 && v <= 4) { s.eq = v; r = new byte[] { 0x06, 0x2E, (byte)v }; if (real) SetQueue(r); }
+            else if (k == "band" && i >= 1 && i <= 10 && v >= 0 && v <= 40)   // (a band plays only in Custom: picked first)
+            {
+                if (s.eq != 4) { s.eq = 4; if (real) SetQueue(new byte[] { 0x06, 0x2E, 4 }); }
+                s.bands[i - 1] = v; r = new byte[] { 0x06, 0x31, (byte)i, (byte)v }; if (real) SetQueue(r);
+            }
+            else if (k == "gain" && (v == 1 || v == 2)) { s.gain = v; r = new byte[] { 0x06, 0x27, (byte)v }; if (real) SetQueue(r); }
+            else if (k == "mic" && v >= 1 && v <= 10) { s.mic = v; r = new byte[] { 0x06, 0x37, (byte)v }; if (real) SetQueue(r); }
+            else if (k == "st" && v >= 0 && v <= 3) { s.st = v; r = new byte[] { 0x06, 0x39, (byte)v }; if (real) SetQueue(r); }
+            else if (k == "light" && v >= 1 && v <= 10) { s.light = v; r = new byte[] { 0x06, 0xBF, (byte)v }; if (real) SetQueue(r); }
+            else if (k == "off" && v >= 0 && v <= 6) { s.off = v; r = new byte[] { 0x06, 0xC1, (byte)v }; if (real) SetQueue(r); }
+            else return;
+        }
+        Changed();
+    }
+    // (under setLk) the newest of each setting wins: an older one of the same command (and band) still waiting goes
+    static void SetQueue(byte[] r) { setQ.RemoveAll(x => x[1] == r[1] && (r[1] != 0x31 || x[2] == r[2])); setQ.Add(r); }
+    // the Headset tab is open: its settings read every 2 s meanwhile (the headset's own button, the base's menu change them too)
+    public static void SettingsLook() { setLook = Ms(); }
+    static void SetReset() { lock (setLk) { hset = null; setQ.Clear(); setDirty = setOwed = false; } volWant = -1; setLvlMem = -1; setRo = head != null && head.Pid != "12e0"; }   // (only the PC base's firmware was read)
+    static void SetFake()
+    {
+        lock (setLk) hset = new HsSet { nc = 0, tr = 8, eq = 4, gain = 2, mic = 10, st = 0, light = 10, off = 3, bands = new[] { 29, 25, 21, 17, 15, 18, 22, 26, 30, 25 } };
+        setLvlMem = 25;
+    }
+    static Dictionary<string, object> SetCard()
+    {
+        lock (setLk)
+        {
+            var s = hset; if (s == null || !HeadThere) return null;
+            var d = new Dictionary<string, object>();
+            d["nc"] = s.nc; d["tr"] = s.tr; d["eq"] = s.eq; d["bands"] = (int[])s.bands.Clone(); d["gain"] = s.gain; d["mic"] = s.mic; d["st"] = s.st;
+            d["light"] = s.light; d["off"] = s.off; d["muted"] = s.muted; d["lvl"] = volWant >= 0 ? volWant : setLvlMem >= 0 ? setLvlMem : knobLevel; d["ro"] = setRo;
+            return d;
+        }
+    }
+    // the answers to 06 b0 and 06 20: kept when every value is in the range the firmware takes (another layout: left out)
+    static void ReadSettings(byte[] b0, byte[] a)
+    {
+        if (b0 == null || a == null || b0.Length < 16 || a.Length < 19) return;
+        var s = new HsSet { tr = b0[8], muted = b0[9], nc = b0[10], light = b0[11], off = b0[12], gain = a[4], eq = a[6], mic = a[17], st = a[18] };
+        bool ok = s.nc <= 2 && s.tr >= 1 && s.tr <= 10 && s.muted <= 1 && s.light >= 1 && s.light <= 10 && s.off <= 6 && (s.gain == 1 || s.gain == 2) && s.eq <= 18 && s.mic >= 1 && s.mic <= 10 && s.st <= 3;
+        for (int i = 0; i < 10; i++) { s.bands[i] = a[7 + i]; ok &= s.bands[i] <= 40; }
+        bool changed;
+        lock (setLk)
+        {
+            if (setQ.Count > 0 || Ms() - setWrote < 300) return;   // (a change of his still on its way: this answer may be from before it)
+            var was = hset; hset = ok ? s : null;
+            changed = (was == null) != (hset == null) || (was != null && (was.nc != s.nc || was.tr != s.tr || was.eq != s.eq || was.gain != s.gain || was.mic != s.mic || was.st != s.st || was.light != s.light || was.off != s.off || was.muted != s.muted || string.Join(",", was.bands) != string.Join(",", s.bands)));
+            if (!ok && was != null) Log("headset: its settings' answer is not as read in its firmware: the settings are left out");
+        }
+        if (changed) Changed();
+    }
+    // in the loop, between the knob's work: the volume wanted, then one queued setting, the read back, the save
+    static void SettingsStep(long now, bool knob)
+    {
+        if (gg || mode == "gg") { lock (setLk) setQ.Clear(); volWant = -1; return; }   // (GG has the base: its own values win, nothing sent)
+        if (knob || knobClicks != 0 || basePressed || firstHold) return;   // (the knob first; and the first questions after a connect, as the screen)
+        if (volWant >= 0 && knobLevel >= 0)
+        {
+            int vw = System.Threading.Interlocked.Exchange(ref volWant, -1);   // (taken in one step: a newer one arriving now is never lost)
+            if (vw < 0) return;
+            if (knobMode) { knobClicks = vw - knobLevel; if (knobClicks != 0) lastSec = -1; }   // (the knob's own way: his page first, the panel locked around 06 25, nothing at the ends)
+            else if (vw != knobLevel) { if (head.SetLevel(vw)) { knobLevel = vw; volume = Vol((byte)(0x38 - vw)); lastSec = -1; } else Log("headset: volume " + vw + " not taken"); }   // (the base's own screen: its gauge shows, as on a knob turn)
+            return;
+        }
+        byte[] r = null; bool idle;
+        lock (setLk) { if (setQ.Count > 0 && now >= setNext) { r = setQ[0]; setQ.RemoveAt(0); } idle = setQ.Count == 0; }
+        if (r != null)
+        {
+            bool ok = head.Setting(r);
+            long t = Ms(); setNext = t + 50; setWrote = t; setReadAt = t + 350; setSaveAt = t + 2000; setDirty = setOwed = true;
+            Log("headset: setting " + Hex(r, 1, r.Length) + (ok ? "" : " not taken"));
+            return;
+        }
+        if (!idle || (held && now - wheelAt < 3000) || now - knobAt < 3000 || now < fastUntil) return;   // (not while the knob or the headset's wheel turns: a question there would hold the knob's next step)
+        if (setDirty && now >= setSaveAt)
+        {
+            bool ok = head.Setting(new byte[] { 0x06, 0x09 }); setDirty = false; setOwed = true; setReadAt = Ms() + 300;
+            Log("headset: settings kept in the base (06 09)" + (ok ? "" : ", not taken"));
+            return;
+        }
+        if (now >= setReadAt && (setOwed || (now - setLook < 3000 && hset != null)))   // (the tab's own reads once the minute's first questions have answered)
+        {
+            var b0 = head.Ask(0xB0);
+            Thread.Sleep(50);   // (GG's own gap between two questions)
+            var a = head.Ask(0x20);
+            if (a != null && a[3] <= 0x38 && !knobMode) { if (Vol(a[3]) != volume) { volume = Vol(a[3]); lastSec = -1; } knobLevel = 0x38 - a[3]; }   // (the knob's own mode keeps its level itself)
+            ReadSettings(b0, a); setOwed = false; setReadAt = Ms() + 2000;
+        }
     }
 
     // the base's brightness 1 to 10 (06 80's answer [2], or as last set; -1 not known). His slider in Customize sets it
-    // with 06 85 when he lets go (11-14, his "why not?" to it). The app never sends 06 09, but the base saves its settings
+    // with 06 85 when he lets go (11-14, his "why not?" to it). The app sends 06 09 only for the headset's own settings (11-15); the base also saves its settings
     // image (brightness, idle brightness, dim timer, home view, volume) to flash on its own 10 s after a wheel level change
     // (firmware: 0x1224c timer, cb 0xda45, the "app_data" record; hs-knob board wheel-1114, item 7, reviewed 11-14), so a
     // brightness set here persists after his next wheel turn, as the volume does
@@ -10039,6 +10684,7 @@ static class Batt
         string m = mode;
         d["bright"] = HeadThere ? Brightness : -1;
         d["wheel"] = HeadThere && knobFw && KnobZero;   // (the Headset tab's "Faster volume wheel": only on the base the wheel mode is proven on)
+        d["set"] = SetCard();   // (the headset's own settings, null while not known)
         d["cap"] = !HeadThere ? "not found" : m == "gg" ? "SteelSeries GG has it" : m == "dark" ? darkWhy : "headset " + HeadText() + ", " + SpareText();
         return d;
     }
@@ -10177,7 +10823,7 @@ static class Batt
             headSeen = true; drew = false; sendFails = 0; HeadThere = true; HeadSeen = true; lastSec = -1;
             knobOk = knobFw = knobAsked = knobClean = knobMode = knobWasOn = knobSoon = panelLocked = basePressed = false; knobWhy = ""; knobLevel = -1; knobClicks = knobTries = 0; busFree = 0; handUntil = 0; sentLeft = sentRight = null;
             held = wheelHit = wheelOwed = false; heldL = heldR = null; holdFails = 0; openTo = 0; wheelAt = turnAt = -100000;
-            Brightness = -1; brightAsked = false;   // (asked again: a restarted base is back at its own brightness)
+            SetReset();             Brightness = -1; brightAsked = false;   // (asked again: a restarted base is back at its own brightness)
             Log("headset base station found"); Changed();
         }
         head.CollectPushes();
@@ -10219,6 +10865,7 @@ static class Batt
             if (bw > 0 && head.Bright(bw)) { Brightness = bw; Log("headset base: brightness " + bw + " (his slider)"); } else if (bw > 0) Log("headset base: brightness " + bw + " not taken");
             if (bw > 0) busFree = Math.Max(busFree, Ms() + PassMs);   // (the base may still be setting it on the panel: no lock byte meanwhile, the review 11-14)
         }
+        SettingsStep(now, knob);
         if (now < headAsk || knob || knobClicks != 0 || basePressed || (held && now - wheelAt < 3000)) return knob;   // (the minute's questions take 200 ms: not while the knob or the wheel turns)
         headAsk = now + 60000;
         var b0 = head.Ask(0xB0);
@@ -10228,6 +10875,7 @@ static class Batt
         var b20 = head.Ask(0x20);
         if (b20 != null && b20[3] <= 0x38 && Vol(b20[3]) != volume) { volume = Vol(b20[3]); lastSec = -1; }
         if (b20 != null && b20[3] <= 0x38) knobLevel = 0x38 - b20[3];
+        ReadSettings(b0, b20);
         if (b0 != null)   // (its firmware, asked once; then, on the proven one only, its home view every minute: he can change that in the base's menu)
         {
             if (!knobAsked) { Thread.Sleep(50); KnobFirmwareIs(head.Ask(0x10)); }
@@ -10590,6 +11238,14 @@ static class Batt
                 WaitBus(); panelLocked = head.PanelLock(true);
                 try { head.SetLevel(knobLevel); busFree = Ms() + GaugeMs; } finally { Unlock(); }
             }
+            if (knobMode)   // (HEAL on his Refresh, 11-15, hs-knob's review: once the knob is ours, the panel locked and the screen the base's (a touch draws nothing), its home pass over)
+            {
+                WaitBus();
+                if (knobLevel >= 0) { var v0 = head.Ask(0x20, 40); if (v0 != null && v0[3] <= 0x38 && 0x38 - v0[3] != knobLevel) { knobLevel = 0x38 - v0[3]; volume = Vol(v0[3]); wheelAt = Ms(); wheelOwed = true; NapUntil(Ms() + HomeMs); } }   // (Hold's guard before the lock: a wheel click right then, its draw over first, hs-knob 11-15)
+                head.PanelLock(true); head.ScreenBack(); NapUntil(Ms() + HomeMs);
+                bool hok = head.Heal(true); busFree = Ms() + 10; sentLeft = sentRight = null; heldL = heldR = null; panelLocked = held = true;
+                Log("headset screen: the panel's set up sent again (refresh): " + (hok ? "ok" : "not all taken"));
+            }
         }
         headAsk = Math.Min(headAsk, Ms() + 300); lastSec = -1;   // (the minute's questions soon: the base's home view again; the picture at the next look, both halves)
     }
@@ -10599,6 +11255,17 @@ static class Batt
     // His clicks come in bursts (2 or 3, 16 to 50 ms apart) with 150 to 300 ms between them (131 timed clicks, 11-14): the
     // number goes out QuietMs after a burst and is on the panel before the next one
     static long levelAskAt, lockedAt = -100000, anchorAt = -100000, tryAt = -100000;
+    // HEAL, automatic (his 11-15 yes): the panel's set up replayed while held (a wheel click draws nothing), once the base's
+    // own home pass is over; after a flash only (a hit cleaned up, a click that met the open moment), never after a picture.
+    // A wheel click during it (06 20 says): sent once more after the base's draw
+    static void HealPanel(string why)
+    {
+        if (head == null || !held) return;
+        NapUntil(busFree);
+        bool ok = head.Heal(true); busFree = Ms() + 10;
+        if (knobLevel >= 0) { var v = head.Ask(0x20, 40); if (v != null && v[3] <= 0x38 && 0x38 - v[3] != knobLevel) { knobLevel = 0x38 - v[3]; volume = Vol(v[3]); wheelAt = Ms(); wheelOwed = true; NapUntil(Ms() + HomeMs); ok &= head.Heal(true); busFree = Ms() + 10; why += ", again after a wheel click"; } }
+        Log("headset screen: the panel's set up sent again (" + why + "): " + (ok ? "ok" : "not all taken"));
+    }
     static int ProgressMs;   // held: while he keeps turning, the number also goes out this often (0: only once he rests QuietMs), right after one of his bursts (30 ms quiet); his 11-14 "if i keep giving inputs nonstop it stays the old value until i pause"
     static bool ProgressDue(long now) { return ProgressMs > 0 && wheelOwed && now - wheelAt >= 30 && now - tryAt >= ProgressMs; } static bool hitCheck;   // (hitCheck: the first answered poll after a lock decides whether a click met the open moment)
     static void PollWheel(long now)
@@ -10709,6 +11376,7 @@ static class Batt
         head.ScreenBack();
         openTo = Ms() + 110;   // (a click in the open moment is pushed up to 100 ms later)
         busFree = Ms() + HomeMs; sentLeft = sentRight = null;
+        if (click) HealPanel("a wheel click met a picture");
     }
 
     // a wheel click may have met the open moment: the base took the screen (its frame may be on the panel, and the lock
@@ -10720,6 +11388,7 @@ static class Batt
         for (int i = 0; i < 2; i++) { if (i > 0) NapUntil(Ms() + 24); head.PanelLock(true); }   // (two pairs 24 ms apart: fewer pairs near a pass edge, 11-14)
         head.ScreenBack(); busFree = Ms() + HomeMs; sentLeft = sentRight = null; heldL = heldR = null; panelLocked = held = true;
         Log("headset screen: a wheel click may have met a picture: locked again, drawn again once it rests");
+        HealPanel("after a hit");
     }
 
     // the hold ends (the knob mode goes off): the last picture again through the open moment, so the screen is the host's
@@ -11018,8 +11687,35 @@ sealed class Arctis : IDisposable
         return Cmd.SetOutput(r) || (!NoWait && Cmd.Write(r, 1000));
     }
     public bool KeyTest(bool on) { return Raw(0x06, 0x1b, 0x81, 0x01, (byte)(on ? 1 : 0)); }
+    // HEAL (his yes 11-15, hs-knob's list 11-14): the panel's own set up again, one byte per report, from this fixed list only,
+    // then locked (lockAfter false: left unlocked, for Refresh). Never 81 (re-posted as contrast 0), never ae (display off)
+    static readonly byte[] HealBytes = { 0xe3, 0xe3, 0xfd, 0x12, 0xfd, 0x12, 0xd5, 0xa0, 0xa8, 0x3f, 0xd3, 0x00, 0x40, 0x20, 0x00, 0xa1, 0xc8, 0xda, 0x12, 0xd9, 0x22, 0xdb, 0x34, 0x2e, 0xa4, 0xa6, 0x22, 0x00, 0x07, 0x21, 0x00, 0x7f, 0xaf, 0xfd, 0x16 };
+    public bool Heal(bool lockAfter) { bool ok = true; int n = lockAfter ? HealBytes.Length : HealBytes.Length - 2; for (int k = 0; k < n; k++) ok &= Cmd.SetOutput(new byte[] { 0x06, 0x1b, 0x8a, 0x01, HealBytes[k] }); return ok; }
     public bool PanelLock(bool on) { return Raw(0x06, 0x1b, 0x8a, 0x01, 0xfd) & Raw(0x06, 0x1b, 0x8a, 0x01, (byte)(on ? 0x16 : 0x12)); }
     public bool Bright(int b) { if (b < 1 || b > 10) throw new InvalidOperationException("brightness outside 1 to 10"); return Raw(0x06, 0x85, (byte)b); }
+    // GATE 5 (11-15, his "Yes, A + save"): the headset's own settings, exactly these and their ranges (hwdeck\local\
+    // hs-settings-1115\findings.md, each read in firmware 1.29.27): 06 bd 0..2 noise control, b9 1..10 transparency,
+    // c1 0..6 auto off, 2e 0..4 EQ preset, 31 <1..10> <0..40> one custom band, 37 1..10 mic volume, 39 0..3 sidetone,
+    // bf 1..10 mute light, 27 1..2 gain, and 06 09 (save to the base's storage). Through the control pipe, as Raw
+    public bool Setting(byte[] r)
+    {
+        bool ok = r != null && r.Length >= 2 && r[0] == 0x06;
+        if (ok)
+        {
+            byte c = r[1]; int n = r.Length - 2, v = n > 0 ? r[2] : -1;
+            if (c == 0x09) ok = n == 0;
+            else if (c == 0xBD) ok = n == 1 && v <= 2;
+            else if (c == 0xB9 || c == 0x37 || c == 0xBF) ok = n == 1 && v >= 1 && v <= 10;
+            else if (c == 0xC1) ok = n == 1 && v <= 6;
+            else if (c == 0x2E) ok = n == 1 && v <= 4;
+            else if (c == 0x31) ok = n == 2 && v >= 1 && v <= 10 && r[3] <= 40;
+            else if (c == 0x39) ok = n == 1 && v <= 3;
+            else if (c == 0x27) ok = n == 1 && (v == 1 || v == 2);
+            else ok = false;
+        }
+        if (!ok) throw new InvalidOperationException("blocked headset setting");
+        return Cmd.SetOutput(r) || (!NoWait && Cmd.Write(r, 1000));
+    }
     public bool SetLevel(int level) { if (level < 0 || level > 0x38) throw new InvalidOperationException("volume level outside 0 to 56"); return Raw(0x06, 0x25, (byte)(0x38 - level)); }
 
     public void CollectPushes() { if (Push != null) Pushes.AddRange(Push.TakeAll()); Inbox.AddRange(Cmd.TakeAll()); if (Inbox.Count > 256) Inbox.RemoveRange(0, Inbox.Count - 256); }

@@ -221,6 +221,8 @@ html[data-motion="off"] .viewwrap { transition: none; }
 .od { position: relative; display: inline-block; overflow: clip; font-variant-numeric: tabular-nums; }
 .od .odr { position: absolute; left: 0; right: 0; top: 0; white-space: pre; text-align: center; visibility: hidden; }   /* rolled by the page's motion clock */
 .od.roll .odh { visibility: hidden; } .od.roll .odr { visibility: visible; }
+.od.odin .odh { display: inline-block; }
+.v > span:not(.od), .v + .u, .v + small { display: inline-block; }   /* (the unit, a point, a comma: slid by odoFlip as the digits change, a transform needs a box, the number-style mock 11-17) */   /* (a digit rolling in or out on its own, a number gaining or losing a digit: 11-17) */
 .spw, .lbl i.spw { display: inline-flex; flex: none; font-style: normal; }   /* (not .lbl i's block: its line box sat the fan 1px off the turn's centre) */
 .yellow { color: var(--yellow); } .red { color: var(--red); } .grey { color: #555; }
 .val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; transition: color var(--t-state); }
@@ -252,7 +254,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .app.editing .dcat:hover .dch .acts, .app.editing .dcat.csel .dch .acts, .app.editing .dch:focus-within .acts { visibility: visible; }
 .app.editing .dch .cn { cursor: text; border-radius: 4px; }
 .app.editing .dch .cn:hover { background: var(--raise); }
-.dch input.cn-in { background: var(--bg); border: 1px solid var(--edit); color: var(--hi); font: inherit; border-radius: 5px; padding: 0 4px; width: 15rem; max-width: 70%; text-transform: none; letter-spacing: 0; }
+.dch input.cn-in { background: var(--bg); border: 1px solid var(--edit); color: var(--hi); font: inherit; border-radius: 5px; padding: 0 4px; width: auto; field-sizing: content; min-width: 4ch; max-width: 70%; text-transform: inherit; letter-spacing: inherit; margin: -1px -5px; }   /* (as the name shows, in its place and its size, the count beside it where it was: the tester's F5 11-15) */
 .dcat.collapsed .dgrid, .dcat.collapsed tr.dc { display: none; }
 .dch .chev svg { transition: transform 140ms; }
 .dcat.collapsed .dch .chev svg { transform: rotate(-90deg); }
@@ -264,6 +266,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .dc.dragging { opacity: 0.35; }
 .app.editing .dc, .app.editing tr.dc > td { cursor: grab; touch-action: none; }   /* (a table row takes no touch-action: Grid's cells, on their td) */
 .app.editing #view { user-select: none; } .app.editing #view input { user-select: text; }
+.storage { user-select: none; } .storage input { user-select: text; }   /* (a drag from its blank space selected its words: the tester's 11-16) */
 .dc.missing .v { color: var(--dim); }
 .rl { margin-top: 0.4rem; align-self: flex-start; font-size: 11.5px; padding: 3px 9px; }
 /* "+ New category": a drop zone over the bottom of the view while a reading or a cell is dragged (and on an empty view),
@@ -507,7 +510,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .app.editing .gt tr.ghdr td { overflow: visible; }   /* (Grid: the grip in the gutter, not cut off, 11-09) */
 .app.editing .card.band:not(.bfold) .bh .ch .cnt { left: 0; margin-left: 0; } .app.editing .card.band:not(.bfold) .bh .ch .acts { right: 0; }
 .band .bh .ch .cn { white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
-.card.band.bfold { flex-direction: column; } .card.band.bfold .bh { width: auto; flex-direction: row; align-items: center; padding: 0 0 0.5rem; }
+.card.band.bfold { flex-direction: column; } .card.band.bfold .bh { width: auto; flex-direction: row; align-items: center; justify-content: flex-start; padding: 0 0 0.5rem; }   /* (on top in a narrow column, on the left as the drawer says: it sat centred, the tester's 11-16) */
 .card.band.bfold .bcells { grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); row-gap: 0.4rem; }
 .bcell { border-left: 1px solid var(--g22, #222222); padding: 0.15rem 1.08rem; display: flex; flex-direction: column; justify-content: center; gap: 0.38rem; min-width: 0; cursor: pointer; transition: background 150ms; }
 .bcell:hover { background: rgba(255,255,255,0.02); }
@@ -679,8 +682,11 @@ select.dsel-n { display: none; }
 .scale .mkw { position: absolute; left: 0; right: 0; top: 0; bottom: 0; pointer-events: none; transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }   /* (the "now" marker glides, 2.1) */
 :root[data-motion="off"] .scale .mkw, :root[data-motion="minimal"] .scale .mkw { transition: none; }   /* (Minimal: it steps, nothing keeps moving; 11-06) */
 .scale .tk { position: absolute; top: 22px; font-size: 10.5px; color: var(--dim); transform: translateX(-50%); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.chk { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.chk input { accent-color: var(--edit); margin: 0; }
+.chk { display: flex; align-items: center; gap: 8px; cursor: pointer; flex-direction: row-reverse; justify-content: space-between; }   /* (11-15 the tester's F26: the app's own switch, on the right as in Settings, not a Windows tick box) */
+.chk input { appearance: none; -webkit-appearance: none; width: 34px; height: 19px; border-radius: 999px; background: var(--g2a, #2a2a2a); position: relative; margin: 0; cursor: pointer; flex: none; transition: background 220ms; }
+.chk input::after { content: ''; position: absolute; top: 2.5px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #9a9a9a; transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), background 220ms; }
+.chk input:checked { background: var(--tog-on, #d0d0d0); } .chk input:checked::after { transform: translateX(14px); background: var(--tog-knob, var(--g16, #161616)); }
+.chk input:focus-visible { outline: 2px solid var(--edit); outline-offset: 2px; }
 .curve svg { width: 100%; height: auto; display: block; touch-action: none; }
 .curve .pt { cursor: grab; }
 .ptab { display: grid; grid-template-columns: 1fr 1fr 26px; gap: 4px 6px; align-items: center; font-size: 12.5px; }
@@ -733,7 +739,7 @@ select.dsel-n { display: none; }
 /* closing back into what opened it (11-09): the popup stays drawn while its card goes home, clicks through it reach the
    view; deck.js shrinkHome() fades the dim and puts it away at the end */
 :is(.modal, #cmodal).zout { opacity: 1; visibility: visible; pointer-events: none; }
-:is(#gmodal, #wmodal) .mcard { width: min(1000px, 94vw); padding: 22px 26px 22px; }
+:is(#gmodal, #wmodal) .mcard { width: min(1000px, 94vw); padding: 22px calc(26px - 10.25px) 22px 26px; scrollbar-gutter: stable; }   /* (room kept for its scroll bar: a list growing past the window no longer shifts 10 px left, the tester's F23 11-15; its right padding less that room, so both sides stay 26 px) */
 /* (Sessions grows as its bar and rows open: its top stays where a full one's is, so nothing jumps under the pointer and
    quick clicks land on the same thing) */
 :is(#gmodal, #wmodal) { align-items: flex-start; padding-top: 6vh; }
@@ -915,8 +921,8 @@ select.dsel-n { display: none; }
 :is(#gmodal, #wmodal) .open .gx-chev { transform: rotate(90deg); stroke: #9a9a9a; }
 :is(#gmodal, #wmodal) .gx-gm, :is(#gmodal, #wmodal) .gx-c { display: grid; gap: 5px; min-width: 0; }
 :is(#gmodal, #wmodal) .gx-row .gx-gm { display: flex; align-items: baseline; gap: 12px; white-space: nowrap; }   /* (the name, then when, on one line) */
-:is(#gmodal, #wmodal) .gx-row .gx-gm > .gx-gn { flex: none; max-width: 60%; }
-:is(#gmodal, #wmodal) .gx-row .gx-gm > .gx-sub { min-width: 0; }
+:is(#gmodal, #wmodal) .gx-row .gx-gm > .gx-gn { flex: 0 1 auto; max-width: none; min-width: 3em; overflow: hidden; text-overflow: ellipsis; }
+:is(#gmodal, #wmodal) .gx-row .gx-gm > .gx-sub { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }   /* (the name whole while the row has room, the time giving way first: the tester's F22 11-15) */
 :is(#gmodal, #wmodal) .gx-lb { display: flex; align-items: center; gap: 10px; }
 :is(#gmodal, #wmodal) .gx-c.gx-lb > .gx-nbar { flex: none; width: 56px; margin: 0; height: 4px; }
 :is(#gmodal, #wmodal) .gx-gn { color: #d6d6d6; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1026,7 +1032,8 @@ select.dsel-n { display: none; }
 .srow2:hover { background: var(--g1a, #1a1a1a); border-color: var(--g2c, #2c2c2c); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 4px 12px rgba(0, 0, 0, 0.45); } .srow2.active:hover { background: var(--g1e, #1e1e1e); }
 .srow2 .sn { color: var(--dim); font-variant-numeric: tabular-nums; text-align: center; }
 .srow2 .st { color: #d6d6d6; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.srow2 .st input { background: var(--bg); border: 1px solid var(--edit); color: #fff; font: inherit; border-radius: 5px; padding: 1px 5px; width: 100%; }
+.srow2 .st input { background: var(--bg); border: 1px solid var(--edit); color: #fff; font: inherit; border-radius: 5px; padding: 1px 5px; width: calc(100% + 12px); box-sizing: border-box; margin: -2px -6px; }   /* (its box around the name, not under it: the row keeps its height, the name its place, the tester's F21 11-15) */
+.srow2 .st:has(> input) { overflow: visible; }
 .srow2.vacant .st { color: #5a5a5a; font-style: italic; }
 .srow2 .sm { color: #6f6f6f; font-size: 12px; margin-top: 2px; }
 .srow2 .sm b { color: var(--yellow); font-weight: 400; }
@@ -1257,7 +1264,7 @@ select.dsel-n { display: none; }
 #glist.cqmode .gx-sess.cqb .gx-row::before { content: 'B'; }
 #gcbar .gb-n { margin-right: 4px; }
 #gcbar .cq-s { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 11px 0 9px; border: 1px solid var(--g2c, #2c2c2c); border-radius: 8px; color: #6f6f6f; white-space: nowrap; transition: background-color 140ms, border-color 140ms, color 140ms; }
-#gcbar .cq-s { min-width: 0; flex: 0 1 auto; overflow: hidden; } #gcbar .cq-s b { overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 18ch; }   /* (long names: the slots shrink, the buttons keep their place, 11-09) */
+#gcbar .cq-s { min-width: 0; flex: 0 1 210px; width: 210px; box-sizing: border-box; overflow: hidden; }   /* (one size, empty or picked: the swap arrows and B never jump when A fills, the tester's F2 11-15) */ #gcbar .cq-s b { overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 18ch; }   /* (long names: the slots shrink, the buttons keep their place, 11-09) */
 #gcbar .cq-s.full { color: #9a9a9a; background: var(--g22, #222222); border-color: var(--g3a, #3a3a3a); } #gcbar .cq-s.full b { color: #ececec; font-weight: 600; }
 #gcbar .cq-s i { font-style: normal; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 4px; border: 1.5px solid var(--g4a, #4a4a4a); box-sizing: border-box; font: 700 10px/1 'Segoe UI Variable Text', 'Segoe UI', sans-serif; color: transparent; transition: background-color 120ms, border-color 120ms; }
 #gcbar .cq-s.full i { border-color: #e6e6e6; background: #e6e6e6; color: #111; }
@@ -1278,7 +1285,7 @@ select.dsel-n { display: none; }
 #gmodal .gx-nm:hover { border-color: var(--g36, #363636); } #gmodal .gx-nm:focus { border-color: var(--g4a, #4a4a4a); outline: none; background: var(--g0f, #0f0f0f); }   /* (grey, not blue: 11-02) */
 #gmodal .gx-del { flex: none; padding: 5px 14px; }
 /* Settings: days */
-.setdays { display: inline-flex; align-items: center; gap: 8px; } .setdays .setin { width: 84px; text-align: right; font-variant-numeric: tabular-nums; } .setdays i { font-style: normal; color: var(--muted); font-size: 12.5px; min-width: 30px; }   /* (one width for days and min: the fields line up) */
+.setdays { display: inline-flex; align-items: center; gap: 8px; } .setdays .setin { width: 78px; text-align: right; font-variant-numeric: tabular-nums; } .setdays i { font-style: normal; color: var(--muted); font-size: 12.5px; min-width: 30px; }   /* (one width for days and min: the fields line up) */
 /* Settings in sections: a header, then its rows in a block, with room between the blocks */
 .setsec { margin: 0 0 18px; } .setsec:first-child { margin-top: 10px; } .setsec:last-child { margin-bottom: 2px; }
 .setsec > h3 { margin: 0 0 7px 3px; font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em; color: #8c8c8c; }   /* (its own case: HWiNFO stays HWiNFO) */
@@ -1324,11 +1331,11 @@ select.dsel-n { display: none; }
 #gcz .gz-s.drag, #gcz .gz-c.drag { opacity: .55; } #gcz .drop { box-shadow: 0 -2px 0 #9a9a9a; } #gcz .dropend > :last-of-type { box-shadow: 0 2px 0 #9a9a9a; }
 #gcz .grip { width: 10px; height: 16px; flex: none; cursor: grab; touch-action: none; background: radial-gradient(circle, #6a6a6a 1.2px, transparent 1.4px) 0 0 / 5px 5px; }
 #gcz .nm { color: #e0e0e0; min-width: 0; padding: 4px 0; } #gcz .gz-s .nm { cursor: default; }
-#gcz .gz-name { background: none; border: 1px solid transparent; color: #e0e0e0; font: inherit; border-radius: 6px; padding: 3px 6px; margin-left: -6px; min-width: 0; width: 46%; }
+#gcz .gz-name { background: none; border: 1px solid transparent; color: #e0e0e0; font: inherit; border-radius: 6px; padding: 3px 6px; margin-left: -6px; min-width: 6ch; width: auto; field-sizing: content; max-width: 58%; flex: none; }   /* (as wide as its name: the small line beside it gets the room, not cut with space to spare, the tester's F25 11-15) */
 #gcz .gz-name:hover { border-color: var(--g2c, #2c2c2c); } #gcz .gz-name:focus { border-color: var(--g4a, #4a4a4a); outline: none; background: var(--g0f, #0f0f0f); }
 #gcz .linkbtn { color: #a8a8a8; } #gcz .linkbtn:hover { color: #fff; text-decoration: none; }
-#gcz .x { flex: 1; text-align: right; font-size: 11.5px; color: #6f6f6f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-#gcz .gz-ph { width: 26px; flex: none; }
+#gcz .x { flex: 1; text-align: right; font-size: 11.5px; color: #6f6f6f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; } #gcz .x.cut { visibility: hidden; }
+#gcz .gz-ph, #gcz .gz-s > .ib { width: 28px; flex: none; }   /* (a row's switch in one column whether it has an x or not, F25) */
 /* the readings to add: Storage's search, chips and list, in a box of their own */
 #gcz .gz-add { display: flex; flex-direction: column; min-width: 0; }
 #gcz .search { margin: 0 0 8px; background: var(--g0f, #0f0f0f); } #gcz .chips { padding: 0 0 8px; }
@@ -1414,7 +1421,14 @@ select.dsel-n { display: none; }
 #wmodal .gx-cols, #wmodal .gx-row { grid-template-columns: 14px minmax(0, 1fr) 100px 70px 50px 200px 76px; }
 @media (max-width: 900px) { #gmodal .gx-cols, #gmodal .gx-row { grid-template-columns: 14px minmax(0, 1fr) 70px 40px 48px 130px 70px; gap: 0 12px; } }
 @media (max-width: 900px) { #wmodal .gx-cols, #wmodal .gx-row { grid-template-columns: 14px minmax(0, 1fr) 84px 56px 40px 120px 64px; gap: 0 12px; } }
-@media (max-width: 900px) { :is(#gmodal, #wmodal) .gx-in { padding-left: 38px; } }   /* (the gap is 12 there: the name starts at 38, 11-06) */
+@media (max-width: 900px) { :is(#gmodal, #wmodal) .gx-in { padding-left: 38px; } }
+@media (max-width: 1100px) { #wmodal .gx-cols, #wmodal .gx-row { grid-template-columns: 14px minmax(0, 1fr) 84px 56px 40px 140px 64px; gap: 0 14px; } #wmodal .gx-row > :nth-child(6) { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.3; } }   /* (its lines wrap, the name has room: the tester's F64 11-16) */
+@media (max-width: 1000px) { :is(#gmodal, #wmodal) .gx-c.gx-lb > .gx-nbar { display: none; } }
+@media (max-width: 1000px) { :is(#gmodal, #wmodal) .gx-row .gx-gm { flex-wrap: wrap; row-gap: 3px; } :is(#gmodal, #wmodal) .gx-row .gx-gm > .gx-sub { flex: 0 0 auto; max-width: 100%; } }   /* (a small window: the time under the name when both don't fit, whole, not cut to "15:..": the tester's 22:04 re-test 11-16) */
+.rng.rg-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
+.rng.rg-l { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 22px), transparent); }
+.rng.rg-l.rg-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 22px), transparent); }   /* (page tabs that scroll: the edge fades where more tabs are, the tester's 22:04 re-test 11-16) */   /* (the words, not the little bar: "cpu-bound 100%" was cut, F65) */
+.cz-l .setrow:has(.seg) { flex-wrap: wrap; row-gap: 10px; } .cz-l .setrow:has(.seg) > div:first-child { flex: 1 1 0; min-width: 6em; } .cz-l .setrow:has(.seg) > div:first-child ~ :last-child { margin-left: auto; }   /* (a small window: the pills under the name, not its words a letter a line, F63) */   /* (the gap is 12 there: the name starts at 38, 11-06) */
 #wmodal .gx-gh, #wmodal .gx-gr { grid-template-columns: minmax(0, 1fr) minmax(80px, 220px) 56px 46px 104px 86px; }
 #wlist.still .gx-det { transition: none; }
 /* the week strip: each day's bar split, yellow under red */
@@ -1463,6 +1477,7 @@ select.dsel-n { display: none; }
 :is(#gmodal, #wmodal) .picking .gx-sess.nopk { opacity: 0.45; } :is(#gmodal, #wmodal) .picking .gx-sess.nopk .gx-row { cursor: default; } :is(#gmodal, #wmodal) .picking .gx-sess.nopk .gx-row::before { display: none; }
 .gb-bar { position: sticky; bottom: -14px; z-index: 5; display: flex; align-items: center; gap: 8px; margin: 16px -6px -6px; padding: 10px 12px 10px 16px; background: var(--g1c, #1c1c1c); border: 1px solid var(--g2e, #2e2e2e); border-radius: 12px; box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.55); font-size: 12.5px; color: #9a9a9a; }
 .gb-bar[hidden] { display: none; } .gb-bar .sp { flex: 1; }
+.gb-bar::after { content: ''; position: absolute; left: -8px; right: -8px; top: calc(100% + 1px); height: 26px; background: var(--pop, #151515); pointer-events: none; }   /* (the card's own background under the floating bar: no row peeks out below it, the tester's F6 11-15) */
 .mcard:has(.gb-bar:not([hidden])) { scroll-padding-bottom: 72px; }   /* (Pick's or Compare's bar on show: a row brought into view (a focus, a key) stops above the bar, not under it, 11-09) */
 .gb-bar .btn.pk-q { background: none; border-color: var(--g2c, #2c2c2c); color: #a8a8a8; } .gb-bar .btn.pk-q:hover { color: #fff; border-color: var(--g44, #444444); background: var(--g23, #232323); }   /* (not .ghost: that is the drag ghost's class, fixed in place) */ .gb-bar b { color: #f2f2f2; font-weight: 600; }
 .gb-bar .btn.pk-go { background: #e6e6e6; border-color: #e6e6e6; color: #111; font-weight: 600; } .gb-bar .btn.pk-go:hover { background: #fff; } .gb-bar .btn.warn:disabled, .gb-bar .btn.warn:disabled:hover { color: #5a5a5a; border-color: var(--g2a, #2a2a2a); background: var(--g18, #181818); }
@@ -1553,7 +1568,8 @@ select.dsel-n { display: none; }
 .lk-cr { display: grid; grid-template-columns: 190px minmax(0, 1fr) 320px 112px; gap: 16px; align-items: center; height: 44px; border-bottom: 1px solid var(--g1e, #1e1e1e); }
 .lk-cn { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--c); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lk-cl { grid-column: 3; } .lk-cl svg { width: 100%; height: 18px; display: block; } .lk-cl path { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
-.lk-hx { grid-column: 4; display: flex; align-items: center; gap: 9px; background: none; border: 0; padding: 4px 0; font: inherit; font-size: 13px; color: #9a9a9a; font-variant-numeric: tabular-nums; cursor: pointer; transition: color 140ms ease-out; }
+.lk-hx { text-transform: lowercase; grid-column: 4; display: flex; align-items: center; gap: 9px; background: none; border: 0; padding: 4px 0; font: inherit; font-size: 13px; color: #9a9a9a; font-variant-numeric: tabular-nums; cursor: pointer; transition: color 140ms ease-out; }
+.cz-l .lk-cr { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 12px; } .cz-l .lk-cl { grid-column: 2; min-width: 0; } .cz-l .lk-hx { grid-column: 3; }   /* (Customize's column: the rows fit it, the colour in sight, the 11-15 cut-off hunt) */
 .lk-hx:hover, .lk-cr.on .lk-hx { color: #fff; } .lk-hx:focus-visible { outline: none; color: #fff; }
 .lk-hx i { width: 14px; height: 14px; border-radius: 3px; background: var(--c); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); transition: box-shadow 140ms ease-out; }
 .lk-cr.on .lk-hx i, .lk-hx:focus-visible i { box-shadow: 0 0 0 2px var(--g8a, #8a8a8a); }
@@ -1608,6 +1624,16 @@ select.dsel-n { display: none; }
 .hsx .setrow:has(> .seg, > .hs-sel, > .hs-rgw, > .setin) > div:first-child { flex: 0 0 120px; }
 .hsx .setrow > .hs-rgw, .hsx .setrow > .setin.hs-tx, .hsx .setrow > .setin.hs-pn { flex: 1 1 0; width: auto; max-width: 380px; min-width: 0; box-sizing: border-box; } .hsx .setrow > .hs-rgw > .lk-rng { flex: 1 1 auto; width: auto; min-width: 0; }   /* (sliders and name boxes on the same column) */ .hsx .setrow > .seg, .hsx .setrow > .hs-sel, .hsx .setrow > .seg.w5, .hsx .setrow > .seg.w6 { flex: 1 1 0; width: auto; max-width: 380px; min-width: 0; }   /* (11-14 his "looks goofy this sliders": a name column, the rest one width, edges in line) */
 .hsx .setrow .seg > button { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-left: 2px; padding-right: 2px; }   /* (a row's buttons equal) */
+.hsx .setrow:has(> .hs-val, > .hs-pgb, > .hs-ic) > div:first-child { flex: 0 0 120px; }
+.hsx .setrow > .hs-pgb, .hsx .setrow > .hs-ic { flex: 1 1 0; max-width: 380px; min-width: 0; justify-content: flex-start; }   /* (the Page row's buttons and the Icon row: on the column too, the 11-15 sweep) */
+.cz-l #sTint, .cz-l #sPops { width: 228px; flex: none; } .cz-l #sTint > button, .cz-l #sPops > button { flex: 1 1 0; min-width: 0; }   /* (Look: Popups as wide as Colour, both start in one place, the 11-15 sweep) */   /* (Yellow at, Red at, Low, High: on the same column as the rows around them, his 11-15 "bug on the yellow at and red at switch": it shrank to fit, None cut to N...) */
+.hsx .setrow > .hs-val { display: flex; flex: 1 1 0; max-width: 380px; min-width: 0; gap: 10px; } .hsx .setrow > .hs-val > .setin.spin { flex: 1 1 0; width: auto; min-width: 0; } .hsx .setrow > .hs-val > .seg { flex: 0 0 calc(50% - 5px); width: auto; min-width: 0; margin-left: auto; }   /* (11-15 his "It should always be [one size], just like in settings ... keep sessions": the pills keep half the row, the box comes in beside them) */
+/* the icon editor in the left column (his 11-15 "you should put it on the left. under icon"): under the Icon row, or on its own at the top while the Icons list is up; bigger squares */
+.hsx .hs-iedl { --icw: 26px; } .hsx .hs-iedl .hs-ied .hs-igrid i { width: 26px; height: 26px; }
+.hsx .hs-val .hs-pc { flex: 1 1 0; color: #9a9a9a; text-align: left; justify-content: flex-start; }   /* (11-15 the Battery section's Low below: its % after the number, as his pick) */
+.hsx .hs-iin { padding: 4px 0 14px; border-bottom: 1px solid var(--line); } .hsx .hs-iin .hs-ied > .lk-fh { display: none; }
+.hsx .cz-l .cz-pc.hs-ialone { padding: 2px 10px 16px; }   /* (11-15 his "the done button is ... very close to the edge": the panel's own padding had put it on the edge) */
+.hsx .hs-ialone .hs-ied > .lk-fh { background: none; font-size: 13px; color: #ececec; padding: 12px 0 4px; margin: 0; }   /* (11-15 his "a little black bar": a gallery title's strip; now the panel's title) */
 .hsx .msec .btn { order: 2; margin-left: 4px; text-transform: none; letter-spacing: 0; font-weight: 400; padding: 5px 11px; }
 .hsx .msec .btn + .btn { order: 3; }
 .hsx .hs-ov { position: absolute; box-sizing: border-box; border: 1px dashed rgba(255, 255, 255, 0.12); border-radius: 4px; cursor: pointer; transition: border-color 120ms, background-color 120ms; }
@@ -1626,6 +1652,7 @@ select.dsel-n { display: none; }
 :root[data-pops="view"] .hsx .cz-l { --lk-gap: var(--tile-solid); }
 .hsx .cz-l .lk-fh.hs-gfh { position: static; background: none; margin: 14px 0 6px; }
 .hsx .lk-tg.hs-g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 4px; } .hsx .lk-tg.hs-g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 4px; }
+@media (max-width: 1000px) { .hsx .lk-tg.hs-g4 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }   /* (a small window: "Seven segments" was cut, the tester's F68 11-16) */
 .hsx .lk-t.playing .lk-sw { box-shadow: 0 0 0 1.5px var(--edit, #e8e8e8); }
 .hsx .hs-rseg { display: flex; margin: 0 10px 12px 0; }
 .hsx .hs-ov .hs-ox { position: absolute; right: -8px; top: -8px; margin: 0; z-index: 1; border-radius: 50%; background: var(--pop, #151515); box-shadow: 0 0 0 1px var(--edit, #e8e8e8); color: var(--edit, #e8e8e8); }   /* (11-14 release checks: on the outline's corner, off the piece's text) */
@@ -1667,16 +1694,21 @@ select.dsel-n { display: none; }
 .hsx .hs-th-h { min-height: 32px; } .hsx .hs-th-h .hs-pg { margin-top: 0; min-width: 0; flex: 1; }
 .hsx .hs-nm { margin-left: 8px; font-size: 12px; color: #7b7b7b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .hsx .hs-th-w { margin-top: 10px; } .hsx .hs-th-w .hs-pv { max-width: none; margin: 0; align-self: start; }
-.hsx .hs-pv.hs-hov .hs-ovs { display: none; }   /* (a tile pointed at: its page alone, no boxes of the one being built) */
+.hsx .hs-pv.hs-hov .hs-ovs, .hsx .hs-pv.hs-dark .hs-ovs { display: none; }   /* (a tile pointed at: its page alone, no boxes of the one being built) */
 .hsx .hs-pvg { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; }
 .hsx .hs-sw { height: auto; aspect-ratio: 2 / 1; background: #000; overflow: hidden; } .hsx .hs-sw.lk-es { background: none; }
 .hsx .hs-sw canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
 .hsx .hs-sv .lk-tn { cursor: pointer; } .hsx .hs-sv:hover .lk-x { opacity: 1; }
 .hsx .lk-th-l section:last-child { min-height: 100%; }   /* (the last group's name reaches the top too: nothing of the one before it left in sight) */
 .hsx .setrow .hs-val .seg { width: auto; } .hsx .hs-val .setin.spin { width: 96px; }
-.hsx .hs-in .setrow { padding-left: 14px; } .hsx .hs-in .setrow:last-child { border-bottom: 0; } .hsx .hs-in .th-grid, .hsx .hs-in .msec { margin-left: 14px; }
+.hsx .hs-in .setrow { padding-left: 14px; } .hsx .hs-in .setrow:last-child { border-bottom: 0; }
+.hsx .hs-in .hs-sub > div > .setrow:last-child { border-bottom: 1px solid var(--g1e, #1e1e1e); }   /* (11-16 a Layout group's last row keeps its line: rows follow it) */
+.hsx .lk-tn small { display: block; margin-top: 1px; font-size: 11.5px; color: #6f6f6f; overflow: hidden; text-overflow: ellipsis; }   /* (11-16 js_patch6: a ready page's group under its name) */
+.hsx .hs-ovs .hs-ov.drag { z-index: 50 !important; } .hsx .hs-ovs .hs-gd { z-index: 40; } .hsx .hs-ovs .hs-mk { z-index: 60; }   /* (11-16 js_patch6: the boxes stack by size, smallest on top (inline z-index 1..12): the one dragged above them all, the guides above every box but it) */
+.hsx .cz-l .lk-in > .hs-sub > div > .hs-gfh, .hsx .cz-l .lk-in > .hs-sub > div > .lk-tg { margin-left: var(--hs-ind, 14px); }   /* (11-16 the Layout groups' Arrange tiles keep their step in, the review) */ .hsx .hs-in .th-grid, .hsx .hs-in .msec { margin-left: 14px; }
 .hsx .hs-fold { border-bottom: 1px solid var(--g1e, #1e1e1e); } .hsx .hs-pgb { display: inline-flex; gap: 8px; }
 /* (11-14 his "cant even tell which category is which": the picked piece in one panel, the page above it, the theme below) */
+.cz-l { overflow-anchor: none; }   /* (11-15: the column keeps its scroll itself through a drawing (put back, czScrollTo); the browser's own anchoring moved it a few px after one, Done jumped) */
 .cz-l .lk-fh { position: static; box-shadow: none; }   /* (11-14 a gallery's title in the settings column scrolls with it: stuck at the top it lay over its section's head) */
 .cz-l .cz-pc { margin: 10px -10px; padding: 0 10px; border: 0; outline: 1px solid rgba(255, 255, 255, 0.08); outline-offset: -1px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); }   /* (11-14 his pick A, after "fat, not centered, weird remove position": the box reaches 10 px past the rows instead of pushing its text 17 px in, so its title, rows and arrow sit on the same pixel as the rows above and below. Its line is an inset outline: crisp top and bottom like a border (an inset shadow lost its bottom line at 150%) but no layout room, so the 10 px stays exact at any scale) */
 .cz-l .cz-pc > :last-child { border-bottom: 0; } .cz-l .cz-pc > .lk-head:not(.open) { border-bottom-color: transparent; }
@@ -1722,6 +1754,7 @@ select.dsel-n { display: none; }
 .cz-l { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 15px 12px; border-right: 1px solid var(--line, #242424); }
 .cz-r { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 12px 4px 0 14px; }
 .cz-r > .lk-dd { width: auto; margin: 0 10px 10px 0; }
+.cz-r > .cz-rrow { display: flex; align-items: center; gap: 12px; margin: 0 10px 12px 0; } .cz-rrow > .hs-rseg, .cz-rrow > .tz-rseg, #tzm .cz-rrow > .tz-rseg { margin: 0; flex: none; } .cz-rrow > .lk-dd { flex: 1 1 0; min-width: 0; width: auto; margin: 0; }   /* (the right column's switch and its jump list in one row: more room for the list, his 11-15 pick B; Headset and PC screen) */
 .cz-r > .lk-th-l { position: relative; inset: auto; flex: 1; min-height: 0; margin: 0 0 0 -4px; padding: 0 4px 6px; scrollbar-width: auto; }
 :is(.cz-l, .cz-r > .lk-th-l)::-webkit-scrollbar { display: block; width: 10.25px; background: transparent; }
 :is(.cz-l, .cz-r > .lk-th-l)::-webkit-scrollbar-track, :is(.cz-l, .cz-r > .lk-th-l)::-webkit-scrollbar-corner { background: transparent; }
@@ -1746,6 +1779,7 @@ select.dsel-n { display: none; }
 .cz-r > .cz-pin, .cz-r > .hs-stick, .hsx .cz-r > .hs-stick { position: static; flex: none; z-index: auto; margin: 0 10px 10px 0; padding: 0 0 12px; background: none; box-shadow: none; border-bottom: 1px solid var(--g1e, #1e1e1e); }
 :root[data-pops="view"] .cz-r > .cz-pin, :root[data-pops="view"] .hsx .cz-r > .hs-stick { background: none; box-shadow: none; }
 .cz-r > .hs-stick .hs-pv { display: block; max-width: none; margin: 10px 0 0; }
+.hsx .cz-r > .hs-stick .hs-pv { width: 72%; margin: 10px auto 0; }   /* (the Headset picture smaller, the list under it taller, his 11-15 pick B) */
 .cz-r > .hs-stick .hs-th-h { min-height: 32px; }
 .cz-r > .cz-pin .lk-pv.cz-sm { margin: 0; max-width: none !important; }
 .cz-look .cz-r .lk-tg, .hsx .cz-r .lk-tg { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1760,7 +1794,8 @@ select.dsel-n { display: none; }
 .hsx .cz-r .hs-th-h .lk-th-r { grid-row: 1; grid-column: 4; }
 .hsx .cz-r .hs-th-h .rng { grid-row: 2; grid-column: 1; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }   /* (many tabs: they scroll, Save stays in sight) */
 .hsx .cz-r .hs-th-h .hs-pg > .ib { grid-row: 2; grid-column: 2; }
-.cz-l { scrollbar-gutter: stable; }
+.cz-l { scrollbar-gutter: stable; --czpl: calc(15px + 10.25px + 1px); --czpr: 15px; padding-left: var(--czpl); padding-right: var(--czpr); }   /* (11-15 his "the 'selected' is not centered": the kept scrollbar room and the column's line came on top of the right's 15 px; now as much from both lines (26 px), the picked piece's box reaching 10 px past the rows on each side, 5 px clear of the scroll bar: the tester's re-test 11-15) */
+.cz-l .hs-stick, .cz-l .cz-pin { margin-left: calc(-1 * var(--czpl)); margin-right: calc(-1 * var(--czpr)); padding-left: var(--czpl); padding-right: var(--czpr); }
 .cz-r .hs-ovs .hs-ox { transform: scale(1.35); transform-origin: center; }
 .cz-r .hs-ovs .hs-rz { transform: scale(1.35); transform-origin: center; }
 .hsx .cz-l .lk-in > .hs-gfh, .hsx .cz-l .lk-in > .lk-tg { margin-left: var(--hs-ind, 14px); }
@@ -1775,3 +1810,170 @@ select.dsel-n { display: none; }
 .cz-box .hsx * { scroll-margin-top: 0; }
 /* (its motion: a switch is drawn in its new state first; put back with the transition off, then let go, so it slides) */
 .tog2.still, .tog2.still::after { transition: none; }
+.tog2:disabled { opacity: 0.35; cursor: default; } .tog2:disabled:active { scale: none; }   /* (a switch that waits on another one: greyed out, his 11-16 "Even with the game in the background") */
+.hs-pxoff { visibility: hidden; pointer-events: none; }   /* (11-15 the tester's F13: every page tab keeps its x's room, so the tabs never move as another is picked) */
+.hs-two { display: inline-grid; } .hs-two > span { grid-area: 1 / 1; text-align: center; } .hs-two > .off { visibility: hidden; }   /* (two words in one room: a button that keeps its size, the tester's F14) */
+.pk-n { display: inline-block; min-width: 3ch; text-align: left; font-variant-numeric: tabular-nums; }   /* (the pick bar's count: room for 3 digits, the tester's F1 11-15) */
+.chips .chip.zero, #chips .chip.zero { opacity: 0.45; cursor: default; }   /* (a kind the search found nothing of: kept in its place, dimmed, the tester's F3 11-15) */
+/* the headset's own settings (11-15): the custom EQ's ten bands, the app's slider stood up, the band under each */
+.hsx .setrow.hs-eqr { display: block; padding: 6px 0 12px; }
+.hsx .hs-eq { display: grid; grid-template-columns: repeat(10, 1fr); }
+.hsx .hs-eqb { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
+.hsx .hs-eqv { position: relative; width: 28px; height: 112px; }
+.hsx .hs-eqv > .lk-rng { position: absolute; left: 50%; top: 50%; width: 112px; margin: 0; transform: translate(-50%, -50%) rotate(-90deg); }
+.hsx .hs-eqb > small { font-size: 11px; color: #8a8a8a; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#chips .chn, #gcz .chips .chn { display: inline-block; text-align: left; font-variant-numeric: tabular-nums; }   /* (a chip's count: room kept while a search is typed, F3) */
+.hsx .lk-rng:disabled { opacity: 0.4; cursor: default; } .hsx .lk-rng:disabled + .lk-v { opacity: 0.6; }   /* (a slider that can't be changed looks it, as the pills do, the tester's F36 11-16) */
+.hsx .hs-fold[data-f="hsset"] > div:first-child { flex: 1 1 auto; min-width: 0; } .hsx .hs-fold[data-f="hsset"] > div:first-child > small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* (one line whatever it says: the head never grows when GG takes the base, F42) */
+.hsx .hs-sel .dsel:disabled { opacity: 0.4; }   /* (Auto off dimmed as the pills and sliders, F36) */
+.hs-mut { margin-left: 8px; color: #7b7b7b; font-size: 12px; opacity: 0; transition: opacity 0.2s ease-out; } .hs-mut.on { opacity: 1; }   /* (the mic muted by the headset's button: beside the name, nothing moves, the tester's F37 11-16) */
+/* ---- 11-16 headset editor revamp (his "keep only pages", "give people freedom just how you do in PC screen", "the selected looks off
+   compared to the base app edit layout") ---- */
+/* the page tabs and Save on one row: no theme's name over them */
+.hsx .cz-r .hs-th-h { grid-template-rows: 32px; }
+.hsx .cz-r .hs-th-h .rng, .hsx .cz-r .hs-th-h .hs-pg > .ib, .hsx .cz-r .hs-th-h .lk-th-r { grid-row: 1; }
+/* an opened piece: where it is (the page's name goes back) and Done, in place of the tabs */
+.hsx .cz-r .hs-th-h .hs-crumb { grid-row: 1; grid-column: 1 / 4; display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: 13.5px; color: #ececec; white-space: nowrap; }
+.hsx .hs-crumb .hs-cb { background: none; border: 0; padding: 0; color: #8a8a8a; font: inherit; cursor: pointer; transition: color 140ms; } .hsx .hs-crumb .hs-cb:hover { color: #ececec; }
+.hsx .hs-crumb svg { width: 10px; height: 10px; flex: none; stroke: #6a6a6a; fill: none; stroke-width: 1.5; }
+.hsx .cz-r .hs-th-h .hs-done { grid-row: 1; grid-column: 4; padding: 4px 14px; font-size: 12.5px; }
+.hsx .hs-th-h.hs-opn .hs-pg > .ib, .hsx .hs-th-h.hs-opn .lk-th-r { display: none; }
+/* a picked piece as the main view's Edit layout picks a tile: an outline in the accent, the size corner inside its
+   bottom right (every piece has one, shown when pointed at, as the tiles' are); no x (Remove is in its panel, and Delete) */
+.hsx .hs-ov { transition: border-color 120ms, background-color 120ms, opacity 200ms; }
+.hsx .hs-ov.on { border: 0; background: none; outline: 2px solid var(--edit, #e8e8e8); outline-offset: -1px; border-radius: 4px; }
+.hsx .hs-ov .hs-rz, .cz-r .hs-ovs .hs-rz { right: 2px; bottom: 2px; width: 16px; height: 16px; border-radius: 4px; background: none; box-shadow: none; transform: none; display: none; filter: drop-shadow(0 0 1.5px #000) drop-shadow(0 0 1px #000); }
+.hsx .hs-ov.on .hs-rz { display: flex; } .hsx .hs-ov:not(.on):not(.drag):hover .hs-rz { display: flex; opacity: 0.55; }
+.hsx .hs-ov .hs-rz:hover { background: none; opacity: 1; } .hsx .hs-ov .hs-rz svg { width: 12px; height: 12px; stroke: var(--edit, #e8e8e8); stroke-width: 2; }
+.hsx .hs-ov.drag { border: 0; outline: 2px solid var(--edit, #e8e8e8); outline-offset: -1px; border-radius: 4px; }
+.hsx .hs-ov .hs-lift, .hsx .hs-pt .hs-lift { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; }
+/* the picture zoomed into an opened piece (a double click on a number): the other pieces fade, its parts get boxes */
+.hsx .hs-pv > .hs-ovs { position: absolute; inset: 0; }
+.hsx .hs-pv > canvas, .hsx .hs-pv > .hs-ovs { transform-origin: 0 0; transition: transform 320ms cubic-bezier(0.3, 0, 0.15, 1); }
+:root[data-motion="minimal"] .hsx .hs-pv > canvas, :root[data-motion="minimal"] .hsx .hs-pv > .hs-ovs { transition-duration: 200ms; }
+:root[data-motion="off"] .hsx .hs-pv > canvas, :root[data-motion="off"] .hsx .hs-pv > .hs-ovs { transition: none; }
+.hsx .hs-pv.hs-zclip, .cz-box .hs-pv.hs-zclip { overflow: hidden; } .cz-box .hs-pv.hs-zclip > canvas { border-radius: 0; }
+.hsx .hs-pv.hs-zoomed .hs-ov:not(.hs-opd) { opacity: 0; pointer-events: none; }
+.hsx .hs-ov.hs-opd { transition: border-color 120ms, background-color 120ms, opacity 200ms, box-shadow 260ms; }
+.hsx .hs-pv.hs-zoomed .hs-ov.hs-opd { box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.72); pointer-events: none; border: calc(1px / var(--z, 1)) dashed color-mix(in srgb, var(--edit, #e8e8e8) 45%, transparent); outline: 0; background: none; border-radius: calc(4px / var(--z, 1)); }
+.hsx .hs-pv.hs-zoomed .hs-ov.hs-opd .hs-rz { display: none; }
+.hsx .hs-pt { position: absolute; box-sizing: border-box; border: calc(1px / var(--z, 1)) dashed rgba(255, 255, 255, 0.4); border-radius: calc(2px / var(--z, 1)); cursor: grab; touch-action: none; transition: border-color 120ms; }
+.hsx .hs-pt.hs-ptin { animation: hsPtIn 260ms 140ms both cubic-bezier(0.3, 0, 0.15, 1); } @keyframes hsPtIn { from { opacity: 0; } }
+:root[data-motion="off"] .hsx .hs-pt.hs-ptin { animation: none; }
+.hsx .hs-pt:hover { border-color: rgba(255, 255, 255, 0.75); }
+.hsx .hs-pt.on { border-color: transparent; outline: calc(2px / var(--z, 1)) solid var(--edit, #e8e8e8); outline-offset: calc(-1px / var(--z, 1)); }
+.hsx .hs-pt.drag { cursor: grabbing; z-index: 2; }
+/* snapping guides (as the main view's), in the picture's own layer: they follow its zoom */
+.hsx .hs-gd { position: absolute; pointer-events: none; background: var(--edit, #e8e8e8); opacity: 0.85; animation: hsGd 120ms ease-out; }
+.hsx .hs-gd.hs-gv { top: 0; bottom: 0; width: calc(1px / var(--z, 1)); margin-left: calc(-0.5px / var(--z, 1)); }
+.hsx .hs-gd.hs-gh2 { left: 0; right: 0; height: calc(1px / var(--z, 1)); margin-top: calc(-0.5px / var(--z, 1)); }
+@keyframes hsGd { from { opacity: 0; } }
+/* number boxes side by side (Move X Y, Place X Y W H) */
+.hsx .setrow > .hs-xy { gap: 8px; align-items: center; max-width: 380px; } .hsx .hs-xy .setin.spin { flex: 1 1 0; width: auto; min-width: 0; } .hsx .hs-xy .hs-xl { color: #8a8a8a; font-size: 12.5px; flex: none; }
+/* (11-16 the tester's F45: a narrow window. The Headset column's rows with a wide control put their name on its own line and the
+   control under it at full width, instead of squeezing its boxes to nothing and cutting its words; F46: a section head's small line
+   is one line, cut with "...", whatever it says, as the Headset settings head) */
+.hsx .cz-l { container: hscol / inline-size; }
+@container hscol (max-width: 470px) {
+  .hsx .setrow:has(> .seg.w5, > .seg.w6, > .hs-xy, > .hs-pgb) { flex-wrap: wrap; row-gap: 8px; }
+  .hsx .setrow:has(> .seg.w5, > .seg.w6, > .hs-xy, > .hs-pgb) > div:first-child { flex: 1 0 100%; }
+  .hsx .setrow > .seg.w5, .hsx .setrow > .seg.w6, .hsx .setrow > .hs-xy, .hsx .setrow > .hs-pgb { width: 100%; max-width: none; flex: 1 1 100%; }
+}
+@container hscol (max-width: 390px) {
+  .hsx .setrow:has(> .seg, > .hs-sel, > .hs-rgw, > .hs-val, > .setin) { flex-wrap: wrap; row-gap: 8px; }
+  .hsx .setrow:has(> .seg, > .hs-sel, > .hs-rgw, > .hs-val, > .setin) > div:first-child { flex: 1 0 100%; }
+  .hsx .setrow > .seg, .hsx .setrow > .hs-sel, .hsx .setrow > .hs-rgw, .hsx .setrow > .hs-val, .hsx .setrow > .setin { width: 100%; max-width: none; flex: 1 1 100%; }
+}
+.hsx .hs-fold > div:first-child { flex: 1 1 auto; min-width: 0; } .hsx .hs-fold > div:first-child > small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@container hscol (max-width: 470px) {   /* (F45: four number boxes (Place X Y W H) two to a line; pills a little tighter) */
+  .hsx .setrow > .hs-xy:has(> .setin:nth-of-type(6)) { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); column-gap: 8px; row-gap: 6px; }
+  .hsx .setrow > .seg > button { padding-left: 9px; padding-right: 9px; min-width: 0; }
+}
+@container hscol (max-width: 300px) { .hsx .setrow > .seg > button { padding-left: 6px; padding-right: 6px; } }
+@container hscol (max-width: 390px) { .hsx .setrow.hs-scr > div:first-child > .hs-rf { margin-right: 0; } }   /* (the row stacked: Refresh inside the column's edge, F45) */
+@container hscol (max-width: 390px) { .hsx .setrow > .seg { flex-wrap: wrap; row-gap: 2px; } .hsx .setrow > .seg > button { flex: 1 0 auto; } }   /* (pills too many for the column: on two lines, whole words, never cut; the two-line look is the app's own, F45 at 720 x 480) */
+
+/* ---- 11-17 a reading to pick: his layout or Storage, one picker for the headset's Shows / Second line and Sessions >
+   Customize (deck.js SP). The menu is the dropdown's (.smenu) box; its tabs the Settings seg with its sliding pill ---- */
+.sp-m { position: fixed; z-index: 106; background: var(--g1a, #1a1a1a); border: 1px solid var(--g33, #333333); border-radius: 9px; padding: 4px; box-shadow: 0 12px 30px rgba(0,0,0,0.6); display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden; }
+.sp-seg { position: relative; display: flex; width: 100%; box-sizing: border-box; margin: 0 0 6px; flex: none; }
+.sp-seg > button { position: relative; z-index: 1; } .sp-seg > button.on { background: none; }
+.sp-seg > .ind { position: absolute; top: 2px; bottom: 2px; left: 2px; width: 0; border-radius: 6px; background: var(--seg-on, var(--g26, #262626)); transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1), width 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.sp-seg > .ind.still { transition: none; }
+.sp-m .search { margin: 0 0 6px; background: var(--g0f, #0f0f0f); flex: none; }
+.sp-m .chips { padding: 0 0 6px; }
+.sp-fold { overflow: hidden; flex: none; }
+.sp-box { position: relative; flex: none; height: 300px; }
+.sp-lst { position: absolute; inset: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--g34, #343434) transparent; }
+.sp-lst.sp-rows { border: 1px solid var(--g26, #262626); border-radius: 9px; background: var(--g12, #121212); }
+.sp-lst .vrow { position: relative; }
+.sp-lst .vrow.r { cursor: pointer; font-size: 12.5px; transition: background-color 140ms ease-out; outline: none; }
+.sp-lst .vrow.r:hover, .sp-lst .vrow.r:focus-visible { background: var(--g17, #171717); }
+.sp-lst .vrow.r.on { background: var(--g22, #222222); } .sp-lst .vrow.r.on .lbl { color: #fff; }
+.sp-lst .vrow.r.dim { opacity: 0.4; cursor: default; } .sp-lst .vrow.r.dim:hover { background: none; }
+.sp-lst .vrow.g { cursor: pointer; background: var(--g16, #161616); }
+.sp-lst .vempty { padding: 14px 12px; color: var(--dim); font-size: 12.5px; }
+.sp-dd.smenu.dsel-m { position: absolute; inset: 0; z-index: auto; border: 0; box-shadow: none; padding: 0; background: none; min-width: 0; border-radius: 0; }
+.sp-dd.smenu.dsel-m button { align-items: center; transition: background-color 140ms ease-out; }
+.sp-tk { flex: none; display: inline-flex; width: 22px; justify-content: center; color: var(--ok); }
+.sp-tk svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2.4; }
+.sp-pair { display: flex; gap: 6px; align-items: center; } .sp-pair > .dsel { flex: 1 1 0; min-width: 0; }
+.sp-sto { flex: none; width: 32px; height: 32px; border: 1px solid var(--line2); border-radius: 7px; background: var(--panel); display: inline-flex; align-items: center; justify-content: center; }
+.sp-sto.on { border-color: var(--edit); }
+.sp-sto svg { width: 15px; height: 15px; }
+/* Customize pill rows beside their name (his pick A2, 11-17): a row of pills keeps today's place (from the 120 px name
+   column to the right edge) when the pills fit there; when they need more, they grow to the left, up to the name's own words
+   + 14 px; only when even that is too little do they go under the name (then the whole second line, as before). Right edges
+   always in line. A pill is never narrower than its word + 10 px a side (no "..." cuts); a row whose pills don't fit even on
+   a line of their own puts them on two lines. (The name's grow is a million times the pills': beside it the pills keep their
+   width, alone on the second line they fill it. calc-size: never wider than the row; older engines take the line before.) */
+/* Headset tab: replaces, for its pill rows, the size tags (w5 / w6) and the narrow-column stacking (hscol 470 / 390); the
+   box + "% | Auto" rows (Low below, Low, High) stay beside their name in narrow columns too. The PC screen tab's rules are at
+   the end of x-turzx.js's CSS. */
+.hsx .cz-l .setrow:has(> .seg) { flex-wrap: wrap; row-gap: 8px; }
+.hsx .cz-l .setrow:has(> .seg) > div:first-child { flex: 1000000 1 auto; min-width: 0; }
+.hsx .cz-l .setrow > .seg { flex: 1 0 auto; width: calc(100% - 134px); min-width: max-content; min-width: calc-size(max-content, min(size, 100%)); max-width: 380px; margin-left: auto; flex-wrap: wrap; row-gap: 2px; }
+.hsx .cz-l .setrow > .seg > button { flex: 1 1 0; min-width: max-content; padding-left: 10px; padding-right: 10px; }
+@container hscol (max-width: 470px) {
+  .hsx .cz-l .setrow:has(> .seg) > div:first-child { flex: 1000000 1 auto; }
+  .hsx .cz-l .setrow > .seg { flex: 1 0 auto; width: calc(100% - 134px); max-width: none; }
+}
+@container hscol (max-width: 390px) {
+  .hsx .cz-l .setrow:has(> .hs-val) { flex-wrap: nowrap; } .hsx .cz-l .setrow:has(> .hs-val) > div:first-child { flex: 0 0 120px; }
+  .hsx .cz-l .setrow > .hs-val { flex: 1 1 0; width: auto; max-width: 380px; } .hsx .cz-l .setrow > .hs-val > .seg { min-width: max-content; }
+}
+@container hscol (max-width: 300px) {
+  .hsx .cz-l .setrow > .seg > button { padding-left: 6px; padding-right: 6px; }
+  .hsx .cz-l .setrow:has(> .hs-val) { flex-wrap: wrap; } .hsx .cz-l .setrow:has(> .hs-val) > div:first-child { flex: 1 0 100%; }   /* (a box + "% | Auto": too little room beside the name here, as before) */
+  .hsx .cz-l .setrow > .hs-val { flex: 1 1 100%; max-width: none; } .hsx .cz-l .setrow > .hs-val > .seg { min-width: 0; }
+}
+
+/* the number switch (11-17): a digit drawn by its style over its cell (.nsx), the cell's own digit hidden meanwhile and
+   free to reach a little past its line (a slide); Flip's halves */
+.od.nsa > .odh { visibility: hidden; } .od.nsa { overflow-clip-margin: 0.6em; }
+.nsx { position: absolute; left: 0; right: 0; top: 0; bottom: 0; text-align: center; pointer-events: none; white-space: pre; }
+.nsx.nst { clip-path: inset(0 0 50% 0); } .nsx.nsb { clip-path: inset(50% 0 0 0); }
+/* its picker in Customize > Look (his pick D): Look's tiles, each a cell going 5 to 25 % and back in its style; the cell
+   takes no hover of its own (the tile's name lights, as Look's do); greyed in Minimal / Off */
+#lkNum { flex-direction: column; align-items: stretch; gap: 12px; }
+.ns-g { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 8px; --lk-gap: var(--box, #191919); }
+:root[data-pops="view"] .ns-g { --lk-gap: var(--tile-solid); }
+.ns-g .lk-sw.ns-sw { height: auto; box-shadow: none; border-radius: var(--tile-r, 0.77rem); }
+.ns-g .lk-t.on .lk-sw.ns-sw { box-shadow: 0 0 0 2px var(--lk-gap), 0 0 0 3.5px #e6e6e6; }
+.ns-sw > .tile { min-height: 0; zoom: 0.8; padding-bottom: 0.55rem; pointer-events: none; }
+.ns-sw > .tile > .tv { display: block; margin-top: 0.15rem; }
+.ns-g.ns-off { opacity: 0.35; } .ns-g .lk-t:disabled { cursor: default; }
+/* Customize rows inside a section (his pick A, 11-17): every row inside an opened section (Look's Cells and Background,
+   Headset settings, a picked piece and its sections, the page, Every page ...) gets the Cells rows' spacing and name size:
+   7 px above and below, names 12.5 px, the small line under a name 11.5 px. The rows at the top of a tab (the sections' own
+   heads, Colour, Popups, Screen ...) stay regular. Spacing only: no control changes size. The equalizer's bands row keeps its
+   own spacing. The PC screen tab's rules are at the end of x-turzx.js's CSS. */
+.cz-l .lk-body .setrow:not(.hs-eqr) { padding-top: 7px; padding-bottom: 7px; }
+.cz-l .lk-body .setrow > div:first-child { font-size: 12.5px; }
+.cz-l .lk-body .setrow > div:first-child > small { font-size: 11.5px; margin-top: 1px; }
+/* (11-17 the tester's batch 4, Look at 720 x 480) the Palette list gives way before its name does (it sat over "Palette");
+   the Cells sliders give way before their values do ("100%" was cut to "100"); a narrow Look column: Colour's pills a
+   little tighter (they ran 17 px into the row's padding) */
+.cz-l .setrow.lk-palh > .lk-dd { flex: 0 1 260px; min-width: 120px; } .cz-l .setrow.lk-palh > .lk-dd > * { min-width: 0; }
+.cz-l .lk-row:not(.bg-side .lk-row) > .lk-rng { flex: 0 1 190px; width: auto; min-width: 60px; } .cz-l .lk-row > .lk-v { flex: none; }
+@media (max-width: 820px) { .cz-look .cz-l #sTint { width: auto; } .cz-look .cz-l #sTint > button { flex: 0 1 auto; padding-left: 7px; padding-right: 7px; } .cz-look .lk-colr .lk-cw { gap: 8px; } }   /* (by the window, not a container query: one on the column would hold its floating editors) */

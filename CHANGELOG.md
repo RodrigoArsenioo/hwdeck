@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.6.0 (2026-11-17)
+
+- Customize > Headset has the headset's own settings: Volume, Noise control (with Transparency), Equalizer and its Gain, Mic volume, Sidetone, Mute light and Auto Off. They are read from the base station and sent to it as you change them; with SteelSeries GG open they show read only.
+- The headset keeps pages, not themes: Save keeps the open page, and the themes saved in 2.5 became pages. The ready-made pages are grouped by kind, with new Free ones (Watch, Sidebar, Hero, Twin, Ticker).
+- A page is a Grid or Free. On a Free page the pieces sit anywhere at any size: drag a piece to move it, its corner to resize it, the arrow keys to nudge it, and Add piece for a new one. A look at Grid and back keeps the Free page as it was.
+- Inside a piece, the number, its unit and its icon each have their own size and place, the number's size can be set in pixels (Auto by default) and its decimals, and the label sits beside, above or below it.
+- The Clock piece has 12 h, seconds, a date under or beside it (as a day, short, in numbers or as a weekday), a label and Inverted. In a cell too small for all of it, it leaves out the date, then the seconds, then the label, instead of drawing nothing.
+- Every reading can show an icon as its label.
+- Shows and Second line pick a reading from one list with two tabs: Layout (the readings in your cells) and Storage (every reading). Sessions > Customize adds a reading from the same list.
+- Paste puts the copied page in place of the open one; Duplicate and + name the new page Page 2, Page 3 and so on.
+- The four digit designs (Blocky, Strokes, Thick strokes, Seven segments) each show as a big number in their pictures. On Auto, Strokes, Thick strokes and Seven segments pick their size in 1 px steps, give pieces in cells of one size the same size, and keep clear of the cell's edges. Switching the design makes a piece's own size smaller when it no longer fits.
+- A battery piece's Low below is a percentage or Auto; Yellow at and Red at are gone from battery pieces.
+- Screen Off, Original and Custom play the base station's own switch off and switch on in the picture. The base station's screen recovers by itself when it gets stuck; Refresh is still there to do it by hand. Faster volume wheel is always listed.
+- Look > Number switch picks how numbers change: Roll (the default), Slide, Fade, Flip, Count or Snap (no animation), each shown live. It works with Animations on Full. A number gaining or losing a digit now changes the same way instead of jumping.
+- Settings > Calmer during games has a second switch, Even with the game in the background, that keeps animations Minimal the whole time a game runs. It is off by default.
+- Customize: rows inside an opened section are more compact, short choices sit beside their names, rows that come or go fold away and grow in, and a row that changes height eases to it. What opens after a click comes into sight: a section, a new piece, a new page, a piece brought back by Undo (picked again).
+- Small windows: Customize's rows put their choices under their names when there is no room, the Look tab fits at 720 px wide, Sessions and Warning history put the time under the name when both do not fit, and a row of page tabs fades at the edge where there are more.
+- On and Off are written with a capital everywhere.
+- Fixes from a full test pass: the icon editor's tiles no longer fly about, Customize's motions no longer jump or stop short, and many smaller ones.
+
 ## 2.5.1 (2026-11-15)
 
 - Sessions and Warning history: with Popups on View, a day's heading drew a line over the top edge of its first session, past the session's rounded corners. The line is gone; the heading still gets its background while it stays on top as the list scrolls.
