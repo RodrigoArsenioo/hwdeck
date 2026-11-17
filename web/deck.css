@@ -234,7 +234,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .tile, .card, .gtable { position: relative; isolation: isolate; }
 .tile::before, .card::before, .gtable::before { content: ''; position: absolute; inset: 0; border-radius: inherit; z-index: -1; pointer-events: none; opacity: 0; transition: opacity 260ms;
   background: radial-gradient(13rem circle at var(--mx, 50%) var(--my, 50%), rgba(255,255,255,0.055), rgba(255,255,255,0.018) 45%, transparent 75%); }
-.tile:hover::before, .card:hover::before, .gtable:hover::before { opacity: 1; }
+.tile:is(:hover, .hovk)::before, .card:hover::before, .gtable:hover::before { opacity: 1; }
 @property --mx { syntax: '<length-percentage>'; inherits: false; initial-value: 50%; }
 @property --my { syntax: '<length-percentage>'; inherits: false; initial-value: 50%; }
 .tile::before, .card::before, .gtable::before { --mx: inherit; --my: inherit; }
@@ -295,13 +295,13 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .tg.kset { grid-template-columns: repeat(var(--k), minmax(0, 1fr)); }   /* tiles per row worked out for the room (no empty tracks) */
 .tile { background: var(--tile, #151515); border: 1px solid var(--tile-line, #242424); border-radius: var(--tile-r, 0.77rem); box-shadow: var(--tile-sh, none); padding: calc(0.77rem * (0.75 + 0.25 * var(--sp, 1))) calc(0.92rem * (0.75 + 0.25 * var(--sp, 1))) calc(0.69rem * (0.75 + 0.25 * var(--sp, 1))); min-width: 0; display: flex; flex-direction: column; min-height: 8.6rem;
         cursor: pointer; transition: border-color 160ms, transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 160ms, background 300ms; }
-.app:not(.editing) .tile:hover { border-color: var(--g3a, #3a3a3a); transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+.app:not(.editing) .tile:is(:hover, .hovk) { border-color: var(--g3a, #3a3a3a); transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.35); }   /* (.hovk: held lifted while the mouse is still where it was, his clip 18:10 11-17) */
 .tile { isolation: isolate; }   /* (the warning glow's layer sits under the content, over the background: 2.1) */
 .glw { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1; opacity: 0; }
 .glw.y { background: rgba(230, 200, 74, 0.16); } .glw.r { background: rgba(229, 72, 77, 0.16); }
 /* Off is off: no press scale, no tile lift (2.1) */
 :root[data-motion="off"] :is(.btn, .ib, .chip, .seg button, .rng button, nav#screens button, .tog2, .mclose):active { scale: none; }
-:root[data-motion="off"] .app:not(.editing) .tile:hover { transform: none; }
+:root[data-motion="off"] .app:not(.editing) .tile:is(:hover, .hovk) { transform: none; }
 .tile.pred { border-style: dashed; }
 .tile.yellow { border-color: #5c4f1d; } .tile.red { border-color: #6b2020; background-color: #1c1113; }
 /* (prettify 11-02: just turned yellow or red: one ring that widens and fades) */
@@ -1858,7 +1858,7 @@ select.dsel-n { display: none; }
 .hsx .hs-pv.hs-zoomed .hs-ov.hs-opd { box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.72); pointer-events: none; border: calc(1px / var(--z, 1)) dashed color-mix(in srgb, var(--edit, #e8e8e8) 45%, transparent); outline: 0; background: none; border-radius: calc(4px / var(--z, 1)); }
 .hsx .hs-pv.hs-zoomed .hs-ov.hs-opd .hs-rz { display: none; }
 .hsx .hs-pt { position: absolute; box-sizing: border-box; border: calc(1px / var(--z, 1)) dashed rgba(255, 255, 255, 0.4); border-radius: calc(2px / var(--z, 1)); cursor: grab; touch-action: none; transition: border-color 120ms; }
-.hsx .hs-pt.hs-ptin { animation: hsPtIn 260ms 140ms both cubic-bezier(0.3, 0, 0.15, 1); } @keyframes hsPtIn { from { opacity: 0; } }
+.hsx .hs-pt.hs-ptin { animation: hsPtIn 260ms calc(140ms * var(--spd, 1)) both cubic-bezier(0.3, 0, 0.15, 1); } @keyframes hsPtIn { from { opacity: 0; } }
 :root[data-motion="off"] .hsx .hs-pt.hs-ptin { animation: none; }
 .hsx .hs-pt:hover { border-color: rgba(255, 255, 255, 0.75); }
 .hsx .hs-pt.on { border-color: transparent; outline: calc(2px / var(--z, 1)) solid var(--edit, #e8e8e8); outline-offset: calc(-1px / var(--z, 1)); }
@@ -1977,3 +1977,11 @@ select.dsel-n { display: none; }
 .cz-l .setrow.lk-palh > .lk-dd { flex: 0 1 260px; min-width: 120px; } .cz-l .setrow.lk-palh > .lk-dd > * { min-width: 0; }
 .cz-l .lk-row:not(.bg-side .lk-row) > .lk-rng { flex: 0 1 190px; width: auto; min-width: 60px; } .cz-l .lk-row > .lk-v { flex: none; }
 @media (max-width: 820px) { .cz-look .cz-l #sTint { width: auto; } .cz-look .cz-l #sTint > button { flex: 0 1 auto; padding-left: 7px; padding-right: 7px; } .cz-look .lk-colr .lk-cw { gap: 8px; } }   /* (by the window, not a container query: one on the column would hold its floating editors) */
+
+/* animation speed, Customize > Look (11-17): Look's thin slider and the stop's name beside it, as wide as Colour and Popups
+   and starting where they start (the name's box as wide as "Super fast", so the slider never moves); dimmed when
+   Animations is Off, as a slider that can't be changed elsewhere */
+.cz-l #lkSpd .lk-spd { display: inline-flex; align-items: center; gap: 10px; width: 228px; flex: none; }
+.cz-l #lkSpd .lk-rng { flex: 1 1 auto; width: auto; min-width: 0; }
+#lkSpd .lk-v { width: 5.2em; }
+#lkSpd .lk-rng:disabled { opacity: 0.4; cursor: default; } #lkSpd .lk-rng:disabled + .lk-v { opacity: 0.6; }

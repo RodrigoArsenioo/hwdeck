@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.2 (2026-11-17)
+
+- Look > Animation speed sets how fast everything moves: Slow, Normal (the default), Fast or Super fast. Popups, folds, glides, number changes and graphs all follow it; spinning fans and live counts keep their pace. It is dimmed while Animations is Off.
+- A tile no longer flickers up and down when the mouse rests on its bottom edge.
+
 ## 2.6.1 (2026-11-17)
 
 - The headset's clock has an icon of its own, so its Label on Icon draws a small clock instead of the word TIME. It can be redrawn in the icon editor like the others.

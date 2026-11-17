@@ -136,7 +136,7 @@ function nbTo(k, v, mode) {
   if (v == null) { s.to = null; s.shown = null; s.live = false; nbShow(k); nbGraph(k, performance.now()); return; }
   if (mode === 'show' || !motionOn()) { s.to = s.from = s.shown = v; s.t0 = 0; s.dur = 1; nbShow(k); nbGraph(k, performance.now()); return; }
   if (s.to === v && mode !== 'live') return;
-  s.from = s.shown == null ? 0 : s.shown; s.to = v; s.t0 = performance.now(); s.dur = mode === 'live' ? 1000 : 600; s.lin = mode === 'live';
+  s.from = s.shown == null ? 0 : s.shown; s.to = v; s.t0 = performance.now(); s.dur = mode === 'live' ? 1000 : spdMs(600); s.lin = mode === 'live';
   if (!s.run) { s.run = true; nbRun(nbJob(k)); }   // (one job a box: the running one takes the new target)
 }
 // the rate in its box, drawn as the tiles' graphs are: a 1.4 px line, the fill under it fading down, a dot at its tip
@@ -162,10 +162,11 @@ function nbAim(el, frac, perS, cap) {
   if (!el) return;
   if (!motionOn()) { nbBar(el, Math.min(cap, frac), motionMode() === 'off' ? 0 : 600); return; }
   const to = Math.min(cap, frac + perS * 1.25), ms = perS > 0 ? (to - frac) / perS * 1000 : 0;
+  el._spdKeep = ms > 30;   // (aimed at the test's pace: not the animation speed's, 11-17)
   el.style.transition = ms > 30 ? 'transform ' + Math.round(ms) + 'ms linear' : 'transform 300ms var(--e-move)';
   el.style.transform = 'scaleX(' + (ms > 30 ? to : Math.min(cap, frac)).toFixed(4) + ')';
 }
-const nbBar = (el, frac, ms) => { if (!el) return; el.style.transition = ms ? 'transform ' + ms + 'ms var(--e-move)' : 'none'; el.style.transform = 'scaleX(' + Math.max(0, Math.min(1, frac)).toFixed(4) + ')'; };
+const nbBar = (el, frac, ms) => { if (!el) return; el._spdKeep = false; el.style.transition = ms ? 'transform ' + ms + 'ms var(--e-move)' : 'none'; el.style.transform = 'scaleX(' + Math.max(0, Math.min(1, frac)).toFixed(4) + ')'; };
 EXT.kinds.net = {
   icon: () => NET_I,
   eval(out, r) {
@@ -224,7 +225,7 @@ EXT.kinds.net = {
       if (started || first) { nbBar(bar, R.pct / 100, 0); void bar.offsetWidth; }
       nbAim(bar, R.pct / 100, R.all ? 1 / R.all : 0, R.pe != null ? R.pe / 100 : 1);
     } else if (pend) { pw.classList.remove('shut'); if (started) nbBar(bar, 0, 0); }
-    else if (ended) { nbBar(bar, 1, 300); clearTimeout(NT.endT); NT.endT = setTimeout(() => { pw.classList.add('shut'); NT.endT = 0; }, 450); }
+    else if (ended) { nbBar(bar, 1, 300); clearTimeout(NT.endT); NT.endT = setTimeout(() => { pw.classList.add('shut'); NT.endT = 0; }, spdMs(450)); }
     else if (!NT.endT) pw.classList.add('shut');
     // the line under: what it tests and the seconds left, or the last test and the next
     const l = box.querySelector('.xn-l'), r = box.querySelector('.xn-r');
@@ -609,7 +610,7 @@ const HSX = (() => {
       pv.classList.toggle('hs-zoomed', !!tf); pv.style.setProperty('--z', HS.zz);
       if (tf || from !== 'none') pv.classList.add('hs-zclip');   // (clipped while zoomed and on its way out, the review 11-16)
       cv.style.transform = ov.style.transform = tf;
-      if (!tf) { const done = () => { if (pv._zk === 'none') pv.classList.remove('hs-zclip'); }; if (motionMode() === 'off' || from === 'none') done(); else { cv.addEventListener('transitionend', done, { once: true }); setTimeout(done, 400); } }
+      if (!tf) { const done = () => { if (pv._zk === 'none') pv.classList.remove('hs-zclip'); }; if (motionMode() === 'off' || from === 'none') done(); else { cv.addEventListener('transitionend', done, { once: true }); setTimeout(done, spdMs(400)); } }
     }
     function hsOpenPiece(i) { const Pg = hsPg(), q = Pg && Pg.pieces[i]; if (!q || q.src === 'clock' || q.style !== 'number') return; HS.sel = i; HS.open = i; HS.part = null; HS.openAt = performance.now(); HS.ptIn = true; clearTimeout(HS.pkT); HS.folds.piece = true; HS.pend = {}; hsDraw(true); czToPiece(); }
     function hsClosePiece() { HS.open = null; HS.part = null; hsDraw(true); }
@@ -1955,7 +1956,52 @@ const recNow = () => Array.isArray(feed.rec) && feed.rec.length > 0;
 const gameCalmNow = () => S.gameCalm !== false && ((!!feed.game && (!!feed.front || !!S.calmBg)) || recNow());   // (calmBg: also with the game in the background, his 11-16 pick; off by default)
 const motionMode = () => { const m = motionPicked(); return m === 'full' && gameCalmNow() ? 'minimal' : m; };
 const motionOn = () => motionMode() === 'full';   // the moving parts: spins, rolls, glides, draw-ins
-function applyMotion() { document.documentElement.dataset.motion = motionMode(); }
+function applyMotion() { document.documentElement.dataset.motion = motionMode(); spdVar(); }   // (--spd: the animation speed, for CSS, 11-17)
+// ---- animation speed (11-17, his "a slider for animations speed where we can choose from super fast, fast, normal and
+// slow (default is normal) this goes in "look" in customization"): every motion that answers something (popups, folds,
+// glides, a number changing, a graph's line morphing into the next) takes its time times this. The browser's own
+// (el.animate) and the page's CSS transitions and animations are scaled here, in one place; the page's own clocks (the
+// number roll, the number switch, graph morphs, the scroll that goes with a fold) and the timers that wait for a motion
+// to end use spdMs(). What keeps pace with the readings (spinning fans, a live count over its second, a spinner) and what
+// waits for a person (hover delays, a double-click's time, how long a toast stays) keep their time. Off: nothing moves.
+// An animation that carries one already scaled (a glide picked up mid-way) says spdKeep ----
+const SPD = [['slow', 'Slow', 1.5], ['normal', 'Normal', 1], ['fast', 'Fast', 0.75], ['xfast', 'Super fast', 0.5]];
+const spdPick = () => SPD.some(x => x[0] === S.aSpd) ? S.aSpd : 'normal';
+const spdK = () => motionMode() === 'off' ? 1 : (SPD.find(x => x[0] === spdPick()) || SPD[1])[2];
+const spdMs = ms => ms * spdK();
+function spdVar() { document.documentElement.style.setProperty('--spd', String(spdK())); }   // (for a CSS animation's own delay, which runs before animationstart can set its clock)
+(() => {
+  const own = Element.prototype.animate;
+  Element.prototype.animate = function (k, o) {
+    const f = spdK();
+    if (f !== 1 && o != null) {
+      if (typeof o === 'number') o *= f;
+      else if (typeof o === 'object' && !o.spdKeep) {
+        o = Object.assign({}, o);
+        if (o.duration > 0 && isFinite(o.duration)) o.duration *= f;
+        if (o.delay) o.delay *= f;
+        if (o.endDelay) o.endDelay *= f;
+      }
+    }
+    return own.call(this, k, o);
+  };
+  // (a CSS transition or animation: at its start, on its own clock, as they have no duration of their own to set; a
+  // spinner, which never ends, keeps its pace; an element that says _spdKeep too: the speed test's bar, aimed at the
+  // test's own pace)
+  const css = e => {
+    const f = spdK(); if (f === 1) return;
+    const t = e.target; if (!t || !t.getAnimations || t._spdKeep) return;
+    const pe = e.pseudoElement || null;
+    for (const a of t.getAnimations(pe ? { subtree: true } : undefined)) {
+      if (a._spd || !a.effect || (a.effect.pseudoElement || null) !== pe) continue;
+      if (e.type === 'transitionrun' ? a.transitionProperty !== e.propertyName : a.animationName !== e.animationName) continue;
+      a._spd = true;
+      if (a.effect.getTiming().iterations === Infinity) continue;
+      a.updatePlaybackRate(1 / f);
+    }
+  };
+  addEventListener('transitionrun', css, true); addEventListener('animationstart', css, true);
+})();
 // the look, in Settings (11-02; the theme rework 11-05, his "ember and graphite are just ways to control the bg color
 // ... a person can choose the bg AND fade colors in ANY edge", then "cells opacity", "change the cells color as well
 // and add some defaults", "remove oled and soft", "reintegrate the current system or else using spectrum with this new
@@ -2399,7 +2445,7 @@ function dropGone() {
   for (const k in holdSince) if (!ruled(S.L.cells[k])) delete holdSince[k];
   if (!Object.values(S.L.cells).some(c => c && c.key === 'hwdeck.0/12v')) { c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; }   // (no connector cell left: its pin episode ends)
 }
-function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, calmBg: !!S.calmBg, numSw: S.numSw && S.numSw !== 'roll' ? S.numSw : undefined, pins: [DR.L.pinned, DR.R.pinned], sides: [DR.L.side, DR.R.side], rPlaced: DR.R.placed || undefined, title: S.title, clock: S.clock, look: lookPlain() ? undefined : S.look, lookSaved: S.lookSaved.length ? S.lookSaved : undefined, hide: S.hide, listFilt: S.listFilt.g || S.listFilt.w ? { g: S.listFilt.g, w: S.listFilt.w } : undefined, setFold: S.setFold.hs || S.setFold.look ? { hs: S.setFold.hs, look: S.setFold.look } : undefined, starter: S.starterSeen === true || undefined, starterNoted: S.starterNoted === true || undefined, hsToast: S.hsToast === true || undefined, hsTab: S.hsTab === true || undefined, czTab: czTab !== 'look' ? czTab : undefined, recent: S.recent.length ? S.recent : undefined, savedCols: S.savedCols.length ? S.savedCols : undefined } }); }, 300); }
+function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, calmBg: !!S.calmBg, aSpd: S.aSpd && S.aSpd !== 'normal' ? S.aSpd : undefined, numSw: S.numSw && S.numSw !== 'roll' ? S.numSw : undefined, pins: [DR.L.pinned, DR.R.pinned], sides: [DR.L.side, DR.R.side], rPlaced: DR.R.placed || undefined, title: S.title, clock: S.clock, look: lookPlain() ? undefined : S.look, lookSaved: S.lookSaved.length ? S.lookSaved : undefined, hide: S.hide, listFilt: S.listFilt.g || S.listFilt.w ? { g: S.listFilt.g, w: S.listFilt.w } : undefined, setFold: S.setFold.hs || S.setFold.look ? { hs: S.setFold.hs, look: S.setFold.look } : undefined, starter: S.starterSeen === true || undefined, starterNoted: S.starterNoted === true || undefined, hsToast: S.hsToast === true || undefined, hsTab: S.hsTab === true || undefined, czTab: czTab !== 'look' ? czTab : undefined, recent: S.recent.length ? S.recent : undefined, savedCols: S.savedCols.length ? S.savedCols : undefined } }); }, 300); }
 function saveSlot(i) { send({ t: 'save', file: 'slots/slot' + (i + 1), data: S.slots[i] }); }
 // undo steps hold the layout and which slot it came from, so Clear then Undo is exactly where you were
 let undoStack = [], redoStack = [];
@@ -2785,7 +2831,7 @@ function odoFlip(el, old, up) {
       el.appendChild(g);
       if (Math.abs(K) > 0.5) g.animate([{ transform: 'none' }, { transform: 'translateX(' + (-K).toFixed(1) + 'px)' }], Object.assign({ fill: 'forwards' }, o2));
       if (nsIsD(o.ch) && g.firstChild) { g.classList.add('odin'); fol(g.firstChild, false, true); } else fol(g, false, false);
-      setTimeout(() => g.remove(), ROLL_MS + 40);
+      setTimeout(() => g.remove(), spdMs(ROLL_MS) + 40);
     });
     if (u) { const dx = (u0 - u.getBoundingClientRect().left) / z; if (Math.abs(dx) > 0.5) u.animate([{ transform: 'translateX(' + dx.toFixed(1) + 'px)' }, { transform: 'none' }], o2); }
   };
@@ -2847,7 +2893,7 @@ function rollTo(c, d, up) {
   if (t === null) t = d + 10;
   if (t === p) { reelAt(rl, p); return; }
   rl.parentNode.classList.add('roll');
-  rl._from = p; rl._to = t; rl._r0 = performance.now(); rl._dur = ROLL_MS;
+  rl._from = p; rl._to = t; rl._r0 = performance.now(); rl._dur = spdMs(ROLL_MS);
   reelAt(rl, p); rolling.add(rl); motionRun();
 }
 function rollStep(now) {
@@ -2958,7 +3004,7 @@ function nsStep(now) {
 }
 function nsRun(el, dur, tasks, parent) {
   if (!tasks.length) return null;
-  const g = { el, t0: performance.now(), dur, tasks, subs: new Set(), parent: parent || null, done: false };
+  const g = { el, t0: performance.now(), dur: spdMs(dur), tasks, subs: new Set(), parent: parent || null, done: false };
   if (parent) parent.subs.add(g); else el._nsg = g;
   for (const t of tasks) t.f(0); nsGroups.add(g); rolling.add(NS_DRIVER); motionRun(); return g;
 }
@@ -3092,12 +3138,50 @@ function nsgMount() {
   at.replaceWith(nsgEl); nsgMark();
   if (!nsgT) nsgT = setInterval(nsgTick, 1500);
 }
+// ---- its row, in Customize > Look (11-17): Look's thin slider, slow on the left, Super fast on the right; the stop's name
+// beside it. Let go: the number switch's tiles under it change once at the new speed. Animations Off: dimmed ----
+const spdRow = () => {
+  const i = Math.max(0, SPD.findIndex(x => x[0] === spdPick())), off = motionPicked() === 'off', n = SPD.length - 1;
+  return '<div class="setrow" id="lkSpd"><div>Animation speed</div><span class="lk-spd"><input type="range" class="lk-rng" id="lkSpdR" min="0" max="' + n + '" step="1" value="' + i + '" style="--v:' + (i / n * 100) + '%" aria-label="Animation speed" aria-valuetext="' + SPD[i][1] + '"' + (off ? ' disabled title="Animations are off"' : '') + '><span class="lk-v">' + SPD[i][1] + '</span></span></div>';
+};
+document.addEventListener('input', e => {
+  const r = e.target; if (r.id !== 'lkSpdR') return;
+  const x = SPD[+r.value] || SPD[1], v = r.parentNode.querySelector('.lk-v');
+  r.style.setProperty('--v', (+r.value / (SPD.length - 1) * 100) + '%'); r.setAttribute('aria-valuetext', x[1]); if (v) v.textContent = x[1];
+});
+document.addEventListener('change', e => {
+  const r = e.target; if (r.id !== 'lkSpdR') return;
+  const x = SPD[+r.value] || SPD[1]; if (spdPick() === x[0]) return;
+  S.aSpd = x[0]; saveState(); spdVar();
+  if (nsgEl && nsgEl.isConnected && motionPicked() === 'full') { clearInterval(nsgT); nsgTick(); nsgT = setInterval(nsgTick, 1500); }   // (its tiles: once now, at the new speed)
+});
 
 // a popup is open: the view under its blur holds still (no spins, rolls or slides; its values still change every second),
 // the popup itself moves as usual (2.1, the motion audit 11-04)
 let modalUp = false;
 // a popup opened by a click grows out of what was clicked (a tile, a title bar button), in Full; Minimal and Off as before
 // (2.2, his autopilot list 11-05: "popups grow from the click")
+// (11-17 his clip 18:10: the mouse held in the last 2 px of a tile's bottom edge: the hover's 2 px lift took the tile from
+// under it, the hover went, the tile came back under it, and so on, flickering for as long as it stayed. A tile left
+// through its lifted bottom edge stays lifted (.hovk) while the mouse is still where the tile was before it lifted; a
+// real move away, a scroll, leaving the window or another tile lets it go)
+let tileHold = null;
+const tileFree = () => { if (tileHold) { tileHold.classList.remove('hovk'); tileHold = null; } };
+document.addEventListener('mouseout', e => {
+  const t = e.target && e.target.closest ? e.target.closest('.tile') : null; if (!t || (e.relatedTarget && t.contains(e.relatedTarget))) return;
+  if (t.closest('.app.editing') || motionMode() === 'off') return;
+  const r = t.getBoundingClientRect();
+  if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.bottom - 1 && e.clientY <= r.bottom + 2.5) { if (tileHold !== t) { tileFree(); tileHold = t; t.classList.add('hovk'); } }
+  else if (tileHold === t) tileFree();
+}, true);
+document.addEventListener('mousemove', e => {
+  if (!tileHold) return;
+  const t = tileHold; if (!t.isConnected) { tileHold = null; return; }
+  if (e.target && e.target.closest && e.target.closest('.tile') && e.target.closest('.tile') !== t) { tileFree(); return; }   // (another tile under the mouse: its own hover)
+  const r = t.getBoundingClientRect();
+  if (!(e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom + 2.5)) tileFree();
+}, true);
+addEventListener('scroll', tileFree, true); addEventListener('blur', tileFree); document.addEventListener('mouseleave', tileFree);
 let lastPress = null;
 document.addEventListener('pointerdown', e => { lastPress = { el: e.target, t: performance.now(), x: e.clientX, y: e.clientY }; }, true);
 document.addEventListener('keydown', () => { lastPress = null; }, true);   // (a popup a key opened grows as before, not out of the last click)
@@ -3274,7 +3358,7 @@ function stackModals() {
   for (const m of document.querySelectorAll('.modal')) {
     const on = open.length > 1 && m.classList.contains('open');
     // (one closing from on top keeps its light dim while it fades, 150 ms, so the one under doesn't flash darker)
-    if (!m.classList.contains('open') && m.classList.contains('over')) { clearTimeout(m._overT); m._overT = setTimeout(() => { if (!m.classList.contains('open')) m.classList.remove('over'); }, 200); }
+    if (!m.classList.contains('open') && m.classList.contains('over')) { clearTimeout(m._overT); m._overT = setTimeout(() => { if (!m.classList.contains('open')) m.classList.remove('over'); }, spdMs(200)); }
     else m.classList.toggle('over', on && m !== low);
     m.classList.toggle('under', on && m !== top);
   }
@@ -3467,7 +3551,7 @@ function graphLoop(now) {
   const todo = [];
   for (const [cv, G] of graphs) {
     if (!cv.isConnected) { graphs.delete(cv); continue; }
-    const p = G.t0 ? Math.max(0, Math.min(1, (now - G.t0) / GDUR)) : 1, rv = G.rev0 ? Math.max(0, Math.min(1, (now - G.rev0) / 800)) : 1, cp = G.colT0 ? Math.max(0, Math.min(1, (now - G.colT0) / 300)) : 1;   // (a frame stamped before its start: 0, not below, 11-09)
+    const p = G.t0 ? Math.max(0, Math.min(1, (now - G.t0) / spdMs(GDUR))) : 1, rv = G.rev0 ? Math.max(0, Math.min(1, (now - G.rev0) / spdMs(800))) : 1, cp = G.colT0 ? Math.max(0, Math.min(1, (now - G.colT0) / spdMs(300))) : 1;   // (a frame stamped before its start: 0, not below, 11-09)
     G.drawCol = cp < 1 ? mixHex(G.colFrom, G.col, cp) : G.col; if (cp >= 1) G.colT0 = 0;
     const moving = p < 1 || rv < 1 || cp < 1;
     if (!moving && !G.dirty) continue;
@@ -3828,7 +3912,7 @@ function buildView() {
     const vr = view.getBoundingClientRect();
     for (const el of view.querySelectorAll('.anim')) {
       const b = el.getBoundingClientRect();
-      el.style.animationDelay = Math.round(((b.left - vr.left) / Math.max(1, vr.width) * 0.35 + (b.top - vr.top) / Math.max(1, vr.height) * 0.65) * 240) + 'ms';
+      el.style.animationDelay = Math.round(((b.left - vr.left) / Math.max(1, vr.width) * 0.35 + (b.top - vr.top) / Math.max(1, vr.height) * 0.65) * spdMs(240)) + 'ms';
     }
     entrance = 0;
   } else entrance = null;
@@ -3838,12 +3922,12 @@ function playEntrance() {
   const view = $('view'), dir = entrance;
   entrance = null;
   if (dir === null || !view) return;
-  entEnd = performance.now() + (dir ? 400 : 650);
+  entEnd = performance.now() + spdMs(dir ? 400 : 650);
   if (dir) {
     sectionsEl.classList.add('sliding');
     const a = sectionsEl._slide = view.animate([{ transform: 'translateX(' + (dir * 3) + '%)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
     a.onfinish = a.oncancel = () => { if (sectionsEl._slide === a) { sectionsEl._slide = null; sectionsEl.classList.remove('sliding'); } };
-  } else { view.classList.add('enter'); setTimeout(() => view.classList.remove('enter'), 1000); }
+  } else { view.classList.add('enter'); setTimeout(() => view.classList.remove('enter'), spdMs(1000)); }
 }
 let drawnHidden = false;   // (a view drawn in the tray: measured again when the window shows)
 function renderView(enter) {
@@ -4075,7 +4159,7 @@ function updateView(all, peek) {   // (peek: a redraw between seconds, a spark's
       r.root.classList.toggle('yellow', e.lvl === 1); r.root.classList.toggle('red', e.lvl === 2); r.root.classList.toggle('warm', e.warm > 0 || e.warmR > 0);
       // (prettify 11-02: a tile that just went yellow, or yellow to red, also pulses a ring out, with the glow below; not
       // as the view is drawn, and only with Full animations. r._lvl moves on below, after the glow)
-      if (r._lvl !== undefined && e.lvl > r._lvl && motionMode() === 'full' && !catchUp && !stillUnder(r.root)) { r.root.classList.remove('flare'); const fr = r.root; requestAnimationFrame(() => fr.classList.add('flare')); clearTimeout(r._fl); r._fl = setTimeout(() => r.root.classList.remove('flare'), 1000); }
+      if (r._lvl !== undefined && e.lvl > r._lvl && motionMode() === 'full' && !catchUp && !stillUnder(r.root)) { r.root.classList.remove('flare'); const fr = r.root; requestAnimationFrame(() => fr.classList.add('flare')); clearTimeout(r._fl); r._fl = setTimeout(() => r.root.classList.remove('flare'), spdMs(1000)); }
       const wk = e.warm ? 'y' + e.warm : e.warmR ? 'r' + e.warmR : '';   // (the border fades toward yellow before it, toward red past it)
       if (r._w !== wk) { r._w = wk; r.root.style.setProperty('--wb', e.warm ? mixHex(S.look.line ? lineOf(S.look) : solidOf(S.look), '#5c4f1d', e.warm * 0.85) : e.warmR ? mixHex('#5c4f1d', '#6b2020', e.warmR * 0.85) : ''); }
     }
@@ -4612,7 +4696,7 @@ function tbSolve(bar, tt, sig, bw, smooth, ed) {
   placeTabInd(true);
 }
 // (a part that closes or opens by itself: eased for the 180 ms it takes, see deck.css)
-function tbEase(els) { for (const e of els) { e.classList.add('tbo'); clearTimeout(e._tbo); e._tbo = setTimeout(() => e.classList.remove('tbo'), 260); } }
+function tbEase(els) { for (const e of els) { e.classList.add('tbo'); clearTimeout(e._tbo); e._tbo = setTimeout(() => e.classList.remove('tbo'), spdMs(260)); } }
 // a drag stopped (winSettle): a part left part closed (the time, Restart HWiNFO and undo / redo, the edit buttons'
 // words, edit mode's name) closes the rest of the way
 function titleRest() {
@@ -6142,7 +6226,7 @@ function szFlash(q, typed, chips) {
     const i = document.querySelector('#insp ' + q); if (!i) return;
     const now = parseFloat(i.value);
     if (isFinite(typed) && isFinite(now) && Math.abs(now - typed) < 0.05) return;
-    const go = el => { el.classList.remove('szfl'); void el.offsetWidth; el.classList.add('szfl'); clearTimeout(el._szfl); el._szfl = setTimeout(() => el.classList.remove('szfl'), 650); };
+    const go = el => { el.classList.remove('szfl'); void el.offsetWidth; el.classList.add('szfl'); clearTimeout(el._szfl); el._szfl = setTimeout(() => el.classList.remove('szfl'), spdMs(650)); };
     go(i);
     if (chips && isFinite(now)) { const c = [...document.querySelectorAll('#insp [data-lay="' + chips + '"] button[data-v]')].find(b => Math.abs(parseFloat(b.dataset.v) - now) < 0.06); if (c) go(c); }
   }, 90);
@@ -6466,7 +6550,7 @@ function setEdit(on) {
   const was = (entering || leaving) && motionMode() !== 'off' && !document.hidden ? catRects() : null;
   clearTimeout(app._lvT); app.classList.remove('leaving');
   S.edit = on; app.classList.toggle('editing', on);
-  if (leaving) { app.classList.add('leaving'); app._lvT = setTimeout(() => app.classList.remove('leaving'), 320); }
+  if (leaving) { app.classList.add('leaving'); app._lvT = setTimeout(() => app.classList.remove('leaving'), spdMs(320)); }
   if (entering) lastvAsk(cellKeys());   // (Re-link shows in edit mode: the 7 days counted from what the host knows now, 11-08)
   // (the strip pops in as you go into edit mode, only then: a CSS animation keyed on the motion setting replayed it
   // whenever a game left the front. 11-02, the motion audit)
@@ -7936,7 +8020,7 @@ const modal = $('modal'), mrng = $('mrng'), mgraph = $('mgraph'), mgsec = $('mgr
 let openedAt = 0, modalCid = null, bigRange = '15m', bigHist = null, histAsked = 0, bigMap = null, bigRev0 = 0, lastBig = null, modalGateInView = false;
 const RANGE_S = { '15m': 900, '1h': 3600, '6h': 21600, '12h': 43200, '24h': 86400, '7d': 604800, '30d': 2592000, '90d': 7776000 };   // (All: as long as the host has it)
 let bigRevMs = 700;   // (the big graph's draw-in: 700 ms as the popup opens, 450 for a range picked in it)
-function bigRev() { if (!bigRev0) return 1; const p = (performance.now() - bigRev0) / bigRevMs; return p >= 1 ? 1 : easeOut(Math.max(0, p)); }
+function bigRev() { if (!bigRev0) return 1; const p = (performance.now() - bigRev0) / spdMs(bigRevMs); return p >= 1 ? 1 : easeOut(Math.max(0, p)); }
 let bigRaf = 0;   // (one draw-in loop at a time: each pick started another, 11-06)
 function bigLoop() { if (bigRaf) return; bigRaf = requestAnimationFrame(() => { bigRaf = 0; if (!modalCid) return;
   if (lastBig) drawBigGraph.apply(null, lastBig);
@@ -8529,7 +8613,7 @@ function fillPrev() {
 }
 function drawPrev() {
   const c = cellAt(HP.cid); if (!c) { HP.rev0 = 0; return; }
-  const p0 = HP.rev0 && motionOn() ? Math.min(1, (performance.now() - HP.rev0) / 450) : 1, more = () => { if (p0 < 1) { if (!HP.raf) HP.raf = requestAnimationFrame(() => { HP.raf = 0; if (HP.shown) drawPrev(); }); } else HP.rev0 = 0; };
+  const p0 = HP.rev0 && motionOn() ? Math.min(1, (performance.now() - HP.rev0) / spdMs(450)) : 1, more = () => { if (p0 < 1) { if (!HP.raf) HP.raf = requestAnimationFrame(() => { HP.raf = 0; if (HP.shown) drawPrev(); }); } else HP.rev0 = 0; };
   if (isBneck(c)) {   // its calls: the last session's minutes, or the last 15 min's seconds
     const e = HP.e || {}, lv = e.col === 'past' && Array.isArray(e.past) ? e.past : series(BNECK, HLEN).map(bnLv);
     drawLevels(hprev.querySelector('.pstrip canvas'), lv, easeOut(p0), e.col === 'past' ? '#a3a3a3' : cellTint(HP.cid) || '#c9c9c9');
@@ -8547,7 +8631,7 @@ function drawPrev() {
   const sp = gbArr(bucketArr(c, isYN(r)), gk), vals = sp.filter(x => x !== null);   // (a Yes/No reading: each bucket's peak, as its popup)
   let gate = false;
   if (vals.length > 1 && det.y !== undefined) { const hi = Math.max(...vals), spn = Math.max(1.2, hi - Math.min(...vals)); gate = det.y > hi && det.y < hi + spn * 1.2; }
-  const p = HP.rev0 && motionOn() ? Math.min(1, (performance.now() - HP.rev0) / 450) : 1;
+  const p = HP.rev0 && motionOn() ? Math.min(1, (performance.now() - HP.rev0) / spdMs(450)) : 1;
   drawBigGraph(hprev.querySelector('canvas'), sp, det, decOfCell(c, r), c.pred ? 'RPM' : isYN(r) ? ynU(r) : unitOf(r), gate, null, HLEN * 1000, { rev: easeOut(p) });
   if (p < 1) { if (!HP.raf) HP.raf = requestAnimationFrame(() => { HP.raf = 0; if (HP.shown) drawPrev(); }); } else HP.rev0 = 0;
 }
@@ -8838,7 +8922,7 @@ function pileNext(el, has, then) {
     void el.offsetWidth; for (const c of cs) c.style.transition = '';
     const nc = cs.find(c => c !== el && c.classList.contains('show'));
     if (nc) for (const k of nc.children) k.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140 });
-  }, 140);
+  }, spdMs(140));
 }
 // sessions from before 2.0.1 this update worked out again (2.1, the host's Games.ReestimateFiles; feed.estNote: how
 // many): a note like Starter's, once, after Starter's if that one is up. Its X or Show sessions and it's gone for good
@@ -8964,7 +9048,7 @@ function notesSeen(v, next) {
   if (!next || !notesDue().length) { el.classList.remove('show'); upLock(); return; }
   if (motionMode() === 'off') { notesDraw(notesDue()); upLock(); return; }   // (Off: the next card at once, not an empty one for 140 ms, 11-08)
   el.classList.add('swap'); upLock();
-  setTimeout(() => { const due = notesDue(); if (due.length) notesDraw(due); else el.classList.remove('show'); el.classList.remove('swap'); upLock(); }, 140);
+  setTimeout(() => { const due = notesDue(); if (due.length) notesDraw(due); else el.classList.remove('show'); el.classList.remove('swap'); upLock(); }, spdMs(140));
 }
 $('upnClose').onclick = () => { if ($('upn').classList.contains('swap')) return; const due = notesDue(); if (due.length) notesSeen(due[0][0], true); };   // (a quick second X waits for the card it would put away)
 $('upnAll').onclick = () => { const due = notesDue(); if (due.length) notesSeen(due[due.length - 1][0], false); };
@@ -9645,7 +9729,7 @@ const gmodal = $('gmodal');
 // a closed popup lets go of its list (thousands of rows stayed in the page all day) and of Customize (its readings
 // stayed subscribed)
 // (after the fade: emptied as it starts to close, the card shrank and jumped while it faded)
-const afterFade = (el, fn) => setTimeout(() => { if (!el.classList.contains('open')) fn(); }, 250);
+const afterFade = (el, fn) => setTimeout(() => { if (!el.classList.contains('open')) fn(); }, spdMs(250));
 const wxBarTint = k => { const w = wxCell(k), c = w ? cellTint(w.cid) : null; return c ? ';--cc:' + c : ''; };   // (a cell's share bar in its colour under Spectrum, 11-09)
 // a day's band stuck at the top of Sessions or Warning history (11-09, his "you can see a line where it's NOT supposed to
 // be one"): marked, so a fade under it lets the sessions slide away under it instead of being cut by a straight line
@@ -10195,7 +10279,7 @@ $('gcz').addEventListener('click', e => {
   else if (k === 'del') gzEdit(G => { G.secs.splice(i, 1); });
   else if (k === 'addsec' && gxLayout().secs.length >= 16) toast('A session\'s details take 16 categories at most');   // (what a file keeps)
   else if (k === 'addsec') { const id = nid('g'); GZ.sel = id; gzEdit(G => { G.secs.push({ id, kind: 'list', name: 'New category', cells: [] }); }); const n = document.querySelector('#gcz .gz-s.on .gz-name'); if (n) { n.focus({ preventScroll: true }); n.select(); }   // (no jump of the browser's own: gzReveal eases to it)
-    setTimeout(() => { const r = document.querySelector('#gcz .gz-s.on'), card = r && r.closest('.mcard'); if (!card || card._czs) return; const C = card.getBoundingClientRect(), b = r.getBoundingClientRect(); if (b.top >= C.top + 8 && b.bottom <= C.bottom - 8) return; czScrollTo(card, Math.max(0, Math.round(b.top - C.top + card.scrollTop - 24))); }, 300); }   // (the tester's R11 11-17: once the box under it has eased to its height, the new category in sight)
+    setTimeout(() => { const r = document.querySelector('#gcz .gz-s.on'), card = r && r.closest('.mcard'); if (!card || card._czs) return; const C = card.getBoundingClientRect(), b = r.getBoundingClientRect(); if (b.top >= C.top + 8 && b.bottom <= C.bottom - 8) return; czScrollTo(card, Math.max(0, Math.round(b.top - C.top + card.scrollTop - 24))); }, spdMs(300)); }   // (the tester's R11 11-17: once the box under it has eased to its height, the new category in sight)
   else if (k === 'add' && rk) gzEdit(G => { const s = G.secs.find(x => x.id === GZ.sel); if (s && s.cells.length < GX_MAX && !s.cells.some(c => c.key === rk)) s.cells.push({ key: rk }); });
   else if (k === 'out' && rk) gzEdit(G => { const s = G.secs.find(x => x.id === GZ.sel), j = s ? s.cells.findIndex(c => c.key === rk) : -1; if (j >= 0) s.cells.splice(j, 1); });
   else if (k === 'cdel') gzEdit(G => { G.secs.find(x => x.id === GZ.sel).cells.splice(ci, 1); });
@@ -10927,11 +11011,11 @@ function centreOpen(el, again) {
   if (!again && grow > 0) {
     clearTimeout(card._padT); card.style.paddingBottom = '';
     card.style.paddingBottom = (parseFloat(getComputedStyle(card).paddingBottom) + grow) + 'px';
-    card._padT = setTimeout(() => { card.style.paddingBottom = ''; }, 340);
+    card._padT = setTimeout(() => { card.style.paddingBottom = ''; }, spdMs(340));
   }
   if (Math.abs(card.scrollTop - want) > (again ? 24 : 4)) card.scrollTo({ top: want, behavior: motionMode() === 'off' ? 'auto' : 'smooth' });
   // (once it is open: a correction, only when it ended up well off)
-  if (!again) setTimeout(() => centreOpen(el, true), 360);
+  if (!again) setTimeout(() => centreOpen(el, true), spdMs(360));
 }
 function showGame() {
   const rs = feed.rec || [];
@@ -11158,7 +11242,7 @@ function czScrollTo(l, top, from, sync) {   // (sync: an animation it goes with,
   if (l._czs) { cancelAnimationFrame(l._czs.raf); if (l._czs.end) l._czs.end(); }   // (one already on its way: ended, its listeners too)
   l._czs = null; l.querySelectorAll(':scope > .cz-sp').forEach(e => e.remove());
   if (motionMode() === 'off') { l.scrollTop = top; return; }
-  let t0 = null; const S = { raf: 0, user: false }, far = Math.max(y0, top), sd = sync && sync.effect ? +sync.effect.getComputedTiming().duration : 0, D = sd > 0 ? sd : czDur();   // (with a motion: its time, 11-16)   // (t0: its first frame, the frame the folds and glides started with it start on: the two never a frame apart, 11-15)
+  let t0 = null; const S = { raf: 0, user: false }, far = Math.max(y0, top), sd = sync && sync.effect ? +sync.effect.getComputedTiming().duration : 0, D = sd > 0 ? sd : spdMs(czDur());   // (with a motion: its time, 11-16)   // (t0: its first frame, the frame the folds and glides started with it start on: the two never a frame apart, 11-15)
   if (Math.abs(top - y0) < 1) { if (Math.abs(l.scrollTop - y0) > 1) l.scrollTop = y0; return; }
   const sp = document.createElement('div'); sp.className = 'cz-sp'; sp.setAttribute('aria-hidden', 'true'); sp.style.cssText = 'height: 0; flex: none; pointer-events: none'; l.append(sp);
   sp.style.height = Math.max(0, Math.ceil(far + l.clientHeight - czHeld(l) + czGhostH(l))) + 'px'; l.scrollTop = y0;   // (its room at once, and the column back where it was, before anything is drawn)
@@ -11575,7 +11659,7 @@ function moIn(box, was) {
       const H = r.getBoundingClientRect().height, endK = w.run.kf[w.run.kf.length - 1] || {}; if (Math.abs(H - (parseFloat(endK.height) || 0)) > 1) continue;   // (its end is not its new height: eased from where it is below, the review 11-16)
       dh += H - (parseFloat(w.at.height) || 0);
       r.style.boxSizing = 'border-box'; r.style.overflow = 'hidden'; if (w.run.roll) czRoll(r, true);   // (rolled only if its motion was made rolled: its padding once)
-      const a = r.animate(w.run.kf, { duration: w.run.dur, easing: w.run.easing, id: 'rowmove' }); a.currentTime = w.run.ct; carried = carried || a; if (w.run.held) made.push(a);
+      const a = r.animate(w.run.kf, { duration: w.run.dur, easing: w.run.easing, id: 'rowmove', spdKeep: true }); a.currentTime = w.run.ct; carried = carried || a; if (w.run.held) made.push(a);
       a.onfinish = a.oncancel = () => { r.style.boxSizing = ''; r.style.overflow = ''; czRoll(r, false); }; w.done = true;
     }
     for (const [k, r] of now) {   // (staying, its height changed, or caught growing: eases from what was seen; a box of parts rides on them)
@@ -11703,11 +11787,11 @@ function spinOn(t) {
   if (t == null) return;
   const v = $('sUpdNow') && $('sUpdNow').querySelector('svg'); if (!v) return;
   const a = v.getAnimations()[0];
-  if (typeof t === 'object') { if (a || !motionOn() || t.left < 16) return; const e = v.animate([{ transform: 'rotate(' + t.end.toFixed(1) + 'deg)' }, { transform: 'rotate(360deg)' }], { duration: t.left, easing: 'ease-out', id: 'spinEnd' }); e._a0 = t.end; return; }
+  if (typeof t === 'object') { if (a || !motionOn() || t.left < 16) return; const e = v.animate([{ transform: 'rotate(' + t.end.toFixed(1) + 'deg)' }, { transform: 'rotate(360deg)' }], { duration: t.left, easing: 'ease-out', id: 'spinEnd', spdKeep: true }); e._a0 = t.end; return; }
   if (a) { a.currentTime = t; return; }
   if (!motionOn()) return;
   const P = 1100, f = (t % P) / P;
-  const e = v.animate([{ transform: 'rotate(' + (f * 360).toFixed(1) + 'deg)' }, { transform: 'rotate(360deg)' }], { duration: Math.max(160, (1 - f) * P), easing: SUM_E, id: 'spinEnd' }); e._a0 = f * 360;
+  const e = v.animate([{ transform: 'rotate(' + (f * 360).toFixed(1) + 'deg)' }, { transform: 'rotate(360deg)' }], { duration: Math.max(160, (1 - f) * P), easing: SUM_E, id: 'spinEnd', spdKeep: true }); e._a0 = f * 360;
 }
 // a switch drawn again in its new state (Settings and Customize draw their rows again on a change, so CSS alone would
 // show it jump): put back in its old state for a frame, then switched, so it slides there. Not with animations Off
@@ -11747,7 +11831,7 @@ function segPills(root, was) {
     // (another control, a message), the cross carries on where it was, nothing lights or dims twice)
     const bi = [...bs].indexOf(b), now = performance.now(); let x = segX.get(k);
     if (w && w.n === bs.length && w.i >= 0 && w.i !== bi && motionMode() !== 'off') { x = { from: w.i, to: bi, t0: now }; segX.set(k, x); }
-    else if (x && (!w || x.to !== bi || now - x.t0 >= 300 || motionMode() === 'off')) { segX.delete(k); x = null; }
+    else if (x && (!w || x.to !== bi || now - x.t0 >= spdMs(300) || motionMode() === 'off')) { segX.delete(k); x = null; }
     const old = x && bs[x.from], ref = old && (old.disabled ? [...bs].find(y => y !== b && !y.disabled) : old);
     if (old && old !== b && ref) { const tz = [b, ref, old]; for (const y of tz) { y.style.transition = 'none'; for (const an of y.getAnimations()) if (!an.transitionProperty) an.cancel(); }   // (a cross still on its way: its own colours ended too, the review 11-15)   // (their colours as they end, not mid-transition: the Customize tabs' names, toggled in place, read the old colours and crossed the wrong way, then snapped back; the tester's F18 11-15)
       const on = getComputedStyle(b).color, dim = getComputedStyle(ref).color, own = getComputedStyle(old).color, o = { duration: 300, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }; for (const y of tz) y.style.transition = '';
@@ -11945,7 +12029,7 @@ async function lkPvDraw(L) {
 }
 // (Settings shut: the preview goes once it has faded, nothing kept, nothing drawn while closed)
 new MutationObserver(() => { const sm = document.getElementById('setmodal'); if (sm.classList.contains('open')) { if (!pvKey) lkPvAsk(lkHovLook() || S.look); requestAnimationFrame(() => { const l = $('lkThL'); if (l && sm.classList.contains('open')) lkThHome(l); }); return; } clearTimeout(pvT); pvWant = null; pvKey = ''; lkThTop = null; lkJf = null; lkHov = null;
-  setTimeout(() => { if (!sm.classList.contains('open')) { const b = $('lkPv'); if (b) b.querySelectorAll('.lk-pvh').forEach(x => x.remove()); } }, 450); }).observe(document.getElementById('setmodal'), { attributes: true, attributeFilter: ['class'] });
+  setTimeout(() => { if (!sm.classList.contains('open')) { const b = $('lkPv'); if (b) b.querySelectorAll('.lk-pvh').forEach(x => x.remove()); } }, spdMs(450)); }).observe(document.getElementById('setmodal'), { attributes: true, attributeFilter: ['class'] });
 addEventListener('resize', () => { if (!document.getElementById('setmodal').classList.contains('open')) return; const b = $('lkPv'); if (b) b.style.aspectRatio = innerWidth + ' / ' + innerHeight; lkPvAsk(lkHovLook() || S.look); });   // (the window's new shape, 11-09 review)
 // ---- after Settings is drawn: the preview kept (a copy of it is costly), the list where it was, Save's fade ----
 function lkAfter(pvEl, hadSave) {
@@ -12110,7 +12194,7 @@ const setSecFold = (key, name, rows, cls, bodyOpen) => '<section class="setsec s
 function setFoldToggle(h) {
   const k = h.dataset.setfold, sec = h.closest('.setsec-f'); if (!sec || !(k in S.setFold)) return;
   const shut = !S.setFold[k]; S.setFold[k] = shut; saveState();
-  clearTimeout(sec._ft); sec.classList.add('anim'); sec._ft = setTimeout(() => sec.classList.remove('anim'), motionMode() === 'off' ? 0 : 330);   // (cut to its box while it glides; open, nothing is cut: the headset's picture stays pinned)
+  clearTimeout(sec._ft); sec.classList.add('anim'); sec._ft = setTimeout(() => sec.classList.remove('anim'), motionMode() === 'off' ? 0 : spdMs(330));   // (cut to its box while it glides; open, nothing is cut: the headset's picture stays pinned)
   sec.classList.toggle('shut', shut); h.setAttribute('aria-expanded', !shut); sec.querySelector('.setsec-b').inert = shut;   // (folded: not for the keys either)
   if (shut) return;
   if (k === 'look') requestAnimationFrame(() => { const l = $('lkThL'); if (l) lkThHome(l); lkPvAsk(lkHovLook() || S.look); });   // (its list at his theme, its preview drawn: nothing was while it was folded)
@@ -12128,7 +12212,7 @@ function lookRows() {
       [['none', 'Mono'], ['accent', 'Accent'], ['spectrum', 'Spectrum']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.tint === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></span>' + (lkPick === 'acc' && S.look.tint !== 'none' ? '<div class="lk-fl" data-for="acc">' + lkPop('acc', S.look.acc) + '</div>' : '') + '</div>' +
     (S.look.tint === 'spectrum' ? lookPalette() : '') +
     '<div class="setrow"><div>Popups</div><span class="seg seg3" id="sPops">' +
-      [['view', 'View'], ['cells', 'Cells']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.pops === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' + nsgRow();   // (the number switch, his pick D 11-17)
+      [['view', 'View'], ['cells', 'Cells']].map(([v, t]) => '<button data-v="' + v + '" class="' + (S.look.pops === v ? 'on' : '') + '">' + t + '</button>').join('') + '</span></div>' + spdRow() + nsgRow();   // (the number switch, his pick D 11-17; animation speed, 11-17)
 }
 function renderSettings0() {
   if (czOn) { $('setbody').innerHTML = czBody(); return; }   // (Customize: one thing on show)
@@ -12333,7 +12417,7 @@ function toast(msg, withUndo, ms) {
   toastDepth = withUndo ? undoSeq : -1;
   const t = $('toast'), was = t.classList.contains('show'); t.classList.add('show'); clearTimeout(toastT);
   if (was && motionMode() !== 'off') t.animate([{ opacity: 0, translate: '0 4px' }, { opacity: 0, translate: '0 4px', offset: 0.47, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }, { opacity: 1, translate: '0 0' }], { duration: 300, easing: 'linear' });   // (its hold in real time, 141 ms: on the whole run's curve it ended at ~45 ms and both texts showed, the tester's F28 11-16)   // (a new message, not the old one changing; 2.1; it comes in as the old one's copy goes, F28)
-  toastT = setTimeout(() => { t.classList.remove('show'); toastDepth = -1; setTimeout(() => { if (!t.classList.contains('show')) { setText($('toastTxt'), ''); $('toastUndo').hidden = true; } }, 300); }, ms || (withUndo ? 8000 : msg.length > 60 ? 5000 : 2600));   // (its Undo goes with its text, after the fade: no narrower box while it fades, 11-08)
+  toastT = setTimeout(() => { t.classList.remove('show'); toastDepth = -1; setTimeout(() => { if (!t.classList.contains('show')) { setText($('toastTxt'), ''); $('toastUndo').hidden = true; } }, spdMs(300)); }, ms || (withUndo ? 8000 : msg.length > 60 ? 5000 : 2600));   // (its Undo goes with its text, after the fade: no narrower box while it fades, 11-08)
 }
 // ---------- tooltips: the page's own instead of Windows' (prettify 11-02) ----------
 // A hint (data-tip: every title becomes one, see the top) under the pointer shows as a tip in the app's greys after a
@@ -12379,7 +12463,7 @@ function retireToastUndo() {   // (no width jump, 11-08: while the toast fades o
   if (motionMode() === 'off') { b.hidden = true; return; }
   b.disabled = true;
   const end = () => { b.disabled = false; if (toastDepth < 0) b.hidden = true; };
-  if (!t.classList.contains('show')) { setTimeout(end, 300); return; }
+  if (!t.classList.contains('show')) { setTimeout(end, spdMs(300)); return; }
   const a = b.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, fill: 'forwards' }); a.onfinish = () => { a.cancel(); end(); };
 }
 
@@ -12611,7 +12695,8 @@ function onHost(m) {
     else { S.L = emptyLayout(); S.active = null; S.edit = true; S.screen = 'tiles'; }   // first run: nothing, edit mode on
     S.gameCalm = !st || st.gameCalm !== false;
     S.calmBg = !!(st && st.calmBg === true);
-    S.numSw = st && NSW.some(x => x[0] === st.numSw) ? st.numSw : 'roll';   // (the number switch, Customize > Look, 11-17)   // (Minimal also with the game in the background: off unless he switched it on, 11-16)
+    S.numSw = st && NSW.some(x => x[0] === st.numSw) ? st.numSw : 'roll';
+    S.aSpd = st && SPD.some(x => x[0] === st.aSpd) ? st.aSpd : 'normal';   // (animation speed, Customize > Look, 11-17)   // (the number switch, Customize > Look, 11-17)   // (Minimal also with the game in the background: off unless he switched it on, 11-16)
     S.lookSaved = cleanSaved(st && st.lookSaved); lkFromCheck();   // (your own looks, the Look page's Saved, 11-09)
     if (st && typeof st.czTab === 'string' && /^[a-z]{1,12}$/.test(st.czTab)) czTab = st.czTab;   // (Customize opens on the tab he used last, after a restart too: the tester's F24 11-15; one not there falls back to Look)
     S.recent = cleanRecent(st && st.recent);   // (the colours picked last, for every colour picker, 11-13)
