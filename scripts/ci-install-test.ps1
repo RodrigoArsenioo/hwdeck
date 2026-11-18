@@ -33,6 +33,21 @@ for ($i = 0; $i -lt 60 -and -not $up; $i++) { Start-Sleep -Seconds 1; try { $up 
 Check 'the installed app opens its page' $up
 if (-not $up) {   # (what it shows instead, and its own log: the cause in the job's output, not a guess)
   Get-Process HWDeck -ErrorAction SilentlyContinue | ForEach-Object { "  window: '$($_.MainWindowTitle)' (pid $($_.Id))" }
+  # (11-18, second run: a window titled "HW Deck" and an empty log = one of the app's own boxes before it starts; its
+  # words, read through UI Automation, and whether its WebView2 browser started at all)
+  try {
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    $A = [System.Windows.Automation.AutomationElement]
+    foreach ($pr in @(Get-Process HWDeck -ErrorAction SilentlyContinue)) {
+      $c = New-Object System.Windows.Automation.PropertyCondition($A::ProcessIdProperty, $pr.Id)
+      foreach ($w in $A::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $c)) {
+        "  its window '$($w.Current.Name)' ($($w.Current.ClassName)):"
+        foreach ($t in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) { if ($t.Current.Name) { "    $($t.Current.ControlType.ProgrammaticName -replace 'ControlType\.', ''): $($t.Current.Name)" } }
+      }
+    }
+  } catch { "  (couldn't read its window: $($_.Exception.Message))" }
+  $wv = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" -ErrorAction SilentlyContinue)
+  "  WebView2 browser processes: $($wv.Count)" + $(if ($wv.Count) { ', debug port in its arguments: ' + [bool]($wv | Where-Object { $_.CommandLine -match 'remote-debugging-port' }) } else { '' })
   if (Test-Path "$data\app.log") { '  app.log:'; Get-Content "$data\app.log" -Tail 25 | ForEach-Object { "    $_" } } else { '  no app.log in the data folder' }
 }
 if ($up) {
