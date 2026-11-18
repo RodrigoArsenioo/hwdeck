@@ -65,7 +65,7 @@ if (none) {
   ok('Customize opens at Headset: the screen part arrives (page, picture, start up and shut down), the tabs say Look and Headset', await until(`!!document.querySelector('#setmodal.open.cz #setbody .cz-hs .hsx .hs-pv canvas') && document.querySelectorAll('#setbody .hsx [data-hsx="anim"]').length === 18`, 8000) &&
     await ev(`[...document.querySelectorAll('#czTabs button')].map(b => b.textContent + (b.classList.contains('on') ? '*' : '')).join(',') === 'Look,Headset*' && $('settitle').textContent === 'Customize'`), await ev(`[...document.querySelectorAll('#czTabs button')].map(b => b.textContent).join(',')`));
   // Screen: a --fake copy has no base station, the pick is kept in memory only
-  await click('#setbody .hsx #hsg-screen [data-hsv="base"]');
+  await click('#setbody .hs-scr [data-hsv="base"]');   // (11-17: the Screen row since the 11-16 revamp; #hsg-screen is gone)
   await p.sleep(2600);
   ok('Original picked: the feed says so, not Custom', await ev('feed.hs.base === true && feed.hs.on === false'));
   try { writeFileSync(join(data, 'e2e-hs.ran'), '1'); } catch { }

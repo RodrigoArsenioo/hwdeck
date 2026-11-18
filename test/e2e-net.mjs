@@ -20,7 +20,7 @@ const click = async sel => { const c = await p.center(sel); if (!c) throw new Er
 
 ok('catalog arrives, with the internet\'s two readings under HW Deck', await until('feed.got && BYKEY.has(NETD) && BYKEY.has(NETU)', 15000), await ev('READ.length'));
 const rd = await J(`[NETD, NETU].map(k => { const r = BYKEY.get(k); return [r.label, r.unit, r.kind || null, SENS[r.s].name]; })`);
-ok('"Download now" (kind net) and "Upload now", Mbit/s, sensor "HW Deck"', JSON.stringify(rd) === JSON.stringify([['Download now', 'Mbit/s', 'net', 'HW Deck'], ['Upload now', 'Mbit/s', null, 'HW Deck']]), rd);
+ok('"Download now" (kind net) and "Upload now" (kind netup, its twin, 11-18), Mbit/s, sensor "HW Deck"', JSON.stringify(rd) === JSON.stringify([['Download now', 'Mbit/s', 'net', 'HW Deck'], ['Upload now', 'Mbit/s', 'netup', 'HW Deck']]), rd);
 ok('the speed test is off to start, and the host says so every second', await until('!!feed.net && feed.net.on === false && feed.net.every === 8', 5000), await ev('JSON.stringify(feed.net)'));
 ok('Storage\'s value: one decimal under 100, whole above', await ev(`valTxt({ unit: 'Mbit/s', v: 3.24, key: NETD }) === '3.2 Mbit/s' && valTxt({ unit: 'Mbit/s', v: 938.4, key: NETD }) === '938 Mbit/s'`));
 ok('its part: none (no game colour under Spectrum)', await ev(`partOf({ key: NETD }) === null && partOf({ key: NETU }) === null`));
@@ -36,7 +36,7 @@ ok('its upload is streamed with it', await ev(`cellKeys().includes(NETU) || [...
 
 // the popup, the test off: nothing of the speed test
 await ev(`(() => { openDetail("${cid}"); return 1; })()`); await p.sleep(1500);
-const pop = () => J(`(() => { const x = document.querySelector('#mextra .xn-st'), b = x && x.querySelector('[data-net]'), bar = x && x.querySelector('.xn-bar i'); return { st: !!x, link: (document.querySelector('#mdesc .xn-d') || {}).textContent || '', btn: b ? b.textContent.trim() : null, dis: b ? b.disabled : null,
+const pop = () => J(`(() => { const x = document.querySelector('#mextra .xn-st'), b = x && x.querySelector('[data-net]'), bar = x && x.querySelector('.xn-bar i'); return { st: !!x, link: (document.querySelector('#mdesc .xn-d') || {}).textContent || '', btn: b ? b.textContent.trim() : null, tip: b ? b.title : null, dis: b ? b.disabled : null,
   boxes: x ? [...x.querySelectorAll('.xn-box3 b')].map(e => e.innerText.replace(/\\s+/g, '')) : [], lines: x ? [...x.querySelectorAll('.xn-bl')].map(e => e.innerText.replace(/\\s+/g, ' ').trim()) : [], bar: bar ? String(100 * (new DOMMatrix(getComputedStyle(bar).transform).a)) : null,
   every: x ? (x.querySelector('[data-net-every].on') || {}).textContent : null, rows: [...document.querySelectorAll('#mextra .xn-tests .wrow')].map(e => [...e.children].map(c => (c.querySelector('svg') ? (c.querySelector('svg').getAttribute('aria-label') === 'download' ? 'D' : 'U') : '') + c.textContent.trim()).join('|')) }; })()`);
 let s0 = await pop();
@@ -72,9 +72,9 @@ ok('and the popup shows 12h', (await pop()).every === '12h');
 // a test (made up in a --fake copy)
 await click('#mextra [data-net="test"]');
 const seen = [];
-for (let i = 0; i < 26; i++) { await p.sleep(500); const s = await pop(), t = await ev(`${el} ? ${el}.innerText.replace(/\\s+/g, ' ').trim() : ''`); seen.push({ s, t }); if (i > 4 && s.btn === 'Test now') break; }
-const runs = seen.filter(x => x.s.btn === 'Testing');
-ok('while it runs: Testing, off; testing ping, download, upload', runs.length >= 6 && runs.every(x => x.s.dis) && ['ping', 'download', 'upload'].every(w => runs.some(x => new RegExp('testing ' + w).test(x.s.lines[0] || ''))), runs.length ? runs.map(x => x.s.lines[0]) : seen.slice(0, 2));
+for (let i = 0; i < 26; i++) { await p.sleep(500); const s = await pop(), t = await ev(`${el} ? ${el}.innerText.replace(/\\s+/g, ' ').trim() : ''`); seen.push({ s, t }); if (i > 4 && !s.dis) break; }
+const runs = seen.filter(x => x.s.dis);   // (11-18: the word stays Test now while it runs, its tip says Testing)
+ok('while it runs: Test now keeps its word, off, its tip Testing; testing ping, download, upload', runs.length >= 6 && runs.every(x => x.s.btn === 'Test now' && x.s.tip === 'Testing') && ['ping', 'download', 'upload'].every(w => runs.some(x => new RegExp('testing ' + w).test(x.s.lines[0] || ''))), runs.length ? runs.map(x => x.s.lines[0]) : seen.slice(0, 2));
 const pcts = runs.map(x => parseFloat(x.s.bar)).filter(v => !isNaN(v));
 ok('the bar only grows', pcts.length >= 4 && pcts.every((v, i) => !i || v >= pcts[i - 1] - 0.01), pcts);
 ok('the cell says "speed test, N s left"', runs.some(x => /speed test, \d+ s left/.test(x.t)), runs.map(x => x.t).slice(0, 3));

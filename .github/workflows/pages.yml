@@ -28,9 +28,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build
+      - name: Build and test   # (11-17: the demo is tested before it goes live; a failing test publishes nothing)
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-demo.ps1 _site
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-demo.ps1
+          $o = node test/e2e-demo.mjs | Out-String; $o
+          if ($o -notmatch 'ALL PASS') { throw 'the demo test failed: nothing published' }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-demo.ps1 _site
 
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
 

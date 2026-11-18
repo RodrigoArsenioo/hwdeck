@@ -61,8 +61,8 @@ const view = ev => ev(`(() => ({ show: $('upn').classList.contains('show'), due:
 const shows = (v, due) => v.show && JSON.stringify(v.due) === JSON.stringify(due) && v.t === TITLE[due[0]] && v.c === (due.length > 1 ? (due.length - 1) + ' more' : '') && v.all === due.length > 1 && v.n === String(Math.min(3, due.length));
 const none = v => !v.show && v.due.length === 0;
 // where a card's X is and how tall the card is (his 11-07 "the X button kept moving away from the cursor")
-const geo = (ev, card, x) => ev(`(() => { const b = $('${x}').getBoundingClientRect(), c = $('${card}').getBoundingClientRect(); return { x: [Math.round(b.top), Math.round(b.right)], h: Math.round(c.height), n: $('upw').dataset.n, c: $('${card}').querySelector('.upc').textContent }; })()`);
-const sameX = (a, b) => a && b && a.x[0] === b.x[0] && a.x[1] === b.x[1] && a.h === b.h;
+const geo = (ev, card, x) => ev(`(() => { const b = $('${x}').getBoundingClientRect(), c = $('${card}').getBoundingClientRect(); return { x: [Math.round(b.top), Math.round(b.right)], h: Math.round(c.height), w: Math.round($('upw').getBoundingClientRect().height), n: $('upw').dataset.n, c: $('${card}').querySelector('.upc').textContent }; })()`);
+const sameX = (a, b) => a && b && a.x[0] === b.x[0] && a.x[1] === b.x[1] && a.w === a.h && b.w === b.h;   // (his 11-13, notes-card.py: each card its own size, the X fixed, the pile as tall as the card on top)
 const x = async ev => { await ev(`$('upnClose').click(); 1`); await sleep(450); };
 const all = async ev => { await ev(`$('upnAll').click(); 1`); await sleep(450); };
 
@@ -184,7 +184,7 @@ for (const [from, due, hist] of [['2.4.1', ['2.4.2']], ['2.4.0', ['2.4.1', '2.4.
     await ev(`$('estClose').click(); 1`); await sleep(450);
     ok('its X: the cards come up, all 6', shows(await view(ev), ALL.slice(1)), await view(ev));
     const g1 = await geo(ev, 'upn', 'upnClose');
-    ok('the first card as tall as the sessions note, its X where that X was', sameX(g0, g1), [g0, g1]);
+    ok('the first card its own size, its X where the sessions note\'s X was (his 11-13)', sameX(g0, g1), [g0, g1]);
     await ev(`$('notice').classList.add('show'); notesCheck(); 1`); await sleep(100);
     ok('Starter\'s note up: the cards step aside', !(await view(ev)).show, await view(ev));
     await ev(`starterSeen(); 1`); await sleep(450);
@@ -195,7 +195,7 @@ for (const [from, due, hist] of [['2.4.1', ['2.4.2']], ['2.4.0', ['2.4.1', '2.4.
     ok('two quick X: one card gone, the second X waits for the next card (11-07 audit)', shows(await view(ev), ALL.slice(2)), await view(ev));
     await ev(`$('upnClose').click(); 1`); await sleep(450);
     const g2 = await geo(ev, 'upn', 'upnClose');
-    ok('two cards on (a shorter one): the same height, the X in the same place', shows(await view(ev), ALL.slice(3)) && sameX(g1, g2), [g1, g2]);
+    ok('two cards on (a shorter one): its own size, the X in the same place (his 11-13)', shows(await view(ev), ALL.slice(3)) && sameX(g1, g2), [g1, g2]);
   });
   ok('the sessions note was put away for good and the two X saved', seen(d) === '2.2.0' && (() => { try { return !('estNote' in JSON.parse(readFileSync(join(d, 'settings.json'), 'utf8'))); } catch (e) { return false; } })(), readFileSync(join(d, 'settings.json'), 'utf8'));
 }

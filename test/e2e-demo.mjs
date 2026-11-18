@@ -158,12 +158,12 @@ try {
     const cid = await E(`Object.keys(S.L.cells).find(id => S.L.cells[id].key === NETD) || ''`);
     ok('internet: the demo has the Internet cell, in Overview, download and upload', !!cid && await E(`(() => { const e = document.querySelector('#view .dc[data-cid="${cid}"]'); return !!e && (e.innerText.match(/Mbit.s/g) || []).length >= 2; })()`), cid);
     await E(`(() => { openDetail(${JSON.stringify(cid)}); return 1; })()`); await sleep(1500);
-    const P = () => E(`JSON.stringify((() => { const x = document.querySelector('#mextra .xn-st'), b = x && x.querySelector('[data-net]'); return { st: !!x, btn: b && b.textContent.trim(), boxes: x ? [...x.querySelectorAll('.xn-box3 b')].map(e => e.textContent) : [], rows: [...document.querySelectorAll('#mextra .xn-tests .wrow')].map(e => [...e.children].map(c => c.textContent.trim()).join('|')) }; })())`).then(JSON.parse);
+    const P = () => E(`JSON.stringify((() => { const x = document.querySelector('#mextra .xn-st'), b = x && x.querySelector('[data-net]'); return { st: !!x, btn: b && b.textContent.trim(), tip: b && b.title, dis: b && b.disabled, boxes: x ? [...x.querySelectorAll('.xn-box3 b')].map(e => e.textContent) : [], rows: [...document.querySelectorAll('#mextra .xn-tests .wrow')].map(e => [...e.children].map(c => c.textContent.trim()).join('|')) }; })())`).then(JSON.parse);
     let q = await P();
     ok('internet: its popup shows the speed test on, made-up results and the list', q.st && q.btn === 'Test now' && q.boxes[0] === '9ms' && q.boxes[1] === '938Mbit/s' && q.rows.length >= 3, JSON.stringify(q));
     await E(`(() => { document.querySelector('#mextra [data-net="test"]').click(); return 1; })()`);
     await sleep(3000); q = await P();
-    ok('internet: Test now plays a made-up test', q.btn === 'Testing' && /running/.test(q.rows[0] || ''), JSON.stringify(q));
+    ok('internet: Test now plays a made-up test (its word stays, off, its tip Testing)', q.btn === 'Test now' && q.dis === true && q.tip === 'Testing' && /running/.test(q.rows[0] || ''), JSON.stringify(q));
     await sleep(14500); q = await P();
     ok('internet: and ends with a new result on top', q.btn === 'Test now' && /^today \d\d:\d\d\|Frankfurt\|8ms\|\d+Mbit\/s\|\d+Mbit\/s$/.test(q.rows[0] || ''), JSON.stringify(q));
     await E(`(() => { document.querySelectorAll('.modal.open').forEach(m => m.classList.remove('open')); return 1; })()`); await sleep(900);

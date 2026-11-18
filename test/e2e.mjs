@@ -26,7 +26,7 @@ ok('5 empty slots', await E('S.slots.every(s => !s)'));
 ok('no extras in HW Deck itself: no extras.js, its own title, its readings have no kind (but its own Download now, 2.4.8)', await E(`!EXT.loaded && !document.querySelector('script[src="extras.js"]') && document.title === "HW Deck" && READ.every(r => r.kind === null || (r.key === NETD && r.kind === "net"))`));
 ok('the status is only a dot (its tooltip says demo data)', (await E('$("dot").title')).includes('Demo data') && !(await E('!!document.getElementById("stat")')), await E('$("dot").title'));
 ok('Storage draws only the rows in sight', await E('document.querySelectorAll("#vspace .vrow").length < 50 && rows.length > 300'), await E('[document.querySelectorAll("#vspace .vrow").length, rows.length]'));
-ok('the type filters wrap instead of hiding (Other is visible)', await E('(() => { const b = [...document.querySelectorAll(".chip")].pop(), r = b.getBoundingClientRect(), s = document.querySelector(".storage").getBoundingClientRect(); return r.right <= s.right && b.textContent.startsWith("Other"); })()'));
+ok('the type filters wrap instead of hiding (Other and the last chip, Hidden, are visible)', await E('(() => { const cs = [...document.querySelectorAll("#chips .chip")], o = cs.find(b => b.textContent.startsWith("Other")), b = cs[cs.length - 1], s = document.querySelector(".storage").getBoundingClientRect(); return !!o && o.getBoundingClientRect().right <= s.right && b.getBoundingClientRect().right <= s.right && b.textContent.startsWith("Hidden"); })()'));   // (11-17: Hidden is always last since 11-15, F3)
 
 // ---- adding ----
 await storage(true);

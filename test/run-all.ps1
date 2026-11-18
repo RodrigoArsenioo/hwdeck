@@ -27,12 +27,16 @@ function Move-Behind($p) {
   if ($p.MainWindowHandle -ne 0) { [void][HWDeckTest.Win]::SetWindowPos($p.MainWindowHandle, [IntPtr]1, $wa.X + 40, $wa.Y + 40, 0, 0, 0x11) }
 }
 $env:HWDECK_NOGAMES = '1'   # (the test copies see only their made-up games, not the ones running on this PC)
+$RunLimit = 360   # (11-17: a run that hangs is stopped after this many seconds)
+function Port-Up([int]$port) { try { $j = (Invoke-WebRequest "http://127.0.0.1:$port/json" -UseBasicParsing -TimeoutSec 1).Content; return $j } catch { return $null } }
 function Start-Deck([string]$data, [int]$port, [int]$fake, [string]$exe = "$d\HWDeck.exe", [switch]$starter) {
+  for ($i = 0; $i -lt 40 -and (Port-Up $port); $i++) { Start-Sleep -Milliseconds 250 }   # (the copy before still on this port: its quit first)
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port $awake"
   $p = Start-Process $exe -ArgumentList (@('--fake', $fake, '--data', "$d\test\$data") + $(if ($starter) { @() } else { @('--no-starter') })) -WorkingDirectory $d -PassThru
   Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
   Move-Behind $p
-  Start-Sleep -Seconds 5
+  $t0 = Get-Date; do { Start-Sleep -Milliseconds 300; $j = Port-Up $port } while (-not ($j -and $j -match 'hwdeck\.example') -and ((Get-Date) - $t0).TotalSeconds -lt 15)
+  Start-Sleep -Milliseconds 1500   # (11-17: the page answering, not a fixed 5 s)
   return $p
 }
 function Quit-Deck($p, [int]$port) {
@@ -42,9 +46,15 @@ function Quit-Deck($p, [int]$port) {
 }
 function Run([string]$name, [string]$script, [int]$port, [string]$data) {
   "== $name"
-  $out = node $script $port $data
+  $sw = [Diagnostics.Stopwatch]::StartNew(); $o = "$d\test\out\run-$port.txt"
+  $a = @($script, $port); if ($data) { $a += $data }
+  $np = Start-Process node -ArgumentList $a -NoNewWindow -PassThru -RedirectStandardOutput $o -RedirectStandardError "$o.err" -WorkingDirectory $d
+  $hung = -not $np.WaitForExit($RunLimit * 1000); if ($hung) { & taskkill /PID $np.Id /T /F 2>&1 | Out-Null }
+  $out = @(Get-Content -Encoding UTF8 $o -ErrorAction SilentlyContinue) + @(Get-Content -Encoding UTF8 "$o.err" -ErrorAction SilentlyContinue | Where-Object { $_ -match 'Error|error' } | Select-Object -First 5)
   $out
-  if (-not ($out -match 'ALL PASS')) { $script:failed++ }
+  if ($hung) { "FAIL it hung: stopped after $RunLimit s" }
+  "   ($([int]$sw.Elapsed.TotalSeconds) s)"
+  if ($hung -or -not ($out -match 'ALL PASS')) { $script:failed++ }
 }
 foreach ($f in 'data1', 'data3k', 'data-h', 'data-bad') { if (Test-Path "$d\test\$f") { Remove-Item -Recurse -Force -LiteralPath "$d\test\$f" } }
 

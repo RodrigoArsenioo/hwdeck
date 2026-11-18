@@ -12,7 +12,10 @@ const { ok, done } = checks();
 const mouse = (type, x, y, extra = {}) => p.cmd('Input.dispatchMouseEvent', Object.assign({ type, x, y, button: 'none', clickCount: 1 }, extra));
 const near = (a, b, t = 0.01) => Math.abs(a - b) <= t;
 const rect = sel => ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, y: r.top + r.height / 2 }; })()`);
-const wheel = async (R, fx, dy) => { const x = R.l + R.w * fx; await mouse('mouseMoved', x, R.y); await sleep(600); await mouse('mouseWheel', x, R.y, { deltaX: 0, deltaY: dy }); await sleep(700); };
+const wheel = async (R, fx, dy) => { const x = R.l + R.w * fx; await mouse('mouseMoved', x, R.y); await sleep(600);
+  for (let i = 0; i < 30 && !(await ev('winWheelOk()')); i++) await sleep(100);   // (11-17: a wheel within 450 ms of the card's last scroll is the page's, on purpose)
+  wheel.last = await ev(`({ since: Math.round(performance.now() - winScrolled), hit: (document.elementFromPoint(${Math.round(x)}, ${Math.round(R.y)}) || { className: 'none' }).className })`);
+  await mouse('mouseWheel', x, R.y, { deltaX: 0, deltaY: dy }); await sleep(700); };
 
 await ev(`(closeDetail(), document.querySelectorAll('.modal.open').forEach(m => m.classList.remove('open')), 1)`); await sleep(300);
 // ---- Sessions ----
@@ -26,7 +29,7 @@ const tab0 = await ev(`[...document.querySelectorAll('#gsum .gx-gr')].map(r => r
 let R = await rect('#gsum .gx-lcp');
 await wheel(R, 0.8, -400);
 let W = await ev('({ a: GX.W.a, b: GX.W.b })');
-ok('Sessions: the wheel zooms the chart in around the pointer', W.b - W.a < 0.7 && near(W.a + 0.8 * (W.b - W.a), 0.8, 0.02), W);
+ok('Sessions: the wheel zooms the chart in around the pointer', W.b - W.a < 0.7 && near(W.a + 0.8 * (W.b - W.a), 0.8, 0.02), { W, at: wheel.last });
 ok('Sessions: the games table is the window\'s', await ev(`[...document.querySelectorAll('#gsum .gx-gr')].map(r => r.textContent).join('|')`) !== tab0);
 { const n0 = await ev(`document.querySelectorAll('#glist .gx-sess').length`);
   ok('Sessions: Filter list beside the game list, off by default: the window leaves the list whole', await ev(`(() => { const b = document.querySelector('#gsum .gx-flt .tog2[data-flt="g"]'); return !!b && !b.classList.contains('on') && S.listFilt.g === false; })()`) && n0 === await ev(`gxAll.filter(x => !GX.game || x.game === GX.game).length`), [n0, await ev('gxAll.length')]);

@@ -32,7 +32,7 @@ const reload = async () => {
 ok('the readings come (made-up, with the pins)', await until('READ.length > 300 && feed.got', 10000), await ev('READ.length'));
 ok('a new user gets Starter at once, not an empty view', await until('S.L.cats.length > 0', 5000) && await ev('!document.querySelector("#view.empty")'));
 const first = await shape('S.L');
-ok('Starter in his order: the game, the GPU, the CPU, memory, drives, fans, by name', JSON.stringify(first.map(x => x.split(':')[0])) === JSON.stringify(['Game', 'Fake GeForce RTX 5090', 'Fake Ryzen 9 9950X', 'Memory', 'Drives', 'Fans']), JSON.stringify(first));
+ok('Starter in his order: the game, the GPU, the CPU, memory, drives, the internet, fans, by name', JSON.stringify(first.map(x => x.split(':')[0])) === JSON.stringify(['Game', 'Fake GeForce RTX 5090', 'Fake Ryzen 9 9950X', 'Memory', 'Drives', 'Network', 'Fans']), JSON.stringify(first));
 ok('the GPU: its temperature, hot spot, memory, usage, power, VRAM and the 12V-2x6 pins', /^Fake GeForce RTX 5090: GPU temperature, GPU hot spot, GPU memory, GPU usage, GPU power, VRAM used, 12V-2x6$/.test(first[1]), first[1]);
 ok('the CPU: its temperature, usage, power and busiest core', /^Fake Ryzen 9 9950X: CPU temperature, CPU usage, CPU power, Busiest core$/.test(first[2]), first[2]);
 ok('memory: RAM used, its sticks (up to 4); drives: the drive once (by its letter)', /^Memory: RAM used, RAM stick 1(, RAM stick [234])*$/.test(first[3]) && first[4] === 'Drives: Drive C:', first[3] + ' / ' + first[4]);
@@ -40,8 +40,8 @@ ok('the game: fps, 1% low, what limits it, the time', /^Game: FPS, 1% low FPS, B
 ok('the connector starts with its lines, nothing else has lines', await ev('Object.values(S.L.cells).filter(c => c.gates && c.gates.mode !== "none").map(c => c.key).join() === CONN'));
 ok('in view mode, no note', await ev('!S.edit && !$("notice").classList.contains("show")'));
 await p.sleep(600);
-ok('remembered: Starter seen, saved with the view', !!state() && state().starter === true && state().L.cats.length === 6, JSON.stringify(state() && { starter: state().starter, cats: state().L.cats.length }));
-ok('no note after a reload either', await reload() && await ev('!$("notice").classList.contains("show") && S.L.cats.length === 6'));
+ok('remembered: Starter seen, saved with the view', !!state() && state().starter === true && state().L.cats.length === 7, JSON.stringify(state() && { starter: state().starter, cats: state().L.cats.length }));
+ok('no note after a reload either', await reload() && await ev('!$("notice").classList.contains("show") && S.L.cats.length === 7'));
 
 // ---- someone with a layout of their own, updated: a note that stays until it is dismissed ----
 await ev('(() => { S.L = emptyLayout(); addKeys([READ[0].key, READ[1].key], null, null, "Mine"); S.starterSeen = false; saveState(); return 1; })()');
@@ -72,20 +72,20 @@ ok('Saves: Starter above the five slots, with what it has', await ev('document.q
 await click('#sstart [data-a="starter"]');
 ok('the view not in a slot: loading asks first', await ev('cmodal.classList.contains("open") && /Starter/.test($("ctitle").textContent)'), await ev('$("ctitle").textContent'));
 await click('#cyes'); await p.sleep(300);
-ok('loaded: Starter in the view, no slot linked, Saves shut, an Undo', await ev('S.L.cats.length === 6 && S.active === null && !smodal.classList.contains("open") && !$("toastUndo").hidden'), await ev('[S.L.cats.length, S.active]'));
+ok('loaded: Starter in the view, no slot linked, Saves shut, an Undo', await ev('S.L.cats.length === 7 && S.active === null && !smodal.classList.contains("open") && !$("toastUndo").hidden'), await ev('[S.L.cats.length, S.active]'));
 await click('#toastUndo');
 ok('Undo: their own view back', await ev('S.L.cats.length === 1 && S.L.cats[0].name === "Mine"'));
 // (loading Starter yourself while its note is up: the note has done its job)
 await ev('(() => { S.starterSeen = false; starterCheck(); return 1; })()');
 await ev('(() => { renderSaves(); smodal.classList.add("open"); return 1; })()'); await p.sleep(300);
 await click('#sstart [data-a="starter"]'); await click('#cyes'); await p.sleep(400);
-ok('loading Starter from Saves dismisses its note, for good', await ev('S.L.cats.length === 6 && !$("notice").classList.contains("show") && S.starterSeen === true'));
+ok('loading Starter from Saves dismisses its note, for good', await ev('S.L.cats.length === 7 && !$("notice").classList.contains("show") && S.starterSeen === true'));
 await click('#toastUndo');
 // the empty view: a button builds it
 await ev('(() => { snap(); S.L = emptyLayout(); S.active = null; afterChange(); return 1; })()');
 ok('an empty view offers Starter (it doesn\'t build it by itself again)', await until('!!document.querySelector("#view.empty #starterBtn")', 2000) && await ev('S.L.cats.length === 0'));
 await click('#starterBtn');
-ok('one click: Starter', await ev('S.L.cats.length === 6'));
+ok('one click: Starter', await ev('S.L.cats.length === 7'));
 
 // ---- Starter on other PCs (made-up catalogs, as HWiNFO names things) ----
 const T = { temp: 1, fan: 3, current: 4, power: 5, clock: 6, usage: 7, other: 8 };

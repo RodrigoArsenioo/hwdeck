@@ -217,7 +217,7 @@ await E('(() => { const c = $("wlist").closest(".mcard"); c.scrollTop = c.scroll
 await click('#wbMore');
 ok('the button draws 300 more', await until('document.querySelectorAll("#wlist .gx-sess").length === 600', 4000), await E('(() => { const b = $("wbMore"); if (!b) return "no button, rows " + document.querySelectorAll("#wlist .gx-sess").length; const r = b.getBoundingClientRect(), e = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return "rows " + document.querySelectorAll("#wlist .gx-sess").length + ", at its centre: " + (e ? e.tagName + "." + e.className + "#" + e.id : "nothing"); })()'));
 await click('#wbar [data-pk="all"]');
-ok('Pick all picks the whole bin, drawn or not, and turns to Pick none', await E('PK.w.pick.size === 700 && $("wbar").querySelector("[data-pk=all]").textContent === "Pick none"') && /700 picked/.test(await bar('wbar')), await bar('wbar'));
+ok('Pick all picks the whole bin, drawn or not, and turns to Pick none', await E('PK.w.pick.size === 700 && $("wbar").querySelector("[data-pk=all] .hs-two > span:not(.off)").textContent === "Pick none"') && /700 picked/.test(await bar('wbar')), await bar('wbar'));
 await p.key('Escape', 'Escape', 27); await p.sleep(500);
 ok('Escape shuts the popup with the bin on show', await E('!$("wmodal").classList.contains("open")'));
 await click('#logBtn');

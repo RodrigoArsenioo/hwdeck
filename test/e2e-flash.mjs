@@ -32,19 +32,21 @@ await ev(`(() => {
   __sw.controls = root => [...root.querySelectorAll('.seg > button, .tog2, button.chip, .lk-chip, .lk-t[data-lk], .lk-g button, .rng button, button[data-lay], .gx-per button, .lk-acc, .lk-hx, .gxh-b')]
     .filter(b => b.getClientRects().length && !b.disabled && !SKIP.test(b.textContent + ' ' + (b.title || '') + ' ' + (b.getAttribute('aria-label') || '')) && !b.classList.contains('mclose') && !b.closest('#sMotion'));   // (Animations: Off would stop every fade, the rest blind)
   // the intended ones: named, the rest are flashes
-  __sw.tag = (t, prop, kf) => t.classList.contains('ind') ? 'pill glide'
+  __sw.tag = (t, prop, kf, id) => t.classList.contains('ind') ? 'pill glide'
     : prop === 'waapi' && t.matches('.seg > button') && kf.some(k => 'color' in k) ? 'labels cross over'
     : t.closest('.tog2') ? 'switch' : t.closest('[data-lk]') ? 'pick ring' : t.closest('#lkPv') ? 'preview cross-fade' : t.closest('.lk-save') ? 'Save fades in'
-    : prop === 'waapi' && t.matches('.lk-pop, .lk-fl') ? 'a colour chip\\'s tones unfold' : '';
+    : prop === 'waapi' && t.matches('.lk-pop, .lk-fl') ? 'a colour chip\\'s tones unfold'
+    : prop === 'waapi' && /^(rowgrow|rowfold|rowmove|glide)$/.test(id) && kf.every(k => Object.keys(k).every(p => /^(offset|easing|composite|computedOffset|height|minHeight|opacity|transform|(margin|padding)(Top|Bottom)|border(Top|Bottom)Width)$/.test(p))) ? 'a row grows, folds or glides'
+    : prop === 'waapi' && t.closest('#lkNumG') && kf.every(k => Object.keys(k).every(p => /^(offset|easing|composite|computedOffset|opacity|transform)$/.test(p))) ? 'the number switch tiles play their switch' : '';
   __sw.fades = root => { const out = [];
     for (const a of document.getAnimations()) { const t = a.effect && a.effect.target; if (!t || !root.contains(t) || __sw.old.has(t)) continue;
       const prop = a.transitionProperty || (a.animationName ? 'anim:' + a.animationName : 'waapi');
       if (!/color|background|border|shadow|outline|opacity|fill|stroke|anim:|waapi/.test(prop)) continue;
       let kf = []; try { kf = a.effect.getKeyframes(); } catch (e) { }
       const k = prop.startsWith('anim:') || prop === 'waapi' ? '' : prop.replace(/-([a-z])/g, (m, c) => c.toUpperCase());
-      const from = kf.length && k ? String(kf[0][k]) : '', to = kf.length && k ? String(kf[kf.length - 1][k]) : '';
+      const from = kf.length && k ? String(kf[0][k]) : prop === 'waapi' ? (a.id || 'no id') + ' ' + [...new Set(kf.flatMap(Object.keys))].filter(p => !/^(offset|easing|composite|computedOffset)$/.test(p)).join(',') : '', to = kf.length && k ? String(kf[kf.length - 1][k]) : '';
       if (k && from === to) continue;
-      out.push({ el: __sw.desc(t), prop, from, to, tag: __sw.tag(t, prop, kf) }); }
+      out.push({ el: __sw.desc(t), prop, from, to, tag: __sw.tag(t, prop, kf, a.id || '') }); }
     return out; };
   return 1;
 })()`);

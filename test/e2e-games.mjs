@@ -118,33 +118,41 @@ await ev(`renderGames(${JSON.stringify(JSON.stringify(full))}); document.querySe
 await click('#gcustom');
 ok('Customize lists the categories in order, with what each holds', await ev('[...document.querySelectorAll("#gcz .gz-s")].map(s => (s.querySelector(".nm") || s.querySelector(".gz-name")).textContent || s.querySelector(".gz-name").value).join() === "Summary,Over time,Temperatures,Power and load,Memory"'),
   await ev('[...document.querySelectorAll("#gcz .gz-s")].map(s => s.textContent + (s.querySelector("input") ? s.querySelector("input").value : "")).join(" | ")'));
-const typeQ = async q => { await ev(`(() => { const i = $("gzQ"); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return 1; })()`); await p.sleep(200); };
-ok('the readings to add are Storage\'s list: a search, the type chips, grouped by sensor, with values', await ev('!!$("gzQ") && document.querySelectorAll("#gcz .chips .chip").length >= 5 && gzRows.filter(r => r.g).length >= 3 && !!document.querySelector("#gcz .gz-list .vrow.g") && document.querySelectorAll("#gcz .gz-list .vrow.r").length >= 5'),
-  await ev('[document.querySelectorAll("#gcz .chips .chip").length, document.querySelectorAll("#gcz .gz-list .vrow.g").length, document.querySelectorAll("#gcz .gz-list .vrow.r").length]'));
-ok('what is already in the category has a tick, the rest a +', await ev('(() => { const keys = gxLayout().secs.find(x => x.id === "temps").cells.map(c => c.key).filter(Boolean); return [...document.querySelectorAll("#gcz .gz-list .vrow.r")].every(r => !!r.querySelector(keys.includes(r.dataset.key) ? ".inv" : ".add")); })()'));
-ok('the rows in sight get their values', await until('[...document.querySelectorAll("#gcz .gz-list .vrow.r .val")].some(v => /\\d/.test(v.textContent))', 4000));
+// ---- (11-17) Add a reading is the source picker since 11-17 02:53 (his pick A: Layout | Storage), not the old Storage list ----
+const spOpen = async () => { if (!(await ev('!!dselOpen'))) await click('#gcz .sp-pick .dsel'); await p.sleep(300); };
+const spTab = async v => { await click(`.sp-m [data-spv="${v}"]`); await p.sleep(400); };
+const typeQ = async q => { await ev(`(() => { const i = document.querySelector(".sp-m .sp-q"); if (!i) return 0; i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return 1; })()`); await p.sleep(300); };
+const spRow = k => `.sp-m .vrow.r[data-spk="${k}"]`;
+const temps = () => ev('gxLayout().secs.find(x => x.id === "temps").cells.length');
+ok('the old Storage list is gone, the picker is there, on the picked category', await ev('!!document.querySelector("#gcz .sp-pick .dsel") && !document.querySelector("#gcz .gz-list") && GZ.sel === "temps"'), await ev('GZ.sel'));
+await spOpen(); await spTab('sto');
+ok('its Storage tab: a search, the type chips, grouped by sensor, with values', await ev('!!document.querySelector(".sp-m .sp-q") && document.querySelectorAll(".sp-m .chips .chip").length >= 5 && document.querySelectorAll(".sp-m .vrow.g[data-spt]").length >= 3 && document.querySelectorAll(".sp-m .vrow.r[data-spk]").length >= 5'),
+  await ev('[document.querySelectorAll(".sp-m .chips .chip").length, document.querySelectorAll(".sp-m .vrow.g[data-spt]").length, document.querySelectorAll(".sp-m .vrow.r[data-spk]").length]'));
+ok('what is already in the category is ticked, the rest not', await ev('(() => { const keys = gxLayout().secs.find(x => x.id === "temps").cells.map(c => c.key || spHeadKey(c.head)).filter(Boolean); return [...document.querySelectorAll(".sp-m .vrow.r[data-spk]")].every(r => r.classList.contains("on") === keys.includes(r.dataset.spk)); })()'));
+ok('the rows in sight get their values', await until('[...document.querySelectorAll(".sp-m .vrow.r .val")].some(v => /\\d/.test(v.textContent))', 4000));
 await typeQ('voltage');
-const vkey = await ev('document.querySelector("#gcz .gz-list .vrow.r") && document.querySelector("#gcz .gz-list .vrow.r").dataset.key');
-ok('the search filters the list (sensor, label, unit)', !!vkey && await ev('[...document.querySelectorAll("#gcz .gz-list .vrow.r")].every(r => BYKEY.get(r.dataset.key).hay.includes("voltage"))'), vkey);
-await click('#gcz .gz-list .vrow.r .add');
-ok('+ puts it in the category: kept in the layout by its key, shown as -- in a session that didn\'t record it', await ev(`S.L.games.secs.find(x => x.id === "temps").cells.slice(-1)[0].key === ${JSON.stringify(vkey)}`) &&
+const vkey = await ev('(() => { const r = [...document.querySelectorAll(".sp-m .vrow.r[data-spk]")].find(r => !r.classList.contains("on")); return r ? r.dataset.spk : null; })()');
+ok('the search filters the list (sensor, label, unit)', !!vkey && await ev('[...document.querySelectorAll(".sp-m .vrow.r[data-spk]")].every(r => BYKEY.get(r.dataset.spk).hay.includes("voltage"))'), vkey);
+await click(spRow(vkey)); await spOpen();
+ok('a click puts it in the category: kept in the layout by its key, shown as -- in a session that didn\'t record it', await ev(`gxLayout().secs.find(x => x.id === "temps").cells.slice(-1)[0].key === ${JSON.stringify(vkey)}`) &&
   (await grp())[0].endsWith('--'), (await grp())[0]);
-ok('and its row in the list gets the tick', await ev(`!!document.querySelector('#gcz .gz-list .vrow.r[data-key="${vkey}"] .inv')`));
+ok('and its row in the list gets the tick', await ev(`!!document.querySelector('${spRow(vkey)}.on')`));
 await typeQ('');
-await click('#gcz .chips .chip[data-t="fan"]');
-ok('a chip shows one type only', await ev('GZ.t === "fan" && [...document.querySelectorAll("#gcz .gz-list .vrow.r")].every(r => BYKEY.get(r.dataset.key).t === "fan")'));
-await click('#gcz .chips .chip[data-t="all"]');
-const g1 = await ev('document.querySelector("#gcz .gz-list .vrow.g").dataset.sk');
-await click('#gcz .gz-list .vrow.g');
-ok('a sensor folds up by its row', await ev(`GZ.shut.has(${JSON.stringify(g1)}) && document.querySelector("#gcz .gz-list .vrow.g").classList.contains("collapsed") && document.querySelector("#gcz .gz-list .vrow.g").nextElementSibling.classList.contains("g")`));
-await click('#gcz .gz-list .vrow.g');
-for (let i = 0; i < 3; i++) { await typeQ('temperature'); await click('#gcz .gz-list .vrow.r .add:not([disabled])'); }   // (4 by default + the voltage + 3 = 8)
-ok('a category takes 8 readings at most: the + go grey', await ev('S.L.games.secs.find(x => x.id === "temps").cells.length === 8 && !document.querySelector("#gcz .gz-list .vrow.r .add:not([disabled])") && /8 readings at most/.test($("gcz").textContent)'), await ev('S.L.games.secs.find(x => x.id === "temps").cells.length'));
+await click('.sp-m .chips .chip[data-spc="fan"]');
+ok('a chip shows one type only', await ev('SP.ty.gz === "fan" && [...document.querySelectorAll(".sp-m .vrow.r[data-spk]")].every(r => BYKEY.get(r.dataset.spk).t === "fan")'));
+await click('.sp-m .chips .chip[data-spc="all"]');
+const g1 = await ev('document.querySelector(".sp-m .vrow.g[data-spt]").dataset.spt');
+await click(`.sp-m .vrow.g[data-spt="${g1}"]`);
+ok('a sensor folds up by its row', await ev(`SP.shut.gz.has(${JSON.stringify(g1)}) && document.querySelector('.sp-m .vrow.g[data-spt="${g1}"]').classList.contains("collapsed")`));
+await click(`.sp-m .vrow.g[data-spt="${g1}"]`);
+for (let i = 0; i < 3; i++) { await typeQ('temperature'); const k = await ev('(() => { const r = [...document.querySelectorAll(".sp-m .vrow.r[data-spk]")].find(r => !r.classList.contains("on") && !r.classList.contains("dim")); return r ? r.dataset.spk : null; })()'); if (k) { await click(spRow(k)); await spOpen(); } }   // (4 by default + the voltage + 3 = 8)
+ok('a category takes 8 readings at most: the rest go dim, the header says 8 of 8', await temps() === 8 && await ev('![...document.querySelectorAll(".sp-m .vrow.r[data-spk]")].some(r => !r.classList.contains("on") && !r.classList.contains("dim")) && /8 of 8/.test($("gcz").textContent)'), await temps());
 await typeQ('voltage');
-await click(`#gcz .gz-list .vrow.r[data-key="${vkey}"] .inv`);
-ok('the tick takes it out again', await ev(`S.L.games.secs.find(x => x.id === "temps").cells.length === 7 && !S.L.games.secs.find(x => x.id === "temps").cells.some(c => c.key === ${JSON.stringify(vkey)})`));
-await click(`#gcz .gz-list .vrow.r[data-key="${vkey}"] .add`);
+await click(spRow(vkey)); await spOpen();
+ok('a click on a ticked one takes it out again', await temps() === 7 && await ev(`!gxLayout().secs.find(x => x.id === "temps").cells.some(c => c.key === ${JSON.stringify(vkey)})`));
+await click(spRow(vkey)); await spOpen();
 await typeQ('');
+await ev('(dselClose(false), 1)'); await p.sleep(300);
 await ev('(() => { const i = document.querySelector("#gcz .gz-s.on .gz-name"); i.value = "Heat"; i.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()'); await p.sleep(200);
 ok('a category takes a new name', (await grp())[0].startsWith('Heat: '), (await grp())[0].slice(0, 30));
 await ev('[...document.querySelectorAll("#gcz .gz-s")].find(s => /Over time/.test(s.textContent)).querySelector("[data-gz=hide]").click()'); await p.sleep(200);
@@ -160,8 +168,9 @@ ok('+ New category adds one, selected, its name ready to type', await ev('S.L.ga
 ok('the setup is saved with the layout and read back on a load', await ev('JSON.stringify(cleanLayout(JSON.parse(JSON.stringify(S.L))).games) === JSON.stringify(S.L.games)'));
 await ev('undo()'); await p.sleep(200);
 ok('undo takes a step back', await ev('S.L.games.secs.length === 5'));
+const rsHit = await ev('(() => { const b = document.querySelector("#gcz [data-gz=reset]"); b.scrollIntoView({ block: "nearest" }); const r = b.getBoundingClientRect(), e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e === b || b.contains(e) ? "button" : (e ? e.className || e.tagName : "none"); })()'); await p.sleep(300);
 await click('#gcz [data-gz=reset]');
-ok('Reset brings the default back', await ev('!S.L.games') && (await grp())[0].startsWith('Temperatures: GPU64.0'), (await grp())[0]);
+ok('Reset brings the default back', await ev('!S.L.games') && (await grp())[0].startsWith('Temperatures: GPU64.0'), { g: (await grp())[0].slice(0, 40), games: await ev('!!S.L.games'), under: rsHit });
 await click('#gcz [data-gz=done]');
 ok('Done closes Customize', await ev('$("gcz").hidden'));
 // for the made-up session below: a reading no cell has, tracked by the setup

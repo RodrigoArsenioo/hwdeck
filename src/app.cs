@@ -33,7 +33,7 @@ using HwHeadset;   // (the headset, at the end of this file)
 
 static class AppInfo
 {
-    public const string Version = "2.6.2";
+    public const string Version = "2.6.3";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;
@@ -125,6 +125,7 @@ abstract class Source
 class HwSource : Source
 {
     const uint SIG = 0x53695748;            // "HWiS"
+    public static string MapName = "Global\\HWiNFO_SENS_SM2";   // (a --hwtest copy reads fakehw's block instead, see Main, 11-17)
     byte[] sbuf = new byte[0], rbuf = new byte[0];
     ulong idHash; long namesAt;
     bool shortHeld;   // (the last poll found fewer readings than the catalog has and kept what it had: see Poll)
@@ -135,7 +136,7 @@ class HwSource : Source
     {
         try
         {
-            using (var mmf = MemoryMappedFile.OpenExisting("Global\\HWiNFO_SENS_SM2", MemoryMappedFileRights.Read))
+            using (var mmf = MemoryMappedFile.OpenExisting(MapName, MemoryMappedFileRights.Read))
             using (var acc = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read))
             {
                 if (acc.ReadUInt32(0) != SIG) { Status = "missing"; shortHeld = false; return; }   // "DEAD" once HWiNFO shuts it
@@ -753,7 +754,7 @@ static class Net
                 if (!double.IsNaN(N("base"))) baseAt = (long)N("base");
                 if (d.ContainsKey("tests") && d["tests"] is object[]) foreach (var x in (object[])d["tests"]) { var a = x as object[]; if (a != null && a.Length == 2) tests.Add(new object[] { Convert.ToInt64(a[0]), Convert.ToString(a[1]) }); }
             }
-            catch (Exception ex) { Log("internet: net.json not read: " + ex.Message); }
+            catch (Exception ex) { Log("internet: net.json not read: " + ex.Message); DataKeep.Bad(File_, Log); }
         }
     }
     static readonly object saveGate = new object();
@@ -3823,6 +3824,7 @@ partial class DeckForm : Form
     readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
     readonly bool fake, customData;
     bool hsFeedSaid;   // (the headset page's readings failed once: said once)
+    bool flushAsked, flushDone;   // (a quit waits for the page's waiting saves, 11-17)
     bool exiting, startHidden, pageReady, force, wasShowing, paused, nonClient = true, wvFailed, restoreMax;
     long notOkSince;
     bool restarting;   // a HWiNFO restart under way
@@ -4030,6 +4032,8 @@ partial class DeckForm : Form
 
         FormClosing += delegate(object s, FormClosingEventArgs e)
         {
+            // a quit: the page's saves still waiting (a change made just now) go first, then the quit (11-17)
+            if (exiting && !flushDone && !ending && pageReady && e.CloseReason != CloseReason.WindowsShutDown) { e.Cancel = true; FlushThenQuit(); return; }
             SaveWin();
             if (!exiting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; HideToTray(); }   // X = to the tray; never veto shutdown
             // Windows asks to end the session: save now, but another app can still cancel it, so the exit mark and
@@ -4056,7 +4060,7 @@ partial class DeckForm : Form
 
     long savedAt;
     bool ended;
-    void SaveAll() { try { ExtStop(); } catch { } try { Batt.Stop(); } catch { } Try(() => { if (src.Frames != null) src.Frames.Stop(); }); if (settingsRetry) SaveSettings(); SaveData(); EndMark(); }   // (a trace left running stays until Windows restarts)
+    void SaveAll() { try { ExtStop(); } catch { } try { Batt.Stop(); } catch { } Try(() => { if (src.Frames != null) src.Frames.Stop(); }); if (settingsRetry) SaveSettings(); Try(HsPage.Retry); SaveData(); EndMark(); }   // (a trace left running stays until Windows restarts)
     bool FpsWanted { get { return !settings.ContainsKey("gameFps") || true.Equals(settings["gameFps"]); } }   // (on unless turned off, 11-09)
 
     // ---- extras: a build may add readings (Extra), cell kinds (web\extras.js) and messages of its own ("x.*" both
@@ -4175,6 +4179,15 @@ partial class DeckForm : Form
         catch { return ""; }
     }
 
+    // (11-17, test batch 2002) the page sends every save it still holds (a change of the last 300 ms) and answers 'flushed'
+    void FlushPage() { if (pageReady) Post(new Dictionary<string, object> { { "t", "flush" } }); }
+    void FlushThenQuit()
+    {
+        if (flushAsked) return; flushAsked = true;
+        var t = new Timer { Interval = 800 }; t.Tick += delegate { t.Stop(); t.Dispose(); QuitFlushed(); }; t.Start();   // (a page that never answers)
+        FlushPage();
+    }
+    void QuitFlushed() { if (flushDone) return; flushDone = true; Application.Exit(); }
     void Post(Dictionary<string, object> m) { try { string j = json.Serialize(m); long a = UiTrace.Now(); wv.CoreWebView2.PostWebMessageAsJson(j); if (UiTrace.on) UiTrace.Took("post " + m["t"] + " " + j.Length + " B", a); } catch { } }
     static Dictionary<string, object> Msg(string t) { return new Dictionary<string, object> { { "t", t } }; }
 
@@ -4353,6 +4366,7 @@ partial class DeckForm : Form
                 case "export": Export(m["data"], m["name"] as string); break;
                 case "import": Import(Convert.ToInt32(m["slot"])); break;
                 case "win": Win(m["a"] as string); break;
+                case "flushed": if (flushAsked) BeginInvoke((Action)QuitFlushed); break;
                 case "exit": exiting = true; tray.Visible = false; Application.Exit(); break;   // a clean quit (tests): history and logs get saved
                 // tests, made-up data only: a game in place of the processes, a reading held at a value
                 case "estSeen": if (settings.Remove("estNote")) SaveSettings(); break;   // (the note's X, or Show sessions)
@@ -4375,7 +4389,7 @@ partial class DeckForm : Form
     bool stateFailing; long stateRetryAt;
     // settings.json written; one that failed (another program's handle) is logged once and written again every 5 s and
     // at the exit, so a setting changed then isn't lost
-    volatile bool settingsRetry;
+    volatile bool settingsRetry; bool saveToastSaid;
     void SaveSettings()
     {
         try { if (SaveFile("settings", settings) && settingsRetry) { settingsRetry = false; Log("settings saved after all"); } }
@@ -4522,6 +4536,8 @@ partial class DeckForm : Form
     // ---- new version check: as soon as the app starts, then once a day while it runs, asks GitHub for the latest
     // release; nothing else is sent. No answer (no network yet, as at sign-in): again in 2 minutes, 3 times, then hourly ----
     const string ReleasesApi = "https://api.github.com/repos/RodrigoArsenioo/hwdeck/releases/latest";
+    // (11-17 test batch 1008: a --fake copy with HWDECK_UPDTEST=<base url> checks <base>/latest instead; the real app never)
+    string UpdTest { get { if (!fake) return null; var u = Environment.GetEnvironmentVariable("HWDECK_UPDTEST"); return string.IsNullOrEmpty(u) ? null : u.TrimEnd('/'); } }
     const string ReleasesPage = "https://github.com/RodrigoArsenioo/hwdeck/releases/";
     long updNext;
     int updMissed;
@@ -4564,7 +4580,7 @@ partial class DeckForm : Form
     void MaybeCheckUpdate(long now)
     {
         if (updBusy) return;
-        if (fake || !UpdatesOn()) { if (updAsked) { updAsked = false; Post(new Dictionary<string, object> { { "t", "updDone" }, { "ok", false }, { "why", fake ? "test" : "off" } }); } return; }
+        if ((fake && UpdTest == null) || !UpdatesOn()) { if (updAsked) { updAsked = false; Post(new Dictionary<string, object> { { "t", "updDone" }, { "ok", false }, { "why", fake ? "test" : "off" } }); } return; }
         if (updNext == 0) updNext = now;   // (a start, or checks just turned on: now)
         if (now < updNext) return;
         updBusy = true;
@@ -4575,7 +4591,7 @@ partial class DeckForm : Form
             try
             {
                 ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;   // TLS 1.2
-                var req = (HttpWebRequest)WebRequest.Create(ReleasesApi);
+                var req = (HttpWebRequest)WebRequest.Create(UpdTest != null ? UpdTest + "/latest" : ReleasesApi);
                 req.UserAgent = "HWDeck/" + AppInfo.Version; req.Accept = "application/vnd.github+json"; req.Timeout = 15000; req.ReadWriteTimeout = 15000;
                 using (var resp = (HttpWebResponse)req.GetResponse())
                 using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
@@ -4629,6 +4645,7 @@ partial class DeckForm : Form
     }
     void UpdateNow()
     {
+        if (UpdTest != null) { Log("update now: refused in an update test copy"); var rt = Msg("toast"); rt["text"] = "Test copy: no update"; Post(rt); return; }   // (never a download, a browser or msiexec there)
         if (fake || Brand.NoActions || Installed() == null) { OpenRelease(); return; }
         if (updating) return;
         updating = true;
@@ -5225,6 +5242,8 @@ partial class DeckForm : Form
             // same: written again)
             if (stateRetryAt > 0 && pageReady && (Source.Unix() >= stateRetryAt || stateRetryAt - Source.Unix() > 5)) { stateRetryAt = 0; Post(Msg("saveView")); }   // (or the clock set back)
             if (settingsRetry && now % 5 == 0) SaveSettings();
+            if (HsPage.SaveFailed && now % 5 == 3) HsPage.Retry();   // (the headset page, 11-17)
+            if ((settingsRetry || HsPage.SaveFailed) && !saveToastSaid && pageReady) { saveToastSaid = true; var st = Msg("toast"); st["text"] = settingsRetry ? "Couldn't save your settings: trying again" : "Couldn't save the headset page: trying again"; Post(st); }   // (one for the run, as the layout's, 11-17)
             if (settingsHeld && now % 5 == 2) RetrySettings();
             // (free now: the page gets it; the view first, whole; slots alone, so the view and its undo stay as they are)
             if (heldFiles.Count > 0 && pageReady && now % 5 == 0)
@@ -5841,12 +5860,12 @@ partial class DeckForm : Form
         {
             long pbt = m.WParam.ToInt64();
             // going to sleep: open episodes end here, not after the wake with the whole sleep in them
-            if (pbt == 4 /*PBT_APMSUSPEND*/ && !asleep) { asleep = true; sleptAt = Environment.TickCount; alerts.Mark("PC going to sleep"); WriteAlerts(); Try(SaveData); }   // (a power cut while asleep loses nothing)
+            if (pbt == 4 /*PBT_APMSUSPEND*/ && !asleep) { asleep = true; sleptAt = Environment.TickCount; alerts.Mark("PC going to sleep"); WriteAlerts(); Try(SaveData); FlushPage(); }   // (a power cut while asleep loses nothing)
             else if (pbt == 0x12 /*PBT_APMRESUMEAUTOMATIC*/ || pbt == 7 /*PBT_APMRESUMESUSPEND*/) asleep = false;
             else if (pbt == 0x8013 /*PBT_POWERSETTINGCHANGE*/ && m.LParam != IntPtr.Zero && (Guid)Marshal.PtrToStructure(m.LParam, typeof(Guid)) == DisplayState)
                 Batt.DisplaysOff = Marshal.ReadInt32(m.LParam, 20) == 0;   // (POWERBROADCAST_SETTING: the guid, its length, then 0 off, 1 on, 2 dimmed)
         }
-        else if (m.Msg == 0x11 /*WM_QUERYENDSESSION*/) ending = true;
+        else if (m.Msg == 0x11 /*WM_QUERYENDSESSION*/) { ending = true; FlushPage(); }   // (the page's waiting saves now, 11-17)
         // minimized: the next tick that finds it on screen says so (shown), even after a minimize too short for any
         // tick to have seen
         // (and when it hid, as the tick does for the tray: the restore sends only the seconds missed, 11-06)
@@ -6951,6 +6970,9 @@ static class Program
             else if (a == "--fake") { fake = 300; int n; if (i + 1 < args.Length && int.TryParse(args[i + 1], out n)) { fake = Math.Max(1, Math.Min(20000, n)); i++; } }
             else if (a == "--updated" && i + 1 < args.Length) { int c; if (int.TryParse(args[++i], out c)) DeckForm.UpdateResult = c; }   // (Update now's script, see UpdateNow)
             else if (a == "--relaunch" && i + 1 < args.Length) { int c; if (int.TryParse(args[++i], out c)) DeckForm.Relaunches = c; }   // (how many times in a row the page's browser died)
+            // (11-17 test batch 1001: a TEST copy on a made-up HWiNFO block, fakehw.exe, named by HWDECK_HWMAP; it changes
+            // nothing on the PC. No real start passes it)
+            else if (a == "--hwtest") { string mn = Environment.GetEnvironmentVariable("HWDECK_HWMAP"); if (!string.IsNullOrEmpty(mn)) HwSource.MapName = mn; Brand.NoActions = true; DeckForm.OtherArgs.Add(args[i]); }
             else DeckForm.OtherArgs.Add(args[i]);   // (a build's own, like HW Dashboard's --test: kept for a restart)
         }
         // made-up values never go into the real history and logs: a demo without --data gets its own folder
@@ -7435,7 +7457,7 @@ static class Ico
 static class HsSt
 {
     public static bool On(HsInfo i) { return i.Now.Second % 2 == 0; }                                   // blink phase
-    public static bool LowHead(HsInfo i) { return !i.HeadOff && i.Head >= 0 && i.Head <= 12 && !i.HeadCharging; }
+    public static bool LowHead(HsInfo i) { return !i.HeadOff && i.Head >= 0 && i.Head <= HeadEst.Low && !i.HeadCharging; }   // (the base's step 0: the headset's own beeps start there, 11-17; was 12, the whole 6.6 h of step 1)
     public static bool LowMouse(HsInfo i) { return i.Mouse >= 0 && i.Mouse <= 15 && !i.MouseCharging; }
     public static bool Swap(HsInfo i) { return LowHead(i) && !i.SpareOut && i.Spare >= 50; }
     public static string Pct(int p) { return p < 0 ? "-" : p + "%"; }
@@ -7496,7 +7518,7 @@ class HsPiece
     public bool NoNum;                  // its number hidden (bar, ring, knob, graph; his 11-13 "a digit hider (keeping only bar)")
     public string NameSz = "auto";      // (11-14) its name's size: auto, small, tiny
     public string OffAs = "word", OffTxt, ChgAs = "blink";
-    public string LowAs = "icon";       // (11-15) a battery under its low level (Crit; 12 when none): what blinks, none / icon / num / both   // (11-14) a battery off / empty: its word, his own word (OffTxt), a dash or nothing; charging: the bolt blinking, steady or hidden
+    public string LowAs = "icon";       // (11-15) a battery under its low level (Crit; when none: the headset 2, its own beeps; the spare 12, the mouse 15): what blinks, none / icon / num / both   // (11-14) a battery off / empty: its word, his own word (OffTxt), a dash or nothing; charging: the bolt blinking, steady or hidden
     public int Dig = -1;                // (11-14) its own big digits (0 to 3); -1: the theme's
     public bool Inv;                    // (11-14) turned over: lit box, dark text (a warning still blinks)
     // (11-16 his "give people freedom, just how you do in PC screen") the number (V), its unit (U) and its label (I: icon
@@ -7504,6 +7526,11 @@ class HsPiece
     // bottom (as before), middle, top or under it; FX..FH: its place on a free page (page pixels; FX -1: none)
     public int VH, WK, BK, UK, IK = 1, VX, VY, UX, UY, IX, IY; public string UAt = "bottom";   // (11-16 round 2: VH the number's height in pixels, WK a word's size, BK the bolt's / zZ's)
     public int FX = -1, FY, FW, FH;
+    // (11-17 his states) St: each state's own look (the piece with that state's keys over its own), StRaw: those keys as
+    // saved; Force: the state the editor's preview shows (that picture only); Of / StNm: a state's look drawn for piece Of
+    // in state StNm; StIco: the icon in a state (auto: an empty spare's dim, else as normal; normal; dim; own: his drawing
+    // under "<src>.<state>"); KAt: the bolt / zZ in the icon's place (auto, as before) or beside the number; KX, KY its move
+    public Dictionary<string, HsPiece> St; public Dictionary<string, object> StRaw; public string Force, StNm, StIco = "auto", KAt = "auto"; public HsPiece Of; public int KX, KY;
     public HsPiece Copy() { return (HsPiece)MemberwiseClone(); }
 }
 
@@ -7551,7 +7578,7 @@ static class Hs
             default: { string u, n; double mx; Units.TryGetValue(k, out u); Names.TryGetValue(k, out n); return new Src { Key = k, Name = n ?? k.ToUpperInvariant(), Unit = u ?? "", Max = Maxes.TryGetValue(k, out mx) ? mx : 100 }; }
         }
     }
-    class Val { public double V = double.NaN; public string T = "-", U = ""; public bool Chg, ChgSteady, Low, Sleep, Empty, Off, HideIco, HideNum; public double Frac { get { return double.IsNaN(V) ? 0 : V; } } }
+    class Val { public double V = double.NaN; public string T = "-", U = ""; public bool Chg, ChgSteady, Low, Sleep, Empty, Off, HideIco, HideNum, Mute, Unmute; public double Frac { get { return double.IsNaN(V) ? 0 : V; } } }
     static Val Get(HsInfo i, string k)
     {
         var v = new Val(); var s = Info(k);
@@ -7569,6 +7596,65 @@ static class Hs
         if (!double.IsNaN(v.V)) { v.T = Math.Round(v.V).ToString("0"); v.U = s.Unit; }
         return v;
     }
+    // ======== 11-17 his "I cant customize the empty and empty icon without changing the main view ... this should be
+    // customizable properly": each special state of a piece its own look ========
+    // the spare's Empty, the headset's Off, no reading, charging, the mouse asleep, low, the volume muted: each may set its
+    // own keys over the piece's (St: parsed as a piece of its own); what it doesn't set follows the normal look. The
+    // editor's preview forces one state on one piece (Force), for its picture only
+    public static readonly string[] StNames = { "empty", "off", "none", "chg", "sleep", "low", "mute" };
+    static double LowAt(HsPiece p) { return double.IsNaN(p.Crit) ? (p.Src == "mouse" ? 15 : p.Src == "head" ? HeadEst.Low : 12) : p.Crit; }
+    // the state a piece is in now (null: its normal look; a clock and a reading of the PC have none)
+    public static string StateOf(HsInfo i, HsPiece p)
+    {
+        if (p.Src == "clock") return null;
+        if (p.Force != null) return p.Force == "norm" ? null : p.Force;   // (Normal: as it would look reading normally)
+        var v = Get(i, p.Src); var s = Info(p.Src);
+        if (v.Empty) return "empty"; if (v.Off) return "off";
+        if (!s.Batt && p.Src != "vol") return null;
+        if (double.IsNaN(v.V)) return "none";
+        if (v.Chg) return "chg"; if (v.Sleep) return "sleep";
+        if (s.Batt && v.V <= LowAt(p)) return "low";
+        if (p.Src == "vol" && v.V == 0) return "mute";
+        return null;
+    }
+    // the piece as it draws now: its state's own look over its own (a copy that knows its piece), or itself
+    static HsPiece Look(HsInfo i, HsPiece p)
+    {
+        HsPiece q; string st = StateOf(i, p);
+        if (st == null || p.St == null || !p.St.TryGetValue(st, out q)) return p;
+        var r = p.Copy(); r.Of = p; r.StNm = st;
+        r.Label = q.Label; r.At = q.At; r.Name = q.Name; r.Size = q.Size; r.Align = q.Align; r.Dec = q.Dec; r.Unit = q.Unit; r.NoNum = q.NoNum; r.NameSz = q.NameSz; r.Dig = q.Dig; r.Inv = q.Inv;
+        r.OffAs = q.OffAs; r.OffTxt = q.OffTxt; r.ChgAs = q.ChgAs; r.LowAs = q.LowAs; r.StIco = q.StIco; r.KAt = q.KAt; r.KX = q.KX; r.KY = q.KY;
+        r.VH = q.VH; r.WK = q.WK; r.BK = q.BK; r.UK = q.UK; r.IK = q.IK; r.VX = q.VX; r.VY = q.VY; r.UX = q.UX; r.UY = q.UY; r.IX = q.IX; r.IY = q.IY; r.UAt = q.UAt;
+        return r;
+    }
+    // the editor's preview of a state: the reading as it would be then (its own value kept where it has one)
+    static Val Forced(HsInfo i, HsPiece p, string k, Val v)
+    {
+        var s = Info(k); string f = p.Force;
+        if (f == "empty") return new Val { Empty = true, T = "EMPTY" };
+        if (f == "off") return new Val { Off = true, T = "OFF" };
+        if (f == "none") return new Val();
+        var r = new Val { V = double.IsNaN(v.V) ? (k == "spare" ? 100 : s.Batt ? 64 : 50) : v.V, Unmute = f != "mute" };   // (norm: this, no state)
+        if (f == "norm" && s.Batt && r.V <= LowAt(p)) r.V = Math.Min(100, Math.Max(k == "spare" ? 100 : 64, Math.Floor(LowAt(p)) + 1));   // (Normal of a battery reading low now: an ordinary level, no blink, the review 11-17)
+        if (f == "norm" && k == "vol" && r.V <= 0) r.V = 50;
+        if (f == "low") { double lo = Math.Round(LowAt(p)); r.V = Math.Max(1, Math.Min(r.V, lo > 6 ? lo - 4 : lo - 1)); }
+        else if (f == "chg") r.Chg = true; else if (f == "sleep") r.Sleep = true; else if (f == "mute") { r.V = 0; r.Mute = true; }
+        if (!double.IsNaN(r.V)) { r.T = Math.Round(r.V).ToString("0"); r.U = s.Unit; }
+        return r;
+    }
+    // a part's box logged for a state's look: the piece's own (the reply goes by the page's pieces)
+    static bool Same(object o, HsPiece p) { var q = o as HsPiece; return q == p || (q != null && q.Of == p); }
+    // (11-17) the bolt / zZ beside the number: blinking there too when he put it there (Bolt place Beside); its box
+    static void MarkAt(Cv c, HsInfo i, HsPiece p, Val v, int x, int y, int vh)
+    {
+        if (!v.Chg && !v.Sleep) return;
+        int k = MarkK(v, vh, p.BK), w, h, y0;
+        if (v.Chg) { var bo = IconFor("bolt", Ico.Bolt); w = G.W(bo) * k; h = bo.Length * k; y0 = y + (vh - h) / 2; } else { w = h = 7 * k; y0 = y + (vh - 7 * k) / 2; }
+        PartBox(p, "mark", x, y0, w, h);
+        if (v.Chg && p.KAt == "beside" && !v.ChgSteady && i.Now.Second % 2 != 0) return;
+        Mark(c, v, x, y, vh, p.BK);
+    }
     static double scLo = double.NaN, scHi = double.NaN;   // (the piece being drawn: his own low / high, 11-14)
     static double Frac(Src s, Val v)
     {
@@ -7580,12 +7666,13 @@ static class Hs
     static Val Get(HsInfo i, HsPiece p, string k)
     {
         var v = Get(i, k);
+        if (p.Force != null && k == p.Src) v = Forced(i, p, k, v);   // (11-17 the editor's preview of one state)
         if (!double.IsNaN(v.V)) { v.T = v.V.ToString("F" + Math.Max(0, Math.Min(2, p.Dec)), CultureInfo.InvariantCulture); if (!p.Unit) v.U = ""; }
         // (11-14 his "when it's empty, when its off, when its charging the blinking thunder, all this should be customizable")
         if (v.Off || v.Empty) { if (p.OffAs == "dash") v.T = "-"; else if (p.OffAs == "blank") v.T = " "; else if (!string.IsNullOrEmpty(p.OffTxt)) v.T = p.OffTxt; }
         if (v.Chg) { if (p.ChgAs == "none") v.Chg = false; else if (p.ChgAs == "steady") v.ChgSteady = true; }
         // (11-15 his Battery section: under its low level its label, its number or both are hidden every other second)
-        if (Info(k).Batt && !double.IsNaN(v.V) && v.V <= (double.IsNaN(p.Crit) ? (k == "mouse" ? 15 : 12) : p.Crit) && !HsSt.On(i))
+        if (Info(k).Batt && !double.IsNaN(v.V) && v.V <= (double.IsNaN(p.Crit) ? (k == "mouse" ? 15 : k == "head" ? HeadEst.Low : 12) : p.Crit) && !HsSt.On(i))
         {
             string la = p.LowAs; bool lab = p.Label != "off", num = !p.NoNum || p.Style == "number";   // (a part it doesn't show: the other one blinks instead)
             if (la == "icon" && !lab) la = "num"; else if (la == "num" && !num) la = "icon";
@@ -7697,7 +7784,7 @@ static class Hs
     }
 
     // ---- labels: an icon (headset, spare, mouse, volume) or the name ----
-    class Lab { public int Kind, W, H; public string[] Icon; public bool Batt, Mini; public string Word; public Fnt F; }
+    class Lab { public int Kind, W, H; public string[] Icon; public bool Batt, Mini; public string Word; public Fnt F; public int Dim = -1; }   // (Dim 11-17: 1 dim, 0 as normal, -1 as before)
     static Lab Label(HsPiece p, Src s, int bw, int bh)
     {
         var l = new Lab();
@@ -7707,6 +7794,8 @@ static class Hs
             l.Kind = 1;
             if (s.Key == "spare") { l.Batt = true; var sp = IconFor("spare", null); if (sp != null) { l.Icon = sp; l.W = G.W(sp); l.H = sp.Length; } else { l.W = 13; l.H = 7; } } else { l.Icon = s.Icon; l.W = G.W(s.Icon); l.H = s.Icon.Length; }
             l.Mini = false;
+            l.Dim = p.StIco == "dim" ? 1 : p.StIco == "normal" ? 0 : -1;   // (11-17 a state's icon)
+            if (p.StIco == "own" && p.StNm != null) { var ow = IconFor(p.Src + "." + p.StNm, null); if (ow != null) { l.Icon = ow; l.W = G.W(ow); l.H = ow.Length; l.Dim = 0; } }   // (his own drawing for this state)
             return l;
         }
         l.Kind = 2; l.Word = p.Name ?? s.Name;
@@ -7719,18 +7808,19 @@ static class Hs
         if (v.HideIco) return;   // (its low blink)
         if (l.Kind == 1)
         {
-            if (l.Batt && l.Mini) { int t = c.Tone; if (v.Empty) c.Tone = 1; c.Rect(x, y, 10, 5); c.Set(x + 10, y + 2); c.Tone = t; if (!v.Empty && v.Frac > 0) c.HLine(x + 2, x + 2 + Math.Max(0, (int)Math.Round(5 * Math.Min(100, v.Frac) / 100)), y + 2); }
-            else if (l.Batt && l.Icon != null) Spare(c, l.Icon, x, y, v);
-            else if (l.Batt) { if (v.Empty) G.Ghost(c, x, y, 13); else Ico.Battery(c, x, y, 13, (int)v.Frac); }
-            else c.Bmp(x, y, s.Key == "vol" && i.Volume == 0 ? IconFor("mute", Ico.Mute) : l.Icon);
+            bool dim = l.Dim < 0 ? v.Empty : l.Dim > 0;   // (11-17: a state's icon dim or as normal; as before an empty spare's dim)
+            if (l.Batt && l.Mini) { int t = c.Tone; if (dim) c.Tone = 1; c.Rect(x, y, 10, 5); c.Set(x + 10, y + 2); c.Tone = t; if (!v.Empty && v.Frac > 0) c.HLine(x + 2, x + 2 + Math.Max(0, (int)Math.Round(5 * Math.Min(100, v.Frac) / 100)), y + 2); }
+            else if (l.Batt && l.Icon != null) Spare(c, l.Icon, x, y, v, dim);
+            else if (l.Batt) { if (v.Empty && dim) G.Ghost(c, x, y, 13); else { int t = c.Tone; if (dim) c.Tone = 1; Ico.Battery(c, x, y, 13, (int)v.Frac); c.Tone = t; } }
+            else { int t = c.Tone; if (dim) c.Tone = 1; c.Bmp(x, y, s.Key == "vol" && (v.Mute || (i.Volume == 0 && !v.Unmute)) && l.Icon == s.Icon ? IconFor("mute", Ico.Mute) : l.Icon); c.Tone = t; }
         }
-        else if (l.Kind == 2) l.F.Draw(c, x, y, l.Word);
+        else if (l.Kind == 2) { int t = c.Tone; if (l.Dim > 0) c.Tone = 1; l.F.Draw(c, x, y, l.Word); c.Tone = t; }
     }
     // his own spare battery outline: drawn as he made it (half lit when the slot is empty), its level filled in the
     // same place as the built-in one's (2 in from the left and top, 3 short of the right, 2 short of the bottom)
-    static void Spare(Cv c, string[] rows, int x, int y, Val v)
+    static void Spare(Cv c, string[] rows, int x, int y, Val v, bool dim)
     {
-        int t = c.Tone; if (v.Empty) c.Tone = 1; c.Bmp(x, y, rows); c.Tone = t;
+        int t = c.Tone; if (dim) c.Tone = 1; c.Bmp(x, y, rows); c.Tone = t;
         int w = G.W(rows), h = rows.Length, inner = w - 5, pct = (int)v.Frac;
         if (v.Empty || pct <= 0 || inner < 1 || h < 5) return;
         c.Block(x + 2, y + 2, Math.Max(1, (inner * Math.Min(100, pct) + 50) / 100), h - 4);
@@ -7813,9 +7903,10 @@ static class Hs
         Place(L);
         Harmony(L, i);
         var c = new Cv(i.Dx, i.Dy);
-        foreach (var p in L.Pieces)
+        foreach (var p0 in L.Pieces)
         {
-            if (p.X < 0) continue;
+            if (p0.X < 0) continue;
+            var p = Look(i, p0);   // (11-17 its state's own look: Empty, Off, charging ...)
             int lv = LvOf(i, p), x0 = p.Bx, y0 = p.By, w0 = p.Bw, h0 = p.Bh;
             BigStyle = p.Dig >= 0 ? p.Dig : L.Digits;
             // (a pixel of air on each side beside the lines, his 11-13 "pieces are too cramped"; past a level, two, and
@@ -7847,9 +7938,9 @@ static class Hs
         // (18 px over 22 px on his page). Now a row, and cells of one size anywhere on the page (3 px either way), are one
         // group: the smallest size of them all; decimals still never pull a group down)
         var ps = new List<HsPiece>(); var hs = new List<int>(); var ks = new List<string>(); var rk = new List<string>(); var ws = new List<int>(); var hh = new List<int>(); var dec = new List<bool>();
-        foreach (var p in L.Pieces)
+        foreach (var p0 in L.Pieces)
         {
-            p.Harm = 0;
+            p0.Harm = 0; var p = Look(i, p0);   // (11-17 measured in its state's look; the size goes to the piece)
             if (p.X < 0 || p.Src == "clock" || p.VH > 0) continue;   // (11-16: his own height sizes on its own; a word at his size measures 0, so skips while it shows)
             bool dial = p.Style == "ring" || p.Style == "knob"; if (!dial && p.Style != "number") continue;
             int x0 = p.Bx, y0 = p.By, w0 = p.Bw, h0 = p.Bh;
@@ -7859,7 +7950,7 @@ static class Hs
             if (h < 0) { kind = "n"; h = Number(null, i, p, true); }   // (a ring too small for its number is drawn as a number: sized with the numbers beside it)
             p.Bx = x0; p.By = y0; p.Bw = w0; p.Bh = h0;
             if (h <= 0) continue;   // (an empty spare's ring: no number to size)
-            ps.Add(p); hs.Add(h); ks.Add(kind); rk.Add(L.Free ? kind + "f" + y0 + "/" + h0 : kind + p.Y + "/" + Math.Min(p.H, L.Rows)); ws.Add(w0); hh.Add(h0); dec.Add(p.Dec > 0);
+            ps.Add(p0); hs.Add(h); ks.Add(kind); rk.Add(L.Free ? kind + "f" + y0 + "/" + h0 : kind + p.Y + "/" + Math.Min(p.H, L.Rows)); ws.Add(w0); hh.Add(h0); dec.Add(p.Dec > 0);
         }
         int n = ps.Count; var up = new int[n]; for (int k = 0; k < n; k++) up[k] = k;
         Func<int, int> root = null; root = k => up[k] == k ? k : (up[k] = root(up[k]));
@@ -7932,7 +8023,7 @@ static class Hs
     static int Number(Cv c, HsInfo i, HsPiece p, bool measure = false)
     {
         if (!measure && PartLog != null && p.Src != "clock") { WkLog(i, p); FitLog(i, p); }   // (11-16 F50 / F51: vhmax, bkmax for the editor)   // (11-16 review: wkmax for the editor)
-        if (ForceX || Opt(p) || (!measure && WordCase(i, p))) return NumberX(c, i, p, measure);   // (11-16)
+        if (ForceX || Opt(p) || (!measure && WordCase(i, p)) || (!measure && PartLog != null && StateOf(i, p) != null)) return NumberX(c, i, p, measure);   // (11-17: in the editor, a state's parts boxed)   // (11-16)
         int bx = p.Bx, by = p.By, bw = p.Bw, bh = p.Bh;
         var s = Info(p.Src); var v = Get(i, p); bool on = HsSt.On(i);
         var l = Label(p, s, bw, bh);
@@ -8006,13 +8097,13 @@ static class Hs
         foreach (var p in ps)
         {
             Dictionary<string, object> d = null;
-            if (p.X >= 0 && log != null) foreach (var e in log) if (e[0] == p && e.Length == 6) { if (d == null) d = new Dictionary<string, object>(); d[(string)e[1]] = new object[] { F(((int)e[2] + 1) / 128.0), F(((int)e[3] + 1) / 64.0), F((int)e[4] / 128.0), F((int)e[5] / 64.0) }; }
+            if (p.X >= 0 && log != null) foreach (var e in log) if (Same(e[0], p) && e.Length == 6) { if (d == null) d = new Dictionary<string, object>(); d[(string)e[1]] = new object[] { F(((int)e[2] + 1) / 128.0), F(((int)e[3] + 1) / 64.0), F((int)e[4] / 128.0), F((int)e[5] / 64.0) }; }
             l.Add(d);
         }
         return l;
     }
     static int AutoEdge() { return BigStyle == 1 ? 0 : 4; }   // (Auto's room kept clear at a cell's sides: Strokes, Thick strokes, Seven segments filled their cells edge to edge, his 11-17)
-    static bool Opt(HsPiece p) { return p.VH > 0 || p.WK > 0 || p.BK > 0 || p.UK > 0 || p.IK > 1 || p.VX != 0 || p.VY != 0 || p.UX != 0 || p.UY != 0 || p.IX != 0 || p.IY != 0 || p.UAt != "bottom" || p.At != "beside"; }   // (above too: centred as beside is in a big box, his mock 11-16)
+    static bool Opt(HsPiece p) { return p.KAt != "auto" || p.KX != 0 || p.KY != 0 || p.VH > 0 || p.WK > 0 || p.BK > 0 || p.UK > 0 || p.IK > 1 || p.VX != 0 || p.VY != 0 || p.UX != 0 || p.UY != 0 || p.IX != 0 || p.IY != 0 || p.UAt != "bottom" || p.At != "beside"; }   // (above too: centred as beside is in a big box, his mock 11-16)
     // EMPTY, OFF or his own word (in letters): drawn the new way, which may put the label above to draw it bigger
     static bool WordCase(HsInfo i, HsPiece p) { if (p.At != "beside" || p.Label == "off" || BigStyle != 1) return false; var v = Get(i, p); return (v.Empty || v.Off) && Letters(v.T); }
     // the label above when that draws the word bigger than beside it (his "make it default as well")
@@ -8056,7 +8147,7 @@ static class Hs
         var l = Label(p, s, bw, bh);
         int ik = Math.Max(1, p.IK), LW = l.W * ik, LH = l.H * ik, sg = ik > 1 ? 4 : 3, vg = ik > 1 ? 4 : 2;
         bool vert = (p.At == "above" || p.At == "below") && l.Kind > 0 && bh - (LH + vg) >= 5;
-        bool swap = v.Chg && l.Kind > 0;
+        bool swap = v.Chg && l.Kind > 0 && p.KAt != "beside";
         string u = v.U, t = Widest(p, s, v); bool under = p.UAt == "under" && u != "";
         int res = s.Key == "mouse" ? 9 * Math.Max(1, p.BK) : 0;   // (the room a mouse keeps for its zZ)
         int[] hs = BigStyle == 1 ? new[] { 42, 35, 28, 21, 14, 7, 5 } : new[] { 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5 };
@@ -8086,7 +8177,7 @@ static class Hs
         var l = Label(p, s, bw, bh);
         int ik = Math.Max(1, p.IK), LW = l.W * ik, LH = l.H * ik, sg = ik > 1 ? 4 : 3, vg = ik > 1 ? 4 : 2;
         bool vert = (p.At == "above" || p.At == "below") && l.Kind > 0 && bh - (LH + vg) >= 5;
-        bool swap = v.Chg && l.Kind > 0;
+        bool swap = v.Chg && l.Kind > 0 && p.KAt != "beside";
         string u = v.U, t = Widest(p, s, v); bool under = p.UAt == "under" && u != "";
         int res = s.Key == "mouse" ? 9 * Math.Max(1, p.BK) : 0;   // (the room a mouse keeps for its zZ)
         int[] hs = BigStyle == 1 ? new[] { 42, 35, 28, 21, 14, 7, 5 } : new[] { 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5 };
@@ -8130,13 +8221,13 @@ static class Hs
     public static List<object> TagReply(List<HsPiece> ps, List<object[]> log, string tag)
     {
         var l = new List<object>();
-        foreach (var p in ps) { object k = null; if (log != null) foreach (var e in log) if (e[0] == p && e.Length == 3 && (string)e[1] == tag) k = e[2]; l.Add(k); }
+        foreach (var p in ps) { object k = null; if (log != null) foreach (var e in log) if (Same(e[0], p) && e.Length == 3 && (string)e[1] == tag) k = e[2]; l.Add(k); }
         return l;
     }
     public static List<object> WkReply(List<HsPiece> ps, List<object[]> log)
     {
         var l = new List<object>();
-        foreach (var p in ps) { object k = null; if (log != null) foreach (var e in log) if (e[0] == p && e.Length == 3 && (string)e[1] == "#wkmax") k = e[2]; l.Add(k); }
+        foreach (var p in ps) { object k = null; if (log != null) foreach (var e in log) if (Same(e[0], p) && e.Length == 3 && (string)e[1] == "#wkmax") k = e[2]; l.Add(k); }
         return l;
     }
     static bool WordUp(HsPiece p, Src s, Val v, int kind, int lw0, int lh0, int bw, int bh, int cap)
@@ -8170,7 +8261,7 @@ static class Hs
         bool vert = (p.At == "above" || p.At == "below") && l.Kind > 0 && bh - (LH + vg) >= 5;
         bool wordUp = !measure && !vert && WordUp(p, s, v, l.Kind, LW, LH, bw, bh, cap); if (wordUp) vert = true;
         bool below = vert && p.At == "below", after = !vert && p.At == "right" && l.Kind > 0;
-        bool swap = v.Chg && l.Kind > 0;
+        bool swap = v.Chg && l.Kind > 0 && p.KAt != "beside";   // (11-17 Bolt place Beside: never in the icon's place)
         string u = v.U; bool under = p.UAt == "under" && u != "";
         int lw = !vert && l.Kind > 0 ? LW + sg : 0, lh = vert ? LH + vg : 0;
         int room = bw - lw - Math.Max(s.Key == "mouse" ? 9 * Math.Max(1, p.BK) : 0, swap ? 0 : MarkW(v, 26, p.BK)), roomH = bh - lh;
@@ -8225,17 +8316,17 @@ static class Hs
             Y = by + (bh - bh0) / 2; LY = by + (bh - LH) / 2;
             MX = X - mw; MY = Y + B[3];
         }
-        X += p.VX; Y += p.VY; MX += p.VX; MY += p.VY; LX += p.IX; LY += p.IY;
+        X += p.VX; Y += p.VY; MX += p.VX; MY += p.VY; LX += p.IX; LY += p.IY; MX += p.KX; MY += p.KY;
         int nx = X + B[2], ny = Y + B[3], ux0 = X + B[4] + p.UX, uy0 = Y + B[5] + p.UY;
-        if (markNow) { var bo = IconFor("bolt", Ico.Bolt); int kb = Math.Max(1, Math.Min(MarkK(v, LH, p.BK), Math.Min((LW + sg) / 5, (vert ? LH + vg - 1 : bh) / 7))); G.BmpK(c, LX + Math.Max(0, (LW - G.W(bo) * kb) / 2), LY + (LH - bo.Length * kb) / 2, bo, kb); }   // (his bolt size, no bigger than the label's place holds: the review 11-16)
-        else if (!(dim && !(f.K == 0 && f.H > 7))) LabelK(c, i, l, s, v, LX, LY, k);
+        if (swap) { var bo = IconFor("bolt", Ico.Bolt); int kb = Math.Max(1, Math.Min(MarkK(v, LH, p.BK), Math.Min((LW + sg) / 5, (vert ? LH + vg - 1 : bh) / 7))); int qx = LX + Math.Max(0, (LW - G.W(bo) * kb) / 2) + p.KX, qy = LY + (LH - bo.Length * kb) / 2 + p.KY; if (markNow) G.BmpK(c, qx, qy, bo, kb); PartBox(p, "mark", qx, qy, G.W(bo) * kb, bo.Length * kb); }   // (his bolt size, no bigger than the label's place holds: the review 11-16; 11-17 its own move, its box)
+        if (!markNow && !(dim && !(f.K == 0 && f.H > 7))) LabelK(c, i, l, s, v, LX, LY, k);
         if (l.Kind > 0) PartBox(p, "icon", LX, LY, LW, LH);
-        if (!swap && !vert) Mark(c, v, MX, MY, f.Ht, p.BK);
+        if (!swap && !vert) MarkAt(c, i, p, v, MX, MY, f.Ht);
         if (dim && f.K == 0 && f.H > 7) c.Tone = 1;   // (the 7 px step dims as the small font, review 11-15)
         c.Hush = v.HideNum; f.Text(c, nx, ny, v.T);
         if (u != "") { if (p.UK > 0) Fnt.Small.Draw(c, ux0, uy0, u, p.UK); else f.Unit(c, ux0, uy0 - f.UnitOff(u), u); }
         c.Hush = false; c.Tone = 0;
-        if (!swap && vert) Mark(c, v, MX, MY, f.Ht, p.BK);
+        if (!swap && vert) MarkAt(c, i, p, v, MX, MY, f.Ht);
         PartBox(p, "value", nx, ny, f.TextW(v.T), f.Ht); if (u != "") PartBox(p, "unit", ux0, uy0, UW(f), UH(f));
         return f.Ht;
     }
@@ -9542,7 +9633,7 @@ class HsInfo
     public DateTime Now;
     public int Dx, Dy;                       // the burn-in shift of this minute, 0 to 2 each
     public double Cpu = double.NaN, Gpu = double.NaN;   // HWiNFO's "CPU (Tctl/Tdie)" and "GPU Temperature", degrees C
-    public int Head = -1;                    // the headset's battery, percent in GG's steps (0, 12, 25, 37 .. 100)
+    public int Head = -1;                    // the headset's battery, percent: the share of its running time left (HeadEst)
     public bool HeadOff, HeadCharging;       // switched off; charging by its cable
     public int Spare = -1;                   // the spare battery in the base's slot, percent
     public bool SpareOut, SpareCharging;     // no battery in the slot; the base is charging it (in the slot, not full)
@@ -9563,6 +9654,24 @@ class HsPreset { public string Key, Name, Group; public HsRowPage Page; public H
 class HsGPage { public bool Free; public int Dig = -1; public string Bar = ""; public string Name = "Page", When = "always", From; public int Rows = 2, Cols = 2, Gap = -1; public string Lines = "none"; public List<HsPiece> Pieces = new List<HsPiece>(); }
 // a theme (his "keep my current setup and make them actual themes"): its pages, page change, start up / shut down, look
 class HsTheme { public Dictionary<string, string[]> Icons; public string Id, Name; public List<HsGPage> Pages = new List<HsGPage>(); public int Every; public string Start = "", Stop = "", Bar = "blocks"; public int Digits = 1; }
+
+// (11-18, the tester's F75) a data file that can't be read is copied aside as <file>.bad-<time> before the app starts
+// over with its defaults, so the next save never loses his own data; never over an older copy
+static class DataKeep
+{
+    public static void Bad(string path, Action<string> log)
+    {
+        try
+        {
+            if (path == null || !File.Exists(path)) return;
+            string b = path + ".bad-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+            if (File.Exists(b)) return;
+            File.Copy(path, b, false);
+            if (log != null) log("kept the unreadable " + Path.GetFileName(path) + " as " + Path.GetFileName(b));
+        }
+        catch { }
+    }
+}
 
 static class HsPage
 {
@@ -9590,6 +9699,8 @@ static class HsPage
     static readonly string[] UAts = { "bottom", "middle", "top", "under" };   // (11-16 the unit: under the number's bottom as before, its middle, its top, under it)
     static readonly string[] DateAts = { "under", "beside" }, DateFmts = { "day", "short", "num", "wday" };   // (11-17 the clock's date)
     static readonly string[] NameSizes = { "auto", "small", "tiny" }, OffAses = { "word", "dash", "blank" }, ChgAses = { "blink", "steady", "none" }, LowAses = { "icon", "none", "num", "both" };
+    // (11-17 his states) a state's own keys: its look only (where it is, what it reads, its levels stay the piece's)
+    static readonly string[] StIcos = { "auto", "normal", "dim", "own" }, KAts = { "auto", "beside" }, StKeys = { "label", "at", "name", "size", "align", "dec", "unit", "num", "nsize", "dig", "inv", "offas", "offtxt", "chgas", "lowas", "vh", "vk", "wk", "bk", "uk", "ik", "vx", "vy", "ux", "uy", "ix", "iy", "uat", "ico", "kat", "kx", "ky" };
     const int MaxGrid = 6, MaxThemes = 12;   // (v3: rows and columns 1 to 6)
     const int MaxPages = 6, MaxUnits = 5, MaxSaved = 100, Keep = 1800;   // (100 saved pages: every theme's pages moved in, 12 x 6 + 12 at most, 11-15)   // (5 units: the screen's 62 rows of pixels; a graph: up to 30 min, a value a second)
 
@@ -9659,7 +9770,7 @@ static class HsPage
             var t = Ready()[0];
             pages = t.Pages; themeName = t.Name; themeFrom = "r:" + t.Id; every = t.Every; digits = t.Digits; bar = t.Bar; icons = t.Icons;
         }
-        try { if (File_ != null && File.Exists(File_)) { var d = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(File_)) as Dictionary<string, object>; lock (gate) { if (d != null) fileV = Int(d, "v", 1, 0, 999); lowMig = true; folded = false; try { Take(d); } finally { lowMig = false; } }
+        try { if (File_ != null && File.Exists(File_)) { var d = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(File_)) as Dictionary<string, object>; if (d == null) DataKeep.Bad(File_, s => Log(s)); lock (gate) { if (d != null) fileV = Int(d, "v", 1, 0, 999); lowMig = true; folded = false; try { Take(d); } finally { lowMig = false; } }
             if (fileV == 3) try { var v3s = Path.Combine(Path.GetDirectoryName(File_), "hs-layout.v3-start.json"); if (!File.Exists(v3s)) File.Copy(File_, v3s, false); } catch { }   // (the file as v3 began: written once, never over itself at each start (it took a renamed page over his copy at a restart, the tester's F48 11-16)
             if (folded)   // (his themes moved into saved pages: the file as it was kept first, never over an older copy; no copy, no save now, review 11-15)
             {
@@ -9672,6 +9783,7 @@ static class HsPage
         {
             Log("headset page: hs-layout.json unreadable, the default page instead (kept as hs-layout.json.bad): " + ex.Message);
             try { File.Copy(File_, File_ + ".bad", true); } catch { }   // (the next change writes a new file over it: his saved pages are in the copy)
+            DataKeep.Bad(File_, s => Log(s));   // (and one that is never written over, 11-18)
         }
     }
     static bool newerSaid, lowMig, folded;   // (lowMig: the file being read at a start, 11-15: an old written battery default reads as Auto then, not on each change)
@@ -9689,9 +9801,13 @@ static class HsPage
             }
             var tmp = File_ + ".tmp"; File.WriteAllText(tmp, new JavaScriptSerializer().Serialize(Setup()));
             if (File.Exists(File_)) File.Replace(tmp, File_, null); else File.Move(tmp, File_);
+            if (SaveFailed) { SaveFailed = false; Log("headset page: saved after all"); }
         }
-        catch (Exception ex) { Log("headset page: not saved: " + ex.Message); }
+        catch (Exception ex) { if (!SaveFailed) Log("headset page: not saved (trying again every 5 s): " + ex.Message); SaveFailed = true; }
     }
+    // (11-17: a save that failed is tried again by the host every 5 s and at the quit, so an edit made then is not lost)
+    public static volatile bool SaveFailed;
+    public static void Retry() { if (SaveFailed) Save(); }
 
     // the setup as JSON (the file, the popup), v3: {v, theme: {name, from, pages, every, start, stop, digits, bar},
     // themes: [{id, name, theme}], saved: [{id, name, page}], wheelfast}; a page {name, when, from, rows, cols, gap, lines,
@@ -9722,7 +9838,8 @@ static class HsPage
             Func<double, object> N = d => double.IsNaN(d) ? null : (object)d;
             pcs.Add(new Dictionary<string, object> { { "x", p.AtX }, { "y", p.AtY }, { "w", p.W }, { "h", p.H }, { "src", p.Src }, { "style", p.Style }, { "label", p.Label }, { "at", p.At }, { "name", p.Name }, { "src2", p.Src2 }, { "graph", p.Graph }, { "over", p.Over }, { "seconds", p.Seconds },
                 { "date", p.Date }, { "h12", p.H12 }, { "dateat", p.DateAt }, { "datefmt", p.DateFmt }, { "size", p.Size }, { "align", p.Align }, { "dec", p.Dec }, { "unit", p.Unit }, { "warn", N(p.Warn) }, { "crit", N(p.Crit) }, { "below", p.Below }, { "lo", N(p.Lo) }, { "hi", N(p.Hi) }, { "num", !p.NoNum }, { "nsize", p.NameSz }, { "dig", p.Dig }, { "inv", p.Inv }, { "offas", p.OffAs }, { "offtxt", p.OffTxt }, { "chgas", p.ChgAs }, { "lowas", p.LowAs },
-                { "vh", p.VH }, { "wk", p.WK }, { "bk", p.BK }, { "uk", p.UK }, { "ik", p.IK }, { "vx", p.VX }, { "vy", p.VY }, { "ux", p.UX }, { "uy", p.UY }, { "ix", p.IX }, { "iy", p.IY }, { "uat", p.UAt }, { "fx", p.FX }, { "fy", p.FY }, { "fw", p.FW }, { "fh", p.FH } });
+                { "vh", p.VH }, { "wk", p.WK }, { "bk", p.BK }, { "uk", p.UK }, { "ik", p.IK }, { "vx", p.VX }, { "vy", p.VY }, { "ux", p.UX }, { "uy", p.UY }, { "ix", p.IX }, { "iy", p.IY }, { "uat", p.UAt }, { "fx", p.FX }, { "fy", p.FY }, { "fw", p.FW }, { "fh", p.FH }, { "kat", p.KAt }, { "kx", p.KX }, { "ky", p.KY } });
+            if (p.StRaw != null) ((Dictionary<string, object>)pcs[pcs.Count - 1])["st"] = p.StRaw;   // (11-17 its states' own keys)
         }
         var page = new Dictionary<string, object> { { "name", pg.Name }, { "when", pg.When }, { "rows", pg.Rows }, { "cols", pg.Cols }, { "gap", pg.Gap }, { "lines", pg.Lines }, { "free", pg.Free }, { "dig", pg.Dig }, { "bar", pg.Bar }, { "pieces", pcs } };
         if (pg.From != null) page["from"] = pg.From;
@@ -10144,6 +10261,21 @@ static class HsPage
         p.VH = qd.ContainsKey("vh") ? Int(qd, "vh", 0, 0, 43) : 7 * Int(qd, "vk", 0, 0, 6); if (p.VH > 0 && p.VH < 5) p.VH = 5; p.WK = Int(qd, "wk", 0, 0, 4); p.BK = Int(qd, "bk", 0, 0, 3); p.UK = Int(qd, "uk", 0, 0, 3); p.IK = Math.Max(1, Int(qd, "ik", 1, 0, 3)); p.UAt = Pick(qd, "uat", UAts);
         p.VX = Int(qd, "vx", 0, -40, 40); p.VY = Int(qd, "vy", 0, -40, 40); p.UX = Int(qd, "ux", 0, -40, 40); p.UY = Int(qd, "uy", 0, -40, 40); p.IX = Int(qd, "ix", 0, -40, 40); p.IY = Int(qd, "iy", 0, -40, 40);
         p.FX = Int(qd, "fx", -1, -1, Cv.W - 1); p.FY = Int(qd, "fy", 0, 0, Cv.H - 1); p.FW = Int(qd, "fw", 0, 0, Cv.W); p.FH = Int(qd, "fh", 0, 0, Cv.H); if (p.FW < 1 || p.FH < 1) p.FX = -1;
+        p.StIco = Pick(qd, "ico", StIcos); p.KAt = Pick(qd, "kat", KAts); p.KX = Int(qd, "kx", 0, -40, 40); p.KY = Int(qd, "ky", 0, -40, 40);
+        object so; var sd = !qd.ContainsKey("#st") && qd.TryGetValue("st", out so) ? so as Dictionary<string, object> : null;   // (11-17 each state's own keys over the piece's: a piece of its own)
+        if (sd != null)
+            foreach (var kv in sd)
+            {
+                var od = kv.Value as Dictionary<string, object>; if (od == null || Array.IndexOf(Hs.StNames, kv.Key) < 0) continue;
+                var own = new Dictionary<string, object>();
+                foreach (var e in od) if (Array.IndexOf(StKeys, e.Key) >= 0 && e.Value != null && (e.Value is string || e.Value is bool || e.Value is int || e.Value is long || e.Value is double || e.Value is decimal)) own[e.Key] = e.Value;
+                if (own.Count == 0) continue;
+                var md = new Dictionary<string, object>(qd); md.Remove("st"); md["#st"] = true; foreach (var e in own) md[e.Key] = e.Value;
+                if (own.ContainsKey("vk") && !own.ContainsKey("vh")) md.Remove("vh");   // (an old-style size of its own: not the piece's height)
+                var q = Piece(md); if (q == null) continue;
+                if (p.St == null) { p.St = new Dictionary<string, HsPiece>(); p.StRaw = new Dictionary<string, object>(); }
+                p.St[kv.Key] = q; p.StRaw[kv.Key] = own;
+            }
         return p;
     }
     static IEnumerable List(Dictionary<string, object> d, string k) { object o; return d.TryGetValue(k, out o) && o is IEnumerable && !(o is string) ? (IEnumerable)o : new object[0]; }
@@ -10233,7 +10365,9 @@ static class HsPage
     static string Caps(string s)
     {
         var b = new StringBuilder();
-        foreach (char c0 in s.ToUpperInvariant()) { char c = c0; if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '%' || c == '-' || c == ':' || c == '.' || c == '/' || c == '!')) c = ' '; if (c == ' ' && (b.Length == 0 || b[b.Length - 1] == ' ')) continue; b.Append(c); }
+        // (an accented letter keeps its letter, 11-17: the accent goes, not the letter)
+        var bare = new StringBuilder(); foreach (char c1 in (s ?? "").Normalize(NormalizationForm.FormD)) if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c1) != System.Globalization.UnicodeCategory.NonSpacingMark) bare.Append(c1);
+        foreach (char c0 in bare.ToString().ToUpperInvariant()) { char c = c0; if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '%' || c == '-' || c == ':' || c == '.' || c == '/' || c == '!')) c = ' '; if (c == ' ' && (b.Length == 0 || b[b.Length - 1] == ' ')) continue; b.Append(c); }
         return b.ToString().TrimEnd();
     }
     static string Unit(string u) { return u == Deg + "C" ? Deg : u == "Mbit/s" ? "MBIT" : Caps(u).Replace(" ", ""); }
@@ -10270,7 +10404,10 @@ static class HsPage
                 focus = n; focusTill = DateTime.UtcNow.AddSeconds(3);
                 var pg = pages[n]; var L = Grid(pg);
                 foreach (var q in L.Pieces) { q.AsNum = false; q.LabCut = false; q.DateCut = false; q.SecCut = false; }
-                var plog = new List<object[]>(); bool[,] px; Hs.PartLog = plog; try { px = Hs.Draw(L, i).Px; } finally { Hs.PartLog = null; }   // (11-16 its parts' boxes)
+                object pso; var psd = m.TryGetValue("pst", out pso) ? pso as Dictionary<string, object> : null; string pss = psd != null ? Str(psd, "s") : null; int psi = psd != null ? Int(psd, "i", -1, 0, 99) : -1;   // (11-17 the editor's preview of a state)
+                var stnow = new List<object>(); foreach (var q in L.Pieces) { q.Force = null; stnow.Add(Hs.StateOf(i, q)); } r["stnow"] = stnow;
+                if (pss != null && psi >= 0 && psi < L.Pieces.Count && (Array.IndexOf(Hs.StNames, pss) >= 0 || pss == "norm")) { L.Pieces[psi].Force = pss; r["pst"] = new Dictionary<string, object> { { "i", psi }, { "s", pss } }; }
+                var plog = new List<object[]>(); bool[,] px; Hs.PartLog = plog; try { px = Hs.Draw(L, i).Px; } finally { Hs.PartLog = null; foreach (var q in L.Pieces) q.Force = null; }   // (11-16 its parts' boxes)
                 Func<double, double> F = v => Math.Round(v, 5);
                 var rects = new List<object>();   // (each piece, in the page's own order: null when it found no room)
                 foreach (var p in L.Pieces) rects.Add(p.X < 0 ? null : new object[] { F((p.Bx + 1) / 128.0), F((p.By + 1) / 64.0), F(p.Bw / 128.0), F(p.Bh / 64.0) });
@@ -10307,7 +10444,8 @@ static class HsPage
                 if (Bool(m, "cards", false))
                 {
                     var cards = new Dictionary<string, object>();
-                    foreach (var a in Anims) { cards[a.Key + "-start"] = Bits(a.Start(a.StartMs * 0.45, px)); cards[a.Key + "-stop"] = Bits(a.Stop(a.StopMs * 0.45, px)); }
+                    var cpx = pss != null ? Hs.Draw(L, i).Px : px;   // (11-17 the cards from the page as it reads, not the state looked at: the review)
+                    foreach (var a in Anims) { cards[a.Key + "-start"] = Bits(a.Start(a.StartMs * 0.45, cpx)); cards[a.Key + "-stop"] = Bits(a.Stop(a.StopMs * 0.45, cpx)); }
                     r["cards"] = cards;
                     var pl = new List<object>();
                     foreach (var x in pre) pl.Add(new Dictionary<string, object> { { "key", x.Key }, { "name", x.Name }, { "group", x.Group }, { "page", PageDict(x.G) } });
@@ -10380,6 +10518,102 @@ static class HsPage
 // every click of the base's volume knob, with our picture right after it, where its knob can't be taken over: there the only way past the base's own volume
 // screen (see volume below). A test copy (--data or --fake) reads nothing (HWDECK_BATT=1 lets one, for its own check).
 
+// ---- the headset's battery as a percent (11-17, hwdeck\local\hs-battery-1117\findings.md) ----
+// The base station hands out 9 steps only (06 b0 / 06 b7, 0 to 8). Its firmware (1.29.27, 0xcd70) cuts the voltage the
+// headset sends it: 0 = 3.60 V or less, 1 to 3.70, 2 to 3.75, 3 to 3.78, 4 to 3.82, 5 to 3.88, 6 to 3.95, 7 to 4.05,
+// 8 above, and keeps nothing finer. GG shows a step as step x 12.5 %, but the steps are far from equal: Hours is how
+// long the headset stayed on each (three logged runs of his two batteries, within a tenth of each other, about 25 h
+// in all). So "12%" covered 28% down to 2% of the running time (6.6 h), and "0%" is the last half hour, where the
+// headset's own beeps start. The percent here is the share of the running time left: a step's start, counted down by
+// the time the headset has been on since, never past the step's end; every real step puts it right again (the
+// backtest over the three runs: at most 3 points off at a step, where step x 12.5 jumped 12 or 13 every time).
+// While discharging the base only lets its step go down, and takes the first reading after the headset connects as
+// it is, so after a rest it can read one step higher for a few minutes; on the cable only up.
+static class HeadEst
+{
+    public static readonly double[] Hours = { 0.5, 6.65, 4.68, 1.51, 1.11, 2.78, 3.16, 3.44, 1.72 };   // on step 0 .. 8
+    public const int Low = 2;                  // step 0 shows 2, then 1: the headset's own beeps start with it
+    static readonly double[] top = new double[9], end = new double[9];   // the share of the running time left as a step starts and ends, percent
+    public static int Step = -1;               // the step counted on: the lowest this battery has shown (-1: no battery seen yet)
+    public static double Sec;                  // seconds the headset has been on, on that step
+    static long at = -1;                       // the clock of the reading before, ms (-1: nothing to count from)
+    static double upSec;                       // seconds it has read one step higher than Step
+    static long spareOut = -1;                 // when the spare's slot went empty, ms (-1: not since the last new battery)
+    static int lastSpare = -1;
+    static bool off = true, cable, full;       // the reading before: the headset off; on its cable; full on its cable
+
+    static HeadEst()
+    {
+        double all = 0; foreach (double h in Hours) all += h;
+        double left = all;
+        for (int s = 8; s >= 0; s--) { top[s] = 100 * left / all; left -= Hours[s]; end[s] = Math.Max(0, 100 * left / all); }
+    }
+    static int R(double x) { return (int)Math.Round(x, MidpointRounding.AwayFromZero); }
+
+    // the most and the least a step shows: never a number of the step under it, so every real step is seen and 2 or
+    // less is step 0 alone
+    public static int Most(int step) { return step >= 8 ? 100 : R(top[step]); }
+    public static int Least(int step) { return step <= 0 ? 1 : R(top[step - 1]) + 1; }
+
+    public static int Pct()
+    {
+        if (Step < 0) return -1;
+        double f = Math.Min(1.0, Sec / (Hours[Step] * 3600));
+        return Math.Max(Least(Step), Math.Min(Most(Step), R(top[Step] - (top[Step] - end[Step]) * f)));
+    }
+
+    // one reading of the base: the headset's step, the spare's (0: its slot empty), the headset's power (1 off, 2
+    // charging on its cable, 4 full on its cable, anything else on) and the clock in ms. The percent to show (-1: off)
+    public static int Feed(int level, int spare, int power, long now)
+    {
+        if (spare == 0 && lastSpare > 0) spareOut = now;   // (the spare taken out: a swap, if the headset comes on within 10 min)
+        if (spare >= 0) lastSpare = spare;
+        if (power == 1) { off = true; at = -1; return -1; }   // (off: nothing counts, the step and its time keep)
+        if (level < 0 || level > 8) return Pct();
+        if (power == 2 || power == 4)   // (on its cable: no counting; the step's end, the base only lets it go up there)
+        {
+            cable = true; full = power == 4; off = false; at = -1; Step = level; Sec = 0; upSec = 0;
+            return full ? 100 : Math.Max(1, R(end[level]));
+        }
+        // a swap: the headset comes back on within 10 min of the spare leaving its slot, on another step (the same
+        // step: the spare was only taken out and put back, his 11-12 21:59)
+        bool swapped = off && spareOut >= 0 && now - spareOut < 600000 && level != Step;
+        long dt = at >= 0 ? now - at : 0; if (dt < 0 || dt > 300000) dt = 0;   // (a hole of over 5 min, the PC asleep: not counted)
+        at = now; off = false;
+        if (Step < 0 || cable || swapped || level >= Step + 2)
+        {
+            // a battery not seen before: at step 8 from the charger's slot (or off a full cable) it is full; anything
+            // else is somewhere on its step, taken as the middle
+            Step = level; Sec = level == 8 && (swapped || full || dt > 0) ? 0 : Hours[level] * 1800; upSec = 0; spareOut = -1;
+        }
+        else if (level == Step + 1)
+        {
+            // one step up: the voltage came back after a rest. Counted on the lower step; half an hour of it means a
+            // battery with more in it after all
+            upSec += dt / 1000.0;
+            if (upSec >= 1800) { Step = level; Sec = Hours[level] * 1800; upSec = 0; } else Sec += dt / 1000.0;
+        }
+        else if (level < Step)
+        {
+            // a step down: seen as it happened (a reading a moment before) it starts now; found later, its middle
+            bool seen = dt > 0 && level == Step - 1;
+            Step = level; Sec = seen ? 0 : Hours[level] * 1800; upSec = 0;
+        }
+        else { Sec += dt / 1000.0; upSec = 0; }
+        cable = full = false;
+        return Pct();
+    }
+
+    // kept across a restart of the app (headbatt.txt in the data folder): the step and its seconds
+    public static string State() { return "head " + Step + " " + (long)Sec; }
+    public static void Load(string s)
+    {
+        var w = (s ?? "").Trim().Split(' '); int st; long sc;
+        if (w.Length >= 3 && w[0] == "head" && int.TryParse(w[1], out st) && long.TryParse(w[2], out sc) && st >= 0 && st <= 8 && sc >= 0) { Step = st; Sec = sc; }
+    }
+    public static void Reset() { Step = -1; Sec = 0; at = -1; upSec = 0; spareOut = -1; lastSpare = -1; off = true; cable = full = false; }
+}
+
 static class Batt
 {
     public static Action<string> Log = delegate { };
@@ -10388,8 +10622,10 @@ static class Batt
     public static bool MouseOn;   // the LIGHTSPEED mouse too: HW Dashboard only (his 11-13: not for HW Deck users), set before Start (HW Dashboard's test and trial copies)
     public static string ScreenFile;                 // hs-screen.txt in the data folder: "on" his pages (Custom), "base" the base's own screen (Original), "dark" (Off); "off" (before 11-14): dark in HW Dashboard, the base's own in HW Deck; none: the base's own
     public static string StateFile;                  // batt.txt in the data folder: the mouse's last reading (a start while it sleeps showed "--")
-    // what was read (-1: not known). The headset's levels are the base's steps, 0 to 8, shown as GG does (0, 12 .. 100 %)
+    // what was read (-1: not known). The levels are the base's steps, 0 to 8: the spare's shown as GG does (0, 12 .. 100 %),
+    // the headset's own as HeadPct, the share of its running time left (HeadEst, 11-17)
     public static volatile int HeadLevel = -1, SpareLevel = -1, HeadPower = -1, MousePct = -1, MouseCharging = -1;
+    public static volatile int HeadPct = -1;          // the headset's battery as shown, percent (-1: off or not read yet)
     public static volatile bool HeadThere, MouseThere, MouseAsleep;
     // found at least once in this run: HW Deck's readings for them are in its list from then on (as the 12V-2x6
     // connector's are only for a card that reports its pins), so nobody without this headset or mouse sees them
@@ -10498,6 +10734,7 @@ static class Batt
             if (w.Length >= 3 && w[0] == "mouse" && int.TryParse(w[1], out p) && int.TryParse(w[2], out c) && p >= 0 && p <= 100) { MousePct = p; MouseCharging = c; }
         }
         catch { }
+        try { string ef = EstFile(); if (ef != null && File.Exists(ef)) HeadEst.Load(File.ReadAllText(ef)); } catch { }   // (the headset's step and its time so far, 11-17)
         SystemEvents.SessionSwitch += OnSwitch; SystemEvents.PowerModeChanged += OnPower; SystemEvents.SessionEnding += OnEnding; AppDomain.CurrentDomain.UnhandledException += OnCrash;
         stop = false;
         th = new Thread(HeadLoop) { IsBackground = true, Name = "headset" };
@@ -10509,6 +10746,7 @@ static class Batt
     public static void Stop()
     {
         if (th == null) return;
+        SaveEst(Ms());
         try { SystemEvents.SessionSwitch -= OnSwitch; SystemEvents.PowerModeChanged -= OnPower; SystemEvents.SessionEnding -= OnEnding; AppDomain.CurrentDomain.UnhandledException -= OnCrash; } catch { }
         stop = true;
         lock (hl)
@@ -10527,8 +10765,8 @@ static class Batt
 
     public static void FakeHeadset(string how = "1")
     {
-        HeadSeen = HeadThere = true; HeadLevel = 5; SpareLevel = 8; HeadPower = 0;
-        foreach (var w in (how ?? "").Split(',')) { var t = w.Trim(); if (t == "spare0") SpareLevel = 0; else if (t == "off") HeadPower = 1; else if (t == "chg") HeadPower = 2; }   // (a test copy's states, 11-16: an empty spare slot, the headset off or charging)
+        HeadSeen = HeadThere = true; HeadLevel = 5; SpareLevel = 8; HeadPower = 0; HeadPct = 62;
+        foreach (var w in (how ?? "").Split(',')) { var t = w.Trim(); if (t == "spare0") SpareLevel = 0; else if (t == "off") HeadPower = 1; else if (t == "chg") HeadPower = 2; else if (t == "low") { HeadLevel = 0; HeadPct = HeadEst.Low; } else if (t.StartsWith("pct")) { int fp; if (int.TryParse(t.Substring(3), out fp) && fp >= 0 && fp <= 100) HeadPct = fp; } }   // (a test copy's states, 11-16: an empty spare slot, the headset off or charging)
         if (MouseOn) { MouseSeen = MouseThere = true; MousePct = 87; MouseCharging = 0; }
         SetFake();         volume = 45; Brightness = 3; knobFw = true;   // (a --fake copy's Headset tab shows the wheel switch, as on his base)
     }
@@ -10689,7 +10927,7 @@ static class Batt
     public static Dictionary<string, object> Card()
     {
         var d = new Dictionary<string, object>();
-        d["there"] = HeadThere; d["mouse"] = MouseOn; d["on"] = ScreenOn; d["base"] = !ScreenOn && ScreenBase; d["off"] = HeadPower == 1; d["chg"] = HeadPower == 2; d["gg"] = mode == "gg";
+        d["there"] = HeadThere; d["mouse"] = MouseOn; d["on"] = ScreenOn; d["base"] = !ScreenOn && ScreenBase; d["off"] = HeadPower == 1; d["chg"] = HeadPower == 2 || HeadPower == 4; d["gg"] = mode == "gg";
         string m = mode;
         d["bright"] = HeadThere ? Brightness : -1;
         d["wheel"] = HeadThere && knobFw && KnobZero;   // (the Headset tab's "Faster volume wheel": only on the base the wheel mode is proven on)
@@ -10716,10 +10954,13 @@ static class Batt
 
     static int P(int level) { return level < 0 ? -1 : level * 100 / 8; }   // (12, 37, 62, 87: GG's own, cut, not rounded)
     public static double Pct(int level) { return level < 0 ? double.NaN : P(level); }
-    public static double HeadValue() { return HeadPower == 1 ? double.NaN : Pct(HeadLevel); }   // (off: no value)
+    public static double HeadValue() { return HeadPower == 1 || HeadPct < 0 ? double.NaN : HeadPct; }   // (off: no value)
+    static long estSaved;
+    static string EstFile() { return StateFile == null ? null : Path.Combine(Path.GetDirectoryName(StateFile), "headbatt.txt"); }
+    static void SaveEst(long now) { estSaved = now; try { string ef = EstFile(); if (ef != null && HeadEst.Step >= 0) File.WriteAllText(ef, HeadEst.State()); } catch { } }
     public static double SpareValue() { return SpareOut ? double.NaN : Pct(SpareLevel); }      // (out: no value)
     static string Level(int l) { return l < 0 ? "--" : P(l) + "%"; }
-    static string HeadText() { return HeadPower == 1 ? "off" : Level(HeadLevel) + (HeadPower == 2 && HeadLevel >= 0 ? " charging" : ""); }
+    static string HeadText() { return HeadPower == 1 ? "off" : (HeadPct < 0 ? "--" : HeadPct + "%") + ((HeadPower == 2 || HeadPower == 4) && HeadPct >= 0 ? " charging" : ""); }
     static string SpareText() { return SpareOut ? "no spare" : "spare " + Level(SpareLevel) + (SpareCharging ? " charging" : ""); }
     static string MouseText() { return MousePct < 0 ? "--" : MousePct + "%" + (MouseCharging == 1 || MouseCharging == 2 ? " charging" : ""); }
 
@@ -10731,7 +10972,7 @@ static class Batt
         return new HsInfo
         {
             Now = t, Dx = Orbit[k, 0], Dy = Orbit[k, 1], Cpu = Cpu, Gpu = Gpu,
-            Head = P(HeadLevel), HeadOff = HeadPower == 1, HeadCharging = HeadPower == 2,
+            Head = HeadPct, HeadOff = HeadPower == 1, HeadCharging = HeadPower == 2 || HeadPower == 4,
             Spare = P(SpareLevel), SpareOut = SpareOut, SpareCharging = SpareCharging,
             Mouse = MousePct, MouseCharging = MouseCharging == 1 || MouseCharging == 2, MouseAsleep = MouseAsleep,
             Volume = volume
@@ -10778,7 +11019,7 @@ static class Batt
             if (!knob && knobClicks == 0 && !basePressed && now - ggLook >= 10000) { ggLook = now; bool g = gg; try { g = GgRuns(); } catch { } if (g != gg) { gg = g; lastSec = -1; } }   // (not on a click: it can take a while)
             if (ending && unchecked(Environment.TickCount - endingAt) > 60000) ending = false;   // (the shutdown was cancelled: carry on)
             int sec = DateTime.Now.Second;
-            if (sec != lastSec || knob || (now < fastUntil && now - drawnAt >= 250) || (held && wheelOwed && (now - wheelAt >= QuietMs || ProgressDue(now))))   // (the wheel has rested: its number now, not at the next second)
+            if (sec != lastSec || knob || (repairAt >= 0 && now >= repairAt) || (now < fastUntil && now - drawnAt >= 250) || (held && wheelOwed && (now - wheelAt >= QuietMs || ProgressDue(now))))   // (the wheel has rested: its number now, not at the next second)
             {
                 lastSec = sec;
                 lock (hl)
@@ -10793,6 +11034,7 @@ static class Batt
                 lock (hl) { if (!stop) try { PlayPreview(pv); } catch (Exception ex) { LostHead(Ms(), ex.Message); } }
             }
             lock (hl) { if (!stop && HoldDue(Ms())) try { Hold(); } catch (Exception ex) { LostHead(Ms(), ex.Message); } }   // (the quiet wheel: right after a picture, or once the base knob has rested)
+            if (dumpAt >= 0 && Ms() >= dumpAt) { dumpAt = -1; lock (hl) { if (!stop) DumpTrace(RepairMs + 6500, "after a base event"); } }
             WheelMode();   // (the Headset tab's switch: its values at once, no restart)
             if (refreshWant) { refreshWant = false; lock (hl) { if (!stop && head != null) try { DoRefresh(); } catch (Exception ex) { LostHead(Ms(), ex.Message); } } }   // (his Refresh button)
             // (wait for the base's next push, at most 30 ms. The push collection always has a read waiting after HeadStep;
@@ -10843,6 +11085,7 @@ static class Batt
             if (r.Length < 3 || r[0] != 0x07) continue;
             if (r[1] == 0x25)
             {
+                T("push 25 " + r[2].ToString("x2"));
                 if (held && r[2] <= 0x38 && 0x38 - r[2] == knobLevel) continue;   // (held: the same level = the echo of our own 06 25 or a late copy of a polled click, the review 11-14)
                 bool polled = held && Ms() - levelAskAt < 150;   // (the level is asked every 10 ms: the push, up to 100 ms late, would only put an older level back)
                 if (!polled) { volume = Vol(r[2]); if (r[2] <= 0x38) knobLevel = 0x38 - r[2]; }
@@ -10857,6 +11100,7 @@ static class Batt
             }
             if (r[1] == 0xB7 || r[1] == 0xB5) headAsk = Math.Min(headAsk, now + 300);   // (battery, the headset's link: ask now)
             Log("base pushed " + Hex(r, 2, 10));   // (rare: battery, link, its buttons)
+            T("push " + Hex(r, 1, 6)); BaseEvent(now);   // (a base event: its own picture anchored, the page again in a moment, then the trace of it all, 11-17)
         }
         head.Pushes.Clear();
         foreach (var r in head.Inbox)   // the key test mode's reports: 06 b1 81 01 <key> <state>
@@ -10904,10 +11148,16 @@ static class Batt
         string said = "b0 " + Hex(b0, 2, 20) + " | b7 " + Hex(b7, 2, 8) + " | 20 " + Hex(b20, 2, 8);
         if (said != lastSaid) { lastSaid = said; Log("base said " + said); }
         int l = b0[6], s = b0[7], p = b0[15];
+        if (l <= 8 && s <= 8)   // (its percent: the step's start counted down by the time the headset is on, see HeadEst; every reading, a minute apart)
+        {
+            int pc = HeadEst.Feed(l, s, p, now);
+            if (pc != HeadPct) { HeadPct = pc; SaveEst(now); if (l == HeadLevel && s == SpareLevel && p == HeadPower) { lastSec = -1; Changed(); } }   // (with a step, spare or power change: said once, below, with the new state)
+            else if (now - estSaved > 300000) SaveEst(now);
+        }
         if (l <= 8 && s <= 8 && (l != HeadLevel || s != SpareLevel || p != HeadPower))
         {
             HeadLevel = l; SpareLevel = s; HeadPower = p; Changed();
-            Log("headset battery " + HeadText() + ", " + SpareText());   // (a change only: a step is about an hour)
+            Log("headset battery " + HeadText() + (p == 1 ? "" : " (step " + l + ")") + ", " + SpareText());   // (a change of step, spare or power only; the base's own step beside the percent)
             lastSec = -1;
         }
         return knob;
@@ -11010,6 +11260,7 @@ static class Batt
     static void Screen(long now, bool click)
     {
         string m, why = "";
+        bool repair = repairAt >= 0 && now >= repairAt; if (repair) repairAt = -1;   // (a base event RepairMs ago, 11-17)
         if (basePressed) { basePressed = false; if (knobMode) Log("headset screen: a button on the base (key " + pressKey + "), ignored"); }   // (his 11-14 "BLOCK THESE COMMANDS FULLY": no more 20 s of its own menus)
         if (head == null) m = "none";
         else if (!ScreenOn) { if (headSeen && !gg && !ScreenBase) { m = "dark"; why = "dark, switched off"; } else if (headSeen && !gg && AllOffNow()) { m = "dark"; why = "dark, all off"; } else m = "off"; }   // (Original: the base's own screen and knob; dark for all off only)
@@ -11028,7 +11279,7 @@ static class Batt
             mode = m; darkWhy = why; Changed();
         }
         if (head == null) return;
-        if (firstHold) { if (knobAsked || now >= firstHoldUntil) firstHold = false; else { lastSec = -1; return; } }   // (the first questions clean up after a run that died: no picture into a panel that may still be locked)
+        if (firstHold) { if (knobAsked || now >= firstHoldUntil) firstHold = false; else { lastSec = -1; if (repair) repairAt = now + RepairMs; return; } }   // (the first questions clean up after a run that died: no picture into a panel that may still be locked)
         bool wantKnob = knobOk && (m == "page" || (m == "dark" && !ending && !asleep));   // (PC off or asleep: the knob is the base's own)
         if (wantKnob != knobMode) Knob(wantKnob);
         if (m == "off" || m == "gg" || m == "base") { if (drew) { if (m == "off" && paged) Play(HsPage.Anim(false), false, HsPage.Draw(Info(DateTime.Now))); head.ScreenBack(); drew = false; Bus(PassMs); sentLeft = sentRight = null; } paged = false; return; }   // (Power off: his shut down animation first)
@@ -11039,6 +11290,11 @@ static class Batt
             if (m == "dark") { Dark(); return; }
         }
         if (knobMode && knobClicks != 0 && (m == "dark" ? lastDark : paged) && KnobTurn(now, m == "dark")) return;   // (the knob, reported by the key test mode: the volume is ours to set; at the top or the bottom nothing was sent and the pass goes on)
+        if (repair)   // (whatever the panel shows, the page again: nothing counts as shown, and the next open moment sets the panel's window anew)
+        {
+            T("repair: the page again" + (held ? " (held)" : "") + (m == "dark" ? " (dark)" : ""));
+            heldL = heldR = null; sentLeft = sentRight = null; anchorAt = -100000; lastDark = false;
+        }
         bool owed = false;
         if (held)   // (the quiet wheel: nothing is drawn while it turns)
         {
@@ -11052,6 +11308,38 @@ static class Batt
         if (!paged && !click) Play(HsPage.Anim(true), true, px);   // (the page comes back: the dashboard started, unlocked, woke, he is back; his start up animation first)
         Send(px); lastDark = false; drawnAt = Ms(); paged = true;
         if (knobMode && knobClicks != 0) lastSec = -1;   // (clicks that came before the page was up: next look)
+    }
+
+    // ---- after a base event: the page again, and what was sent (11-17, hwdeck\local\hs-battery-1117\findings.md) ----
+    // His 11-17 22:3x, twice: "the ui glitched on the deck" = his page pushed about a quarter of the screen sideways,
+    // not evenly, from the picture sent right after the base's spare slot read empty until the next change of the
+    // page (22 s, then 6 s: his page has no clock, so between changes nothing is sent and a picture that comes out
+    // wrong stays). The app saw nothing: every report was taken. The cause is not proven (the base's firmware puts a
+    // picture together in one go; the panel's write position or window left wrong fits, as after a wheel hit). So:
+    // RepairMs after any push of the base that is not the wheel's, the page goes out again through the open moment
+    // with the panel's window set anew (the re-anchor), whatever it shows; and what was sent in the seconds around it
+    // is written to the log, there and on his Refresh button, so the next one is read, not guessed.
+    const int RepairMs = 1500;
+    static long repairAt = -1, repairFrom, dumpAt = -1, eventAt = -100000;   // (eventAt: the last push that was not the wheel's; repairFrom: the first push of the burst the repair waits out)
+    static readonly string[] trText = new string[256]; static readonly long[] trAt = new long[256]; static int trN;
+    static void T(string s) { int k = trN & 255; trText[k] = s; trAt[k] = Ms(); trN = (trN + 1) & int.MaxValue; }
+    // a push of the base that is not the wheel's: the page again RepairMs after the last one of a burst (pushes come in
+    // twos and threes), 4 s after the first at the latest (a contact that chatters must not hold it back for good)
+    static void BaseEvent(long now)
+    {
+        if (repairAt < 0) repairFrom = now;
+        eventAt = now; repairAt = Math.Min(now + RepairMs, repairFrom + 4000); dumpAt = repairAt + 2500;
+    }
+    static void DumpTrace(int lastMs, string why)
+    {
+        long now = Ms(); var t0 = DateTime.Now; int n = Math.Min(trN, trText.Length), shown = 0;
+        var sb = new System.Text.StringBuilder();
+        for (int i = trN - n; i < trN; i++)
+        {
+            int k = i & 255; if (now - trAt[k] > lastMs) continue;
+            sb.Append(shown++ == 0 ? "" : " | ").Append(t0.AddMilliseconds(trAt[k] - now).ToString("ss.fff", System.Globalization.CultureInfo.InvariantCulture)).Append(' ').Append(trText[k]);
+        }
+        Log("headset screen: sent in the last " + (lastMs / 1000) + " s (" + why + "): " + (shown == 0 ? "nothing" : sb.ToString()));
     }
 
     static void Dark() { Send(new bool[128, 64]); lastDark = true; darkAt = Ms(); paged = false; }
@@ -11204,6 +11492,7 @@ static class Batt
         bool rightFirst = sentRight == null;   // (the base's copy may still hold the gauge's columns, a knob step that left its right half to the next picture: the right half first, so no flush ever shows them, the review 11-14)
         for (int k = 0; k < 2; k++) { int i = rightFirst ? 1 - k : k; bool one = head.Feature(reps[i]); ok &= one; Bus(PassMs); if (i == 0) sentLeft = one ? reps[i] : null; else sentRight = one ? reps[i] : null; }
         drew = true;
+        T("send (not held): both halves" + (ok ? "" : ", one REFUSED"));
         if (ok) sendFails = 0;
         else if (++sendFails >= 3) throw new IOException("the screen refused 3 pictures in a row");
     }
@@ -11233,6 +11522,7 @@ static class Batt
     static void DoRefresh()
     {
         Log("headset screen: refresh (his button)");
+        DumpTrace(60000, "his Refresh button");
         handUntil = 0; basePressed = false; knobClicks = 0; wheelHit = wheelOwed = false;
         if (knobMode || held || panelLocked) Knob(false);
         else if (knobFw) { Unlock(); head.KeyTest(false); }   // (the connect's own clean up: a panel left locked by a dropped unlock is free again, the review 11-14)
@@ -11310,6 +11600,7 @@ static class Batt
     {
         NapUntil(busFree);
         if (mayStop) tryAt = Ms();
+        long tOpen = Ms();
         bool okL = head.Feature(reps[0]);
         // RE-ANCHOR (11-14, board wheel-1114 065038 / 065700): the 06 25 gauge right behind the left half (a partial window,
         // to the locked panel: the base's window cache becomes partial), so the right half below, on the UNLOCKED panel, makes
@@ -11318,7 +11609,7 @@ static class Batt
         // window command: the 06:04 break) is undone by the next picture. The level asked right before (a click in between
         // would be undone); never at 0 or 56 (the headset beeps at its limit)
         bool anchored = false, early = false;
-        if (okL && mayStop && knobLevel > 0 && knobLevel < 0x38 && (Ms() - wheelAt < 30000 || Ms() - anchorAt >= 60000))   // (up to 30 s after the wheel's last use, else every 60 s: each 06 25 also goes to the headset and re-applies the volume)
+        if (okL && mayStop && knobLevel > 0 && knobLevel < 0x38 && (Ms() - wheelAt < 30000 || Ms() - eventAt < 5000 || Ms() - anchorAt >= 60000))   // (up to 30 s after the wheel's last use, 5 s after a base event (11-17), else every 60 s: each 06 25 also goes to the headset and re-applies the volume)
         {
             var v0 = head.Ask(0x20, 40);
             if (v0 != null && v0[3] <= 0x38)
@@ -11339,13 +11630,15 @@ static class Batt
         }
         if (!okL || click)
         {
+            T("open: " + (!okL ? "left half REFUSED" : "a wheel click before the panel opened") + ", stopped");
             if (click) { wheelAt = Ms(); wheelOwed = true; NapUntil(Ms() + HomeMs); }   // (it may have taken the screen back behind the lock: its draw is over first)
             head.ScreenBack(); busFree = Ms() + HomeMs; sentLeft = sentRight = null;   // (a refused half still made the screen the host's: the base's again)
             if (!okL && ++sendFails >= 3) throw new IOException("the screen refused 3 pictures in a row");
             return false;
         }
-        head.PanelLock(false); panelLocked = held = wheelHit = false;
-        bool okR = head.Feature(reps[1]); Bus(HeldPassMs);   // (the open moment: locked again once this pass is surely over)
+        long tUn = Ms(); bool unl = head.PanelLock(false); panelLocked = held = wheelHit = false;
+        bool okR = head.Feature(reps[1]); Bus(HeldPassMs);
+        T("open: left" + (anchored ? ", anchor" : "") + ", unlock " + (unl ? "" : "REFUSED ") + "at +" + (tUn - tOpen) + " ms, right " + (okR ? "" : "REFUSED ") + "done +" + (Ms() - tOpen) + " ms");   // (the open moment: locked again once this pass is surely over)
         sentLeft = reps[0]; sentRight = okR ? reps[1] : null; drew = true; heldAt = Ms();
         if (okR) sendFails = 0; else if (++sendFails >= 3) throw new IOException("the screen refused 3 pictures in a row");
         return true;
@@ -11383,6 +11676,7 @@ static class Batt
         holdFails = 0; panelLocked = held = true; heldL = click ? null : sentLeft; heldR = click ? null : sentRight;
         lockedAt = Ms(); hitCheck = true;
         head.ScreenBack();
+        T("hold: locked" + (click ? " after a wheel click" : "") + ", screen handed back");
         openTo = Ms() + 110;   // (a click in the open moment is pushed up to 100 ms later)
         busFree = Ms() + HomeMs; sentLeft = sentRight = null;
         if (click) HealPanel("a wheel click met a picture");
@@ -11397,6 +11691,7 @@ static class Batt
         for (int i = 0; i < 2; i++) { if (i > 0) NapUntil(Ms() + 24); head.PanelLock(true); }   // (two pairs 24 ms apart: fewer pairs near a pass edge, 11-14)
         head.ScreenBack(); busFree = Ms() + HomeMs; sentLeft = sentRight = null; heldL = heldR = null; panelLocked = held = true;
         Log("headset screen: a wheel click may have met a picture: locked again, drawn again once it rests");
+        T("clean up after a hit");
         HealPanel("after a hit");
     }
 

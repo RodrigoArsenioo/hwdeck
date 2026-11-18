@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.6.3 (2026-11-18)
+
+- Upload now is the Internet tile's twin: it reads Upload, has the same icon and one decimal, shows the download speed under its number (the speed test's seconds while one runs) and opens the same popup, with Test now.
+- Customize > Headset: a reading with states (Empty, Off, Charging, Low, No data) has a State row. Each state has its own look, set and previewed on its own, without changing the normal one.
+- The headset's battery reads between the few steps the base station reports, instead of jumping from step to step, and counts as low only in the last step, when the headset itself starts to beep.
+- After the spare battery goes in or out of the base station, the headset page is drawn again, so it is never left out of place.
+- Accented letters show on the headset's screen; they were drawn as spaces.
+- A number caught part way through a roll stays inside its line; the digit going out showed above the others.
+- Renaming a category in its header gives a roomier box inside the category's frame, and the side panel's name follows as you type (and the header follows the panel).
+- A change made just before closing the app, or just before Windows shuts down, is saved.
+- If the settings or the headset page can't be saved (a full or failing disk), it tries again and says so. A data file that can't be read is kept aside next to it instead of being replaced.
+- Customize > Headset: switching a piece to Clock keeps its rows in view in small windows. Customize > Look: with Spectrum on, picking a tone no longer makes the Palette row taller and push the rows under it down.
+- The speed test's Test now keeps its word while a test runs (its tip says Testing), and a greyed-out button has a faint hover of its own instead of none.
+- The update notes for 2.6.0, 2.6.1 and 2.6.2 now show after updating; they were missing.
+- Every release is now installed, started and uninstalled on a clean Windows machine before it is published.
+
 ## 2.6.2 (2026-11-17)
 
 - Look > Animation speed sets how fast everything moves: Slow, Normal (the default), Fast or Super fast. Popups, folds, glides, number changes and graphs all follow it; spinning fans and live counts keep their pace. It is dimmed while Animations is Off.

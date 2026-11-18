@@ -198,11 +198,11 @@ EXT.kinds.net = {
       NT.was = undefined;
     }
     const m = /(\d+(?:\.\d+)?) (G|M)bit\/s/.exec(N.link || ''); NT.top = m ? +m[1] * (m[2] === 'G' ? 1000 : 1) : 1000;
-    // Test now: "Testing" and the boxes cleared at the click, not at the next second (NT.pend, 4 s at most)
+    // Test now: its tip "Testing" and the boxes cleared at the click, not at the next second (NT.pend, 4 s at most)
     const pend = !R && NT.pend && performance.now() - NT.pend < 4000; if (R) NT.pend = 0;
     const live = R || (pend ? { p: 'ping' } : null), first = NT.was === undefined, started = !!live && !NT.was && !first, ended = !live && !!NT.was;
     NT.was = live ? Object.assign({}, live) : null;
-    const btn = box.querySelector('[data-net="test"]'); btn.disabled = !!live; setText(box.querySelector('.xn-bt'), live ? 'Testing' : 'Test now');
+    const btn = box.querySelector('[data-net="test"]'); btn.disabled = !!live; const btt = live ? 'Testing' : ''; if (btn.title !== btt) btn.title = btt;   // (its word stays "Test now" while one runs, the reason is its tip: his 11-18 "title changes when it shouldn't")
     const seg = box.querySelector('.xn-seg'), sh = netSeg(N.every, 'data-net-every'); if (seg._h !== sh) { seg.innerHTML = sh; seg._h = sh; }
     // the boxes: ping shows once known; download and upload count to each reading while their step runs, and ease into
     // their end when it is over
@@ -254,6 +254,20 @@ EXT.kinds.net = {
     const keys = new Set(rows.map(keyOf)); for (const f of [...list.children]) if (!keys.has(f.dataset.at)) f.remove();
   }
 };
+// Upload now (his pick A 11-18, "if there is an upload it needs to be a COMPLETE MIRROR (same style, subtitle, icon)"):
+// the Internet cell's twin. Its arrows, its value with one decimal under 100, download now under it (the speed test's
+// seconds while one runs), no lines, the same popup (the adapter, the speed test)
+EXT.kinds.netup = Object.assign({}, EXT.kinds.net, {
+  eval(out, r) {
+    const R = feed.net && feed.net.run, u = r.v, dr = BYKEY.get(NETD), d = dr ? dr.v : null;
+    out.v = u; out.col = 'white';
+    if (u == null || !isFinite(u)) return false;
+    out.txt = nf1(u); out.utxt = 'Mbit/s';
+    const sub = R ? 'speed test, ' + R.left + ' s left' : 'download ' + nf1(d) + ' Mbit/s', short = R ? sub : 'download ' + nf1(d);
+    out.sub = sub; out.tsub = sub; out.tsubS = short; out.subS = { of: sub, s: short };
+    return true;
+  }
+});
 // ---- the headset (11-13, from HW Dashboard: a SteelSeries Arctis Nova Pro Wireless base station): HW Deck's own
 // readings for its batteries, in the list only once it was found (as the 12V-2x6 connector's only for a card that reports
 // its pins); the Headset cell; in its popup the base station's screen: HW Deck's page on it (off until switched on),
@@ -293,7 +307,7 @@ const HSX = (() => {
     // (11-14, his "logo editor") the icons a theme can have of its own: the built-in ones, then any reading's
     const HS_ICONS = () => [['head', 'Headset'], ['spare', 'Spare battery'], ['vol', 'Speaker'], ['mute', 'Mute']].concat(feed.hs && feed.hs.mouse ? [['mouse', 'Mouse']] : [], [['bolt', 'Charging']]);
     const HS_ICOK = { head: 1, spare: 1, vol: 1, mute: 1, mouse: 1, bolt: 1, clock: 1 };
-    const hsIcoName = k => { const b = HS_ICONS().find(x => x[0] === k); if (b) return b[1]; const own = HS_OWN().flatMap(g => g[1]).find(x => x[0] === k); return own ? own[1] : (BYKEY.get(k) || {}).label || k; };
+    const hsIcoName = k => { if (k && k.includes('.')) { const [a, b] = k.split('.'); return hsIcoName(a) + ', ' + (HS_STNM[b] || b).toLowerCase(); } const b = HS_ICONS().find(x => x[0] === k); if (b) return b[1]; const own = HS_OWN().flatMap(g => g[1]).find(x => x[0] === k); return own ? own[1] : (BYKEY.get(k) || {}).label || k; };
     const hsIcoRows = k => { const T = hsT(); return (T && T.icons && T.icons[k]) || (HS.icodef || {})[k] || null; };
     const hsHasIco = k => HS_ICO.includes(k) || !!hsIcoRows(k);
     // (11-14: an icon's canvas made at its size, not the browser's 300 x 150 until it is painted: its row stood 130 px
@@ -307,7 +321,25 @@ const HSX = (() => {
     }
     const hsT = () => HS.v && HS.v.setup.theme;
     const hsPg = () => { const T = hsT(); return T && (T.pages[HS.page] || T.pages[0]); };
-    const hsCur = () => { const Pg = hsPg(); return Pg && HS.sel != null && Pg.pieces[HS.sel] || null; };
+    // ======== 11-17 his "I cant customize the empty and empty icon without changing the main view ... this should be
+    // customizable properly": each state of a piece its own look ========
+    // the states a reading has (the clock and the PC's readings none), their names, the keys a state may set for itself
+    const HS_STS = { head: ['off', 'chg', 'low', 'none'], spare: ['empty', 'chg', 'low', 'none'], mouse: ['sleep', 'chg', 'low', 'none'], vol: ['mute'] };
+    const HS_STNM = { norm: 'Normal', empty: 'Empty', off: 'Off', chg: 'Charging', low: 'Low', sleep: 'Asleep', none: 'No data', mute: 'Muted' };
+    const HS_SK = new Set(['label', 'at', 'name', 'size', 'align', 'dec', 'unit', 'num', 'nsize', 'dig', 'inv', 'offas', 'offtxt', 'chgas', 'lowas', 'vh', 'vk', 'wk', 'bk', 'uk', 'ik', 'vx', 'vy', 'ux', 'uy', 'ix', 'iy', 'uat', 'ico', 'kat', 'kx', 'ky']);
+    const hsStsOf = q => q && q.src !== 'clock' ? HS_STS[q.src] || [] : [];
+    // the state being looked at (null: the normal look), for the picked piece only; another piece or page: back to normal
+    const hsPstOf = q => { const k = HS.page + ':' + HS.sel; if (HS.pstK !== k) { HS.pst = null; HS.pstK = k; } return q && HS.pst && hsStsOf(q).includes(HS.pst) ? HS.pst : null; };
+    // a piece as one state sees it: that state's own keys over the piece's; a change to one of those keys is that state's
+    // alone (cleared: the normal look's again), any other key the piece's
+    const hsStView = (q, st) => !q || !st ? q : new Proxy(q, {
+      get(t, k) { const o = t.st && t.st[st]; return o && HS_SK.has(k) && Object.prototype.hasOwnProperty.call(o, k) ? o[k] : t[k]; },
+      set(t, k, v) { if (!HS_SK.has(k)) { t[k] = v; return true; } const S = t.st = t.st || {}, o = S[st] = S[st] || {};
+        if (v == null) delete o[k]; else o[k] = v; if (!Object.keys(o).length) delete S[st]; if (!Object.keys(S).length) delete t.st; return true; } });
+    const hsBase = () => { const Pg = hsPg(); return Pg && HS.sel != null && Pg.pieces[HS.sel] || null; };
+    const hsCur = () => { const q = hsBase(); return hsStView(q, hsPstOf(q)); };
+    // (a piece's states compared by what they hold, not the order the file gave their keys)
+    const hsStNorm = s => s ? Object.keys(s).sort().map(k => [k, Object.keys(s[k] || {}).sort().map(j => [j, s[k][j]])]) : null;
     const hsNew = (x, y) => ({ x, y, w: 1, h: 1, src: 'cpu', style: 'number', label: 'name', at: 'beside', name: null, src2: null, graph: 'line', over: 120, seconds: false, date: true, size: 'auto', align: 'auto', dec: 0, unit: true, warn: null, crit: null, below: null, lo: null, hi: null, num: true, offas: 'word', offtxt: null, chgas: 'blink' });
     const clone = o => JSON.parse(JSON.stringify(o));
     const hsClip = () => { if (HS.clip === undefined) { try { HS.clip = JSON.parse(localStorage.getItem('hsClip') || 'null'); } catch (e) { HS.clip = null; } } return HS.clip; };   // (a copied page, kept while the window is shut)
@@ -402,8 +434,8 @@ const HSX = (() => {
     // ---- themes: his own ("t:<id>"), the ready-made ones ("r:<key>", for now one ready-made page each); a page's gallery ----
     const hsThemes = () => (HS.v && HS.v.setup.themes) || [], hsSavedL = () => (HS.v && HS.v.setup.saved) || [];
     const hsGroups = () => { const g = []; for (const x of HS.presets || []) if (!g.includes(x.group)) g.push(x.group); return g; };
-    const HS_PK = ['nsize', 'dig', 'inv', 'offas', 'offtxt', 'chgas', 'lowas', 'x', 'y', 'w', 'h', 'src', 'style', 'label', 'at', 'name', 'src2', 'graph', 'over', 'seconds', 'date', 'h12', 'dateat', 'datefmt', 'size', 'align', 'dec', 'unit', 'warn', 'crit', 'below', 'lo', 'hi', 'num', 'vk', 'uk', 'ik', 'vx', 'vy', 'ux', 'uy', 'ix', 'iy', 'uat', 'fx', 'fy', 'fw', 'fh', 'vh', 'wk', 'bk'];
-    const hsPageCore = pg => [pg.rows, pg.cols, pg.gap, pg.lines, pg.when || 'always', pg.pieces.map(q => HS_PK.map(k => q[k] == null ? null : q[k]))];
+    const HS_PK = ['nsize', 'dig', 'inv', 'offas', 'offtxt', 'chgas', 'lowas', 'x', 'y', 'w', 'h', 'src', 'style', 'label', 'at', 'name', 'src2', 'graph', 'over', 'seconds', 'date', 'h12', 'dateat', 'datefmt', 'size', 'align', 'dec', 'unit', 'warn', 'crit', 'below', 'lo', 'hi', 'num', 'vk', 'uk', 'ik', 'vx', 'vy', 'ux', 'uy', 'ix', 'iy', 'uat', 'fx', 'fy', 'fw', 'fh', 'vh', 'wk', 'bk', 'st', 'ico', 'kat', 'kx', 'ky'];
+    const hsPageCore = pg => [pg.rows, pg.cols, pg.gap, pg.lines, pg.when || 'always', pg.pieces.map(q => HS_PK.map(k => k === 'st' ? hsStNorm(q.st) : q[k] == null ? null : q[k]))];
     const hsCore = T => JSON.stringify([T.pages.map(hsPageCore), T.every || 0, T.start || '', T.stop || '', T.digits == null ? 1 : T.digits, T.bar || 'blocks', T.icons || null]);   // (what it is, not what it is called)
     function hsRtheme(key) {   // (a ready-made theme, the host's; his start up and shut down kept)
       const x = (HS.rthemes || []).find(x => x.key === key), T = hsT(); if (!x) return null;
@@ -414,7 +446,7 @@ const HSX = (() => {
       const t = clone(T); delete t.from; delete t.name;
       const mo = !!(feed.hs && feed.hs.mouse);   // (the app with the mouse keeps its pieces in the file: his 4 numbers came back 3, the tester's F44 11-16)
       t.pages.forEach(pg => { if (!mo) { pg.pieces = pg.pieces.filter(q => q.src !== 'mouse'); pg.pieces.forEach(q => { if (q.src2 === 'mouse') q.src2 = null; }); } delete pg.from; });
-      if (t.icons && !mo) { delete t.icons.mouse; if (!Object.keys(t.icons).length) delete t.icons; }
+      if (t.icons && !mo) { delete t.icons.mouse; for (const k of Object.keys(t.icons)) if (k.startsWith('mouse.')) delete t.icons[k]; if (!Object.keys(t.icons).length) delete t.icons; }
       return t;
     }
     // a theme from a file: put on the screen, named after the file's
@@ -434,7 +466,7 @@ const HSX = (() => {
     }
     const hsDirty = T => { const s = hsSrc(T); return !!s && hsCore(T) !== hsCore(s.theme); };   // (a ready-made one changed; his own setup: no ", changed", nothing to save it into, 11-15)
     // the open page's source (a gallery page, one of his saved pages) and whether it differs from it (its name and when aside)
-    const hsPgCore = pg => JSON.stringify([pg.rows, pg.cols, pg.gap, pg.lines, !!pg.free, pg.dig == null ? -1 : pg.dig, pg.bar || '', (pg.pieces || []).map(q => HS_PK.map(k => q[k] == null ? null : q[k]))]);
+    const hsPgCore = pg => JSON.stringify([pg.rows, pg.cols, pg.gap, pg.lines, !!pg.free, pg.dig == null ? -1 : pg.dig, pg.bar || '', (pg.pieces || []).map(q => HS_PK.map(k => k === 'st' ? hsStNorm(q.st) : q[k] == null ? null : q[k]))]);
     function hsPgSrc(pg) { const f = (pg && pg.from) || '', id = f.slice(2), x = f[0] === 'p' ? (HS.presets || []).find(x => x.key === id) : f[0] === 's' ? hsSavedL().find(x => x.id === id) : null; return x && (f[1] === ':') ? { kind: f[0], id, name: x.name, page: x.page } : null; }
     const hsPgDirty = pg => { const s = hsPgSrc(pg); return !s || hsPgCore(pg) !== hsPgCore(s.page); };
     const hsImgOf = k => !k ? null : k[0] === 't' ? HS.timg[k.slice(2)] : k[0] === 's' ? HS.simg[k.slice(2)] : k[0] === 'r' ? (HS.rimg || {})[k.slice(2)] : HS.pimg[k.slice(2)];
@@ -573,9 +605,51 @@ const HSX = (() => {
       }
       return h;
     }
+    // (11-17 his states) the picture's state for the host: the picked piece in the state looked at (Normal too: drawn as
+    // normal whatever it reads now)
+    const hsPstMsg = () => { const q = hsBase(); if (!q || !hsStsOf(q).length) return undefined; return { i: HS.sel, s: hsPstOf(q) || 'norm' }; };
+    const hsStSw = (sts, pst) => '<span class="seg pills hs-stsw" id="hsg-pst">' + ['norm'].concat(sts).map(s => '<button data-hsx="pst" data-hsv="' + s + '"' + ((pst || 'norm') === s ? ' class="on"' : '') + '>' + HS_STNM[s] + '</button>').join('') + '</span>';
+    const hsStReset = (q, st) => '<button class="btn" data-hsx="streset" data-hsv="' + st + '"' + (q && q.st && q.st[st] && Object.keys(q.st[st]).length ? '' : ' disabled') + '>Same as normal</button>';
+    // a state's own rows: what it shows instead of the number, its icon, then the number's own sections as the normal look
+    // has them (v: the piece as this state sees it, q: the piece)
+    function hsStRows(v, q, st) {
+      const word = st === 'empty' || st === 'off', oa = v.offas || 'word', W0 = st === 'empty' ? 'EMPTY' : 'OFF', icoK = q.src + '.' + st;
+      const dg = v.dig != null && v.dig >= 0 ? v.dig : -1, digSel = '<div class="hs-sel"><select data-hsk="dig">' + [[-1, "Page's"]].concat(HS_DIG).map(x => '<option value="' + x[0] + '"' + (x[0] === dg ? ' selected' : '') + '>' + x[1] + '</option>').join('') + '</select></div>';
+      let h = '';
+      if (word) { h += hsRow('Shows', hsSeg('offas', [['word', 'Word'], ['dash', 'Dash'], ['blank', 'Nothing']], oa)); if (oa === 'word') h += hsRow('Word', '<input class="setin hs-tx" data-hsk="offtxt" maxlength="6" spellcheck="false" autocomplete="off" placeholder="' + W0 + '" value="' + esc(v.offtxt || '') + '">'); }
+      if (st === 'chg') h += hsRow('Bolt', hsSeg('chgas', [['blink', 'Blinking'], ['steady', 'Steady'], ['none', 'None']], v.chgas || 'blink'));
+      if (st === 'low') { const al = q.src === 'mouse' ? 15 : q.src === 'head' ? 2 : 12; h += hsRow('Blinks', hsSeg('lowas', [['none', 'Nothing'], ['icon', 'Icon'], ['num', 'Number'], ['both', 'Both']], v.lowas || 'icon')) + hsRow('Low below', hsVal('crit', q.crit, String(al), '%', 'Auto')); }
+      h += hsRow('Inverted', hsTog('inv', !!v.inv));
+      const graph = v.style === 'graph', icoOk = v.label === 'icon' && !graph && hsHasIco(q.src);
+      h += hsRow('Label', graph ? hsSeg('label', HS_LB.filter(x => x[0] !== 'icon'), v.label === 'icon' ? 'name' : v.label) : hsSeg('label', HS_LB, v.label));
+      if (icoOk) {
+        const io = v.ico && v.ico !== 'auto' ? v.ico : st === 'empty' ? 'dim' : 'normal', edOn = !!(HS.icoOn && HS.ico === icoK);
+        h += hsRow('Icon', hsSeg('ico', [['normal', 'Normal'], ['dim', 'Dim'], ['own', 'Own']], io));
+        if (io === 'own') h += hsRow('Drawing', '<span class="hs-ic">' + (hsIcoRows(icoK) ? '<canvas data-hsi="' + esc(icoK) + '" data-k="2"' + hsIcoWH(icoK, 2) + '></canvas>' : '') + '<button class="btn' + (edOn ? ' on' : '') + '" data-hsx="icoedit" data-hsv="' + esc(icoK) + '"><span class="hs-two"><span' + (edOn ? ' class="off"' : '') + '>' + (hsIcoRows(icoK) ? 'Edit' : 'New') + '</span><span' + (edOn ? '' : ' class="off" aria-hidden="true"') + '>Editing</span></span></button></span>') + (edOn ? '<div class="hs-iedl hs-iin">' + hsIcoView(true) + '</div>' : '');
+      }
+      else if (v.label !== 'off') h += hsRow('Label text', '<input class="setin hs-tx" data-hsk="name" maxlength="16" spellcheck="false" autocomplete="off" placeholder="' + esc(hsDefName(q.src)) + '" value="' + esc(v.name || '') + '">');
+      if (graph) return h;
+      if (v.style !== 'number') { const sz = (v.size || 'auto') === 's' ? 's' : 'auto';
+        return h + hsRow('Number', hsSeg('num', HS_NUM, v.num === false ? 0 : 1)) + hsFold('text', 'Text', [sz === 'auto' ? 'size auto' : 'size S', (v.dec || 0) === 1 ? '1 decimal' : (v.dec || 0) + ' decimals', v.unit === false ? 'no unit' : 'unit'].join(', '),
+          hsRow('Text size', hsSeg('size', HS_SZ.slice(0, 2), sz)) + hsRow('Decimals', hsSeg('dec', HS_DEC, v.dec || 0)) + hsRow('Unit', hsTog('unit', v.unit !== false))); }
+      const ik = Math.max(1, v.ik || 1), nmOn = !icoOk, labF = v.label === 'off' ? '' : hsFold('lab', icoOk ? 'Icon' : 'Name', [hsName(HS_AT, v.at || 'beside').toLowerCase(), ik + 'x', hsMoved(v.ix, v.iy)].filter(Boolean).join(', '),
+        hsRow('Place', hsSeg('at', HS_AT, v.at || 'beside')) + hsRow('Size', hsSeg('ik', HS_IK, ik)) + (nmOn ? hsRow('Name size', hsSeg('nsize', [['auto', 'Auto'], ['small', 'Small'], ['tiny', 'Tiny']], v.nsize || 'auto')) : '') + hsRow('Move', hsXY([['ix', 'X', -40, 40], ['iy', 'Y', -40, 40]], v)));
+      if (word && oa === 'word') return h + hsFold('num', 'Word', [v.wk ? v.wk + 'x' : 'size auto', (v.align || 'auto') === 'auto' ? '' : 'align ' + hsName(HS_AL, v.align).toLowerCase(), hsMoved(v.vx, v.vy)].filter(Boolean).join(', '),
+        hsRow('Size', hsSeg('wk', [[0, 'Auto'], [1, '1x'], [2, '2x'], [3, '3x'], [4, '4x']], v.wk || 0, '', x => x > 0 && hsWordBig(v, W0, x))) + hsRow('Align', hsSeg('align', HS_AL, v.align || 'auto')) + hsRow('Move', hsXY([['vx', 'X', -40, 40], ['vy', 'Y', -40, 40]], v))) + labF;
+      if (word && oa === 'blank') return h + labF;
+      if (word) { const r = (HS.v.rects || [])[HS.sel], bh = r ? Math.round(r[3] * 64) : 62, vh = hsVhShown(v, HS.sel);
+        return h + hsFold('num', 'Dash', [vh ? vh + ' px' : 'size auto', (v.align || 'auto') === 'auto' ? '' : 'align ' + hsName(HS_AL, v.align).toLowerCase(), hsMoved(v.vx, v.vy)].filter(Boolean).join(', '),
+          hsRow('Size', hsVhRow(v, bh, dg >= 0 ? dg : hsDigOf(hsPg(), hsT()))) + hsRow('Align', hsSeg('align', HS_AL, v.align || 'auto')) + hsRow('Move', hsXY([['vx', 'X', -40, 40], ['vy', 'Y', -40, 40]], v)) + hsRow('Digits', digSel)) + labF; }
+      h += hsNumFolds(v, digSel, nmOn && v.label !== 'off');
+      if (st === 'chg' || st === 'sleep') { const chg = st === 'chg', besideOk = chg && v.label !== 'off';
+        h += hsFold('mark', chg ? 'Bolt' : 'zZ', [besideOk ? (v.kat === 'beside' ? 'beside the number' : 'in the icon\'s place') : '', v.bk ? v.bk + 'x' : 'size auto', hsMoved(v.kx, v.ky)].filter(Boolean).join(', '),
+          (besideOk ? hsRow('Place', hsSeg('kat', [['auto', 'Icon\'s place'], ['beside', 'Beside']], v.kat || 'auto')) : '') +
+          hsRow('Size', hsSeg('bk', [[0, 'Auto'], [1, '1x'], [2, '2x'], [3, '3x']], v.bk || 0, '', x => { const bm = (HS.v.bkmax || [])[HS.sel]; return x > 0 && bm != null && x > bm; })) + hsRow('Move', hsXY([['kx', 'X', -40, 40], ['ky', 'Y', -40, 40]], v))); }
+      return h;
+    }
     // an opened piece (a double click on a number on the picture): the picture zooms into it, its parts get boxes
-    const hsOpenP = () => { const Pg = hsPg(); const q = HS.open != null && HS.sel === HS.open && Pg && Pg.pieces[HS.open]; return q && q.style === 'number' && q.src !== 'clock' ? q : null; };
-    const HS_PARTF = { value: 'num', unit: 'unit', icon: 'lab' }, HS_PARTK = { value: ['vx', 'vy'], unit: ['ux', 'uy'], icon: ['ix', 'iy'] };
+    const hsOpenP = () => { const Pg = hsPg(); const q = HS.open != null && HS.sel === HS.open && Pg && Pg.pieces[HS.open]; return q && q.style === 'number' && q.src !== 'clock' ? hsStView(q, hsPstOf(q)) : null; };   // (11-17 in the state looked at)
+    const HS_PARTF = { value: 'num', unit: 'unit', icon: 'lab', mark: 'mark' }, HS_PARTK = { value: ['vx', 'vy'], unit: ['ux', 'uy'], icon: ['ix', 'iy'], mark: ['kx', 'ky'] };
     function hsCrumb(Pg, p) {
       const own = HS_OWN().flatMap(g => g[1]).find(x => x[0] === p.src), nm = own ? own[1] : (BYKEY.get(p.src) || {}).label || p.src;
       return '<span class="hs-crumb"><button class="hs-cb" data-hsx="pdone">' + esc(Pg.name || 'Page') + '</button><svg viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg><span>' + esc(nm) + '</span></span><button class="btn hs-done" data-hsx="pdone">Done</button>';
@@ -583,7 +657,7 @@ const HSX = (() => {
     function hsPartsHtml(v) {
       const p = hsOpenP(), ps = p && (v.parts || [])[HS.open]; if (!ps) return '';
       const fresh = HS.ptIn ? ' hs-ptin' : ''; HS.ptIn = false;   // (once, as it opens)
-      return ['icon', 'value', 'unit'].filter(k => ps[k]).map(k => { const r = ps[k];
+      return ['icon', 'value', 'unit', 'mark'].filter(k => ps[k]).map(k => { const r = ps[k];
         return '<i class="hs-pt' + (HS.part === k ? ' on' : '') + fresh + '" data-hsx="part" data-hsv="' + k + '" style="left:' + ((r[0] - 1 / 128) * 100).toFixed(3) + '%;top:' + ((r[1] - 1 / 64) * 100).toFixed(3) + '%;width:' + ((r[2] + 2 / 128) * 100).toFixed(3) + '%;height:' + ((r[3] + 2 / 64) * 100).toFixed(3) + '%"></i>'; }).join('');
     }
     // (the zoom: the piece's box fills the picture, a pixel or two of air round it; its own glide when it changes, none when
@@ -721,6 +795,10 @@ const HSX = (() => {
         if (p) {   // the picked piece
           const own = HS_OWN().flatMap(g => g[1]).find(x => x[0] === p.src), srcName = own ? own[1] : (BYKEY.get(p.src) || {}).label || p.src;
           const pcAt = h.length;   // (11-14 the picked piece is one section: its rows and its own sections inside, folding as a whole as in the PC screen tab)
+          const stB = Pg.pieces[HS.sel], sts = hsStsOf(stB), pst = hsPstOf(stB);   // (11-17 his states, his pick A)
+          if (sts.length) h += hsRow('State', hsStSw(sts, pst));
+          if (pst) h += hsStRows(p, stB, pst);
+          else {
           h += hsRow('Shows', spWrap('<select data-hsk="src" data-sp="hs">' + hsOpts(p.src, false) + '</select>'));
           if (Pg.free) h += hsRow('Place', hsXY([['fx', 'X', 0, 125], ['fy', 'Y', 0, 61], ['fw', 'W', 4, 126], ['fh', 'H', 4, 62]], p));   // (11-16 Free layout: its pixels)
           // (11-15 the tester's F7-F10: each style shows only what changes it: a bar's and a graph's text is the 5 x 7 or the
@@ -765,18 +843,19 @@ const HSX = (() => {
             const down = p.below == null ? HS_BATT.includes(p.src) : p.below, batt = HS_BATT.includes(p.src);
             if (!batt) h += hsFold('levels', 'Warning levels', p.warn == null && p.crit == null ? 'none' : [p.warn != null ? 'yellow at ' + p.warn : '', p.crit != null ? 'red at ' + p.crit : ''].filter(Boolean).join(', ') + (down ? ', below' : ', above'),
               hsRow('Warn when', hsSeg('below', HS_DIR, down ? 1 : 0)) + hsRow('Yellow at', hsVal('warn', p.warn, batt ? '20' : '80', u, 'None')) + hsRow('Red at', hsVal('crit', p.crit, batt ? '10' : '90', u, 'None')));
-            else {   // (11-15 his pick: one Battery section for a battery, instead of Warning levels + States: off or empty, charging, low)
-              const offW = p.src === 'spare' ? 'EMPTY' : 'OFF', oa = p.offas || 'word', ca = p.chgas || 'blink', la = p.lowas || 'icon', autoLow = p.src === 'mouse' ? 15 : 12, low = p.crit == null ? autoLow : p.crit;
+            else if (!sts.length) {   // (11-15 his pick: one Battery section for a battery, instead of Warning levels + States: off or empty, charging, low; 11-17: in its states now)
+              const offW = p.src === 'spare' ? 'EMPTY' : 'OFF', oa = p.offas || 'word', ca = p.chgas || 'blink', la = p.lowas || 'icon', autoLow = p.src === 'mouse' ? 15 : p.src === 'head' ? 2 : 12, low = p.crit == null ? autoLow : p.crit;
               const OFFS = [['word', offW], ['dash', 'Dash'], ['blank', 'Blank']], CHGS = [['blink', 'Bolt blinking'], ['steady', 'Bolt'], ['none', 'No bolt']], LOWS = [['none', 'Nothing'], ['icon', 'Icon'], ['num', 'Number'], ['both', 'Both']];
               const offRows = p.src === 'mouse' ? '' : hsRow(p.src === 'spare' ? 'Spare empty' : 'Headset Off', hsSeg('offas', OFFS, oa)) + (oa === 'word' ? hsRow(p.src === 'spare' ? 'Empty word' : 'Off word', '<input class="setin hs-tx" data-hsk="offtxt" maxlength="6" spellcheck="false" autocomplete="off" placeholder="' + offW + '" value="' + esc(p.offtxt || '') + '">') : '');
               const lowT = { none: 'nothing blinks', icon: 'icon blinks', num: 'number blinks', both: 'icon and number blink' }[la] || 'icon blinks';
               h += hsFold('batt', 'Battery', [p.src === 'mouse' ? '' : (p.src === 'spare' ? 'empty: ' : 'Off: ') + (oa === 'word' ? (p.offtxt || offW) : hsName(OFFS, oa).toLowerCase()), 'charging: ' + hsName(CHGS, ca).toLowerCase(), 'below ' + low + '%: ' + lowT].filter(Boolean).join(', '),
                 offRows + (p.src !== 'mouse' && oa === 'word' && p.style === 'number' ? hsRow(p.src === 'spare' ? 'Empty word size' : 'Off word size', hsSeg('wk', [[0, 'Auto'], [1, '1x'], [2, '2x'], [3, '3x'], [4, '4x']], p.wk || 0, '', x => x > 0 && hsWordBig(p, offW, x))) : '') +
                 hsRow('Charging', hsSeg('chgas', CHGS, ca)) + (p.style === 'number' && (ca !== 'none' || p.src === 'mouse') ? hsRow(p.src === 'mouse' ? 'Bolt and zZ size' : 'Bolt size', hsSeg('bk', [[0, 'Auto'], [1, '1x'], [2, '2x'], [3, '3x']], p.bk || 0, '', x => { const bm = (HS.v.bkmax || [])[HS.sel]; return x > 0 && bm != null && x > bm; })) : '') + hsRow('Blinks when low', hsSeg('lowas', LOWS, la)) +
-                hsRow('Low below', hsVal('crit', p.crit, String(autoLow), '%', 'Auto')));   // (his 11-15: as Settings' Keep sessions, a number or Auto; Auto = 12, the mouse 15)
+                hsRow('Low below', hsVal('crit', p.crit, String(autoLow), '%', 'Auto')));   // (his 11-15: as Settings' Keep sessions, a number or Auto; Auto = the headset 2, where its own beeps start (11-17), the spare 12, the mouse 15)
             }
           }
-          h = h.slice(0, pcAt) + '<div class="cz-pc">' + hsFold('piece', srcName, (p.src === 'clock' ? 'clock' : hsName(HS_ST, p.style).toLowerCase() + (p.num === false && p.style !== 'number' ? ', number hidden' : '')), h.slice(pcAt), '<button class="btn" data-hsx="rm">' + HS_X + 'Remove</button>') + '</div>';   // (his "cant even tell which category is which")
+          }
+          h = h.slice(0, pcAt) + '<div class="cz-pc">' + hsFold('piece', srcName, (p.src === 'clock' ? 'clock' : hsName(HS_ST, p.style).toLowerCase() + (p.num === false && p.style !== 'number' ? ', number hidden' : '')) + (pst ? ', ' + HS_STNM[pst].toLowerCase() : ''), h.slice(pcAt), pst ? hsStReset(stB, pst) : '<button class="btn" data-hsx="rm">' + HS_X + 'Remove</button>') + '</div>';   // (his "cant even tell which category is which")
         }
         // the theme's own parts: its look, its behaviour
         if (0) h += hsFold('look', 'Look', [hsName(HS_DIG, dg).toLowerCase() + ' digits', 'bars in ' + (bl === 'solid' ? 'one piece' : 'blocks')].join(', '),
@@ -816,7 +895,7 @@ const HSX = (() => {
         const czCk = HS.sel != null && ((hsPg() || { pieces: [] }).pieces[HS.sel] || {}).src === 'clock' ? ':clock' : '';   // (11-16 the tester's F54: a clock and a reading share almost no rows: the panel moves as for another piece)
         const czK = HS.page + ':' + (HS.sel == null ? '' : HS.sel) + czCk, czK0 = m.dataset.czSel || '';
         try { czGlide(m, mo, czK); } catch (e) { }
-        if (HS.sel != null && czK0 !== czK && czK0.replace(/:clock$/, '') === czK.replace(/:clock$/, '') && typeof czTrig !== 'undefined' && czTrig && performance.now() - czTrig.t < 5000 && typeof czToPiece === 'function') czToPiece();   // (Shows Clock <-> a reading, the same piece: its panel in sight as a pick is, the tester's R1 11-17)
+        if (HS.sel != null && czK0 !== czK && czK0.replace(/:clock$/, '') === czK.replace(/:clock$/, '') && typeof czTrig !== 'undefined' && czTrig && performance.now() - czTrig.t < 5000 && typeof czToPiece === 'function') czToPiece(czK.endsWith(':clock') ? '[data-hsk="h12"]' : null);   // (Shows Clock <-> a reading, the same piece: its panel in sight as a pick is, the tester's R1 11-17)
         { let dh = 0; const opened = [], shut = []; for (const s of m.querySelectorAll('.cz-l .hs-sub[data-sub]')) { const want = s.dataset.want === '1'; s.inert = !want; if (s.classList.contains('open') !== want) { const h0 = s.getBoundingClientRect().height; void s.offsetHeight; s.classList.toggle('open', want); dh += (want ? s.firstElementChild.scrollHeight : 0) - h0; (want ? opened : shut).push([s, h0]); } HS.subWas[s.dataset.sub] = want; }   // (11-16: Grid | Free folds one group as the other opens; a shut one out of the keys' way)
           HS.subSig = hsSubSig(); const l = m.querySelector('.cz-l'); if (l && dh < -1 && !l._czs) { const mx = Math.max(0, Math.round(l.scrollHeight + dh - l.clientHeight)); if (l.scrollTop > mx + 1) czScrollTo(l, mx); }
           // (11-17 rvck R2 / R3: a group opened by his click or key (Layout Grid | Free) out of sight: into sight as rows grown in are, czRowsReveal's rules)
@@ -857,10 +936,10 @@ const HSX = (() => {
       if (!ed) return h + '</section>';
       const k = HS.ico, rows = hsIcoRows(k);
       if (!rows) return h;
-      const w = rows.reduce((a, r) => Math.max(a, r.length), 0), hh = rows.length, mine = !!(T.icons || {})[k], spare = k === 'spare';
+      const w = rows.reduce((a, r) => Math.max(a, r.length), 0), hh = rows.length, mine = !!(T.icons || {})[k], spare = k === 'spare' || k.startsWith('spare.');
       const ib = (t, title, svg) => '<button class="ib" data-hsx="icot" data-hsw="' + t + '" title="' + title + '" aria-label="' + title + '"><svg viewBox="0 0 24 24">' + svg + '</svg></button>';
       let g = '<div class="hs-igrid" style="grid-template-columns: repeat(' + w + ', var(--icw, 22px))">';
-      for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) { const on = rows[y][x] === 'X', fa = spare && x >= 2 && x <= w - 4 && y >= 2 && y <= hh - 3; g += '<i data-ix="' + x + '" data-iy="' + y + '"' + (on || fa ? ' class="' + (on ? 'on' : 'fa') + '"' : '') + '></i>'; }
+      for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) { const on = rows[y][x] === 'X', fa = spare && k !== 'spare.empty' && x >= 2 && x <= w - 4 && y >= 2 && y <= hh - 3; g += '<i data-ix="' + x + '" data-iy="' + y + '"' + (on || fa ? ' class="' + (on ? 'on' : 'fa') + '"' : '') + '></i>'; }
       g += '</div>';
       const step = (t, n, lo, hi, title) => '<span class="hs-ist"><button class="ib" data-hsx="icot" data-hsw="' + t + '-"' + (n <= lo ? ' disabled' : '') + ' title="' + title + ' smaller" aria-label="' + title + ' smaller"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button><span>' + n + '</span><button class="ib" data-hsx="icot" data-hsw="' + t + '+"' + (n >= hi ? ' disabled' : '') + ' title="' + title + ' bigger" aria-label="' + title + ' bigger"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></button></span>';
       h += '<section class="hs-ied"><div class="lk-fh">' + esc(hsIcoName(k)) + '</div>' + g +
@@ -868,7 +947,7 @@ const HSX = (() => {
         '<div class="hs-itools">' + ib('mirror', 'Mirror', '<path d="M12 3v18"/><path d="M8 7L4 12l4 5V7z"/><path d="M16 7l4 5-4 5V7z"/>') + ib('flip', 'Flip', '<path d="M3 12h18"/><path d="M7 8l5-4 5 4H7z"/><path d="M7 16l5 4 5-4H7z"/>') +
         ib('left', 'Nudge left', '<path d="M15 6l-6 6 6 6"/>') + ib('right', 'Nudge right', '<path d="M9 6l6 6-6 6"/>') + ib('up', 'Nudge up', '<path d="M6 15l6-6 6 6"/>') + ib('down', 'Nudge down', '<path d="M6 9l6 6 6-6"/>') +
         ib('invert', 'Invert', '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 20L20 4v16H4z" fill="currentColor"/>') + ib('clear', 'Clear', '<path d="M6 6l12 12M18 6L6 18"/>') + '</div>' +
-        (spare ? '' : '<div class="hs-itools">' + step('w', w, 1, 13, 'Width') + step('h', hh, 1, 13, 'Height') + '</div>') +
+        (spare && k !== 'spare.empty' ? '' : '<div class="hs-itools">' + step('w', w, 1, 13, 'Width') + step('h', hh, 1, 13, 'Height') + '</div>') +
         '<div class="hs-itools">' + (HS_ICOK[k] ? '<button class="btn" data-hsx="icot" data-hsw="reset"' + (mine ? '' : ' disabled') + '>Reset to default</button>' : '<button class="btn" data-hsx="icot" data-hsw="remove">' + HS_X + 'Remove</button>') + '<button class="btn" data-hsx="icodone">Done</button></div></section>';
       return h;
     }
@@ -886,7 +965,7 @@ const HSX = (() => {
     function hsIcoNew(k) {
       const T = hsT(); if (!T || !k || HS_ICOK[k]) return false;
       T.icons = T.icons || {};
-      if (!T.icons[k]) { if (Object.keys(T.icons).length >= 32) return false; T.icons[k] = Array.from({ length: 7 }, () => '........'); }
+      if (!T.icons[k]) { if (Object.keys(T.icons).length >= 32) return false; const b0 = k.includes('.') ? hsIcoRows(k === 'vol.mute' ? 'mute' : k.split('.')[0]) : null; T.icons[k] = b0 ? b0.slice() : Array.from({ length: 7 }, () => '........'); }   // (a state's own: starts as the normal one, 11-17)
       HS.icoOn = true; HS.full = true; hsSet(); return true;   // (its editor in the left column, 11-15)
     }
     function hsIcoPut(rows) {
@@ -964,7 +1043,7 @@ const HSX = (() => {
         const F = HS.digFit; HS.digFit = null;
         const Pg = F.page === m.page ? m.setup.theme.pages[m.page] : null; let moved = false;
         const same = (q, w) => !!q && q.src === w.src && q.x === w.x && q.y === w.y && q.fx === w.fx && q.fy === w.fy;
-        if (Pg) for (const w of F.list) { const i = Pg.pieces.findIndex(q => same(q, w)), p = Pg.pieces[i], vm = i < 0 ? null : m.vhmax[i]; if (p && vm != null && vm >= 0 && hsVhOf(p) > vm) { p.vh = vm; if (!vm) p.vk = 0; moved = true; } }
+        if (Pg) for (const w of F.list) { const i = Pg.pieces.findIndex(q => same(q, w)), ps = m.pst && m.pst.i === i && m.pst.s !== 'norm' ? m.pst.s : null, p = ps ? hsStView(Pg.pieces[i], ps) : Pg.pieces[i], vm = i < 0 ? null : m.vhmax[i]; if (p && vm != null && vm >= 0 && hsVhOf(p) > vm) { p.vh = vm; if (!vm) p.vk = 0; moved = true; } }
         if (moved) {
           // (the switch's own undo step: its redo is the fitted setup, so a redo never brings the size back that the
           // design can't draw; and what the next step starts from)
@@ -1008,7 +1087,7 @@ const HSX = (() => {
       };
       step();
     }
-    const hsAsk = cards => send({ t: 'hs.get', page: HS.page, cards: !!cards });
+    const hsAsk = cards => send({ t: 'hs.get', page: HS.page, cards: !!cards, pst: hsPstMsg() });
     // (an answer held through a press is asked for again; with a digits fit waiting, the setup is sent again instead (no
     // step): a get's answer has no sizes, and the fit landed on a later edit's, the review 11-16)
     const hsReask = () => { if (HS.digFit) { HS.noStep = true; try { hsSet(); } finally { HS.noStep = false; } } else hsAsk(false); };
@@ -1025,7 +1104,7 @@ const HSX = (() => {
       const now = JSON.stringify(HS.v.setup);
       if (!HS.noStep && HS.last && HS.last !== now && czOn && document.getElementById('setmodal').classList.contains('open')) { const was = JSON.parse(HS.last); czStep('hs', { t: 'hs.set', setup: was, page: Math.max(0, Math.min(HS.lastPage == null ? HS.page : HS.lastPage, was.theme.pages.length - 1)) }, { t: 'hs.set', setup: JSON.parse(now), page: HS.page }); }
       if (!HS.noStep) { HS.last = now; HS.lastPage = HS.page; }
-      send({ t: 'hs.set', setup: HS.v.setup, page: HS.page }); } };
+      send({ t: 'hs.set', setup: HS.v.setup, page: HS.page, pst: hsPstMsg() }); } };
     // rows or columns fewer: never below what the pieces need (those buttons are off); more: the pieces stay where they are
     function hsClick(e) {
       if (HS.dragAt && performance.now() - HS.dragAt < 300) return;
@@ -1036,12 +1115,15 @@ const HSX = (() => {
       if (b.dataset.hsn) {
         const n = b.dataset.hsn, q = hsCur(); if (!q) return;
         if (b.dataset.hsv === 'none') { HS.pend[n] = false; if (q[n] == null) { hsDraw(true); return; } q[n] = null; HS.full = true; hsSet(); return; }
-        if (q[n] == null && !HS.pend[n] && n === 'crit' && HS_BATT.includes(q.src)) { q.crit = q.src === 'mouse' ? 15 : 12; HS.full = true; hsSet(); return; }   // (a battery's Low below: % starts at Auto's number)
+        if (q[n] == null && !HS.pend[n] && n === 'crit' && HS_BATT.includes(q.src)) { q.crit = q.src === 'mouse' ? 15 : q.src === 'head' ? 2 : 12; HS.full = true; hsSet(); return; }   // (a battery's Low below: % starts at Auto's number)
         if (q[n] == null && !HS.pend[n]) { HS.pend[n] = true; hsDraw(true); const i = hsEl() && hsEl().querySelector('input[data-hsk="' + n + '"]'); if (i) i.focus(); }
         return;
       }
       if (b.dataset.hss) { hsSetPick(b); return; }
       const S2 = HS.v.setup, T = hsT(), Pg = hsPg(), p = hsCur(), a = b.dataset.hsx, k = b.dataset.hsk, val = b.dataset.hsv;
+      if (a === 'pst') { const q = hsBase(); if (!q) return; hsPstOf(q); HS.pst = val === 'norm' ? null : val; HS.part = null; HS.icoOn = false; hsDraw(true); hsAsk(false); return; }   // (11-17 a state looked at: on the picture, its own rows)
+      if (a === 'streset') { const q = hsBase(); if (!q || !q.st || !q.st[val]) return; delete q.st[val]; if (!Object.keys(q.st).length) delete q.st; HS.full = true; hsSet(); return; }
+      if (k === 'ico' && p) { const st = hsPstOf(hsBase()); p.ico = val; if (val === 'own' && st && T) { const key = p.src + '.' + st; T.icons = T.icons || {}; if (!T.icons[key] && Object.keys(T.icons).length < 32) T.icons[key] = (hsIcoRows(st === 'mute' ? 'mute' : p.src) || Array.from({ length: 7 }, () => '........')).slice(); HS.ico = key; HS.icoOn = true; } else HS.icoOn = false; HS.full = true; hsSet(); return; }   // (his own drawing for this state: starts as the normal icon)
       if (k === 'screen') { const H = feed.hs; if (!H || hsScr(H) === val) return; const was = hsScr(H); send({ t: 'hs.screen', m: val }); if ((was === 'on') !== (val === 'on')) hsScrPlay(val === 'on' ? 'start' : 'stop'); H.on = val === 'on'; H.base = val === 'base'; hsDraw(true); return; }   // (the device's, not the setup's: not in undo)
       if (a === 'refresh') { send({ t: 'hs.refresh' }); b.classList.add('spin'); setTimeout(() => b.classList.remove('spin'), 1100); return; }   // (his 11-14 "add a refresh button to unbug in case it happens")
       if (a === 'wheelfast') { S2.wheelfast = !S2.wheelfast; HS.full = true; hsSet(); return; }   // (saved with the setup: undo takes it back too)
@@ -1112,7 +1194,7 @@ const HSX = (() => {
       else if (k === 'gap') { if (!Pg) return; Pg.gap = +s.value <= 0 ? -1 : Math.max(0, Math.min(6, +s.value - 1)); }   // (its first step Auto: once moved off it, only undo brought it back, the tester's 11-16)
       else if (!p) return;
       else if (k === 'src') {   // (11-14 a battery's low warning as a level he sees and can clear: red at 12 for the headset, 15 for the mouse; switched away, it goes)
-        const was = p.src, LOWB = { head: 12, mouse: 15 }; p.src = s.value;
+        const was = p.src, LOWB = { head: 2, mouse: 15 }; p.src = s.value;
         if (p.src === 'clock' && was !== 'clock') p.label = 'off'; else if (was === 'clock' && p.src !== 'clock' && p.label === 'off') p.label = 'icon';   // (11-17: a clock has a label now, none unless he picks one)
         if (LOWB[was] != null && p.warn == null && p.crit === LOWB[was]) p.crit = null;   // (the old battery's default goes first)
         if (HS_BATT.includes(was) !== HS_BATT.includes(p.src)) { p.warn = null; p.crit = null; p.below = null; HS.pend.warn = HS.pend.crit = false; }   // (a battery's Low below and a reading's levels mean other things: dropped across, the tester's F16 11-15)
@@ -1121,7 +1203,7 @@ const HSX = (() => {
       else if (k === 'name') p.name = t || null;
       else if (k === 'offtxt') p.offtxt = t.toUpperCase().slice(0, 6) || null;
       else if (k === 'dig') { const T0 = hsT(), dOf = () => p.dig != null && p.dig >= 0 ? p.dig : hsDigOf(Pg, T0), was = dOf(); p.dig = +s.value; if (dOf() !== was) hsDigFit([HS.sel]); }   // (its own digits; its size follows, see hsMsg)
-      else if (/^(vx|vy|ux|uy|ix|iy|fx|fy|fw|fh)$/.test(k)) { const n = Math.round(+t.replace(',', '.')), lo = +s.dataset.min, hi = +s.dataset.max; p[k] = isFinite(n) && t !== '' ? Math.max(lo, Math.min(hi, n)) : (k[0] === 'f' ? p[k] : 0); if (k[0] === 'f' && p.fw > 0) { p.fx = Math.max(0, Math.min(126 - p.fw, p.fx)); p.fy = Math.max(0, Math.min(62 - p.fh, p.fy)); } }   // (11-16 moves and places: whole pixels, held to their room)   // (his own word for off / empty)
+      else if (/^(vx|vy|ux|uy|ix|iy|kx|ky|fx|fy|fw|fh)$/.test(k)) { const n = Math.round(+t.replace(',', '.')), lo = +s.dataset.min, hi = +s.dataset.max; p[k] = isFinite(n) && t !== '' ? Math.max(lo, Math.min(hi, n)) : (k[0] === 'f' ? p[k] : 0); if (k[0] === 'f' && p.fw > 0) { p.fx = Math.max(0, Math.min(126 - p.fw, p.fx)); p.fy = Math.max(0, Math.min(62 - p.fh, p.fy)); } }   // (11-16 moves and places: whole pixels, held to their room)   // (his own word for off / empty)
       else { const n = +t.replace(',', '.'); p[k] = t === '' || !isFinite(n) ? null : n; if (p[k] != null) HS.pend[k] = false; if (k === 'crit' && p.crit != null && HS_BATT.includes(p.src)) p.crit = Math.max(1, Math.min(100, Math.round(p.crit))); }   // (a battery's Low below held to 1..100, the review 11-15)
       HS.full = true; hsSet();
     }
@@ -1330,21 +1412,27 @@ const HSX = (() => {
         if (HS.sel == null && !was && pg && pg0 && pg.pieces && pg0.pieces && (msg.page == null || msg.page === HS.page) && pg.name === pg0.name && pg.pieces.length === pg0.pieces.length + 1) {   // (an undo of a Remove, a redo of an Add: the piece that came back picked again, its panel in sight, the tester's question 11-17)
           const like = (q, w) => q.src === w.src && q.x === w.x && q.y === w.y && (q.fx || 0) === (w.fx || 0) && (q.fy || 0) === (w.fy || 0), k = pg.pieces.findIndex(q => !pg0.pieces.some(w => like(q, w)));
           if (k >= 0) { HS.sel = k; HS.folds.piece = true; HS.reveal = k; } } }   // (a Free piece moved back by an undo stays picked: same reading, same place in the list, the revamp's author 11-16)
-      if (msg && msg.setup) { HS.last = JSON.stringify(msg.setup); if (msg.page != null) HS.lastPage = msg.page; } }
+      if (msg && msg.setup) { HS.last = JSON.stringify(msg.setup); if (msg.page != null) HS.lastPage = msg.page; }
+      { const pg = msg && msg.setup && msg.setup.theme && msg.setup.theme.pages ? msg.setup.theme.pages[msg.page != null ? msg.page : HS.page] : null, q = pg && HS.sel != null ? pg.pieces[HS.sel] : null;   // (11-17: the undo's picture is drawn as it reads; the state looked at again)
+        if (q && hsStsOf(q).length) { const same = HS.pstK === HS.page + ':' + HS.sel && HS.pst && hsStsOf(q).includes(HS.pst); HS.sets = (HS.sets || 0) + 1; send({ t: 'hs.set', setup: msg.setup, page: msg.page != null ? msg.page : HS.page, pst: { i: HS.sel, s: same ? HS.pst : 'norm' } }); } } }
     // (the arrow-nudge burst made one undo step now, before an undo or a redo reads the steps: the review 11-16)
     const flush = () => { if (!HS.nudgeT) return; clearTimeout(HS.nudgeT); HS.nudgeT = 0; if (HS.burst) HS.last = HS.burst; HS.burst = null; hsSet(); };
     return { msg: hsMsg, imp: hsImp, forFile: hsForFile, detail, mount, draw: hsDraw, shown, stepped, state: HS, flush };
   })();
 EXT.kinds.headset = {
   icon: () => HS_I,
-  eval(out, r) {
-    const H = feed.hs || {}, v = r.v; out.col = 'white';
-    if (v == null || !isFinite(v)) return false;
-    out.v = v; out.txt = String(Math.round(v)); out.utxt = '%';
+  // (11-17: after the lines, not instead of them: his "only log yellows and reds if they are set like any other cell".
+  // Before, eval answered for the whole cell, so a line set on the Headset tile never turned it. No line crossed: white
+  // and its spare under it, HWiNFO there or not, as before; a line crossed: the warning's own words)
+  after(out, r) {
+    const H = feed.hs || {}, v = r.v;
+    if (v == null || !isFinite(v)) return;
+    out.txt = String(Math.round(v)); out.utxt = '%';
+    if (out.lvl) return;
+    out.col = 'white';
     const sp = BYKEY.get(HSK_SPARE), spare = sp && sp.v != null && isFinite(sp.v) ? 'spare ' + Math.round(sp.v) + '%' : 'no spare';
     const sub = H.chg ? 'charging, ' + spare : spare;
     out.sub = sub; out.tsub = sub; out.tsubS = sub; out.subS = { of: sub, s: sub };
-    return true;
   },
   desc: () => '<span class="hsx-d"></span>',
   detail(box) { HSX.detail(box); }
@@ -1417,7 +1505,7 @@ function setCatalog(m) {
   let unknown = -1;
   READ = m.readings.map(([s, t, key, label, unit, kind], idx) => {
     if (!SENS[s]) { if (unknown < 0) { unknown = SENS.length; SENS.push({ key: 'unknown.0', name: 'Unknown sensor', short: 'Unknown' }); } s = unknown; }
-    const r = { idx, key, s, t: TYPES[t] || 'other', label, unit, kind: kind || null, v: null, mn: null, mx: null, av: null };
+    const r = { idx, key, s, t: TYPES[t] || 'other', label, unit, kind: kind || (key === NETU ? 'netup' : null), v: null, mn: null, mx: null, av: null };
     const o = old.get(key); if (o) { r.v = o.v; r.mn = o.mn; r.mx = o.mx; r.av = o.av; }
     r.hay = ((SENS[s] ? SENS[s].name : '') + ' ' + label + ' ' + (inGB(r) ? 'GB' : unit) + ' ' + r.t).toLowerCase();   // (the unit it shows)
     return r;
@@ -2445,7 +2533,11 @@ function dropGone() {
   for (const k in holdSince) if (!ruled(S.L.cells[k])) delete holdSince[k];
   if (!Object.values(S.L.cells).some(c => c && c.key === 'hwdeck.0/12v')) { c12Since = 0; c12Ep.on = false; c12Ep.calm = 0; }   // (no connector cell left: its pin episode ends)
 }
-function saveState() { clearTimeout(saveT); saveT = setTimeout(() => { dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, calmBg: !!S.calmBg, aSpd: S.aSpd && S.aSpd !== 'normal' ? S.aSpd : undefined, numSw: S.numSw && S.numSw !== 'roll' ? S.numSw : undefined, pins: [DR.L.pinned, DR.R.pinned], sides: [DR.L.side, DR.R.side], rPlaced: DR.R.placed || undefined, title: S.title, clock: S.clock, look: lookPlain() ? undefined : S.look, lookSaved: S.lookSaved.length ? S.lookSaved : undefined, hide: S.hide, listFilt: S.listFilt.g || S.listFilt.w ? { g: S.listFilt.g, w: S.listFilt.w } : undefined, setFold: S.setFold.hs || S.setFold.look ? { hs: S.setFold.hs, look: S.setFold.look } : undefined, starter: S.starterSeen === true || undefined, starterNoted: S.starterNoted === true || undefined, hsToast: S.hsToast === true || undefined, hsTab: S.hsTab === true || undefined, czTab: czTab !== 'look' ? czTab : undefined, recent: S.recent.length ? S.recent : undefined, savedCols: S.savedCols.length ? S.savedCols : undefined } }); }, 300); }
+function saveState() { clearTimeout(saveT); saveT = setTimeout(saveNow, 300); }
+function saveNow() { clearTimeout(saveT); saveT = 0; dropGone(); send({ t: 'save', file: 'state', gen: stateGen, data: { v: 1, L: S.L, active: S.active, edit: S.edit, screen: S.screen, motion: S.motion, gameCalm: S.gameCalm !== false, calmBg: !!S.calmBg, aSpd: S.aSpd && S.aSpd !== 'normal' ? S.aSpd : undefined, numSw: S.numSw && S.numSw !== 'roll' ? S.numSw : undefined, pins: [DR.L.pinned, DR.R.pinned], sides: [DR.L.side, DR.R.side], rPlaced: DR.R.placed || undefined, title: S.title, clock: S.clock, look: lookPlain() ? undefined : S.look, lookSaved: S.lookSaved.length ? S.lookSaved : undefined, hide: S.hide, listFilt: S.listFilt.g || S.listFilt.w ? { g: S.listFilt.g, w: S.listFilt.w } : undefined, setFold: S.setFold.hs || S.setFold.look ? { hs: S.setFold.hs, look: S.setFold.look } : undefined, starter: S.starterSeen === true || undefined, starterNoted: S.starterNoted === true || undefined, hsToast: S.hsToast === true || undefined, hsTab: S.hsTab === true || undefined, czTab: czTab !== 'look' ? czTab : undefined, recent: S.recent.length ? S.recent : undefined, savedCols: S.savedCols.length ? S.savedCols : undefined } }); }
+// (11-17, test batch 2002: a change in the last moments before a quit was lost, its save still waiting. The host asks
+// for this before it quits, when Windows ends the session and when the PC goes to sleep: every waiting save goes now)
+function flushAll() { try { if (nudge) flushNudge(); lkFlush(); HSX.flush(); for (const t of CZ_EXT) if (t.flush) t.flush(); } catch (e) { } if (saveT) saveNow(); send({ t: 'flushed' }); }
 function saveSlot(i) { send({ t: 'save', file: 'slots/slot' + (i + 1), data: S.slots[i] }); }
 // undo steps hold the layout and which slot it came from, so Clear then Undo is exactly where you were
 let undoStack = [], redoStack = [];
@@ -2541,6 +2633,7 @@ function cellKeys() {
     const lr = c.key && BYKEY.get(c.key), fp = gfKind(lr) === 'low' && fpsOf(lr); if (fp) set.add(fp.key);   // (a 1% low's "% of the fps": the live fps, 11-06)
     if (c.key === CONN && feed.c12keys) for (const k of [].concat(...feed.c12keys)) if (k) set.add(k);   // its pins (their voltages too, where shared)
     if (c.key === NETD) set.add(NETU);   // (the internet: its upload line)
+    if (c.key === NETU) set.add(NETD);   // (Upload: its download line, 11-18)
     if (c.key === HSK_HEAD) set.add(HSK_SPARE);   // (the headset: its spare under it, 11-13)
   }
   if (EXT.keys) for (const k of EXT.keys()) set.add(k);
@@ -2836,6 +2929,46 @@ function odoFlip(el, old, up) {
     if (u) { const dx = (u0 - u.getBoundingClientRect().left) / z; if (Math.abs(dx) > 0.5) u.animate([{ transform: 'translateX(' + dx.toFixed(1) + 'px)' }, { transform: 'none' }], o2); }
   };
 }
+// (11-18 his pictures, "an old bug that didnt get properly fix": a Roll caught part way showed the digit going out over
+// the other digits' tops and the one coming in under their line, "5 3" over "6.4": its window was the whole text line,
+// 1.15 of the font size, the digits 0.74 of it, the reel's digits a line apart. Now the window is the digits' own height
+// (.odf: their top to their line, --odT / --odB) and the reel's digits sit ODL apart (--odY puts its digits on the
+// number's line), as a counter's strip; a digit rolling in or out on its own moves by the same step. Measured once a
+// font and line height, in em (a number drawn bigger or smaller keeps it); a font not loaded yet: at a later roll)
+const ODL = 0.86, odFit = new Map(); let odCv = null;
+function odFitTo(el) {
+  el._odr = document.documentElement.style.fontSize;   // (refitted when the page's base size changes: odo)
+  const c = el._ocells && el._ocells.find(x => x.rl && x.h && x.h.firstChild); if (!c) return;
+  const cs = getComputedStyle(el), fs = parseFloat(cs.fontSize), lp = parseFloat(cs.lineHeight);
+  if (!(fs > 0) || !(lp > 0)) { el._odk = 1; return; }   // (a line height of 'normal': as before)
+  const lh = lp / fs, k = cs.fontWeight + ' ' + cs.fontFamily + '|' + lh.toFixed(3) + '|' + fs.toFixed(2);
+  let m = odFit.get(k);
+  if (!m) {
+    const f = cs.fontWeight + ' 100px ' + cs.fontFamily;
+    if (document.fonts && !document.fonts.check(f)) return;
+    odCv = odCv || document.createElement('canvas').getContext('2d'); odCv.font = f;
+    const t = odCv.measureText('0123456789'), A = t.fontBoundingBoxAscent / 100, D = t.fontBoundingBoxDescent / 100, base = (lh - A - D) / 2 + A, pad = 0.03;
+    if (!(A > 0) || !(t.actualBoundingBoxAscent > 0)) { el._odk = 1; return; }
+    const Y = odMeasure(el, c, fs); if (Y === null) return;
+    m = { T: Math.max(0, base - t.actualBoundingBoxAscent / 100 - pad), B: Math.max(0, lh - base - Math.max(0, t.actualBoundingBoxDescent) / 100 - pad), Y };
+    odFit.set(k, m);
+  }
+  el._odk = k;
+  el.style.setProperty('--odT', m.T.toFixed(4) + 'em'); el.style.setProperty('--odB', m.B.toFixed(4) + 'em'); el.style.setProperty('--odY', m.Y.toFixed(5) + 'em');
+  el.classList.add('odf');
+}
+// the strip's place on the number's line, from the page's own layout: the digit's top in its reel line against the still
+// digit's (the browser rounds the font's ascent and descent: worked out from the metrics it sat up to 0.27 px high, a
+// 1 to 2 px jump at the end of every roll). null: not laid out (hidden), measured at a later roll
+function odMeasure(el, c, fs) {
+  const od = c.rl.parentNode, had = el.classList.contains('odf'), y0 = el.style.getPropertyValue('--odY');
+  el.style.setProperty('--odY', '0px'); el.classList.add('odf');
+  const oh = od.offsetHeight, rr = (n, a) => { const r = document.createRange(); r.setStart(n, a); r.setEnd(n, a + 1); return r.getBoundingClientRect(); };
+  let Y = null;
+  if (oh > 0) { const sc = od.getBoundingClientRect().height / oh || 1, h0 = rr(c.h.firstChild, 0).top - od.getBoundingClientRect().top, g = rr(c.rl.firstChild, 0).top - c.rl.getBoundingClientRect().top; Y = (h0 - g) / sc / fs; if (!isFinite(Y)) Y = null; }
+  if (!had) el.classList.remove('odf'); if (y0) el.style.setProperty('--odY', y0); else el.style.removeProperty('--odY');
+  return Y;
+}
 function odo(el, s, due, cut) {   // (cut: a different number, not a change of this one: shown at once, never rolled)
   if (!el) return;
   if (cut) due = true;
@@ -2856,7 +2989,8 @@ function odo(el, s, due, cut) {   // (cut: a different number, not a change of t
   const a = num(old), b = num(s), up = a === null || b === null || Math.abs(b) >= Math.abs(a), roll = motionOn() && !cut && !stillUnder(el);   // the digits show the size: -5 to -7 rolls up
   const shape = x => x.replace(/[0-9]/g, '0');
   el._t = el._ot = s;
-  { const st = nswOf(el); if (st !== 'roll') { nsDraw(el, old, s, built, up, st, roll); return; } }   // (the number switch, 11-17: Slide, Fade, Flip, Count, Snap)
+  { const st = nswOf(el); if (st !== 'roll') { nsDraw(el, old, s, built, up, st, roll); return; } }
+  if (roll && built && el.isConnected && (!el._odk || el._odr !== document.documentElement.style.fontSize)) odFitTo(el);   // (the roll's window and strip, 11-18: see odFitTo)   // (the number switch, 11-17: Slide, Fade, Flip, Count, Snap)
   if (!built || shape(old) !== shape(s)) {
     // a new shape (987 to 1,012, -1 to 0) has no digit-for-digit roll: drawn anew; in Full it moves (odoFlip, 11-17)
     let fl = null; if (built && roll && el.isConnected && /^-?[0-9.,]+$/.test(old) && /^-?[0-9.,]+$/.test(s)) try { fl = odoFlip(el, old, up); } catch (e) { fl = null; }
@@ -3616,7 +3750,9 @@ let E = new Map();       // cell id -> its elements in the current view
 let CARDS = [];          // the Overview's cards (their tags)
 let enterNext = true, slideDir = 0, entrance = null, animI = 0;
 const anim = () => ' anim" style="--i:' + (animI++);
-function cellName(c) { const r = c.key ? BYKEY.get(c.key) : null; return c.name || (r ? r.label : c.pred ? 'Predicted fan' : (c.match ? c.match.split('|')[1] : 'Missing reading')); }
+// a reading's name in a cell: its own, but Upload now reads Upload (its twin reads Internet, 11-18)
+function ownLabel(r) { return r.key === NETU ? 'Upload' : r.label; }
+function cellName(c) { const r = c.key ? BYKEY.get(c.key) : null; return c.name || (r ? ownLabel(r) : c.pred ? 'Predicted fan' : (c.match ? c.match.split('|')[1] : 'Missing reading')); }
 const isMissing = c => !c.pred && READ.length > 0 && !BYKEY.has(c.key);
 // a missing reading whose sensor is here was dropped by HWiNFO for now (hidden, device idle); else it's from another PC
 const sensorHere = c => (!READ.length && !feed.fake) || (!!c.key && SENS.some(sn => c.key.startsWith(sn.key + '/')));   // (no readings at all yet, HWiNFO off: not sharing, not "not on this PC", 11-06)
@@ -6796,6 +6932,14 @@ sectionsEl.addEventListener('dblclick', ev => {
 });
 // a new category's name: the next free "New category", "New category 2" ... (the tester's F4 11-15: they were all one name)
 function catNameNew() { const names = new Set(S.L.cats.map(c => c.name)); let n = 'New category', k = 2; while (names.has(n)) n = 'New category ' + k++; return n; }
+// a category's name as it is being typed (11-18 his picture: the header said MISC, the panel still "New category"):
+// in its header (from the panel's Name) and the panel's title and Name (from the header); nothing kept till Enter
+function catNameShow(id, v, from) {
+  if (from !== 'head') for (const el of document.querySelectorAll('#view [data-cat="' + CSS.escape(id) + '"] .cn')) if (el.textContent !== v) el.textContent = v;
+  if (selCat !== id || !S.edit) return;
+  inspTitle('Category', v);
+  const f = $('lName'); if (from !== 'panel' && f && f.value !== v) f.value = v;
+}
 function renameCat(catEl) {
   if (!catEl || !S.edit) return;
   const c = S.L.cats.find(x => x.id === catEl.dataset.cat), cn = catEl.querySelector('.cn');
@@ -6809,10 +6953,11 @@ function renameCat(catEl) {
     const v = inp.value.trim().slice(0, 200);
     const cur = S.L.cats.find(x => x.id === c.id);   // (the category as the layout has it now: an undo in between replaced the one it began with, the code review 11-16)
     if (keep && v && cur && v !== cur.name) { if (quiet) { snap(); cur.name = v; saveState(); syncUndo(); syncSaves(); } else mutate(() => { cur.name = v; }); }
-    else if (!quiet) renderView(false);
+    else { if (cur) catNameShow(cur.id, cur.name, 'head'); if (!quiet) renderView(false); }   // (Escape, or nothing typed: the panel back too, 11-18)
     if (!quiet && inp.matches(':focus-within, :focus') === false && document.activeElement === document.body) focusCat(c.id);   // (Enter or Escape: the focus back on its header, 11-06)
   };
   inp._commit = commit;
+  inp.oninput = () => { const cur = S.L.cats.find(x => x.id === c.id); catNameShow(c.id, inp.value.trim() || (cur ? cur.name : c.name), 'head'); };   // (the panel as it is typed, 11-18)
   inp.onkeydown = e => {
     e.stopPropagation();
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); commit(true); onSave(); return; }
@@ -7299,7 +7444,7 @@ function renderInsp() {
   const cl = cellLook(sel), V = VNAME[S.screen], vnm = cl.name != null || (!!nmOnly && nmOnly.cid === sel && nmOnly.vn === S.screen);
   const own = VIEWS.filter(v => v !== S.screen && cellLook(sel, v).name != null);   // (other views with a name of their own: said under the field, 11-08 audit)
   h += '<div class="fld"><span>Name</span>' + (vnm ? '<input id="lvName" aria-label="Name in ' + V + '" maxlength="' + NAME_MAX + '" value="' + esc(cl.name || '') + '" placeholder="' + esc(cellName(c)) + '">'
-    : '<input id="iName" aria-label="Name" maxlength="' + NAME_MAX + '" value="' + esc(c.name || '') + '" placeholder="' + esc(r ? r.label : c.pred ? 'Predicted fan' : '') + '">') +
+    : '<input id="iName" aria-label="Name" maxlength="' + NAME_MAX + '" value="' + esc(c.name || '') + '" placeholder="' + esc(r ? ownLabel(r) : c.pred ? 'Predicted fan' : '') + '">') +
     chipsH('nscope', [['all', 'All views'], ['one', 'Only ' + V]], x => x === 'one' ? vnm : !vnm && !own.length, '', 'Name for') + '</div>' +
     (own.length ? '<span class="hint">' + own.map(v => esc(VNAME[v] + ': ' + cellLook(sel, v).name)).join(', ') + '</span>' : '');
   h += cellLayHtml(sel, c);
@@ -7853,13 +7998,15 @@ insp.addEventListener('change', e => {
   if (t.dataset.lay === 'lead') mutate(() => setLook('cat', selCat, 'lead', t.value));
 });
 insp.addEventListener('input', e => {   // a name in this view, as it's typed (the cell's own input listener took the undo step)
-  const t = e.target; if (t.id !== 'lvName' || !sel || !S.L.cells[sel]) return;
+  const t = e.target;
+  if (t.id === 'lName' && selCat) { const cat = catById(selCat); if (cat) catNameShow(cat.id, t.value.trim() || cat.name, 'panel'); return; }   // (a category's: its header as it is typed, 11-18)
+  if (t.id !== 'lvName' || !sel || !S.L.cells[sel]) return;
   setLook('cell', sel, 'name', t.value.trim() ? t.value.slice(0, 200) : '');
   tidyViews(S.L); saveState(); syncSaves(); inspTitle('Cell', nameIn(sel));
   const el = document.querySelector('#view .dc[data-cid="' + sel + '"] .tn > span, #view .dc[data-cid="' + sel + '"] .nm > span, #view .dc[data-cid="' + sel + '"] .gname > span');
   if (el) { el.textContent = nameIn(sel); nameFitSoon(); }
 });
-insp.addEventListener('keydown', e => { if (e.target.id === 'lName' && e.key === 'Escape') { const cat = catById(selCat); if (cat) e.target.value = cat.name; e.target.blur(); } });
+insp.addEventListener('keydown', e => { if (e.target.id === 'lName' && e.key === 'Escape') { const cat = catById(selCat); if (cat) { e.target.value = cat.name; catNameShow(cat.id, cat.name); } e.target.blur(); } });
 // a template shows itself while the pointer rests on it
 let tplT = 0, tplUsed = null;   // (tplUsed: the one just used, not previewed again until the pointer leaves it)
 insp.addEventListener('pointerdown', e => { const l = e.target.closest && e.target.closest('select'); if (l) l._ptr = true; }, true);
@@ -9007,6 +9154,21 @@ const NOTES = [
     'Overview fits the window at any size, without scrolling.',
     'One slider style everywhere, and lists fade out as they close.']],
   ['2.5.1', '2.5.1', ['Sessions and Warning history: with Popups on View, a day\'s heading no longer draws a line over the edge of its first session.']],
+  ['2.6.0', '2.6', ['Customize > Headset: the headset\'s own settings, Volume, Noise control, Equalizer, Mic volume, Sidetone, Mute light and Auto Off.',
+    'The headset keeps pages instead of themes, and a page can be Free: pieces anywhere at any size, dragged, sized by their corner or nudged with the arrow keys.',
+    'Inside a piece, the number, its unit and its icon each have their own size and place. The Clock piece has 12 h, seconds and a date, and every reading can show an icon.',
+    'Shows picks a reading from one list with two tabs, Layout and Storage.',
+    'Look > Number switch picks how numbers change: Roll, Slide, Fade, Flip, Count or Snap.',
+    'Customize has more compact rows, rows that fold away and grow in, and fits windows down to 720 px wide.']],
+  ['2.6.1', '2.6.1', ['The headset\'s clock has an icon of its own, and the clock on every ready-made page starts with its Label Off.']],
+  ['2.6.2', '2.6.2', ['Look > Animation speed: Slow, Normal, Fast or Super fast.',
+    'A tile no longer flickers when the mouse rests on its bottom edge.']],
+  ['2.6.3', '2.6.3', ['Upload now is the Internet tile\'s twin: the same icon, the download speed under it and the speed test.',
+    'Customize > Headset: each state of a reading (Empty, Off, Charging, Low, No data) has its own look, set and previewed on its own.',
+    'The headset\'s battery reads between the base station\'s few steps and counts as low only in the last one.',
+    'A number part way through a roll stays inside its line.',
+    'Renaming a category in its header: a roomier box, and the side panel follows as you type.',
+    'A change made just before closing is saved, and a save that fails is tried again.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
@@ -11190,7 +11352,7 @@ addEventListener('pointerdown', e => { const pop = $('setbody').querySelector('.
 addEventListener('click', () => { if (!lkOut) return; lkOut = false; if ($('setbody').querySelector('.lk-pop.lk-float:not(.lk-gh)')) lkFloatClose(); });   // (after the click did its own work: the editor closes)
 addEventListener('keydown', e => { if (e.key !== 'Escape') return; const pop = $('setbody').querySelector('.lk-pop.lk-float:not(.lk-gh)'); if (!pop || !setmodal.classList.contains('open')) return; e.preventDefault(); e.stopImmediatePropagation(); lkFloatClose(); }, true);
 // (11-14 a piece picked in an editor's picture: the settings scrolled to its panel, under what is pinned at the top)
-function czToPiece() {   // (by layout, not by what is seen: the panel may still be growing open, 11-14)
+function czToPiece(rowSel) {   // (by layout, not by what is seen: the panel may still be growing open, 11-14; rowSel: a row of the panel to keep in sight too, 11-18)
   const docY = el => { let y = 0; for (let e = el; e; e = e.offsetParent) y += e.offsetTop; return y; };
   requestAnimationFrame(() => {
     // (looked up in the frame: a drawing in between replaced the panel, and one measured before was all zeros, the column
@@ -11203,7 +11365,11 @@ function czToPiece() {   // (by layout, not by what is seen: the panel may still
     // grown: aimed at its place then; an Undo of a Remove at 900 stopped 194 px too far, the panel's head out of sight)
     let shift = 0; for (const g of l.querySelectorAll('.cz-ghost')) { if (g.parentElement.closest('.cz-ghost') || !(g.compareDocumentPosition(pc) & 4) || g.contains(pc)) continue; const cs = getComputedStyle(g); if (cs.position === 'absolute') continue; shift -= g.getBoundingClientRect().height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0); }
     for (const r of l.querySelectorAll('.setrow, .hs-iin, .bg-ed, .lk-tg')) if (r._czEnd != null && !r.closest('.cz-ghost') && (r.compareDocumentPosition(pc) & 4) && !r.contains(pc) && !pc.contains(r)) shift += r._czEnd - r.getBoundingClientRect().height;
-    const to = Math.max(0, Math.min(docY(pc) - docY(l) + shift - (parseFloat(getComputedStyle(l).scrollPaddingTop) || 0), czEndH(l) + more - l.clientHeight)); if (Number.isFinite(to)) czScrollTo(l, to);   // (11-17: where the column ends once every row growing in with it is done (Arrange as the first piece comes), not only the panel: it stopped short, the panel left at the bottom edge)
+    let to = Math.max(0, Math.min(docY(pc) - docY(l) + shift - (parseFloat(getComputedStyle(l).scrollPaddingTop) || 0), czEndH(l) + more - l.clientHeight));
+    // (11-18, the tester's F76: a switch to a clock: its first clock row in sight too, its bottom 12 px inside the box once grown)
+    const rq = rowSel ? pc.querySelector(rowSel) : null, rr = rq && (rq.closest('.setrow') || rq);
+    if (rr && pc.contains(rr)) { const rb = docY(rr) - docY(l) + shift + (rr._czEnd != null ? rr._czEnd : rr.offsetHeight); to = Math.max(to, Math.min(rb + 12 - l.clientHeight, czEndH(l) + more - l.clientHeight)); }
+    if (Number.isFinite(to)) czScrollTo(l, to);   // (11-17: where the column ends once every row growing in with it is done (Arrange as the first piece comes), not only the panel: it stopped short, the panel left at the bottom edge)
   });
 }
 // (what the column's content takes, by layout (scrollHeight never reads less than the window): the bottom of its last
@@ -12241,7 +12407,7 @@ function renderSettings0() {
     setSec('Internet',
     '<div class="setrow"><div>Speed test<small>Measures download, upload and ping with Cloudflare\'s speed test, or the nearest LibreSpeed server when Cloudflare refuses. A test takes about 10 seconds and uses up to 0.4 GB.</small></div>' +
       '<button class="tog2' + (feed.net && feed.net.on ? ' on' : '') + '" id="sNet" aria-pressed="' + !!(feed.net && feed.net.on) + '" title="Speed test"' + (feed.net ? '' : ' disabled') + '></button></div>' +
-    (feed.net && feed.net.on ? '<div class="setrow" data-mo="net"><div>Test every<small>' + (!+feed.net.every ? 'Only when you press Test now in the Internet cell.' : 'Skipped while a game runs, and tried again 30 minutes later.') + '</small></div>' + netSeg(feed.net.every, 'data-net-every') + '</div>' : '')) +
+    (feed.net && feed.net.on ? '<div class="setrow" data-mo="net"><div>Test every<small>' + (!+feed.net.every ? 'Only when you press Test now in the Internet or Upload cell.' : 'Skipped while a game runs, and tried again 30 minutes later.') + '</small></div>' + netSeg(feed.net.every, 'data-net-every') + '</div>' : '')) +
     setSec('Data',
     keepRow('sGameDays', 'gameDays', 'Keep sessions', 'Older sessions, games and your own, go to the bin. Its icon in Sessions brings them back.') +
     keepRow('sWarnDays', 'warnDays', 'Keep warnings', 'Older warnings go to the bin. Its icon in Warning history brings them back.') +
@@ -12675,6 +12841,7 @@ function showFeed() {
   }
 }
 function onHost(m) {
+  if (m.t === 'flush') { flushAll(); return; }
   if (m.t === 'state') {
     feed.fake = !!m.fake; feed.dataDir = m.dataDir || ''; feed.version = m.version || ''; feed.nonClient = m.nonClient !== false; feed.pc = typeof m.pc === 'string' ? m.pc : '';
     feed.brand = typeof m.brand === 'string' && m.brand ? m.brand : 'HW Deck'; feed.updatable = m.updatable !== false; document.title = feed.brand;

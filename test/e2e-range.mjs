@@ -93,10 +93,11 @@ await pick('15m');
 ok('15m: the bar still there, whole', await ev(`!mbar.hidden && parseFloat(mbar.firstChild.style.left) === 0 && parseFloat(mbar.firstChild.style.right) === 0`));
 // the window's hover reads the window
 await ev('(bwSet(0, 1), 1)'); await pick('30d'); await ev('(bwSet(0.5, 0.6), 1)'); await sleep(200);
-P = await plot(); await mouse('mouseMoved', P.l + 5, P.y); await sleep(600);
+P = await plot(); for (let i = 0; i < 40 && !(await ev('!!bigMap && bigRev() >= 1')); i++) await sleep(100);   // (11-17: the draw-in over first)
+await mouse('mouseMoved', P.l + 6, P.y); await sleep(100); await mouse('mouseMoved', P.l + 5, P.y); await sleep(600);
 // (where the guide is, through the window, and the time its tip reads: the window's first moment, half the range back)
-const hv = await ev(`(() => { const M = bigMap, d = devicePixelRatio || 1, pl = M.padL / d, pr = (M.w - M.padR) / d, f = M.i0 + (HV.cx - pl) / (pr - pl) * (M.i1 - M.i0), when = new Date(Date.now() - M.span * (1 - f / (M.n - 1))); return { f, n: M.n, hm: p2(when.getHours()) + ':' + p2(when.getMinutes()), day: dMon(when), tip: mtip.textContent }; })()`);
-ok('the hover at the window\'s left reads its first moment, not the range\'s', Math.abs(hv.f - 0.5 * (hv.n - 1)) < 2 && hv.tip.includes(hv.hm) && hv.tip.includes(hv.day), hv);
+const hv = await ev(`(() => { const M = bigMap, d = devicePixelRatio || 1, pl = M.padL / d, pr = (M.w - M.padR) / d, f = M.i0 + (HV.cx - pl) / (pr - pl) * (M.i1 - M.i0), when = new Date(Date.now() - M.span * (1 - f / (M.n - 1))); return { f, n: M.n, hm: p2(when.getHours()) + ':' + p2(when.getMinutes()), day: dMon(when), tip: mtip.textContent, on: HV.on, cx: HV.cx }; })()`);
+ok('the hover at the window\'s left reads its first moment, not the range\'s', hv.on && hv.cx !== null && Math.abs(hv.f - 0.5 * (hv.n - 1)) < 2 && hv.tip.includes(hv.hm) && hv.tip.includes(hv.day), hv);
 await mouse('mouseMoved', P.l - 200, P.y - 300);
 // the bottleneck: no chart, no bar
 ok('a Yes/No or bottleneck popup with no chart has no bar', await ev(`(() => { closeDetail(); const k = Object.keys(S.L.cells).find(id => { const c = S.L.cells[id]; return c.key && /bneck|bottleneck/i.test(c.key + (c.name || '')); }); if (!k) return true; openDetail(k); const r = mbar.hidden; closeDetail(); return r; })()`));

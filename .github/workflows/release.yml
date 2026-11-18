@@ -24,6 +24,10 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\fetch-deps.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pack.ps1
 
+      - name: Install test   # (11-17: install, start, page, quit, uninstall, nothing left; a broken installer is never published)
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ci-install-test.ps1
+
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |

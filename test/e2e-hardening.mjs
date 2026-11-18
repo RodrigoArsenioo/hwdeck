@@ -29,7 +29,7 @@ ok('its episode ends under the same name', await untilFile(join(data, 'alerts.lo
 const fanYs = () => (text(join(data, 'alerts.log')).match(/YELLOW\s+Rear fan fan curve: /g) || []).length, fy0 = fanYs();
 await E(`(() => { const c = S.L.cells.fan1; c.curve.tol = 15; c.curve.warn = false; saveState(); return 1; })()`);
 await p.sleep(4000);   // (its hold is 1 s)
-ok('a curve set not to warn: off it, the cell stays white and nothing is logged, it says how far off it is', fanYs() === fy0 && await E('(() => { const e = evalCell("fan1", S.L.cells.fan1, true, true); return e.lvl === 0 && !e.offCurve && /% (under|over) its curve$/.test(e.sub); })()'),
+ok('a curve set not to warn: off it, the cell stays white and nothing is logged, it says how far off it is', fanYs() === fy0 && await E('(() => { const e = evalCell("fan1", S.L.cells.fan1, true, true); return e.lvl === 0 && !e.offCurve && /% (under|over) (its|the) curve$/.test(e.sub); })()'),
   fanYs() + ' vs ' + fy0 + ', ' + await E('JSON.stringify(evalCell("fan1", S.L.cells.fan1, true, true).sub)'));
 ok('it stays that way when the layout is loaded again', await E('Object.values(cleanLayout(JSON.parse(JSON.stringify(S.L))).cells).find(c => c.name === "Rear fan").curve.warn === false'));
 await E('selectCell("fan1")'); await p.sleep(250);

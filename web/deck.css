@@ -222,6 +222,9 @@ html[data-motion="off"] .viewwrap { transition: none; }
 .od .odr { position: absolute; left: 0; right: 0; top: 0; white-space: pre; text-align: center; visibility: hidden; }   /* rolled by the page's motion clock */
 .od.roll .odh { visibility: hidden; } .od.roll .odr { visibility: visible; }
 .od.odin .odh { display: inline-block; }
+.odf > .od > .odr { line-height: 0.86; top: var(--odY, 0); }   /* (11-18: the reel's digits 0.86 apart, on the number's line, odFitTo; ODL in deck.js) */
+.odf > .od.roll, .odf > .od.odin { clip-path: inset(var(--odT, 0) 0 var(--odB, 0) 0); }   /* (its window: the digits' own height) */
+.odf > .od.odin > .odh { line-height: 0.86; }   /* (a digit rolling in or out on its own: the same step) */
 .v > span:not(.od), .v + .u, .v + small { display: inline-block; }   /* (the unit, a point, a comma: slid by odoFlip as the digits change, a transform needs a box, the number-style mock 11-17) */   /* (a digit rolling in or out on its own, a number gaining or losing a digit: 11-17) */
 .spw, .lbl i.spw { display: inline-flex; flex: none; font-style: normal; }   /* (not .lbl i's block: its line box sat the fan 1px off the turn's centre) */
 .yellow { color: var(--yellow); } .red { color: var(--red); } .grey { color: #555; }
@@ -254,7 +257,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .app.editing .dcat:hover .dch .acts, .app.editing .dcat.csel .dch .acts, .app.editing .dch:focus-within .acts { visibility: visible; }
 .app.editing .dch .cn { cursor: text; border-radius: 4px; }
 .app.editing .dch .cn:hover { background: var(--raise); }
-.dch input.cn-in { background: var(--bg); border: 1px solid var(--edit); color: var(--hi); font: inherit; border-radius: 5px; padding: 0 4px; width: auto; field-sizing: content; min-width: 4ch; max-width: 70%; text-transform: inherit; letter-spacing: inherit; margin: -1px -5px; }   /* (as the name shows, in its place and its size, the count beside it where it was: the tester's F5 11-15) */
+.dch input.cn-in { background: var(--bg); border: 1px solid var(--edit); color: var(--hi); font: inherit; border-radius: 6px; padding: 2px 9px 2px 7px; width: auto; field-sizing: content; min-width: 6ch; max-width: 70%; text-transform: inherit; letter-spacing: inherit; margin: -3px 0; }   /* (11-18 his "another visual bug": it reached 5 px left of the name, onto the picked category's frame, 4 px a side, the caret on the last letter: now inside the frame, room for the caret) */   /* (as the name shows, in its place and its size, the count beside it where it was: the tester's F5 11-15) */
 .dcat.collapsed .dgrid, .dcat.collapsed tr.dc { display: none; }
 .dch .chev svg { transition: transform 140ms; }
 .dcat.collapsed .dch .chev svg { transform: rotate(-90deg); }
@@ -1975,6 +1978,7 @@ select.dsel-n { display: none; }
    the Cells sliders give way before their values do ("100%" was cut to "100"); a narrow Look column: Colour's pills a
    little tighter (they ran 17 px into the row's padding) */
 .cz-l .setrow.lk-palh > .lk-dd { flex: 0 1 260px; min-width: 120px; } .cz-l .setrow.lk-palh > .lk-dd > * { min-width: 0; }
+.cz-l .setrow.lk-palh > div:first-child > small { white-space: nowrap; overflow-wrap: normal; }   /* (11-17: the palette's line never wraps, its row keeps one height; the list gives way) */
 .cz-l .lk-row:not(.bg-side .lk-row) > .lk-rng { flex: 0 1 190px; width: auto; min-width: 60px; } .cz-l .lk-row > .lk-v { flex: none; }
 @media (max-width: 820px) { .cz-look .cz-l #sTint { width: auto; } .cz-look .cz-l #sTint > button { flex: 0 1 auto; padding-left: 7px; padding-right: 7px; } .cz-look .lk-colr .lk-cw { gap: 8px; } }   /* (by the window, not a container query: one on the column would hold its floating editors) */
 
@@ -1985,3 +1989,14 @@ select.dsel-n { display: none; }
 .cz-l #lkSpd .lk-rng { flex: 1 1 auto; width: auto; min-width: 0; }
 #lkSpd .lk-v { width: 5.2em; }
 #lkSpd .lk-rng:disabled { opacity: 0.4; cursor: default; } #lkSpd .lk-rng:disabled + .lk-v { opacity: 0.6; }
+
+/* (11-17 his states) the State row: five pills of one width where the rows under it have theirs (a pill as wide as its
+   longest word, Charging, + 3 px a side: 5 of them fit the 292 px the other rows have at his size) */
+.hsx .cz-l .setrow > .seg.hs-stsw { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; }   /* (one width each, also where it doesn't fit beside its name: each as wide as the widest word) */
+.hsx .cz-l .setrow > .seg.hs-stsw > button { padding-left: 3px; padding-right: 3px; }
+@container hscol (max-width: 340px) { .hsx .cz-l .setrow > .seg.hs-stsw:has(> button:nth-child(5)) { grid-auto-flow: row; grid-template-columns: repeat(3, 1fr); row-gap: 2px; } .hsx .cz-l .setrow > .seg.hs-stsw:has(> button:nth-child(5)) > button { padding-left: 6px; padding-right: 6px; } }   /* (a column too narrow for five of one width on a line, 720 x 480: three a line, still one width) */
+
+/* (11-18 button states) a button that can't be used now keeps its words and a hover of its own, fainter than a usable
+   one's (no fill); they had none. His 11-18 "they both should have a hover and the hovers should be different" */
+.btn:disabled:not(.pri):not(.warn):not(.ghost):hover { color: #6e6e6e; background: var(--g18, #181818); border-color: var(--g3a, #3a3a3a); }
+.ib:disabled:not(.on):not(.spin):hover { color: #5c5c5c; background: none; }   /* (plain ones only: an accent or lit one keeps its own look) */
