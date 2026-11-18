@@ -14,6 +14,16 @@ Check "the MSI installs quietly (exit $($p.ExitCode))" ($p.ExitCode -eq 0)
 Check 'HWDeck.exe and its page files are in Program Files' ((Test-Path "$pf\HWDeck.exe") -and (Test-Path "$pf\web\deck.js") -and (Test-Path "$pf\Microsoft.Web.WebView2.Core.dll"))
 Check 'the Start menu shortcut is there' (Test-Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\HW Deck.lnk")
 Get-Process HWDeck -ErrorAction SilentlyContinue | Stop-Process -Force   # (the installer may start it: the test starts its own copy)
+# (11-18, v2.6.3's first run: GitHub's Windows Server image has Edge but no WebView2 Runtime, which every Windows 10 / 11
+# PC has; the app stopped at its "needs the WebView2 Runtime" box and its page never came. Installed here as a PC has it)
+$wvKeys = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+$wvVer = { foreach ($k in $wvKeys) { $v = (Get-ItemProperty $k -Name pv -ErrorAction SilentlyContinue).pv; if ($v -and $v -ne '0.0.0.0') { return $v } }; $null }
+if (-not (& $wvVer)) {
+  $bs = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+  Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $bs -UseBasicParsing
+  Start-Process $bs -ArgumentList '/silent', '/install' -Wait
+}
+"WebView2 Runtime: $(& $wvVer)"
 $data = Join-Path $env:RUNNER_TEMP 'hwdeck-ci-data'; New-Item -ItemType Directory -Force $data | Out-Null
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9230'
 $app = Start-Process "$pf\HWDeck.exe" -ArgumentList '--fake', 60, '--data', $data, '--no-starter' -PassThru
@@ -21,6 +31,10 @@ Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $up = $false
 for ($i = 0; $i -lt 60 -and -not $up; $i++) { Start-Sleep -Seconds 1; try { $up = (Invoke-WebRequest 'http://127.0.0.1:9230/json' -UseBasicParsing -TimeoutSec 2).Content -match 'hwdeck\.example' } catch { } }
 Check 'the installed app opens its page' $up
+if (-not $up) {   # (what it shows instead, and its own log: the cause in the job's output, not a guess)
+  Get-Process HWDeck -ErrorAction SilentlyContinue | ForEach-Object { "  window: '$($_.MainWindowTitle)' (pid $($_.Id))" }
+  if (Test-Path "$data\app.log") { '  app.log:'; Get-Content "$data\app.log" -Tail 25 | ForEach-Object { "    $_" } } else { '  no app.log in the data folder' }
+}
 if ($up) {
   $o = node -e "import('file:///$($root -replace '\\','/')/test/cdp.mjs').then(async m => { const p = await m.connect(9230); for (let i = 0; i < 80; i++) { if (await p.evaluate('typeof feed !== \'undefined\' && feed.got && READ.length > 50')) { console.log('READY ' + (await p.evaluate('feed.version'))); break; } await p.sleep(250); } p.evaluate('send({ t: \'exit\' })').catch(() => {}); setTimeout(() => process.exit(0), 800); }).catch(e => { console.log('ERR ' + e); process.exit(0); })" | Out-String
   Check "its page draws the made-up readings ($($o.Trim()))" ($o -match 'READY')
