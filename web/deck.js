@@ -8450,6 +8450,16 @@ function graphCtx(cv) {
   return { ctx, w, h, dpr };
 }
 function yCaption(ctx, dpr, text, x) { if (!text) return; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = '#555'; ctx.font = (10 * dpr) + 'px Segoe UI'; ctx.fillText(text, x == null ? 4 * dpr : x, 1 * dpr); }
+// where a graph's unit goes, left of its scale's numbers (tickW: the widest of them): where it always sat (a long unit,
+// "Mbit/s", further left: it went over "1,000", 11-12), but never nearer the numbers than a short unit sits beside
+// short ones ("°C" beside "80"): "RPM" touched "1,200", his 11-19 "rpm too close to the graph". need: the room on the
+// left that takes (a preview's narrow scale grows to it)
+const CAP_GAP = 18;
+function unitPlace(ctx, dpr, padL, unit, tickW) {
+  ctx.font = (10 * dpr) + 'px Segoe UI';
+  const uw = ctx.measureText(unit).width, x0 = uw > 24 * dpr ? padL - 40 * dpr - uw : padL - 54 * dpr;
+  return { x: Math.max(4 * dpr, Math.min(x0, padL - 6 * dpr - tickW - CAP_GAP * dpr - uw)), need: 4 * dpr + uw + CAP_GAP * dpr + tickW + 6 * dpr };
+}
 // a graph's scale (the popup's and the tiles'): at least a sensible span for its unit, so a steady reading's one-step
 // change stays a small step (52 to 53 C filled the whole graph); its top at its highest value, unless a few spikes stand
 // far above the rest (a second at 1,702 fps over a line at 230): then it follows the rest and the spikes are cut at the
@@ -8490,7 +8500,8 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
   let vals = data.slice(k0, k1 + 1).filter(nn), pvals = (maxData || []).slice(k0, k1 + 1).filter(nn);
   const gap = !vals.length;
   if (gap) { vals = all; pvals = (maxData || []).filter(nn); }   // (a window on a gap: the whole range's scale)
-  const padL = (preview ? 58 : BIG_PADL) * dpr, padR = (preview ? 8 : BIG_PADR) * dpr, padT = 10 * dpr, padB = (preview ? 36 : 26) * dpr, yn = isYNu(unit), ynO = unit === 'On/Off';
+  let padL = (preview ? 58 : BIG_PADL) * dpr;
+  const padR = (preview ? 8 : BIG_PADR) * dpr, padT = 10 * dpr, padB = (preview ? 36 : 26) * dpr, yn = isYNu(unit), ynO = unit === 'On/Off';
   if (yn) data = data.map(x => nn(x) ? x : 0);   // (an empty minute of a Yes/No graph is No: the line drops to it, his 11-06 "graph still not going up and down")
   let dLo = Math.min(...vals);
   const sc = scaleTop(pvals.length ? vals.concat(pvals) : vals, unit), floor0 = dLo >= 0;
@@ -8505,14 +8516,19 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
   const step = yn ? 1 : [1, 2, 5, 10].map(m => m * pw).find(s => s >= rawStep) || 10 * pw;
   const stepDec = step >= 1 ? 0 : Math.ceil(-Math.log10(step) - 1e-9);
   const lo = yn ? -0.25 : Math.max(floor0 ? 0 : -Infinity, Math.floor(dLo / step) * step), hi = yn ? 1.25 : Math.ceil(dHi / step) * step;
+  // the scale's numbers: the widest decides where the unit goes, and a preview's narrow scale gets the room wide ones
+  // need ("1,200" with "RPM" beside it)
+  const nTicks = yn ? 1 : Math.round((hi - lo) / step), tickTxt = v => yn ? ynW(ynO, v) : dec ? v.toFixed(Math.max(dec, stepDec)) : (step >= 1 ? Math.round(v).toLocaleString('en-US') : v.toFixed(stepDec));
+  ctx.font = (11 * dpr) + 'px Segoe UI'; let tickW = 0;
+  for (let i = 0; i <= nTicks; i++) tickW = Math.max(tickW, ctx.measureText(tickTxt(yn ? i : lo + i * step)).width);
+  if (preview && !yn && unit) padL = Math.max(padL, unitPlace(ctx, dpr, padL, unit, tickW).need);
   // (a value past the scale, a cut spike, is drawn at its edge)
   const plotW = w - padL - padR, X = i => padL + (i - i0) / (i1 - i0) * plotW, Y = v => h - padB - (Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo) * (h - padT - padB);
   ctx.font = (11 * dpr) + 'px Segoe UI'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  const nTicks = yn ? 1 : Math.round((hi - lo) / step);
   for (let i = 0; i <= nTicks; i++) {
     const v = yn ? i : lo + i * step, y = Y(v);
     ctx.strokeStyle = gv('#1e1e1e'); ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
-    ctx.fillStyle = '#666'; ctx.fillText(yn ? ynW(ynO, v) : dec ? v.toFixed(Math.max(dec, stepDec)) : (step >= 1 ? Math.round(v).toLocaleString('en-US') : v.toFixed(stepDec)), padL - 6 * dpr, y);
+    ctx.fillStyle = '#666'; ctx.fillText(tickTxt(v), padL - 6 * dpr, y);
   }
   const span = spanMs || HLEN * 1000;
   ctx.textBaseline = 'top'; ctx.fillStyle = '#666';
@@ -8529,9 +8545,7 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
     ctx.textAlign = 'center'; ctx.fillText(lab(at((Wn.a + Wn.b) / 2)), padL + plotW / 2, h - padB + 8 * dpr);
     ctx.textAlign = 'right'; ctx.fillText(Wn.b > 0.999 ? 'now' : lab(at(Wn.b)), w - padR, h - padB + 8 * dpr);
   }
-  // (as near its scale's numbers as before the plot was centred; a long unit, "Mbit/s", further left, clear of the top
-  // number: it went over "1,000", 11-12)
-  { ctx.font = (10 * dpr) + 'px Segoe UI'; const uw = yn || !unit ? 0 : ctx.measureText(unit).width; yCaption(ctx, dpr, yn ? '' : unit || '', uw > 24 * dpr ? Math.max(4 * dpr, padL - 40 * dpr - uw) : padL - 54 * dpr); }
+  if (!yn && unit) yCaption(ctx, dpr, unit, unitPlace(ctx, dpr, padL, unit, tickW).x);   // (see unitPlace)
   const yGy = det.y !== undefined ? Y(det.y) : null, rGy = det.r !== undefined ? Y(det.r) : null;
   const gateClose = yGy !== null && rGy !== null && Math.abs(yGy - rGy) < 15 * dpr;
   for (const g of [['y', '#e6c84a'], ['r', '#e5484d'], ['y2', '#e6c84a'], ['r2', '#e5484d']]) {
@@ -8619,17 +8633,18 @@ function drawBigGraph(cv, data, det, dec, unit, gateInView, maxData, spanMs, pre
 // a fan's curve in the popup: temperature 0-100 along the bottom, the live point on it
 function drawCurveChart(cv, c, e) {
   const { ctx, w, h, dpr } = graphCtx(cv);
-  const padL = 58 * dpr, padR = 10 * dpr, padT = 12 * dpr, padB = 38 * dpr;
+  // (its scale and unit as the graph above it has them: the same room on the left, 11-19)
+  const padL = BIG_PADL * dpr, padR = 10 * dpr, padT = 12 * dpr, padB = 38 * dpr;
   const pts = c.curve.pts.slice().sort(ptOrd);
   const src = BYKEY.get(c.curve.src), cr = curveRange(src);
   const ax = niceAxis(Math.max(500, Math.max(...pts.map(p => p[1]), e.v || 0) * 1.12), 5), yMax = ax.max;
   const X = t => padL + (t - cr.min) / (cr.max - cr.min) * (w - padL - padR), Y = v => h - padB - v / yMax * (h - padT - padB);
-  ctx.font = (11 * dpr) + 'px Segoe UI'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  for (let v = 0; v <= yMax + 1e-9; v += ax.step) { const y = Y(v); ctx.strokeStyle = gv('#1e1e1e'); ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke(); ctx.fillStyle = '#666'; ctx.fillText(v.toLocaleString('en-US'), padL - 6 * dpr, y); }
+  ctx.font = (11 * dpr) + 'px Segoe UI'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; let tickW = 0;
+  for (let v = 0; v <= yMax + 1e-9; v += ax.step) { const y = Y(v), tx = v.toLocaleString('en-US'); tickW = Math.max(tickW, ctx.measureText(tx).width); ctx.strokeStyle = gv('#1e1e1e'); ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke(); ctx.fillStyle = '#666'; ctx.fillText(tx, padL - 6 * dpr, y); }
   ctx.textBaseline = 'top'; ctx.fillStyle = '#666';
   for (let t = cr.min; t <= cr.max; t += cr.step) { ctx.textAlign = t === cr.min ? 'left' : t === cr.max ? 'right' : 'center'; ctx.fillText(t, X(t) + (t === cr.min ? 3 * dpr : 0), h - padB + 8 * dpr); }
   ctx.textAlign = 'center'; ctx.fillStyle = '#555'; ctx.fillText((src ? src.label : 'temperature') + ' ' + tempUnit(src), (padL + w - padR) / 2, h - padB + 22 * dpr);
-  yCaption(ctx, dpr, 'RPM');
+  yCaption(ctx, dpr, 'RPM', unitPlace(ctx, dpr, padL, 'RPM', tickW).x);
   ctx.save(); ctx.beginPath(); ctx.rect(padL, padT - 6 * dpr, w - padL - padR, h - padT - padB + 6 * dpr); ctx.clip();
   // (the tolerance isn't drawn: it only decides whether the fan is on its curve)
   // past its first and last points a fan keeps their speed: dashed to the edges of the graph
@@ -9336,7 +9351,7 @@ const wxNum = x => { const m = /^(-?[\d.]+)\s*(.*)$/.exec(x || ''); return m ? {
 // log is read off an episode whose peak went lower than its crossing), the furthest off for a curve, else the highest
 function wxWorst(eps) {
   let pk = null;
-  const low = eps.some(ep => /\(under its line\)/.test(ep.detail) || /% under its curve\)/.test(ep.detail) || (!/ fan curve$/.test(ep.name) && wxNum(ep.peak) && wxNum(ep.detail) && wxNum(ep.peak).v < wxNum(ep.detail).v));
+  const low = eps.some(ep => /\(under its line\)/.test(ep.detail) || /% under its curve[,)]/.test(ep.detail) ||(!/ fan curve$/.test(ep.name) && wxNum(ep.peak) && wxNum(ep.detail) && wxNum(ep.peak).v < wxNum(ep.detail).v));
   for (const ep of eps) { const c = wxNum(ep.peak) || wxNum(ep.redDetail) || wxNum(ep.detail); if (c && (!pk || (low ? c.v < pk.v : c.v > pk.v))) pk = c; }
   return pk;
 }
@@ -9511,7 +9526,7 @@ function wxCell(name) {
 }
 // the lines a row crossed: its cell's as they are now, on the side it crossed; else what the log says
 function wxLines(g, w) {
-  if (w && w.curve) return 'its fan curve';
+  if (w && w.curve) { const cc = S.L.cells[w.cid]; return cc && cc.curve && cc.curve.tol ? 'within ' + cc.curve.tol + '% of its curve' : 'its fan curve'; }
   if (w && w.pins) return 'a pin over 1.5x its share';
   const c = w && S.L.cells[w.cid], r = c && c.key ? BYKEY.get(c.key) : null, under = g.eps.some(ep => /\(under its line\)/.test(ep.detail));
   if (c && gatesOn(c.gates)) {
@@ -9568,6 +9583,15 @@ function drawWarnList(keep) {
   }
   listGlide(list, fl); pkMark('w');
 }
+// a fan's crossing in words: "1422 RPM (37% under its curve, 2250 RPM at 85 °C GPU Hot Spot Temperature)" (logged
+// since 11-19: what its curve wanted then, at what temperature) reads "1,422 RPM, its curve 2,250 at 85 °C GPU Hot Spot
+// Temperature, 37% under"; an older one, "1422 RPM (37% under its curve)", "1,422 RPM, 37% under its curve"
+function wxCurveAt(d) {
+  const m = /^(-?[\d.]+)\s*([^\s(]*)\s*\((\d+)% (under|over) its curve(?:, (-?[\d.]+)[^\d(),]*?(?: at (-?[\d.]+) (\S+) (.+))?)?\)$/.exec(String(d || ''));
+  if (!m) return null;
+  const n = x => (+x).toLocaleString('en-US', { maximumFractionDigits: 1 }), u = m[2] ? ' ' + m[2] : '';
+  return n(m[1]) + u + (m[5] != null ? ', its curve ' + n(m[5]) + (m[6] != null ? ' at ' + Math.round(+m[6]) + ' ' + m[7] + ' ' + m[8] : '') + ', ' + m[3] + '% ' + m[4] : ', ' + m[3] + '% ' + m[4] + ' its curve');
+}
 // what opens under a row: the reading around it (when its cell is in the view and the history reaches that far), then
 // each crossing: when, its level, what it crossed at, how long, how it ended, its peak
 function wxFill(el, g, old) {
@@ -9575,7 +9599,7 @@ function wxFill(el, g, old) {
   const w = wxCell(g.name), c = w && !w.pins ? S.L.cells[w.cid] : null;
   const how = ep => ep.interrupted ? (/^HWiNFO/.test(ep.cut || '') ? 'HWiNFO stopped sharing' : /^PC going to sleep/.test(ep.cut || '') ? 'PC went to sleep' : 'ended with the app') : ep.end ? 'back to normal' : 'ongoing';
   const rows = g.eps.map(ep => {
-    const red = ep.level === 'RED', at = String(ep.redDetail || ep.detail || '').replace(/\s*\((over|under) its line\)/, '').replace(/\s*\((\d+% (?:under|over) its curve)\)/, ', $1');
+    const red = ep.level === 'RED', at = wxCurveAt(ep.redDetail || ep.detail) || String(ep.redDetail || ep.detail || '').replace(/\s*\((over|under) its line\)/, '');
     const o = [ep.end ? fmtDur(ep.end - ep.when) : '', how(ep), ep.peak ? 'peak ' + wYN(ep.peak) : ''].filter(Boolean).join(', ');
     return '<div class="wx-ep"><span class="t">' + ep.time + '</span><span class="wx-lv' + (red ? ' r' : '') + '"><i></i>' + (red ? 'red' : 'yellow') + '</span><span class="v">' + (at ? 'at ' + esc(wYN(at)) : '') + '</span><span class="o">' + esc(o) + '</span></div>';
   }).join('');
@@ -9605,8 +9629,15 @@ function wxAsk(ch, g, w) {
     if (now - (s - pad) <= span) { range = rg; a = s - pad; b = Math.min(now, e + pad); break; }
   }
   if (!range) { ch.remove(); return; }
-  const k = c.key + '|' + range, o = { ch, g, w, a, b }, ws = wxWait.get(k);
-  if (ws) ws.push(o); else { wxWait.set(k, [o]); send({ t: 'hist', key: c.key, range }); }
+  // (a fan off its curve: the temperature it follows too, for a line of what its curve wanted, his 11-19 "this log
+  // doesnt tell me much when it comes to fan tracking"; no answer for it in 5 s: the chart without that line)
+  const cs = w.curve && c.curve && c.curve.src && c.curve.src !== c.key && Array.isArray(c.curve.pts) && c.curve.pts.length > 1 ? c.curve.src : null;
+  const pair = cs ? { got: {}, done: false } : null;
+  for (const key of cs ? [c.key, cs] : [c.key]) {
+    const k = key + '|' + range, o = { ch, g, w, a, b, pair, key }, ws = wxWait.get(k);
+    if (ws) ws.push(o); else { wxWait.set(k, [o]); send({ t: 'hist', key, range }); }
+  }
+  if (pair) setTimeout(() => { const fm = pair.got[c.key]; if (!pair.done && fm && ch.isConnected) { pair.done = true; wxChart({ ch, g, w, a, b }, fm); } }, 5000);
 }
 // the host's history in (onHost's 'hist'): the charts waiting for it drawn; true when only they wanted it (the cell
 // popup asking for the same key and range gets it too)
@@ -9622,17 +9653,27 @@ function wxTake(m) {
 // them shaded, round steps on the right, clock ticks under it, a legend, and the minute under the pointer read out
 const WXC = {}; let wxN = 0, wxHz = null;
 function wxChart(o, m) {
+  if (o.pair) {   // (a fan off its curve: drawn once both its own and its temperature's history are in)
+    const p = o.pair; if (p.done) return;
+    p.got[o.key] = m; const c0 = S.L.cells[o.w.cid];
+    if (!c0 || !c0.curve || !p.got[c0.key] || !p.got[c0.curve.src]) return;
+    p.done = true; o = { ch: o.ch, g: o.g, w: o.w, a: o.a, b: o.b, temp: p.got[c0.curve.src] }; m = p.got[c0.key];
+  }
   const { ch, g, w, a, b } = o, c = S.L.cells[w.cid];
   if (!c || !Array.isArray(m.avg) || !Array.isArray(m.max)) { wxChGone(ch); return; }
-  const r = BYKEY.get(c.key), under = g.eps.some(ep => /\(under its line\)/.test(ep.detail)), src = under ? m.avg : m.max, n = src.length, t0 = m.end - (n - 1) * m.step;
-  const pts = [];
-  for (let i = 0; i < n; i++) { const t = t0 + i * m.step; if (t + m.step <= a || t > b) continue; const v = src[i]; pts.push([t, v == null || !isFinite(v) ? null : +v]); }
+  // (a fan on its curve: the minutes' averages, its own and what its curve wanted from the temperature's)
+  const cv = w.curve && c.curve && Array.isArray(c.curve.pts) && c.curve.pts.length > 1 ? c.curve : null, tm = cv && o.temp && Array.isArray(o.temp.avg) && o.temp.step ? o.temp : null;
+  const r = BYKEY.get(c.key), under = g.eps.some(ep => /\(under its line\)/.test(ep.detail)), src = under || cv ? m.avg : m.max, n = src.length, t0 = m.end - (n - 1) * m.step;
+  const pts = [], exp = [];
+  const tAt = t => { const j = Math.round((t - (tm.end - (tm.avg.length - 1) * tm.step)) / tm.step), v = j >= 0 && j < tm.avg.length ? tm.avg[j] : null; return v == null || !isFinite(v) ? null : +v; };
+  for (let i = 0; i < n; i++) { const t = t0 + i * m.step; if (t + m.step <= a || t > b) continue; const v = src[i]; pts.push([t, v == null || !isFinite(v) ? null : +v]); if (tm) { const tv = tAt(t); exp.push(tv === null ? null : interp(cv.pts, tv)); } }
   const vs = pts.filter(p => p[1] !== null); if (vs.length < 2) { wxChGone(ch); return; }
   const gl = w.curve || !gatesOn(c.gates) ? {} : gateLines(c.gates), lines = [], side = (y, rr) => { if (y !== undefined) lines.push([y, 'y']); if (rr !== undefined) lines.push([rr, 'r']); };
   if (gl.below === under) side(gl.y, gl.r); else side(gl.y2, gl.r2);
   const k = gbK(r), dec = decOfCell(c, r), u = unitOf(r), val = x => lnTxt(x * k, dec, r, under) + (u ? ' ' + u : ''), name = cellName(c);
+  const ex = exp.some(x => x !== null) ? exp : null, srcR = cv ? BYKEY.get(cv.src) : null;
   // (round steps, about 4 of them, like the session chart's, from a little under the lowest to a little over the highest)
-  const all = vs.map(p => p[1]).concat(lines.map(l => l[0])), mn = Math.min(...all), mx = Math.max(...all), span = mx - mn || Math.abs(mx) * 0.1 || 1;
+  const all = vs.map(p => p[1]).concat(lines.map(l => l[0]), ex ? ex.filter(x => x !== null) : []), mn = Math.min(...all), mx = Math.max(...all), span = mx - mn || Math.abs(mx) * 0.1 || 1;
   const raw = span * 1.25 / 4, pw = Math.pow(10, Math.floor(Math.log10(raw))), step = [1, 2, 2.5, 5, 10].map(s => s * pw).find(s => s >= raw);
   let lo = Math.floor((mn - span * 0.08) / step) * step, top = Math.ceil((mx + span * 0.08) / step) * step;
   if (mn >= 0) lo = Math.max(0, lo);
@@ -9644,8 +9685,9 @@ function wxChart(o, m) {
   let sh = '';
   for (const ep of g.eps) { const s = Math.max(A, ep.when.getTime() / 1000), e = Math.min(B, ep.end ? ep.end.getTime() / 1000 : ep.interrupted ? s : now); if (e > s) sh += '<rect class="w' + (ep.level === 'RED' ? 'r' : 'y') + '" x="' + XT(s) + '" y="0" width="' + Math.max(2, XT(e) - XT(s)).toFixed(1) + '" height="' + H + '"/>'; }
   const lns = lines.map(([v, l]) => '<line class="w' + l + '" x1="0" x2="' + Wd + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/>').join('');
-  // (runs of minutes with a value; one on its own between gaps a short dash)
+  // (runs of minutes with a value; one on its own between gaps a short dash; what its curve wanted dashed, under it)
   let ln = '', run = [];
+  if (ex) { let er = []; const ef = () => { if (er.length > 1) ln += '<polyline class="ca" points="' + er.map(i => X(i) + ',' + Y(ex[i])).join(' ') + '"/>'; else if (er.length === 1) ln += '<polyline class="ca" points="' + (+X(er[0]) - 3) + ',' + Y(ex[er[0]]) + ' ' + (+X(er[0]) + 3) + ',' + Y(ex[er[0]]) + '"/>'; er = []; }; ex.forEach((v, i) => { if (v === null) ef(); else er.push(i); }); ef(); }
   const flush = () => { if (run.length > 1) ln += '<polyline class="fp" points="' + run.map(i => X(i) + ',' + Y(pts[i][1])).join(' ') + '"/>'; else if (run.length === 1) ln += '<polyline class="fp" points="' + (+X(run[0]) - 3) + ',' + Y(pts[run[0]][1]) + ' ' + (+X(run[0]) + 3) + ',' + Y(pts[run[0]][1]) + '"/>'; run = []; };
   pts.forEach((p, i) => { if (p[1] === null) flush(); else run.push(i); }); flush();
   // (clock ticks: its ends, and the round minutes between them, as the session chart has them)
@@ -9654,13 +9696,14 @@ function wxChart(o, m) {
   for (let t = Math.ceil((A - tz) / 60 / every) * every * 60 + tz; t < B; t += every * 60) { const pc = (t - A) / (B - A) * 100; if (pc > 9 && pc < 91 && hhmm(t) !== hhmm(B)) tk += '<span style="left:' + pc.toFixed(2) + '%">' + hhmm(t) + '</span>'; }
   tk += '<span class="e1">' + hhmm(B) + '</span>';
   const h0 = ch.offsetHeight, id = ch._wx || (ch._wx = ++wxN);
-  WXC[id] = { pts, step: m.step, lo, top, lines, under, val, name, yn: isYN(r) };
+  WXC[id] = { pts, step: m.step, lo, top, lines, under, val, name, yn: isYN(r), exp: ex };
   const fc = cellTint(w.cid);
-  ch.innerHTML = '<div class="gx-tl wx-tl" data-w="' + id + '"' + (fc ? ' style="--fc:' + fc + '"' : '') + '><div class="gx-ch">' + esc(name) + '<span>' + (m.step === 600 ? '10-minute' : '1-minute') + (under ? ' averages' : ' peaks') + ', the time over its lines shaded</span></div>' +
+  ch.innerHTML = '<div class="gx-tl wx-tl" data-w="' + id + '"' + (fc ? ' style="--fc:' + fc + '"' : '') + '><div class="gx-ch">' + esc(name) + '<span>' + (m.step === 600 ? '10-minute' : '1-minute') + (under || cv ? ' averages' : ' peaks') + (cv ? ', the time off its curve shaded' : ', the time over its lines shaded') + '</span></div>' +
     '<div class="gx-hz wx-hz"><div class="gx-tr f"><span class="l">' + esc(u || 'value') + '</span><span class="gx-plot"><svg class="gx-fpsc" viewBox="0 0 ' + Wd + ' ' + H + '" preserveAspectRatio="none">' + grid + sh + lns + ln + '</svg><i class="gx-gd"></i><i class="gx-dot fp"></i></span><span class="gx-yax">' + yl + '</span></div><div class="gx-tip"></div></div>' +
     '<div class="gx-tr"><span></span><span class="gx-ticks">' + tk + '</span><span></span></div>' +
     '<div class="gx-tr"><span></span><span class="gx-leg"><span><b class="ln fp"></b>' + esc(name) + '</span>' + lines.map(([v, l]) => '<span><b class="wl ' + l + '"></b>' + (l === 'r' ? 'red' : 'yellow') + ' <i>' + esc(val(v)) + '</i></span>').join('') +
-    (sh ? '<span><b class="wsh"></b>over the line</span>' : '') + '</span><span></span></div></div>';
+    (ex ? '<span><b class="ln ca"></b>its curve, from ' + esc(srcR ? srcR.label : 'its temperature') + '</span>' : '') +
+    (sh ? '<span><b class="wsh"></b>' + (cv ? 'off its curve' : 'over the line') + '</span>' : '') + '</span><span></span></div></div>';
   ch.classList.remove('ld'); wxChEase(ch, h0);
 }
 // the hover read-out: the minute under the pointer, its guide and dot, its value and whether it was past a line
@@ -9676,6 +9719,7 @@ function wxHover(hz, e) {
   if (v !== null) { d.style.left = at; d.style.top = ((1 - (Math.max(T.lo, Math.min(T.top, v)) - T.lo) / (T.top - T.lo)) * 100).toFixed(2) + '%'; }
   const past = raw === null ? [] : T.lines.filter(([lv]) => T.under ? v <= lv : v >= lv).map(x => x[1]);
   let h = '<b>' + hhmm(t) + (T.step === 600 ? ' to ' + hhmm(t + 600) : '') + '</b>' + (v === null ? '<span>no reading</span>' : '<span>' + esc(T.name) + ' <em>' + esc(T.val(v)) + '</em></span>');
+  if (T.exp && T.exp[i] != null) h += '<span>its curve <em>' + esc(T.val(T.exp[i])) + '</em></span>';   // (a fan: what its curve wanted that minute)
   if (past.length) { const red = past.includes('r'); h += '<span><i class="w' + (red ? 'r' : 'y') + '"></i>' + (T.under ? 'under' : 'over') + ' its ' + (red ? 'red' : 'yellow') + ' line</span>'; }
   const tip = hz.querySelector('.gx-tip');
   if (tip._h !== h) { tip.innerHTML = h; tip._h = h; }

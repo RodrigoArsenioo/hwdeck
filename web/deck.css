@@ -1463,6 +1463,8 @@ select.dsel-n { display: none; }
 #wmodal .gx-fpsc rect.wy { fill: rgba(230, 200, 74, 0.08); } #wmodal .gx-fpsc rect.wr { fill: rgba(229, 72, 77, 0.1); }
 #wmodal .gx-leg b.wl { height: 0; width: 12px; border-top: 1.5px dashed; border-radius: 0; } #wmodal .gx-leg b.wl.y { border-color: #b39b3c; } #wmodal .gx-leg b.wl.r { border-color: #b4474b; }
 #wmodal .gx-leg b.wsh { background: rgba(230, 200, 74, 0.22); }
+/* (a fan's row: what its curve wanted, dashed like a session's compared line, 11-19) */
+#wmodal .wx-tl .gx-fpsc polyline.ca { stroke: #8a8a8a; stroke-dasharray: 5 5; } #wmodal .gx-leg b.ln.ca { background: repeating-linear-gradient(90deg, #8a8a8a 0 3px, transparent 3px 6px); }
 #wmodal .gx-tip i.wy { background: var(--yellow); } #wmodal .gx-tip i.wr { background: var(--red); }
 #wmodal .wx-tl .gx-leg { margin-top: 12px; }
 #wmodal .wx-ep { display: grid; grid-template-columns: 56px 84px auto minmax(0, 1fr);   /* (its value whole: 11-02, "at 1181 RPM ..." was cut) */ gap: 14px; align-items: center; padding: 7px 0; border-top: 1px solid var(--g22, #222222); font-size: 12.5px; color: #c4c4c4; font-variant-numeric: tabular-nums; }

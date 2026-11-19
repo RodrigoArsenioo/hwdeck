@@ -2188,7 +2188,7 @@ class History
 // to normal for 3 s (with its peak), in alerts.log, the same format as the tailored dashboard
 class Alerts
 {
-    class Rule { public string Id, Key, Name, Unit, Mode, Dir, Src; public double Y, R, Tol, Hold, CurveHold, OY = double.NaN, OR = double.NaN; public bool CurveWarn = true; public int Dec; public double[][] Pts; public Func<int> Level; public Func<string> Why; }
+    class Rule { public string Id, Key, Name, Unit, Mode, Dir, Src, SrcLabel, SrcUnit; public double Y, R, Tol, Hold, CurveHold, OY = double.NaN, OR = double.NaN; public bool CurveWarn = true; public int Dec; public double[][] Pts; public Func<int> Level; public Func<string> Why; }
     class St
     {
         public long Since; public int Logged, Calm, Dec; public double Peak, PeakDev; public string Name, Unit; public bool Below, Off;
@@ -2274,6 +2274,9 @@ class Alerts
             {
                 rule.Src = F(cv, "src") as string; rule.Tol = Math.Max(1, Num(F(cv, "tol"), 15)); rule.CurveHold = Math.Max(0, Math.Min(1e9, Num(F(cv, "hold"), 10)));
                 rule.CurveWarn = !false.Equals(F(cv, "warn"));   // off: the page only says how far off it is, nothing is logged
+                // (the temperature it follows, by its name, for the log: never ": ", the log's names end at the last one)
+                var sr = rule.Src != null ? src.Readings.FirstOrDefault(x => x.Key == rule.Src) : null;
+                if (sr != null) { rule.SrcLabel = Clean(sr.Label).Replace(": ", " "); rule.SrcUnit = sr.Unit ?? ""; }
                 var pts = F(cv, "pts") as System.Collections.IList;   // object[] from state.json, ArrayList from a page message
                 if (pts != null)
                     rule.Pts = pts.Cast<object>().Select(p => p as System.Collections.IList).Where(p => p != null && p.Count >= 2)
@@ -2396,12 +2399,16 @@ class Alerts
             int si;
             if (!skip && raw == 0 && r.CurveWarn && r.Pts != null && r.Pts.Length > 0 && r.Src != null && index.TryGetValue(r.Src, out si) && si < src.Values.Length && !double.IsNaN(src.Values[si]))
             {
-                double exp = Interp(r.Pts, src.Values[si]);
+                double t = src.Values[si], exp = Interp(r.Pts, t);
                 double pct = exp > 0 ? (v - exp) / exp * 100 : v > 100 ? 100 : 0;   // (11-06: expected at 0 rpm and spinning: off it, as on the page)
                 if (Math.Abs(pct) > r.Tol)
                 {
                     raw = 1; hold = r.CurveHold; off = true; under = v < exp; dev = Math.Abs(pct) / 100;
-                    extra = " (" + Math.Abs(Math.Round(pct)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "% " + (v < exp ? "under" : "over") + " its curve)";
+                    // what its curve wanted then, and at what temperature (his 11-19 "this log doesnt tell me much when it
+                    // comes to fan tracking"): "(37% under its curve, 2250 RPM at 85 °C GPU Hot Spot Temperature)"
+                    var ic = System.Globalization.CultureInfo.InvariantCulture;
+                    extra = " (" + Math.Abs(Math.Round(pct)).ToString(ic) + "% " + (v < exp ? "under" : "over") + " its curve, " + Math.Round(exp).ToString(ic) + (string.IsNullOrEmpty(r.Unit) ? "" : " " + r.Unit) +
+                            (r.SrcLabel != null ? " at " + Math.Round(t).ToString(ic) + " " + r.SrcUnit + " " + r.SrcLabel : "") + ")";
                 }
             }
             St s;
