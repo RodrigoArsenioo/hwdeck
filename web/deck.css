@@ -28,7 +28,7 @@ button { font-family: inherit; }
 .tbar { flex: none; position: relative; display: flex; align-items: center; gap: 10px; height: 50px; padding: 8px 8px 8px 18px; app-region: drag; -webkit-app-region: drag; user-select: none; font-size: 15px; }   /* (one height in and out of edit mode: the edit strip stood 0.58 px taller than the tabs and moved the whole view down, his 11-09) */
 .tbar button, .tbar nav { app-region: no-drag; -webkit-app-region: no-drag; }
 .tbar .name { font-weight: 650; color: var(--hi); letter-spacing: 0.04em; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
-.tclock { font-size: 14px; color: #5c5c5c; font-variant-numeric: tabular-nums; margin-left: -1px; white-space: nowrap; }
+.tclock { font-size: 14px; color: var(--g70, #707070); font-variant-numeric: tabular-nums; margin-left: -1px; white-space: nowrap; }
 /* the bar's steps move (his 11-13 "it's still snappy, the clock just disappears, the view modes switch snaps into small
    sizes, smaller snap are still snaps ... just make smooth animations"): what leaves closes and fades (--on: 0 on it:
    its width, its gap and its opacity go to nothing; --mw, its own width, set by titleFit, so it closes from where it
@@ -227,7 +227,7 @@ html[data-motion="off"] .viewwrap { transition: none; }
 .odf > .od.odin > .odh { line-height: 0.86; }   /* (a digit rolling in or out on its own: the same step) */
 .v > span:not(.od), .v + .u, .v + small { display: inline-block; }   /* (the unit, a point, a comma: slid by odoFlip as the digits change, a transform needs a box, the number-style mock 11-17) */   /* (a digit rolling in or out on its own, a number gaining or losing a digit: 11-17) */
 .spw, .lbl i.spw { display: inline-flex; flex: none; font-style: normal; }   /* (not .lbl i's block: its line box sat the fan 1px off the turn's centre) */
-.yellow { color: var(--yellow); } .red { color: var(--red); } .grey { color: #555; }
+.yellow { color: var(--yellow); } .red { color: var(--red); } .grey { color: var(--g70, #707070); }
 .val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; transition: color var(--t-state); }
 .val small { color: #666; font-weight: 400; font-size: 0.88rem; margin-left: 0.15rem; }
 .lbl { color: #9a9a9a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; line-height: 1.25; }
@@ -341,7 +341,7 @@ i.y, .hc.y, .tc.y, td.ginfo.y { color: #c9ad3f; } i.r, .hc.r, .tc.r, td.ginfo.r 
 .hero .nm > span { overflow: hidden; text-overflow: ellipsis; }
 .hv { font-family: var(--f-num); font-size: 2.31rem; font-weight: 600; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; transition: color var(--t-state); color: #e8e8e8; }
 .hv small { font-size: 1.08rem; color: #666; font-weight: 400; margin-left: 0.23rem; }
-.tv.yellow, .hv.yellow { color: var(--yellow); } .tv.red, .hv.red { color: var(--red); } .tv.grey, .hv.grey { color: #555; }
+.tv.yellow, .hv.yellow { color: var(--yellow); } .tv.red, .hv.red { color: var(--red); } .tv.grey, .hv.grey { color: var(--g70, #707070); }
 .tv.past, .hv.past, .val.past { color: #a3a3a3; }   /* a past reading (2.1: the last game session while no game runs) */
 .hc { font-size: max(0.92rem, 10px); color: #7b7b7b; margin-top: 0.38rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16rem; transition: color 300ms; min-height: 1.2em; }
 .hero canvas { width: 100%; height: 4.9rem; display: block; }
@@ -379,8 +379,8 @@ table.gt { width: 100%; border-collapse: collapse; font-size: 0.96rem; table-lay
 .gt td.gval { font-weight: 600; color: #e8e8e8; transition: color var(--t-state), background 150ms; }
 .gt td.gval .v { display: inline-block; min-width: 3.3rem; text-align: right; }
 .gt td.gval .gu { display: inline-block; width: 2.3rem; margin-left: 0.3rem; text-align: left; color: #666; font-weight: 400; font-size: 0.85rem; }
-.gt td.gval.yellow { color: var(--yellow); } .gt td.gval.red { color: var(--red); } .gt td.gval.grey { color: #555; } .gt td.gval.past { color: #a3a3a3; }
-.gt td.glines { font-size: 0.88rem; color: #444; }
+.gt td.gval.yellow { color: var(--yellow); } .gt td.gval.red { color: var(--red); } .gt td.gval.grey { color: var(--g70, #707070); } .gt td.gval.past { color: #a3a3a3; }
+.gt td.glines { font-size: 0.88rem; color: var(--g70, #707070); }
 .gt td.glines .y { color: #b39b3c; } .gt td.glines .r { color: #b4474b; }
 .gt td.ginfo { text-align: left; color: #7d7d7d; font-size: 0.85rem; padding-left: 0.77rem; transition: color 300ms, background 150ms; }
 .gt td.ginfo.y { color: #c9ad3f; } .gt td.ginfo.r { color: #e5484d; }
@@ -400,6 +400,7 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .strip.big { height: 12px; border-radius: 4px; }
 /* the bottleneck's popup bar: blocks of calls (15 min) or a column per minute (10 minutes over 7 days), its read-out */
 .bnp .bnw { position: relative; margin-top: 4px; }
+.bnp .bnw.grab { cursor: grabbing; }   /* (a drag of its window, as the line graph's, 11-19) */
 .bnp .bnc { display: block; width: 100%; height: 112px; transition: opacity 200ms; }
 .bnp .sticks, #hprev .pstrip .sticks { padding: 0 4px 0 50px; }   /* (under the graph, right of its names) */
 .bnp.loading .bnc { opacity: 0.35; }
@@ -410,12 +411,12 @@ i.lg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margi
 .bnp .bnw.hv .bgd, .bnp .bnw.hv .btip { opacity: 1; }
 .bnp .btip b { color: #e8e8e8; font-weight: 600; } .bnp .btip em { font-style: normal; color: #e8e8e8; }
 .bnp .btip span { display: inline-flex; align-items: center; gap: 6px; } .bnp .btip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-.sticks { display: flex; justify-content: space-between; font-size: 11px; color: #555; margin: 5px 0 6px; font-variant-numeric: tabular-nums; }
+.sticks { display: flex; justify-content: space-between; font-size: 11px; color: var(--g70, #707070); margin: 5px 0 6px; font-variant-numeric: tabular-nums; }
 .gt td.gname .rl { margin: 0 0 0 0.5rem; vertical-align: middle; }
 .gt tr.ghdr td { color: #6f6f6f; text-transform: uppercase; font-size: 0.81rem; letter-spacing: 0.08em; text-align: left; padding: 0.92rem 0.3rem 0.3rem; }
 .gt tr.ghdr .dchw { display: flex; align-items: center; gap: 0.4rem; }
 .gt tbody tr.dc { cursor: pointer; }
-.gt tbody.cont .dchw { color: #6a6a6a; } .gt .contd { margin-left: 0.6em; font-size: 0.85em; color: #555; text-transform: none; letter-spacing: 0; font-style: italic; }
+.gt tbody.cont .dchw { color: #6a6a6a; } .gt .contd { margin-left: 0.6em; font-size: 0.85em; color: var(--g70, #707070); text-transform: none; letter-spacing: 0; font-style: italic; }
 .gt tbody tr.dc:hover td { background: rgba(255,255,255,0.026); }
 .gt tr.dc.sel { outline: 0; }
 .gt tr.dc.sel td { background: var(--edit-soft); }
@@ -816,7 +817,7 @@ select.dsel-n { display: none; }
 .wsum b { font-weight: 600; }
 .wgrp { cursor: pointer; } .wgrp:hover { background: var(--g1a, #1a1a1a); }
 .wcnt { font-size: 11px; color: #9a9a9a; background: var(--g22, #222222); border-radius: 6px; padding: 1px 6px; margin-left: 6px; font-variant-numeric: tabular-nums; }
-.wchev { color: #555; font-size: 11px; width: 10px; flex: none; transition: transform 150ms; }
+.wchev { color: var(--g70, #707070); font-size: 11px; width: 10px; flex: none; transition: transform 150ms; }
 .wgrp.open .wchev { transform: rotate(90deg); }
 .wsub { display: none; padding: 0 0 6px 28px; } .wsub.open { display: block; }
 .wsub .wrow { padding: 4px 0; font-size: 12px; border-bottom: 0; } .wsub .wname { color: #8a8a8a; }
@@ -834,7 +835,7 @@ select.dsel-n { display: none; }
 :is(#gmodal, #wmodal) .gx-wd { display: grid; justify-items: center; gap: 4px; }
 :is(#gmodal, #wmodal) .gx-wd i { display: block; width: 8px; background: #6f6f6f; border-radius: 2px; }
 :is(#gmodal, #wmodal) .gx-wd i.z { background: var(--g2e, #2e2e2e); }
-:is(#gmodal, #wmodal) .gx-wd em { font-style: normal; font-size: 9.5px; color: #555; line-height: 1; }
+:is(#gmodal, #wmodal) .gx-wd em { font-style: normal; font-size: 9.5px; color: var(--g70, #707070); line-height: 1; }
 :is(#gmodal, #wmodal) .gx-wd.today em { color: #9a9a9a; }
 /* the summary bar: its row (the week) opens what's under it like a session's row: a period, one game, their chart,
    each game's share. Its row never changes when it opens; the details unfold under it (300 ms, a session's curve) */
@@ -871,7 +872,7 @@ select.dsel-n { display: none; }
 /* its chart: hours a day as a line (a session's fps chart's look), hours on the left, the average on the right */
 :is(#gmodal, #wmodal) .gx-lc { margin-top: 20px; }
 :is(#gmodal, #wmodal) .gx-lcg { display: grid; grid-template-columns: 30px minmax(0, 1fr) 64px; gap: 10px; }   /* (the plot centred in its box: 46 + 30 + 10 on the left, 10 + 64 + 12 on the right) */
-:is(#gmodal, #wmodal) .gx-lcy { position: relative; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-lcy { position: relative; font-size: 10px; color: var(--g70, #707070); font-variant-numeric: tabular-nums; }
 :is(#gmodal, #wmodal) .gx-lcy span { position: absolute; right: 0; transform: translateY(-50%); }
 :is(#gmodal, #wmodal) .gx-lcp { position: relative; cursor: crosshair; }
 :is(#gmodal, #wmodal) .gx-lcp svg { display: block; width: 100%; overflow: visible; }
@@ -883,12 +884,12 @@ select.dsel-n { display: none; }
 @keyframes sumIn { from { opacity: 0; } }
 #wmodal .wx-ch.ld { min-height: 200px; }   /* (a warning row's chart: its room held while it loads, 11-08) */
 :is(#gmodal, #wmodal) .gx-lca { position: absolute; left: calc(100% + 8px); font-size: 10.5px; color: #777; transform: translateY(-50%); white-space: nowrap; font-variant-numeric: tabular-nums; }
-:is(#gmodal, #wmodal) .gx-lcx { position: relative; height: 13px; margin-top: 7px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-lcx { position: relative; height: 13px; margin-top: 7px; font-size: 10px; color: var(--g70, #707070); font-variant-numeric: tabular-nums; }
 :is(#gmodal, #wmodal) .gx-lcx span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 :is(#gmodal, #wmodal) .gx-lcx span.e { transform: none; right: 0; }
 :is(#gmodal, #wmodal) .gx-gtab { margin: 18px -6px 0; padding-top: 6px; border-top: 1px solid var(--g24, #242424); }   /* (not .gx-gt: that is the name of the session in progress, 11-02 bug) */
 :is(#gmodal, #wmodal) .gx-gh, :is(#gmodal, #wmodal) .gx-gr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, 190px) 76px 62px 70px 48px 86px; gap: 0 18px; align-items: center; padding: 0 10px; }
-:is(#gmodal, #wmodal) .gx-gh { font-size: 10.5px; color: #555; text-transform: uppercase; letter-spacing: 0.09em; padding-top: 10px; padding-bottom: 8px; }
+:is(#gmodal, #wmodal) .gx-gh { font-size: 10.5px; color: var(--g70, #707070); text-transform: uppercase; letter-spacing: 0.09em; padding-top: 10px; padding-bottom: 8px; }
 #gmodal .gx-gh .gx-sk { cursor: pointer; white-space: nowrap; transition: color 140ms ease-out; } #gmodal .gx-gh .gx-sk:hover { color: #8a8a8a; } #gmodal .gx-gh .gx-sk.on { color: #c8c8c8; }   /* the game table sorts by a column (11-06) */
 #gmodal .gx-gh .gx-sk svg { width: 8px; height: 8px; margin-left: 5px; vertical-align: 1px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 :is(#gmodal, #wmodal) .gx-gr { min-height: 40px; font-size: 12.5px; color: #c4c4c4; font-variant-numeric: tabular-nums; border-radius: 8px; cursor: pointer; transition: background 150ms; }
@@ -902,7 +903,7 @@ select.dsel-n { display: none; }
 :is(#gmodal, #wmodal) .gx-gr.on .gx-gbar span { background: #d4d4d4; }
 :is(#gmodal, #wmodal) .gx-ago { color: #6f6f6f; }
 :is(#gmodal, #wmodal) .gx-cols, :is(#gmodal, #wmodal) .gx-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) 90px 46px 56px 172px 112px; gap: 0 20px; align-items: center; padding: 0 12px; }
-:is(#gmodal, #wmodal) .gx-cols { font-size: 10.5px; color: #555; text-transform: uppercase; letter-spacing: 0.09em; padding-bottom: 9px; border-bottom: 1px solid var(--g1e, #1e1e1e); }
+:is(#gmodal, #wmodal) .gx-cols { font-size: 10.5px; color: var(--g70, #707070); text-transform: uppercase; letter-spacing: 0.09em; padding-bottom: 9px; border-bottom: 1px solid var(--g1e, #1e1e1e); }
 :is(#gmodal, #wmodal) .gx-r { text-align: right; }
 :is(#gmodal, #wmodal) .gx-cols > :nth-child(6), :is(#gmodal, #wmodal) .gx-row > :nth-child(6) { padding-left: 16px; }
 :is(#gmodal, #wmodal) .gx-day { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.09em; margin: 26px 0 0; padding: 8px 12px 8px;
@@ -911,8 +912,8 @@ select.dsel-n { display: none; }
 /* (stuck at the top: a fade under it, so what scrolls under it slides away instead of being cut by a line, 11-09) */
 :is(#gmodal, #wmodal) .gx-day::after { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 14px; pointer-events: none; opacity: 0; transition: opacity 140ms; background: linear-gradient(var(--dayc, var(--pop)), transparent); }
 :is(#gmodal, #wmodal) .gx-day.stuck::after { opacity: 1; } :root[data-motion="off"] :is(#gmodal, #wmodal) .gx-day::after { transition: none; }
-:is(#gmodal, #wmodal) .gx-day span { color: #474747; margin-left: 8px; }
-:is(#gmodal, #wmodal) .gx-day .gx-tot { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-day span { color: var(--g70, #707070); margin-left: 8px; }
+:is(#gmodal, #wmodal) .gx-day .gx-tot { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--g70, #707070); font-variant-numeric: tabular-nums; }
 /* every session is its own block with a gap around it (open or not), so rows never run into each other */
 :is(#gmodal, #wmodal) .gx-sess { background: var(--g17, #171717); border: 1px solid var(--g1f, #1f1f1f); border-radius: 10px; transition: background 200ms, border-color 200ms; }
 :is(#gmodal, #wmodal) .gx-sess + .gx-sess { margin-top: 6px; }
@@ -944,17 +945,17 @@ select.dsel-n { display: none; }
 :is(#gmodal, #wmodal) .gx-nbar span { position: absolute; top: 0; bottom: 0; }
 :is(#gmodal, #wmodal) .gx-st { justify-items: end; text-align: right; font-size: 12px; }
 :is(#gmodal, #wmodal) .gx-st > * { max-width: 100%; }
-:is(#gmodal, #wmodal) .gx-st .gx-ok { color: #4a4a4a; }
+:is(#gmodal, #wmodal) .gx-st .gx-ok { color: var(--g70, #707070); }
 :is(#gmodal, #wmodal) .gx-st .gx-wv { color: #c4c4c4; }   /* (plain, no dot, no yellow: his ask 11-02) */
 :is(#gmodal, #wmodal) .gx-det { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 :is(#gmodal, #wmodal) .gx-sess.open .gx-det { grid-template-rows: 1fr; }
 :is(#gmodal, #wmodal) .gx-det > div { overflow: hidden; }
 :is(#gmodal, #wmodal) .gx-in { padding: 0 12px 15px 46px; }   /* the details line up with the game name */
-:is(#gmodal, #wmodal) .gx-ch { font-size: 10.5px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 4px; }
+:is(#gmodal, #wmodal) .gx-ch { font-size: 10.5px; font-weight: 600; color: var(--g70, #707070); text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 4px; }
 :is(#gmodal, #wmodal) .gx-tl { margin-top: 20px; padding-top: 16px; padding-bottom: 7px; border-top: 1px solid var(--g24, #242424); }
 :is(#gmodal, #wmodal) .gx-tl > .gx-ch { margin-bottom: 3px; }
 :is(#gmodal, #wmodal) .gx-tl .gx-ch { display: flex; justify-content: space-between; }
-:is(#gmodal, #wmodal) .gx-tl .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; }
+:is(#gmodal, #wmodal) .gx-tl .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--g70, #707070); }
 :is(#gmodal, #wmodal) .gx-tr { display: grid; grid-template-columns: 64px minmax(0, 1fr) 98px; gap: 18px; align-items: center; }   /* (the plot centred in its box: 46 + 64 + 18 on the left, 18 + 98 + 12 on the right) */
 :is(#gmodal, #wmodal) .gx-tr .l { font-size: 12px; color: #8a8a8a; }
 /* the charts: fps (its 1% low under it, the band between), what limited each minute; a hover guide runs through both */
@@ -985,9 +986,9 @@ select.dsel-n { display: none; }
 :where(:root:is([data-tint="accent"], [data-tint="spectrum"])) :is(#gmodal, #wmodal) .gx-fpsc polygon { fill: color-mix(in srgb, var(--cc, var(--gc, #ffffff)) 10%, transparent); }
 :where(:root:is([data-tint="accent"], [data-tint="spectrum"])) :is(#gmodal, #wmodal) .gx-bnc path.bl { stroke: color-mix(in srgb, var(--cc, var(--gc, #bdbdbd)) 70%, #ffffff); }
 :where(:root:is([data-tint="accent"], [data-tint="spectrum"])) .mbar i { background: var(--mc, var(--gc, var(--acc, #8c8c8c))); }   /* (a cell's popup: the cell's own colour, paintMc) */
-:is(#gmodal, #wmodal) .gx-bny { position: relative; height: 40px; font-size: 10px; color: #555; }
+:is(#gmodal, #wmodal) .gx-bny { position: relative; height: 40px; font-size: 10px; color: var(--g70, #707070); }
 :is(#gmodal, #wmodal) .gx-bny span { position: absolute; left: 0; transform: translateY(-50%); white-space: nowrap; }
-:is(#gmodal, #wmodal) .gx-yax { position: relative; height: 140px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-yax { position: relative; height: 140px; font-size: 10px; color: var(--g70, #707070); font-variant-numeric: tabular-nums; }
 :is(#gmodal, #wmodal) .gx-yax span { position: absolute; left: 0; transform: translateY(-50%); }
 :is(#gmodal, #wmodal) .gx-tr.f { margin-top: 10px; }
 :is(#gmodal, #wmodal) .gx-tr.s { margin-top: 12px; }
@@ -1002,7 +1003,7 @@ select.dsel-n { display: none; }
 :is(#gmodal, #wmodal) .gx-tip em { font-style: normal; color: #e8e8e8; }
 :is(#gmodal, #wmodal) .gx-tip span { display: inline-flex; align-items: center; gap: 6px; }
 :is(#gmodal, #wmodal) .gx-tip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-:is(#gmodal, #wmodal) .gx-ticks { position: relative; height: 14px; margin-top: 2px; font-size: 10px; color: #555; font-variant-numeric: tabular-nums; }
+:is(#gmodal, #wmodal) .gx-ticks { position: relative; height: 14px; margin-top: 2px; font-size: 10px; color: var(--g70, #707070); font-variant-numeric: tabular-nums; }
 :is(#gmodal, #wmodal) .gx-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 :is(#gmodal, #wmodal) .gx-ticks span.e0 { transform: none; left: 0; } :is(#gmodal, #wmodal) .gx-ticks span.e1 { transform: none; right: 0; }
 :is(#gmodal, #wmodal) .gx-leg { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 11.5px; color: #8a8a8a; margin-top: 20px; font-variant-numeric: tabular-nums; }
@@ -1222,7 +1223,7 @@ select.dsel-n { display: none; }
 #gmodal .gx-rw .m { text-align: right; color: #e8e8e8; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #gmodal .gx-rw .m u { text-decoration: none; color: #6f6f6f; font-weight: 400; font-size: 11px; margin-left: 2px; }
 #gmodal .gx-rw .m.y { color: var(--yellow); } #gmodal .gx-rw .m.r { color: var(--red); }
-#gmodal .gx-rw.nil .n, #gmodal .gx-rw.nil .m { color: #4a4a4a; }
+#gmodal .gx-rw.nil .n, #gmodal .gx-rw.nil .m { color: var(--g70, #707070); }
 #glist.still .gx-det { transition: none; }
 /* Sessions' header: real buttons with an icon (11-02); Customize open is lit grey, not blue; Clear warms to red */
 /* a popup's header actions (Sessions, Warning history): plain icons like the close X beside them, no boxes; a soft
@@ -1330,7 +1331,7 @@ select.dsel-n { display: none; }
 #gcz .gx-ch { display: flex; justify-content: space-between; font-size: 10.5px; font-weight: 600; color: #6f6f6f; text-transform: uppercase; letter-spacing: .09em; margin-bottom: 8px; }
 #gcz .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; }
 #gcz .gz-s, #gcz .gz-c { display: flex; align-items: center; gap: 10px; background: var(--g17, #171717); border: 1px solid var(--g26, #262626); border-radius: 9px; padding: 6px 8px 6px 10px; margin-bottom: 6px; font-size: 12.5px; cursor: default; }
-#gcz .gz-s.on { border-color: var(--g44, #444444); background: var(--g20, #202020); } #gcz .gz-s.off .nm, #gcz .gz-s.off .gz-name { color: #555; }
+#gcz .gz-s.on { border-color: var(--g44, #444444); background: var(--g20, #202020); } #gcz .gz-s.off .nm, #gcz .gz-s.off .gz-name { color: var(--g70, #707070); }
 #gcz .gz-s.drag, #gcz .gz-c.drag { opacity: .55; } #gcz .drop { box-shadow: 0 -2px 0 #9a9a9a; } #gcz .dropend > :last-of-type { box-shadow: 0 2px 0 #9a9a9a; }
 #gcz .grip { width: 10px; height: 16px; flex: none; cursor: grab; touch-action: none; background: radial-gradient(circle, #6a6a6a 1.2px, transparent 1.4px) 0 0 / 5px 5px; }
 #gcz .nm { color: #e0e0e0; min-width: 0; padding: 4px 0; } #gcz .gz-s .nm { cursor: default; }
@@ -1389,7 +1390,7 @@ select.dsel-n { display: none; }
 @media (max-width: 760px) { .lk-pal { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .lk-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--g21, #212121); }
 .lk-name { color: #cfcfcf; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.lk-tag { color: #5c5c5c; font-size: 11.5px; white-space: nowrap; } .lk-row .sp { flex: 1; }
+.lk-tag { color: var(--g70, #707070); font-size: 11.5px; white-space: nowrap; } .lk-row .sp { flex: 1; }
 .lk-chip { display: inline-flex; align-items: center; gap: 8px; flex: none; background: var(--g15, #151515); border: 1px solid var(--g2a, #2a2a2a); border-radius: 999px; padding: 3px 11px 3px 4px; color: #9a9a9a; font: inherit; font-size: 11.5px; font-variant-numeric: tabular-nums; cursor: pointer; transition: border-color 150ms, color 150ms; }
 .lk-chip i { width: 16px; height: 16px; border-radius: 50%; background: var(--c); }
 .lk-chip:hover, .lk-chip.on { border-color: var(--g4a, #4a4a4a); color: #fff; }
@@ -1399,7 +1400,7 @@ select.dsel-n { display: none; }
 .lk-g button:where(:not(.lk-x, .lk-es)) { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }   /* (11-14 a faint edge on every swatch, not on Saved's x or +: black and the darkest tones show on the dark editor; :where keeps it under .on) */
 .lk-g button:hover { transform: scale(1.12); } :root[data-motion="off"] .lk-g button:hover { transform: none; } .lk-g button.on { box-shadow: 0 0 0 2px var(--g15, #151515), 0 0 0 3.5px #e6e6e6; }
 /* (the colours picked last, under the tones: one list for every colour picker, 2.4.9) */
-.lk-rl { margin: 11px 0 7px; color: #5c5c5c; font-size: 11.5px; }
+.lk-rl { margin: 11px 0 7px; color: var(--g70, #707070); font-size: 11.5px; }
 /* (his saved colours, at most two rows: a dashed + keeps the colour the editor is on, an x on one, shown under the pointer, takes it out; 2.4.9) */
 .lk-sc { position: relative; display: block; } .lk-sc > button:first-child { display: block; width: 100%; }
 .lk-g .lk-scx { top: -4px; right: -4px; width: 14px; height: 14px; aspect-ratio: auto; border-radius: 50%; background: var(--g22, #222222); box-shadow: 0 0 0 1.5px var(--g15, #151515); transition: opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out; }
@@ -1455,7 +1456,7 @@ select.dsel-n { display: none; }
 #wmodal .wx-lv i { width: 7px; height: 7px; border-radius: 50%; background: var(--yellow); flex: none; } #wmodal .wx-lv.r i { background: var(--red); }
 /* opened: the reading around it (its lines dashed, the time over them shaded), then each crossing */
 #wmodal .wx-ch { margin: 2px 0 14px; }
-#wmodal .wx-ch .gx-ch { display: flex; justify-content: space-between; } #wmodal .wx-ch .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; color: #555; }
+#wmodal .wx-ch .gx-ch { display: flex; justify-content: space-between; } #wmodal .wx-ch .gx-ch span { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--g70, #707070); }
 /* a warning's chart: the session chart's pieces (gx-tl, gx-hz, gx-fpsc ...) plus its lines dashed, the time over them
    shaded, and their legend and read-out marks (11-02) */
 #wmodal .gx-fpsc line.wy, #wmodal .gx-fpsc line.wr { stroke-dasharray: 5 4; } #wmodal .gx-fpsc line.wy { stroke: #b39b3c; } #wmodal .gx-fpsc line.wr { stroke: #b4474b; }
@@ -1980,6 +1981,7 @@ select.dsel-n { display: none; }
 .cz-l .setrow.lk-palh > .lk-dd { flex: 0 1 260px; min-width: 120px; } .cz-l .setrow.lk-palh > .lk-dd > * { min-width: 0; }
 .cz-l .setrow.lk-palh > div:first-child > small { white-space: nowrap; overflow-wrap: normal; }   /* (11-17: the palette's line never wraps, its row keeps one height; the list gives way) */
 .cz-l .lk-row:not(.bg-side .lk-row) > .lk-rng { flex: 0 1 190px; width: auto; min-width: 60px; } .cz-l .lk-row > .lk-v { flex: none; }
+.cz-l .lk-row:not(.bg-side .lk-row):has(> .lk-rng) > .lk-name { flex-shrink: 0; }   /* (the name whole, the slider gives way: Look at 720 x 480 read "Opa...", his pick 11-18, item 6) */
 @media (max-width: 820px) { .cz-look .cz-l #sTint { width: auto; } .cz-look .cz-l #sTint > button { flex: 0 1 auto; padding-left: 7px; padding-right: 7px; } .cz-look .lk-colr .lk-cw { gap: 8px; } }   /* (by the window, not a container query: one on the column would hold its floating editors) */
 
 /* animation speed, Customize > Look (11-17): Look's thin slider and the stop's name beside it, as wide as Colour and Popups

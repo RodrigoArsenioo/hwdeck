@@ -326,6 +326,7 @@ const HSX = (() => {
     // the states a reading has (the clock and the PC's readings none), their names, the keys a state may set for itself
     const HS_STS = { head: ['off', 'chg', 'low', 'none'], spare: ['empty', 'chg', 'low', 'none'], mouse: ['sleep', 'chg', 'low', 'none'], vol: ['mute'] };
     const HS_STNM = { norm: 'Normal', empty: 'Empty', off: 'Off', chg: 'Charging', low: 'Low', sleep: 'Asleep', none: 'No data', mute: 'Muted' };
+    const HS_EMPTY_WK = 1;   // (11-18 his "make this the default": a spare's Empty word at 1x, app.cs Hs.EMPTY_WK)
     const HS_SK = new Set(['label', 'at', 'name', 'size', 'align', 'dec', 'unit', 'num', 'nsize', 'dig', 'inv', 'offas', 'offtxt', 'chgas', 'lowas', 'vh', 'vk', 'wk', 'bk', 'uk', 'ik', 'vx', 'vy', 'ux', 'uy', 'ix', 'iy', 'uat', 'ico', 'kat', 'kx', 'ky']);
     const hsStsOf = q => q && q.src !== 'clock' ? HS_STS[q.src] || [] : [];
     // the state being looked at (null: the normal look), for the picked piece only; another piece or page: back to normal
@@ -333,7 +334,7 @@ const HSX = (() => {
     // a piece as one state sees it: that state's own keys over the piece's; a change to one of those keys is that state's
     // alone (cleared: the normal look's again), any other key the piece's
     const hsStView = (q, st) => !q || !st ? q : new Proxy(q, {
-      get(t, k) { const o = t.st && t.st[st]; return o && HS_SK.has(k) && Object.prototype.hasOwnProperty.call(o, k) ? o[k] : t[k]; },
+      get(t, k) { const o = t.st && t.st[st]; if (o && HS_SK.has(k) && Object.prototype.hasOwnProperty.call(o, k)) return o[k]; return k === 'wk' && st === 'empty' && t.src === 'spare' ? (t.wk > 0 ? t.wk : HS_EMPTY_WK) : t[k]; },   // (11-18: a spare's Empty word at 1x unless it sets its own, his default; app.cs Hs.EMPTY_WK)
       set(t, k, v) { if (!HS_SK.has(k)) { t[k] = v; return true; } const S = t.st = t.st || {}, o = S[st] = S[st] || {};
         if (v == null) delete o[k]; else o[k] = v; if (!Object.keys(o).length) delete S[st]; if (!Object.keys(S).length) delete t.st; return true; } });
     const hsBase = () => { const Pg = hsPg(); return Pg && HS.sel != null && Pg.pieces[HS.sel] || null; };
@@ -849,7 +850,7 @@ const HSX = (() => {
               const offRows = p.src === 'mouse' ? '' : hsRow(p.src === 'spare' ? 'Spare empty' : 'Headset Off', hsSeg('offas', OFFS, oa)) + (oa === 'word' ? hsRow(p.src === 'spare' ? 'Empty word' : 'Off word', '<input class="setin hs-tx" data-hsk="offtxt" maxlength="6" spellcheck="false" autocomplete="off" placeholder="' + offW + '" value="' + esc(p.offtxt || '') + '">') : '');
               const lowT = { none: 'nothing blinks', icon: 'icon blinks', num: 'number blinks', both: 'icon and number blink' }[la] || 'icon blinks';
               h += hsFold('batt', 'Battery', [p.src === 'mouse' ? '' : (p.src === 'spare' ? 'empty: ' : 'Off: ') + (oa === 'word' ? (p.offtxt || offW) : hsName(OFFS, oa).toLowerCase()), 'charging: ' + hsName(CHGS, ca).toLowerCase(), 'below ' + low + '%: ' + lowT].filter(Boolean).join(', '),
-                offRows + (p.src !== 'mouse' && oa === 'word' && p.style === 'number' ? hsRow(p.src === 'spare' ? 'Empty word size' : 'Off word size', hsSeg('wk', [[0, 'Auto'], [1, '1x'], [2, '2x'], [3, '3x'], [4, '4x']], p.wk || 0, '', x => x > 0 && hsWordBig(p, offW, x))) : '') +
+                offRows + (p.src !== 'mouse' && oa === 'word' && p.style === 'number' ? hsRow(p.src === 'spare' ? 'Empty word size' : 'Off word size', hsSeg('wk', p.src === 'spare' ? [[1, '1x'], [2, '2x'], [3, '3x'], [4, '4x']] : [[0, 'Auto'], [1, '1x'], [2, '2x'], [3, '3x'], [4, '4x']], p.src === 'spare' ? (p.wk || HS_EMPTY_WK) : p.wk || 0, '', x => x > 0 && hsWordBig(p, offW, x))) : '') +
                 hsRow('Charging', hsSeg('chgas', CHGS, ca)) + (p.style === 'number' && (ca !== 'none' || p.src === 'mouse') ? hsRow(p.src === 'mouse' ? 'Bolt and zZ size' : 'Bolt size', hsSeg('bk', [[0, 'Auto'], [1, '1x'], [2, '2x'], [3, '3x']], p.bk || 0, '', x => { const bm = (HS.v.bkmax || [])[HS.sel]; return x > 0 && bm != null && x > bm; })) : '') + hsRow('Blinks when low', hsSeg('lowas', LOWS, la)) +
                 hsRow('Low below', hsVal('crit', p.crit, String(autoLow), '%', 'Auto')));   // (his 11-15: as Settings' Keep sessions, a number or Auto; Auto = the headset 2, where its own beeps start (11-17), the spare 12, the mouse 15)
             }
@@ -1462,7 +1463,7 @@ const ICONS = {
   neck: '<svg viewBox="0 0 24 24"><path d="M5 6h14l-5 6v6l-4 2v-8z"/></svg>',
   pad: '<svg viewBox="0 0 64 64"><rect x="8" y="12" width="20" height="16" rx="3"/><rect x="36" y="12" width="20" height="16" rx="3"/><rect x="8" y="36" width="20" height="16" rx="3"/><rect x="36" y="36" width="20" height="16" rx="3" stroke-dasharray="3 3"/></svg>'
 };
-const COLORS = { white: '#e8e8e8', yellow: '#e6c84a', red: '#e5484d', grey: '#555555' };
+const COLORS = { white: '#e8e8e8', yellow: '#e6c84a', red: '#e5484d', get grey() { return gv('#707070'); } };   // (grey: the look's dim text grey, was a fixed #555555 under 3:1, 11-18)
 
 // ---------- the catalog: every reading HWiNFO shares ----------
 const TYPES = ['none', 'temp', 'volt', 'fan', 'current', 'power', 'clock', 'usage', 'other'];
@@ -2315,7 +2316,7 @@ function lookVars(L) {
 // every grey a surface had, made the look's (11-09, his "if a theme is choosen you need to stick to the theme, cant go for any
 // gray/black things anywhere"): the same step from the cells' colour as from Classic's #151515, toward white or black, so
 // Classic keeps its greys exactly. deck.css reads them as var(--gNN, #nnnnnn); gv() gives one to what the page draws
-const G_LV = ['0f', '10', '12', '14', '15', '16', '17', '18', '19', '1a', '1b', '1c', '1d', '1e', '1f', '20', '21', '22', '23', '24', '25', '26', '28', '2a', '2b', '2c', '2e', '30', '33', '34', '36', '3a', '44', '47', '4a', '55', '6a', '8a'];
+const G_LV = ['0f', '10', '12', '14', '15', '16', '17', '18', '19', '1a', '1b', '1c', '1d', '1e', '1f', '20', '21', '22', '23', '24', '25', '26', '28', '2a', '2b', '2c', '2e', '30', '33', '34', '36', '3a', '44', '47', '4a', '55', '6a', '70', '8a'];   // (70: dim text, over 3:1 on the cells, the rows on them and a look's glow; was fixed #474747 to #5c5c5c, under 3:1 in every look, 11-18)
 // (OLED, his pick C 11-09: cells darker than a near-black floor step their greys from the floor, so popups, menus and
 // panels keep their rows and lines on a black view; the view's own colours are the look's, not these)
 const G_FLOOR = '#0d0d0d', G_FLUM = relLum(G_FLOOR);
@@ -8200,15 +8201,15 @@ mrng.addEventListener('click', e => {
 });
 // ---- the popup's window (see mkWin): the stats under the chart are the window's; a new range or a new popup starts whole ----
 // (the narrowest: 10 of its points, and a minute)
-function bwMin() { const L = lastBig, n = L && L[1] ? L[1].length : 0, sp = L && L[7] ? L[7] : (RANGE_S[bigRange] || 0) * 1000; return Math.min(1, Math.max(n > 1 ? 10 / (n - 1) : 0.02, sp ? 60000 / sp : 0)); }
-function bwDraw() { if (modalCid && lastBig) refreshModal(false, true); }   // (light: the chart, its bar and the stats, not the extras, 11-08)
+function bwMin() { const L = lastBig, n = L && L[1] ? L[1].length : BNP.on && BNP.B ? BNP.B.n : 0, sp = L && L[7] ? L[7] : (RANGE_S[bigRange] || 0) * 1000; return Math.min(1, Math.max(n > 1 ? 10 / (n - 1) : 0.02, sp ? 60000 / sp : 0)); }
+function bwDraw() { if (modalCid && (lastBig || BNP.on)) refreshModal(false, true); }   // (light: the chart, its bar and the stats, not the extras, 11-08)
 const BW = mkWin({ min: bwMin, draw: bwDraw });
 const bwSet = (a, b, glide) => BW.set(a, b, glide), bwReset = () => BW.reset();
 // the bar: where the window is, its start and end beside its ends (a date from 2 days on, else the time; now when it ends now)
 function bwBar() {
-  mbar.hidden = mgraph.hidden || !lastBig;
+  mbar.hidden = BNP.on ? !BNP.B : mgraph.hidden || !lastBig;   // (the Bottleneck's chart has it too, 11-19)
   if (mbar.hidden) return;
-  const span = lastBig[7] || (RANGE_S[bigRange] || 0) * 1000, now = Date.now();
+  const span = BNP.on ? BNP.B.n * BNP.B.step * 1000 : lastBig[7] || (RANGE_S[bigRange] || 0) * 1000, now = Date.now();
   winBarDraw(mbar, winBarParts(BW, now - span, now, winTime, 'now'));
 }
 const plotW = () => Math.max(1, mgraph.getBoundingClientRect().width - BIG_PADL - BIG_PADR);
@@ -8220,7 +8221,7 @@ mgraph.addEventListener('wheel', e => {
 }, { passive: false });
 mgraph.addEventListener('mousedown', e => { if (e.button !== 0 || !lastBig) return; e.preventDefault(); winGrab(BW, 'pan', e.clientX, plotW(), on => { mgraph.classList.toggle('grab', on); if (on) { HV.on = false; kickHover(); } }); });
 mgraph.addEventListener('dblclick', e => { if (!lastBig) return; e.preventDefault(); BW.set(0, 1, true); });
-mbar.addEventListener('mousedown', e => { if (lastBig) winBarDown(BW, mbar, e, on => mbar.classList.toggle('act', on)); });
+mbar.addEventListener('mousedown', e => { if (lastBig || (BNP.on && BNP.B)) winBarDown(BW, mbar, e, on => mbar.classList.toggle('act', on)); });
 mbar.addEventListener('mousemove', e => winBarCursor(BW, mbar, e));
 function pickRange(r) {
   setRange(r, false);
@@ -8293,7 +8294,8 @@ function refreshModal(full, light) {   // (light: a window moved, 11-08)
   }
   mgsec.hidden = !!(xk && xk.noGraph);
   mgraph.hidden = $('mstats').hidden = !!e.strip;   // the bottleneck: only the range tabs up here, its bar below
-  if (e.strip) { lastBig = null; bwBar(); bnPanel($('mextra'), e, full); return; }
+  BNP.on = !!e.strip; if (!e.strip && mbar.nextSibling !== $('mstats')) $('mstats').before(mbar);   // (the bar back under the line graph, 11-19)
+  if (e.strip) { lastBig = null; bnPanel($('mextra'), e, full); bwBar(); return; }
   if (xk && xk.noGraph) { lastBig = null; bwBar(); xDetail(xk, r, e, full); return; }
   const sp = gbArr(bucketArr(c, isYN(r)), gk);
   if (full) {   // the yellow line joins the scale when it is close above the data; decided once per opening
@@ -8343,7 +8345,15 @@ function xDetail(xk, r, e, full) {
 // a game ran in it and split into the calls (gpu at the bottom, then cpu, capped on top)
 const BN_SPAN = { '15m': 'the last 15 minutes', '1h': 'the last hour', '6h': 'the last 6 hours', '12h': 'the last 12 hours', '24h': 'the last 24 hours', '7d': 'the last 7 days', '30d': 'the last 30 days', '90d': 'the last 90 days', 'all': 'the year kept' };
 const bnSpan = r => BN_SPAN[r] || '';
-const BNP = { B: null, x: null, hist: null };
+const BNP = { B: null, V: null, x: null, hist: null, on: false };   // (V: the part in the popup's window, on: the open popup is the Bottleneck's, 11-19)
+// the popup's window (BW) over the Bottleneck's columns: the part shown, as columns of their own (the line graph's
+// own cut, inW); the whole range: the columns as they are
+function bnWin(B) {
+  if (!B) return null;
+  const n = B.n, k0 = Math.max(0, Math.ceil(BW.a * (n - 1) - 1e-9)), k1 = Math.min(n - 1, Math.floor(BW.b * (n - 1) + 1e-9));
+  if (k0 <= 0 && k1 >= n - 1 || k1 < k0) return B;
+  return { n: k1 - k0 + 1, step: B.step, end: B.end - (n - 1 - k1) * B.step, old: B.old, cols: B.cols.slice(k0, k1 + 1), win: true, atEnd: k1 === n - 1 };
+}
 function bnCols() {   // per column [gpu, cpu, capped] as parts of it (null: no game), and the seconds a column stands for
   if (bigRange === '15m') return { n: HLEN, step: 1, end: nowTs, cols: series(BNECK, HLEN).map(x => BN[x] ? [x === 1 ? 1 : 0, x === 2 ? 1 : 0, x === 3 ? 1 : 0] : null) };
   if (!histReady() || !Array.isArray(bigHist.sg)) return null;
@@ -8363,14 +8373,14 @@ function bnSum(B) {   // each call's share of the game time in the range, like t
 }
 const bnClock = (u, sec, day) => { const d = new Date(u * 1000), p = x => ('0' + x).slice(-2); return (day ? d.toLocaleDateString('en-GB', { weekday: 'short' }) + ' ' : '') + p(d.getHours()) + ':' + p(d.getMinutes()) + (sec ? ':' + p(d.getSeconds()) : ''); };
 function bnTicks(B) {
-  if (B.step === 1) return '<span>-15m</span><span>-10m</span><span>-5m</span><span>now</span>';
+  // (11-19 his "same x and y as the other": clock times, start, middle, now, as the line graphs; it said -15m ... now)
   const t0 = B.end - (B.n - 1) * B.step, wk = B.n * B.step >= 2 * 86400, mo = B.n * B.step >= 8 * 86400;   // (from 30 days: the date)
   const tk = u => mo ? dMon(new Date(u * 1000)) : bnClock(u, false, wk);
-  return '<span>' + tk(t0) + '</span><span>' + tk(t0 + B.n * B.step / 2) + '</span><span>now</span>';
+  return '<span>' + tk(t0) + '</span><span>' + tk(t0 + B.n * B.step / 2) + '</span><span>' + (B.win && !B.atEnd ? tk(B.end) : 'now') + '</span>';
 }
 function bnPanel(box, e, full) {
   if (full || !box.querySelector('.bnp')) box.innerHTML = '<div class="bnp"><div class="bnw"><canvas class="bnc"></canvas><i class="bgd"></i><div class="btip"></div></div><div class="sticks"></div><div class="mstats"></div></div>';
-  const B = BNP.B = bnCols(), cv = box.querySelector('.bnc');
+  const B0 = BNP.B = bnCols(), B = BNP.V = bnWin(B0), cv = box.querySelector('.bnc');   // (B: the part in the window, 11-19)
   box.querySelector('.bnp').classList.toggle('loading', !B);
   if (B) {   // (drawn again only when a column or its size changed)
     const lv = B.cols.map(v => v ? 3 - v.indexOf(Math.max(v[0], v[1], v[2])) : null), k = lv.join() + '|' + cvDims(cv).join('x') + '|' + solidOf(S.look) + '|' + (cellTint(modalCid) || '');   // (a new look draws it again, 11-09)
@@ -8379,15 +8389,16 @@ function bnPanel(box, e, full) {
     if (cv._h !== k) { drawLevels(cv, lv, 1, cellTint(modalCid) || '#c9c9c9'); if (cv._r !== undefined && cv._r !== bigRange && motionOn()) cv.animate([{ opacity: 0.25 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' }); cv._r = bigRange; cv._h = k; }
   }
   const sum = B && bnSum(B);
-  const lg = !B ? '<span>loading...</span>' : sum.tot ? bnLegend(sum) + (B.step > 1 ? '<span><em>game time</em>' + (sum.secs < 59.5 ? Math.round(sum.secs) + 's' : durTxt(sum.secs)) + '</span>' : '') : B.old ? '<span>The split per minute is kept from HW Deck 1.3.0 on: nothing here yet</span>' : '<span>no game in ' + bnSpan(bigRange) + '</span>';
+  const lg = !B ? '<span>loading...</span>' : sum.tot ? bnLegend(sum) + (B.step > 1 ? '<span><em>game time</em>' + (sum.secs < 59.5 ? Math.round(sum.secs) + 's' : durTxt(sum.secs)) + '</span>' : '') : B.old ? '<span>The split per minute is kept from HW Deck 1.3.0 on: nothing here yet</span>' : '<span>' + (B.win ? 'no game in this part' : 'no game in ' + bnSpan(bigRange)) + '</span>';   // (zoomed in: not the whole range, 11-19)
   const el = box.querySelector('.mstats'); if (el._h !== lg) { el.innerHTML = lg; el._h = lg; }
   const tk = B ? bnTicks(B) : '', st = box.querySelector('.sticks'); if (st._h !== tk) { st.innerHTML = tk; st._h = tk; }
+  if (mbar.previousSibling !== st) st.after(mbar);   // (the popup's slider, under this chart as under the line graph, 11-19)
   bnHover(box);
 }
 // the read-out under the pointer: that second's call, or that minute's (block's) split and how long a game ran in it
 function bnHover(box) {
   const w = box.querySelector('.bnw'); if (!w) return;
-  const B = BNP.B, r = w.getBoundingClientRect(), pw = Math.max(1, r.width - BN_PADL - 4), f = BNP.x === null ? -1 : (BNP.x - r.left - BN_PADL) / pw;   // (the graph right of its names)
+  const B = BNP.V || BNP.B, r = w.getBoundingClientRect(), pw = Math.max(1, r.width - BN_PADL - 4), f = BNP.x === null ? -1 : (BNP.x - r.left - BN_PADL) / pw;   // (the graph right of its names)
   if (!B || f < 0 || f > 1) { w.classList.remove('hv'); return; }
   const i = Math.max(0, Math.min(B.n - 1, Math.floor(f * B.n))), v = B.cols[i], at = B.end - (B.n - 1 - i) * B.step;
   let h = '<b>' + bnClock(at, B.step === 1, B.n * B.step >= 2 * 86400) + '</b>';
@@ -8406,6 +8417,17 @@ function bnHover(box) {
 }
 $('mextra').addEventListener('pointermove', ev => { const w = ev.target.closest && ev.target.closest('.bnw'); BNP.x = w ? ev.clientX : null; bnHover($('mextra')); });
 $('mextra').addEventListener('pointerleave', () => { BNP.x = null; bnHover($('mextra')); });
+const bnPlot = w => { const r = w.getBoundingClientRect(); return { r, pw: Math.max(1, r.width - BN_PADL - 4) }; };   // (its plot: right of its names)
+$('mextra').addEventListener('wheel', e => {
+  const w = e.target.closest && e.target.closest('.bnw'); if (!w || !BNP.on || !BNP.B || !winWheelOk()) return;
+  e.preventDefault(); const P = bnPlot(w);
+  BW.wheel(Math.max(0, Math.min(1, (e.clientX - P.r.left - BN_PADL) / P.pw)), e.deltaMode ? e.deltaY * 33 : e.deltaY);
+}, { passive: false });
+$('mextra').addEventListener('mousedown', e => {
+  const w = e.target.closest && e.target.closest('.bnw'); if (!w || e.button !== 0 || !BNP.on || !BNP.B) return;
+  e.preventDefault(); winGrab(BW, 'pan', e.clientX, bnPlot(w).pw, on => { w.classList.toggle('grab', on); if (on) { BNP.x = null; bnHover($('mextra')); } });
+});
+$('mextra').addEventListener('dblclick', e => { const w = e.target.closest && e.target.closest('.bnw'); if (!w || !BNP.on || !BNP.B) return; e.preventDefault(); BW.set(0, 1, true); });
 // a press outside the popup closes it, however soon after it opened and wherever (the same spot as the cell too)
 modal.addEventListener('mousedown', e => { if (e.target === modal) { e.preventDefault(); closeDetail(); } });
 $('mclose').onclick = closeDetail;
@@ -9169,6 +9191,10 @@ const NOTES = [
     'A number part way through a roll stays inside its line.',
     'Renaming a category in its header: a roomier box, and the side panel follows as you type.',
     'A change made just before closing is saved, and a save that fails is tried again.']],
+  ['2.6.4', '2.6.4', ['The Bottleneck popup has the same time slider as the other graphs: zoom, drag, double click for the whole range.',
+    'Customize > Headset: a spare battery\'s Empty state shows its word at 1x by default, its icon dimmed beside it.',
+    'Small grey text is a little lighter and follows the theme.',
+    'Customize > Look in a small window: the sliders show their names in full.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };

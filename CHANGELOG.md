@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6.4 (2026-11-19)
+
+- The Bottleneck popup has the same time slider as the other graphs: the wheel zooms where the pointer is, a drag moves back and forth, a double click shows the whole range again, and the slider itself can be dragged. The split under the chart and its times follow what is in view, and the times are clock times, as on the other graphs.
+- Customize > Headset: a spare battery's Empty state shows its word at 1x by default, with its icon dimmed beside it. A size picked for it, Auto included, still wins.
+- Small grey text (the dates and week letters in Sessions, column heads, the Off and -- placeholders, the title clock, the lines of a Grid) is a little lighter and follows the theme, so it stays readable.
+- Customize > Look in a small window (720 x 480): the sliders show their names in full.
+- When the page's browser and its graphics process stop, each is started again on a count of its own, so one can't use up the other's tries.
+
 ## 2.6.3 (2026-11-18)
 
 - Upload now is the Internet tile's twin: it reads Upload, has the same icon and one decimal, shows the download speed under its number (the speed test's seconds while one runs) and opens the same popup, with Test now.

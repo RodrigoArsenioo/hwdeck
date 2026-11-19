@@ -33,7 +33,7 @@ using HwHeadset;   // (the headset, at the end of this file)
 
 static class AppInfo
 {
-    public const string Version = "2.6.3";
+    public const string Version = "2.6.4";
     // the version this copy runs as: this one; a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test, 11-07: an install going from one version to the next on one data folder)
     public static string Run = Version;
@@ -4158,9 +4158,9 @@ partial class DeckForm : Form
                 Try(() =>
                 {
                     // (a browser that keeps dying: after the third time within minutes, no more starts, it says so)
-                    int next = NextRelaunch();
+                    int next = NextRelaunch(false);
                     if (next > 2) { Log("the page's browser keeps closing: not started again"); exiting = true; tray.Visible = false; MessageBox.Show(Brand.Name + "'s page keeps closing (its WebView2 browser stopped " + next + " times in a few minutes), so " + Brand.Name + " stopped. Start it again later, or repair the Microsoft Edge WebView2 Runtime in Settings, Apps.", Brand.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning); Application.Exit(); return; }
-                    Relaunch(next);
+                    Relaunch(next, false);
                 });
         };
         // the page's files changed (an update): WebView2 may keep serving the old ones from its cache for a while (the
@@ -5645,13 +5645,15 @@ partial class DeckForm : Form
         }
         catch { return false; }
     }
-    public static int Relaunches;   // the page's browser (or its GPU process) died and this copy was started again: how many times in a row
-    int NextRelaunch() { return (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMinutes < 10 ? Relaunches + 1 : 1; }
+    public static int Relaunches, GpuRelaunches;   // the page's browser died / its GPU process died and this copy was started again: how many times in a row, each its own (one tally: two GPU starts after a driver update, then one browser crash read as "keeps closing", 11-18)
+    static bool RelaunchRecent() { return (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMinutes < 10; }
+    int NextRelaunch(bool gpu) { return RelaunchRecent() ? (gpu ? GpuRelaunches : Relaunches) + 1 : 1; }
     // a new copy that waits for this one to save and quit, and comes back as the window is now
     // (and for the page's browser too: one still closing would be joined by the new copy's page, GPU state and all)
-    void Relaunch(int next)
+    void Relaunch(int next, bool gpu)
     {
-        Process.Start(Application.ExecutablePath, RestartArgs() + " --after " + Process.GetCurrentProcess().Id + (browserPid != 0 ? " --after-browser " + browserPid : "") + " --relaunch " + next + (Visible && !IsIconic(Handle) ? "" : " -min"));
+        int other = RelaunchRecent() ? (gpu ? Relaunches : GpuRelaunches) : 0;   // (the other tally carried on while it is recent)
+        Process.Start(Application.ExecutablePath, RestartArgs() + " --after " + Process.GetCurrentProcess().Id + (browserPid != 0 ? " --after-browser " + browserPid : "") + " --relaunch " + (gpu ? other : next) + " --gpu-relaunch " + (gpu ? next : other) + (Visible && !IsIconic(Handle) ? "" : " -min"));
         exiting = true; tray.Visible = false; Application.Exit();
     }
     uint browserPid;   // the page's WebView2 browser process
@@ -5663,11 +5665,11 @@ partial class DeckForm : Form
     {
         if (!gpuLost || exiting || ending || asleep || unchecked(Environment.TickCount - gpuLostAt) < 30000) return false;
         if (Visible && !IsIconic(Handle) && (gameFront || FullScreenInFront())) return false;
-        int next = NextRelaunch();
+        int next = NextRelaunch(true);
         if (next > 2) { if (!gpuWaitLogged) Log("the page's GPU process keeps closing: starting again once this copy has run 10 minutes"); gpuWaitLogged = true; return false; }
         gpuLost = false;
         Log("starting again: the page's GPU process closed");
-        if (!Try(() => Relaunch(next))) Log("starting again failed");
+        if (!Try(() => Relaunch(next, true))) Log("starting again failed");
         return exiting;
     }
     [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
@@ -6970,6 +6972,7 @@ static class Program
             else if (a == "--fake") { fake = 300; int n; if (i + 1 < args.Length && int.TryParse(args[i + 1], out n)) { fake = Math.Max(1, Math.Min(20000, n)); i++; } }
             else if (a == "--updated" && i + 1 < args.Length) { int c; if (int.TryParse(args[++i], out c)) DeckForm.UpdateResult = c; }   // (Update now's script, see UpdateNow)
             else if (a == "--relaunch" && i + 1 < args.Length) { int c; if (int.TryParse(args[++i], out c)) DeckForm.Relaunches = c; }   // (how many times in a row the page's browser died)
+            else if (a == "--gpu-relaunch" && i + 1 < args.Length) { int c; if (int.TryParse(args[++i], out c)) DeckForm.GpuRelaunches = c; }   // (and its GPU process: a tally of its own, 11-18)
             // (11-17 test batch 1001: a TEST copy on a made-up HWiNFO block, fakehw.exe, named by HWDECK_HWMAP; it changes
             // nothing on the PC. No real start passes it)
             else if (a == "--hwtest") { string mn = Environment.GetEnvironmentVariable("HWDECK_HWMAP"); if (!string.IsNullOrEmpty(mn)) HwSource.MapName = mn; Brand.NoActions = true; DeckForm.OtherArgs.Add(args[i]); }
@@ -7602,6 +7605,7 @@ static class Hs
     // own keys over the piece's (St: parsed as a piece of its own); what it doesn't set follows the normal look. The
     // editor's preview forces one state on one piece (Force), for its picture only
     public static readonly string[] StNames = { "empty", "off", "none", "chg", "sleep", "low", "mute" };
+    public const int EMPTY_WK = 1;   // (11-18 his default: a spare's Empty word at 1x; deck.js HS_EMPTY_WK)
     static double LowAt(HsPiece p) { return double.IsNaN(p.Crit) ? (p.Src == "mouse" ? 15 : p.Src == "head" ? HeadEst.Low : 12) : p.Crit; }
     // the state a piece is in now (null: its normal look; a clock and a reading of the PC have none)
     public static string StateOf(HsInfo i, HsPiece p)
@@ -10276,6 +10280,20 @@ static class HsPage
                 if (p.St == null) { p.St = new Dictionary<string, HsPiece>(); p.StRaw = new Dictionary<string, object>(); }
                 p.St[kv.Key] = q; p.StRaw[kv.Key] = own;
             }
+        // (11-18 his "make this the default": a spare's Empty draws its word at 1x, not at the number's Auto size, unless that
+        // state has a size of its own, Auto included. Never saved: StRaw keeps only his keys)
+        if (p.Src == "spare" && p.WK == 0 && !qd.ContainsKey("#st"))   // (EMPTY_WK2: the piece's Empty word size, a size, wins too)
+        {
+            object eo; var eown = p.StRaw != null && p.StRaw.TryGetValue("empty", out eo) ? eo as Dictionary<string, object> : null;
+            if (eown == null || !eown.ContainsKey("wk"))
+            {
+                var md = new Dictionary<string, object>(qd); md.Remove("st"); md["#st"] = true;
+                if (eown != null) foreach (var e in eown) md[e.Key] = e.Value;
+                md["wk"] = Hs.EMPTY_WK;
+                var q = Piece(md);
+                if (q != null) { if (p.St == null) p.St = new Dictionary<string, HsPiece>(); p.St["empty"] = q; }
+            }
+        }
         return p;
     }
     static IEnumerable List(Dictionary<string, object> d, string k) { object o; return d.TryGetValue(k, out o) && o is IEnumerable && !(o is string) ? (IEnumerable)o : new object[0]; }
