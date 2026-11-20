@@ -192,7 +192,7 @@
   // HW Deck's own: the bottleneck, 1 gpu, 2 cpu, 3 capped (none: no game), and how long the game has run (minutes)
   add(9, 8, 'Bottleneck', '', t => core(t).call);
   add(9, 8, 'Game time', 'min', t => { const m = core(t).g ? sessAt(t) : null; return m ? (t - m.start - m.gap) / 60 : null; });   // (its breaks aren't play)
-  // the internet (2.4.8): a quiet line with a few bursts, and the made-up speed test's traffic while one runs
+  // the internet: a quiet line with a few bursts, and the made-up speed test's traffic while one runs
   const netNow = (t, up) => { const T = NET.run ? t - NET.run.t0 / 1000 : -1;   // (by t: the graphs' past seconds and minutes too)
     if (T >= 1 && T < 8.5 && !up) return Math.min(1, (T - 1) / 1.2) * (880 + 40 * smooth(91, t, 3));
     if (T >= 8.5 && T < 16 && up) return Math.min(1, (T - 8.5) / 1.2) * (395 + 20 * smooth(92, t, 3));
@@ -318,7 +318,7 @@
   const settingsMsg = () => ({ t: 'settings', autostart: false, hwinfo: 'Made-up readings in this demo', updates: false, latest: null, gameDays: days('gameDays'), warnDays: days('warnDays'), gameMerge: Math.round(mergeS() / 60) });
 
   // ---- the long history a popup asks for: 1 h to 24 h as minutes, 7 days as 10-minute blocks, 30 days, 90 days and
-  // All (here 120 days) as hours, as the app keeps them (2.4.2) ----
+  // All (here 120 days) as hours, as the app keeps them ----
   function hist(k, range) {
     const week = range === '7d', hours = range === '30d' || range === '90d' || range === 'all';
     const step = hours ? 3600 : week ? 600 : 60, n = hours ? (range === '30d' ? 720 : range === '90d' ? 2160 : 2880) : week ? 1008 : range === '1h' ? 60 : range === '6h' ? 360 : range === '12h' ? 720 : 1440;
@@ -393,7 +393,7 @@
         const st = load('state') || DEMO_STATE, slots = [0, 1, 2, 3, 4].map(i => { const s = load('slots/slot' + (i + 1)); return s !== undefined ? s : i === 0 ? { v: 1, name: 'Demo layout', layout: DEMO } : null; });
         post({ t: 'state', state: st, slots, fake: true, dataDir: 'Nothing is saved in the demo (only in this tab)', version: VERSION, pc: 'GAMING-PC', nonClient: false, ext: false, brand: 'HW Deck', updatable: false });
         post(settingsMsg());
-        post({ t: 'winMax', max: true });   // (a tab has no edges to resize: no band at them that swallows a press, 11-06)
+        post({ t: 'winMax', max: true });   // (a tab has no edges to resize: no band at them that swallows a press)
         post({ t: 'catalog', ver: 1, sensors: SENSORS, readings: R.map(r => [r.s, r.type, r.key, r.label, r.unit, r.key === 'hwdeck.0/netdown' ? 'net' : null]), bneck: [key(1, 'GPU Core Load'), key(0, 'Max CPU/Thread Usage'), 0], c12: null });
         clearInterval(timer); setTimeout(() => { tick(); timer = setInterval(tick, 1000); }, 1000 - Date.now() % 1000);
         tick();

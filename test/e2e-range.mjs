@@ -99,8 +99,8 @@ await mouse('mouseMoved', P.l + 6, P.y); await sleep(100); await mouse('mouseMov
 const hv = await ev(`(() => { const M = bigMap, d = devicePixelRatio || 1, pl = M.padL / d, pr = (M.w - M.padR) / d, f = M.i0 + (HV.cx - pl) / (pr - pl) * (M.i1 - M.i0), when = new Date(Date.now() - M.span * (1 - f / (M.n - 1))); return { f, n: M.n, hm: p2(when.getHours()) + ':' + p2(when.getMinutes()), day: dMon(when), tip: mtip.textContent, on: HV.on, cx: HV.cx }; })()`);
 ok('the hover at the window\'s left reads its first moment, not the range\'s', hv.on && hv.cx !== null && Math.abs(hv.f - 0.5 * (hv.n - 1)) < 2 && hv.tip.includes(hv.hm) && hv.tip.includes(hv.day), hv);
 await mouse('mouseMoved', P.l - 200, P.y - 300);
-// the bottleneck: no chart, no bar
-ok('a Yes/No or bottleneck popup with no chart has no bar', await ev(`(() => { closeDetail(); const k = Object.keys(S.L.cells).find(id => { const c = S.L.cells[id]; return c.key && /bneck|bottleneck/i.test(c.key + (c.name || '')); }); if (!k) return true; openDetail(k); const r = mbar.hidden; closeDetail(); return r; })()`));
+// the bottleneck: its own chart, and the bar under it
+ok('the bottleneck popup has its chart and the bar under it', await ev(`(() => { closeDetail(); const k = Object.keys(S.L.cells).find(id => { const c = S.L.cells[id]; return c.key && /bneck|bottleneck/i.test(c.key + (c.name || '')); }); if (!k) return true; openDetail(k); const r = !mbar.hidden; closeDetail(); return r; })()`));
 ok('no page errors', errs.length === 0, errs);
 await ev('closeDetail(), 1');
 { const all = done(); console.log(all ? 'ALL PASS' : 'SOME FAILED'); process.exit(all ? 0 : 1); }
