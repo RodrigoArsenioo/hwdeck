@@ -33,7 +33,7 @@ using HwHeadset;   // (the headset, at the end of this file)
 
 static class AppInfo
 {
-    public const string Version = "2.6.5";
+    public const string Version = "2.6.6";
     // the version this copy runs as: a made-up copy (--fake) can run as another with HWDECK_RUNVER (the update
     // notes' test: an install going from one version to the next on one data folder)
     public static string Run = Version;

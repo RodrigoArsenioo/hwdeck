@@ -9084,6 +9084,9 @@ const NOTES = [
   ['2.6.5', '2.6.5', ['A graph\'s unit keeps its gap from the numbers: "RPM" no longer touches them.',
     'A fan\'s warning says what its curve wanted and at what temperature.',
     'Warning history: a fan\'s chart shows a dashed line of what its curve wanted each minute.']],
+  ['2.6.6', '2.6.6', ['The spare battery reads between its steps: a flat one starts at 1%, not 12%, and climbs as it charges.',
+    'The headset\'s ready-made pages Gamer, Load watch and Steps show CPU use and GPU power.',
+    'Small fixes: Warning history\'s empty state, the hover graph\'s line, safer saving.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };

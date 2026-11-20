@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.6.6 (2026-11-20)
+
+- The spare battery reads between the few steps the base station reports, as the headset's battery does since 2.6.3: a flat battery put in to charge starts at 1% instead of 12% and climbs as it charges. Its number is kept across a restart of the app, and a battery swapped out of the headset starts from the headset's last number.
+- The headset's ready-made pages Gamer, Load watch and Steps show CPU use and GPU power; they showed -.
+- Warning history with nothing to show: its icon sits centred above the words, instead of beside them with a hand pointer.
+- The small graph shown on hover over a fan or fps cell shows its "bad when below" line when it sits just under the readings, as the popup does; it was left off the scale.
+- The speed test's history is saved the safe way, so a power cut while it saves can't empty it.
+- The app's log no longer loses lines when two parts of the app write at the same moment.
+- About 1,000 lines of unused code are gone, and some of the work done every second is lighter.
+
 ## 2.6.5 (2026-11-20)
 
 - A graph's unit keeps the same gap from its scale's numbers as a short unit does: "RPM" no longer touches "1,200". The fan curve chart in a fan's popup has the same left margin as the graph above it, so their scales line up, and the small graph shown on hover makes room for wide numbers.
