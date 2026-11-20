@@ -9210,6 +9210,9 @@ const NOTES = [
     'Customize > Headset: a spare battery\'s Empty state shows its word at 1x by default, its icon dimmed beside it.',
     'Small grey text is a little lighter and follows the theme.',
     'Customize > Look in a small window: the sliders show their names in full.']],
+  ['2.6.5', '2.6.5', ['A graph\'s unit keeps its gap from the numbers: "RPM" no longer touches them.',
+    'A fan\'s warning says what its curve wanted and at what temperature.',
+    'Warning history: a fan\'s chart shows a dashed line of what its curve wanted each minute.']],
 ];
 const verN = v => String(v || '').split('.').map(n => parseInt(n, 10) || 0).concat([0, 0, 0]).slice(0, 3);
 const verNewer = (a, b) => { const x = verN(a), y = verN(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };

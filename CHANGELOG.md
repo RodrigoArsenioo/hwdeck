@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.6.5 (2026-11-20)
+
+- A graph's unit keeps the same gap from its scale's numbers as a short unit does: "RPM" no longer touches "1,200". The fan curve chart in a fan's popup has the same left margin as the graph above it, so their scales line up, and the small graph shown on hover makes room for wide numbers.
+- A fan's warning says what its curve wanted and at what temperature, for example "37% under its curve, 2250 RPM at 85 °C GPU Hot Spot Temperature", recorded at the moment of the warning.
+- Warning history, a fan's row: its lines read "within 30% of its curve" (its own tolerance), the chart shows a dashed line of what the curve wanted each minute from the temperature it follows, the time off the curve is shaded, and pointing at a minute shows the curve's speed beside the fan's.
+
 ## 2.6.4 (2026-11-19)
 
 - The Bottleneck popup has the same time slider as the other graphs: the wheel zooms where the pointer is, a drag moves back and forth, a double click shows the whole range again, and the slider itself can be dragged. The split under the chart and its times follow what is in view, and the times are clock times, as on the other graphs.
